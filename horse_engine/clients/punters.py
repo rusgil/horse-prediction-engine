@@ -115,6 +115,19 @@ _MEETING_FULL_QUERY = """
 }
 """
 
+_MEETINGS_BY_DATE_QUERY = """
+{
+  meetings(sport: HorseRacing, startDate: "$DATE", endDate: "$DATE") {
+    id
+    name
+    slug
+    meetingDateLocal
+    railPosition
+    venue { name state }
+  }
+}
+"""
+
 _MEETING_SLUG_QUERY = """
 {
   meeting(slug: "$SLUG", sport: HorseRacing) {
@@ -188,59 +201,34 @@ class PuntersClient:
 
     async def get_meetings(self, race_date: str | None = None) -> list[dict]:
         """
-        Return list of Australian thoroughbred meetings for race_date.
-        Each dict: {id, name, slug, venue, state, rail_position, track_condition}
+        Return list of Australian thoroughbred meetings for race_date via GraphQL.
+        Each dict: {id, name, slug, venue, state, rail_position, date}
         """
         d = race_date or _today()
-        html = await self._get_html(_FORM_GUIDE_INDEX)
-        D = self._decode_nuxt(html)
-        if not D:
-            log.warning("No NUXT data found on form guide index page")
+        query = _MEETINGS_BY_DATE_QUERY.replace("$DATE", d)
+        try:
+            data = await self._gql(query)
+        except Exception as e:
+            log.warning("get_meetings GraphQL failed: %s", e)
             return []
 
+        all_meetings = (data.get("data") or {}).get("meetings") or []
         meetings = []
-        for i, v in enumerate(D):
-            if not isinstance(v, dict):
+        for m in all_meetings:
+            venue = m.get("venue") or {}
+            state = venue.get("state", "")
+            if state not in _AU_STATES:
                 continue
-            # Meeting objects have events, venue, meetingDateLocal
-            if not ("events" in v and "venue" in v and "meetingDateLocal" in v):
+            slug = m.get("slug", "")
+            if slug.endswith("-bt"):  # exclude barrier trials
                 continue
-
-            date_ref = v["meetingDateLocal"]
-            date_val = D[date_ref] if isinstance(date_ref, int) and 0 <= date_ref < len(D) else date_ref
-            if not isinstance(date_val, str) or not date_val.startswith(d):
-                continue
-
-            # Resolve venue
-            venue_ref = v["venue"]
-            venue_obj = D[venue_ref] if isinstance(venue_ref, int) else venue_ref
-            if not isinstance(venue_obj, dict):
-                continue
-
-            state_ref = venue_obj.get("state")
-            state_val = D[state_ref] if isinstance(state_ref, int) and 0 <= state_ref < len(D) else state_ref
-            if state_val not in _AU_STATES:
-                continue
-
-            name_ref = v.get("name")
-            name_val = D[name_ref] if isinstance(name_ref, int) and 0 <= name_ref < len(D) else name_ref
-
-            slug_ref = v.get("slug")
-            slug_val = D[slug_ref] if isinstance(slug_ref, int) and 0 <= slug_ref < len(D) else slug_ref
-
-            id_ref = v.get("id")
-            id_val = D[id_ref] if isinstance(id_ref, int) and 0 <= id_ref < len(D) else id_ref
-
-            rail_ref = v.get("railPosition")
-            rail_val = D[rail_ref] if isinstance(rail_ref, int) and 0 <= rail_ref < len(D) else rail_ref
-
             meetings.append({
-                "id": str(id_val) if id_val else None,
-                "name": name_val,
-                "slug": slug_val,
-                "venue": name_val,
-                "state": state_val,
-                "rail_position": rail_val or "",
+                "id": str(m.get("id") or ""),
+                "name": m.get("name", ""),
+                "slug": slug,
+                "venue": m.get("name", ""),
+                "state": state,
+                "rail_position": m.get("railPosition") or "",
                 "date": d,
             })
 
