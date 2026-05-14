@@ -18,8 +18,10 @@ Race IDs follow the pattern "{date}_{venue}_R{num}" e.g. "2026-05-14_werribee_R3
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
+import random
 from contextlib import asynccontextmanager
 from datetime import date, datetime, timedelta
 from typing import Any, Optional
@@ -420,6 +422,124 @@ async def seed_results(race_date: str, x_cron_secret: Optional[str] = Header(Non
                     seeded += 1
 
     return {"status": "seeded", "results": seeded}
+
+
+# ── Backfill ──────────────────────────────────────────────────────────────────
+
+_backfill: dict = {"running": False, "done": False, "current": None,
+                   "completed": [], "errors": [], "meetings": 0, "races": 0, "runners": 0}
+
+
+async def _run_backfill(days: int, x_secret: Optional[str]):
+    global _backfill
+    _backfill.update({"running": True, "done": False, "current": None,
+                      "completed": [], "errors": [], "meetings": 0, "races": 0, "runners": 0,
+                      "started_at": datetime.utcnow().isoformat(), "total_days": days})
+    try:
+        client = get_tab_client()
+        async with get_session() as session:
+            model = await _load_model(session)
+
+        for i in range(1, days + 1):
+            race_date = (date.today() - timedelta(days=i)).isoformat()
+            _backfill["current"] = race_date
+            log.info("[backfill] Processing %s", race_date)
+            try:
+                meetings = await client.get_meetings(race_date)
+                for m in meetings:
+                    slug = m.get("slug", "")
+                    venue_code = slug.split("-")[0] if slug else ""
+                    venue_name = m.get("venue", venue_code)
+                    state = m.get("state", "")
+
+                    meeting_detail = await client.get_meeting_by_slug(slug)
+                    if not meeting_detail:
+                        continue
+                    full = await client._fetch_meeting_full(meeting_detail["id"])
+                    if not full:
+                        continue
+
+                    for event in full.get("events", []):
+                        race_num = event.get("eventNumber")
+                        race_id = f"{race_date}_{venue_code}_R{race_num}"
+                        event["_meeting"] = full
+                        try:
+                            race = client.parse_race(event, race_date, venue_name, state)
+                            if not race.runners:
+                                continue
+                            predictions, _ = await enrich_and_predict_race(
+                                race, model, generate_narratives=False
+                            )
+                            async with get_session() as session:
+                                await save_race_predictions(
+                                    session, race_id,
+                                    [_prediction_to_db_dict(p, race_id) for p in predictions],
+                                )
+                            # Seed actual results
+                            for sel in event.get("selections", []):
+                                position = sel.get("selectionResult")
+                                if not position or int(position) <= 0:
+                                    continue
+                                horse = (sel.get("competitor") or {}).get("name", "")
+                                sp = sel.get("startingPrice")
+                                beaten = sel.get("officialMargin") or 0
+                                async with get_session() as session:
+                                    fv_q = await session.execute(
+                                        select(RunnerPredictionRow)
+                                        .where(RunnerPredictionRow.race_id == race_id)
+                                        .where(RunnerPredictionRow.horse_name == horse)
+                                        .limit(1)
+                                    )
+                                    fv_row = fv_q.scalars().first()
+                                    hr = HistoricalResultRow(
+                                        race_id=race_id,
+                                        horse_name=horse,
+                                        position=int(position),
+                                        beaten_margin=float(beaten),
+                                        winner=int(position) == 1,
+                                        placed=int(position) <= 3,
+                                        starting_price=float(sp) if sp else None,
+                                        feature_vector_json=fv_row.enriched_json if fv_row else None,
+                                    )
+                                    session.add(hr)
+                                    await session.commit()
+                                _backfill["runners"] += 1
+                            _backfill["races"] += 1
+                        except Exception as e:
+                            log.warning("[backfill] Race %s failed: %s", race_id, e)
+
+                    _backfill["meetings"] += 1
+                    await asyncio.sleep(random.uniform(2, 5))
+
+                _backfill["completed"].append(race_date)
+            except Exception as e:
+                log.warning("[backfill] Date %s failed: %s", race_date, e)
+                _backfill["errors"].append({"date": race_date, "error": str(e)})
+    finally:
+        _backfill.update({"running": False, "done": True, "current": None,
+                          "finished_at": datetime.utcnow().isoformat()})
+        log.info("[backfill] Done — %d meetings, %d races, %d runners",
+                 _backfill["meetings"], _backfill["races"], _backfill["runners"])
+
+
+@app.post("/api/admin/backfill")
+async def start_backfill(
+    days: int = Query(14, ge=1, le=90),
+    x_cron_secret: Optional[str] = Header(None),
+):
+    """Start background backfill of past N days. Check /api/admin/backfill/status for progress."""
+    if settings.cron_secret and x_cron_secret != settings.cron_secret:
+        raise HTTPException(403, "Forbidden")
+    if _backfill["running"]:
+        raise HTTPException(409, "Backfill already running")
+    asyncio.create_task(_run_backfill(days, x_cron_secret))
+    return {"status": "started", "days": days, "message": "Check /api/admin/backfill/status for progress"}
+
+
+@app.get("/api/admin/backfill/status")
+async def backfill_status():
+    """Current backfill progress."""
+    return _backfill
 
 
 # ── Cron ──────────────────────────────────────────────────────────────────────
