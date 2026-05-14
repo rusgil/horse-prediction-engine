@@ -21,7 +21,7 @@ from __future__ import annotations
 import json
 import logging
 from contextlib import asynccontextmanager
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from typing import Any, Optional
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query
@@ -394,35 +394,24 @@ async def seed_results(race_date: str, x_cron_secret: Optional[str] = Header(Non
 
 # ── Cron ──────────────────────────────────────────────────────────────────────
 
-@app.post("/api/cron/enrich")
-async def cron_enrich(x_cron_secret: Optional[str] = Header(None)):
-    """Daily cron: enrich all today's meetings."""
-    if settings.cron_secret and x_cron_secret != settings.cron_secret:
-        raise HTTPException(403, "Forbidden")
-
-    today = _today()
-    client = get_tab_client()
-    meetings = await client.get_meetings(today)
-
+async def _enrich_date(race_date: str, client, model) -> list[dict]:
+    """Enrich all meetings for a single date. Returns summary list."""
+    meetings = await client.get_meetings(race_date)
     summary = []
-    async with get_session() as session:
-        model = await _load_model(session)
-
     for m in meetings:
         slug = m.get("slug", "")
         venue_code = slug.split("-")[0] if slug else m.get("name", "").lower().replace(" ", "-")
         venue_name = m.get("venue", venue_code)
         state = m.get("state", "")
-
         try:
             raw_events = await client.get_meeting_races(slug)
             for raw_event in raw_events:
                 race_num = raw_event.get("eventNumber")
-                race_id = f"{today}_{venue_code}_R{race_num}"
+                race_id = f"{race_date}_{venue_code}_R{race_num}"
                 full_event = await client.get_race(slug, race_num)
                 if not full_event:
                     continue
-                race = client.parse_race(full_event, today, venue_name, state)
+                race = client.parse_race(full_event, race_date, venue_name, state)
                 predictions, _ = await enrich_and_predict_race(race, model)
                 async with get_session() as session:
                     await save_race_predictions(
@@ -432,10 +421,31 @@ async def cron_enrich(x_cron_secret: Optional[str] = Header(None)):
                     )
             summary.append({"venue": venue_code, "status": "ok"})
         except Exception as e:
-            log.warning("Cron failed for %s: %s", venue_code, e)
+            log.warning("Cron failed for %s on %s: %s", venue_code, race_date, e)
             summary.append({"venue": venue_code, "status": "error", "error": str(e)})
+    return summary
 
-    return {"date": today, "summary": summary}
+
+@app.post("/api/cron/enrich")
+async def cron_enrich(
+    days: int = Query(3, ge=1, le=7),
+    x_cron_secret: Optional[str] = Header(None),
+):
+    """Cron: enrich all meetings for today + next N days (default 3)."""
+    if settings.cron_secret and x_cron_secret != settings.cron_secret:
+        raise HTTPException(403, "Forbidden")
+
+    client = get_tab_client()
+    async with get_session() as session:
+        model = await _load_model(session)
+
+    results = {}
+    for i in range(days):
+        race_date = (date.today() + timedelta(days=i)).isoformat()
+        log.info("[cron] Enriching %s", race_date)
+        results[race_date] = await _enrich_date(race_date, client, model)
+
+    return {"dates": results}
 
 
 # ── Serialisation helpers ─────────────────────────────────────────────────────

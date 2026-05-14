@@ -216,6 +216,31 @@
       margin-top: 1px;
     }
 
+    /* Date pills */
+    .date-pill {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      padding: 8px 16px;
+      cursor: pointer;
+      transition: var(--transition);
+      white-space: nowrap; flex-shrink: 0;
+      text-align: center;
+    }
+    .date-pill:hover { border-color: var(--gold-mid); background: var(--bg-hover); }
+    .date-pill.active { border-color: var(--gold); background: var(--gold-dim); }
+    .date-pill-day {
+      font-family: 'Barlow Condensed', sans-serif;
+      font-size: 1rem; font-weight: 800;
+      text-transform: uppercase; letter-spacing: 0.04em;
+      color: var(--text-primary); display: block;
+    }
+    .date-pill.active .date-pill-day { color: var(--gold-light); }
+    .date-pill-date {
+      font-size: 0.68rem; color: var(--text-dim);
+      font-weight: 500; display: block; margin-top: 1px;
+    }
+
     /* Race pills (simpler) */
     .race-pill {
       background: var(--bg-card);
@@ -588,7 +613,7 @@
       FunkyIQ
     </a>
     <div class="nav-title">Horse Racing</div>
-    <div class="nav-date" id="dateDisplay" title="Today's racing"></div>
+    <div class="nav-date" id="navDate" title="Today's racing"></div>
   </div>
 </nav>
 
@@ -602,9 +627,12 @@
     </div>
   </div>
 
+  <!-- Date selector -->
+  <div class="pills-row" id="datePills" style="margin-bottom:20px"></div>
+
   <!-- Meetings -->
   <div id="meetingsSection" style="display:none">
-    <div class="section-label">Today's Meetings</div>
+    <div class="section-label" id="meetingsLabel">Today's Meetings</div>
     <div class="pills-row" id="meetingPills"></div>
   </div>
 
@@ -683,9 +711,58 @@
     return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
   }
 
+  function addDays(iso, n) {
+    const d = new Date(iso + 'T00:00:00');
+    d.setDate(d.getDate() + n);
+    return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+  }
+
   function formatDate(iso) {
     const d = new Date(iso + 'T00:00:00');
     return d.toLocaleDateString('en-AU', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' });
+  }
+
+  function formatDayLabel(iso) {
+    const today = todayISO();
+    if (iso === today) return 'Today';
+    if (iso === addDays(today, 1)) return 'Tomorrow';
+    const d = new Date(iso + 'T00:00:00');
+    return d.toLocaleDateString('en-AU', { weekday: 'short' });
+  }
+
+  function formatShortDate(iso) {
+    const d = new Date(iso + 'T00:00:00');
+    return d.toLocaleDateString('en-AU', { day: 'numeric', month: 'short' });
+  }
+
+  function renderDatePills() {
+    const container = document.getElementById('datePills');
+    container.innerHTML = '';
+    const today = todayISO();
+    for (let i = 0; i < 3; i++) {
+      const iso = addDays(today, i);
+      const el = document.createElement('div');
+      el.className = 'date-pill' + (S.date === iso ? ' active' : '');
+      el.innerHTML = `<span class="date-pill-day">${formatDayLabel(iso)}</span><span class="date-pill-date">${formatShortDate(iso)}</span>`;
+      el.addEventListener('click', () => selectDate(iso));
+      container.appendChild(el);
+    }
+  }
+
+  async function selectDate(iso) {
+    if (S.date === iso) return;
+    S.date = iso;
+    S.meetings = [];
+    S.selectedMeeting = null;
+    S.races = [];
+    S.selectedRaceId = null;
+    S.runners = [];
+    renderDatePills();
+    document.getElementById('meetingsSection').style.display = 'none';
+    document.getElementById('racesSection').style.display = 'none';
+    document.getElementById('raceContent').innerHTML = '';
+    document.getElementById('navDate').textContent = formatDate(iso);
+    await loadMeetingsForDate(iso);
   }
 
   // ── API calls ─────────────────────────────────────────────────────────────
@@ -718,24 +795,32 @@
   // ── Init ──────────────────────────────────────────────────────────────────
 
   async function init() {
-    document.getElementById('dateDisplay').textContent = formatDate(S.date);
+    document.getElementById('navDate').textContent = formatDate(S.date);
+    renderDatePills();
+    await loadMeetingsForDate(S.date);
+  }
+
+  async function loadMeetingsForDate(iso) {
+    const label = document.getElementById('meetingsLabel');
+    if (label) label.textContent = formatDayLabel(iso) + "'s Meetings";
+    document.getElementById('heroSub').textContent = `Loading meetings for ${formatDate(iso)}…`;
 
     try {
-      const data = await fetchMeetings(S.date);
+      const data = await fetchMeetings(iso);
       S.meetings = data.meetings || [];
 
       if (!S.meetings.length) {
-        document.getElementById('heroSub').textContent = 'No Australian thoroughbred meetings today.';
+        document.getElementById('heroSub').textContent = `No Australian thoroughbred meetings on ${formatDate(iso)}.`;
+        document.getElementById('meetingsSection').style.display = 'none';
         return;
       }
 
       document.getElementById('heroSub').textContent =
-        `${S.meetings.length} meeting${S.meetings.length > 1 ? 's' : ''} — ${formatDate(S.date)}`;
+        `${S.meetings.length} meeting${S.meetings.length > 1 ? 's' : ''} — ${formatDate(iso)}`;
 
       renderMeetingPills();
       document.getElementById('meetingsSection').style.display = '';
 
-      // Auto-select first meeting
       await selectMeeting(S.meetings[0]);
 
     } catch (e) {
