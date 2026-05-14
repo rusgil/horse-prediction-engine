@@ -542,6 +542,142 @@ async def backfill_status():
     return _backfill
 
 
+# ── Backtest ──────────────────────────────────────────────────────────────────
+
+@app.get("/api/admin/backtest")
+async def backtest_report(
+    days: int = Query(14, ge=1, le=90),
+    x_cron_secret: Optional[str] = Header(None),
+):
+    """
+    Performance report: join predictions vs actual results.
+    Returns top-pick win/place rate, value P&L, and per-condition breakdown.
+    """
+    if settings.cron_secret and x_cron_secret != settings.cron_secret:
+        raise HTTPException(403, "Forbidden")
+
+    cutoff = (date.today() - timedelta(days=days)).isoformat()
+
+    async with get_session() as session:
+        # Fetch all historical results within range
+        hr_result = await session.execute(
+            select(HistoricalResultRow)
+            .where(HistoricalResultRow.race_id >= cutoff)
+        )
+        hr_rows = hr_result.scalars().all()
+
+        # Fetch all runner predictions for those race_ids
+        race_ids = list({r.race_id for r in hr_rows})
+        if not race_ids:
+            return {
+                "days": days,
+                "races_with_results": 0,
+                "message": "No historical results found — run backfill first",
+            }
+
+        pred_result = await session.execute(
+            select(RunnerPredictionRow)
+            .where(RunnerPredictionRow.race_id.in_(race_ids))
+        )
+        pred_rows = pred_result.scalars().all()
+
+    # Index predictions by (race_id, horse_name) and track top-pick per race
+    pred_by_key: dict[tuple, RunnerPredictionRow] = {}
+    top_pick: dict[str, RunnerPredictionRow] = {}   # race_id -> model_rank=1
+    for p in pred_rows:
+        pred_by_key[(p.race_id, p.horse_name)] = p
+        if p.model_rank == 1 or p.race_id not in top_pick:
+            if p.model_rank == 1:
+                top_pick[p.race_id] = p
+            elif p.race_id not in top_pick:
+                top_pick[p.race_id] = p
+
+    # Index results by (race_id, horse_name)
+    result_by_key: dict[tuple, HistoricalResultRow] = {
+        (r.race_id, r.horse_name): r for r in hr_rows
+    }
+
+    races_with_predictions = set(top_pick.keys()) & set(r.race_id for r in hr_rows)
+    total_races = len(races_with_predictions)
+
+    top_pick_wins = 0
+    top_pick_places = 0
+    value_pnl = 0.0
+    value_bets = 0
+
+    # Per-condition breakdown
+    condition_stats: dict[str, dict] = {}
+
+    recent_picks = []
+
+    for race_id in sorted(races_with_predictions, reverse=True):
+        pick = top_pick.get(race_id)
+        if not pick:
+            continue
+        actual = result_by_key.get((race_id, pick.horse_name))
+        if not actual:
+            continue
+
+        won = actual.winner
+        placed = actual.placed
+        sp = actual.starting_price or 0.0
+        overlay = pick.overlay or 0.0
+
+        if won:
+            top_pick_wins += 1
+        if placed:
+            top_pick_places += 1
+
+        # Value bet: only when model ranks it #1 and overlay > 0.05
+        if overlay > 0.05 and sp > 0:
+            value_bets += 1
+            value_pnl += (sp - 1.0) if won else -1.0
+
+        # Track condition breakdown — derive from race_id prefix
+        parts = race_id.split("_")
+        # track_condition is on RacePredictionRow which we don't fetch here.
+        # Use "all" as the only bucket for now.
+        bucket = "all"
+        if bucket not in condition_stats:
+            condition_stats[bucket] = {"races": 0, "wins": 0, "places": 0}
+        condition_stats[bucket]["races"] += 1
+        if won:
+            condition_stats[bucket]["wins"] += 1
+        if placed:
+            condition_stats[bucket]["places"] += 1
+
+        # Recent 20 picks for the detail table
+        if len(recent_picks) < 20:
+            recent_picks.append({
+                "race_id": race_id,
+                "top_pick": pick.horse_name,
+                "model_rank": pick.model_rank,
+                "win_prob": round(pick.win_probability or 0, 3),
+                "overlay": round(overlay, 3),
+                "sp": sp,
+                "actual_position": actual.position,
+                "won": won,
+                "placed": placed,
+            })
+
+    win_rate = round(top_pick_wins / total_races, 3) if total_races else 0
+    place_rate = round(top_pick_places / total_races, 3) if total_races else 0
+    value_roi = round(value_pnl / value_bets, 3) if value_bets else 0
+
+    return {
+        "days": days,
+        "total_races": total_races,
+        "top_pick_wins": top_pick_wins,
+        "top_pick_win_rate": win_rate,
+        "top_pick_places": top_pick_places,
+        "top_pick_place_rate": place_rate,
+        "value_bets": value_bets,
+        "value_pnl": round(value_pnl, 2),
+        "value_roi_per_bet": value_roi,
+        "recent_picks": recent_picks,
+    }
+
+
 # ── Cron ──────────────────────────────────────────────────────────────────────
 
 async def _enrich_date(race_date: str, client, model) -> list[dict]:
