@@ -19,7 +19,7 @@ import httpx
 from tenacity import retry, stop_after_attempt, wait_exponential
 
 from horse_engine.models.race import (
-    PedigreeProfile, Race, Runner,
+    FormStart, PedigreeProfile, Race, Runner,
 )
 from horse_engine.pedigree.sire_profiles import SIRE_PROFILES
 
@@ -101,6 +101,14 @@ _MEETING_FULL_QUERY = """
         }
         jockey { id name slug apprentice }
         trainer { id name slug }
+        lastRun {
+          finishPosition
+          weight
+          eventDistance
+          trackCondition
+          meetingDate
+          meetingName
+        }
       }
     }
   }
@@ -373,6 +381,8 @@ class PuntersClient:
         elif sp:
             best_odds = float(sp)
 
+        last_10_starts = self._parse_last_run(sel.get("lastRun"))
+
         return Runner(
             barrier=int(sel.get("barrierNumber") or 0),
             tab_number=int(sel.get("competitorNumber") or 0),
@@ -387,10 +397,39 @@ class PuntersClient:
             career_starts=0,
             career_wins=0,
             career_places=0,
-            last_10_starts=[],
+            last_10_starts=last_10_starts,
             pedigree=pedigree,
             tote_win_odds=float(tote_win) if tote_win else None,
             tote_place_odds=float(tote_place) if tote_place else None,
             fixed_win_odds=float(sp) if sp else None,
             best_available_odds=best_odds,
         )
+
+    @staticmethod
+    def _parse_last_run(lr: dict | None) -> list[FormStart]:
+        """Convert a lastRun GraphQL object into a single-entry FormStart list."""
+        if not lr:
+            return []
+        try:
+            tc = lr.get("trackCondition") or "Good"
+            pos = int(lr.get("finishPosition") or 0)
+            if pos == 0:
+                return []
+            date_raw = lr.get("meetingDate") or ""
+            date_str = date_raw[:10] if date_raw else ""
+            return [FormStart(
+                date=date_str,
+                track=lr.get("meetingName") or "",
+                distance=int(lr.get("eventDistance") or 0),
+                track_condition=tc,
+                barrier=0,
+                weight=float(lr.get("weight") or 0),
+                jockey="",
+                position=pos,
+                finishers=max(pos, 10),  # conservative estimate when not available
+                beaten_margin=0.0,
+                race_class="",
+                prize_money=0,
+            )]
+        except Exception:
+            return []
