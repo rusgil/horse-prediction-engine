@@ -257,6 +257,15 @@
       font-size: 0.75rem; color: var(--text-dim);
     }
     .info-chip strong { color: var(--text-secondary); }
+    .info-chip.countdown {
+      background: var(--gold-dim);
+      border: 1px solid var(--gold-mid);
+      color: var(--gold-light);
+      font-family: 'Barlow Condensed', sans-serif;
+      font-weight: 700; font-size: 0.85rem;
+      letter-spacing: 0.04em;
+    }
+    .info-chip.countdown strong { color: var(--gold-light); }
 
     @media (min-width: 768px) {
       .info-bar { padding: 12px 16px; gap: 14px; }
@@ -628,6 +637,34 @@
 <script>
   const API = 'https://web-production-dec62.up.railway.app';
 
+  // ── Countdown ─────────────────────────────────────────────────────────────
+  let _countdownInterval = null;
+
+  function startCountdown(timeStr) {
+    if (_countdownInterval) clearInterval(_countdownInterval);
+    const tick = () => {
+      const el = document.getElementById('race-countdown');
+      if (!el) { clearInterval(_countdownInterval); return; }
+      const diff = new Date(timeStr) - Date.now();
+      if (diff <= 0) {
+        el.className = 'info-chip countdown';
+        el.textContent = '🏇 In Running';
+        clearInterval(_countdownInterval);
+        return;
+      }
+      const h = Math.floor(diff / 3600000);
+      const m = Math.floor((diff % 3600000) / 60000);
+      const s = Math.floor((diff % 60000) / 1000);
+      const parts = [];
+      if (h > 0) parts.push(`${h}h`);
+      parts.push(`${String(m).padStart(2,'0')}m`);
+      parts.push(`${String(s).padStart(2,'0')}s`);
+      el.innerHTML = `Race in <strong>${parts.join(' ')}</strong>`;
+    };
+    tick();
+    _countdownInterval = setInterval(tick, 1000);
+  }
+
   // ── State ─────────────────────────────────────────────────────────────────
   const S = {
     date: todayISO(),
@@ -785,15 +822,18 @@
     S.loadingRace = true;
     renderRacePills();
 
+    const startTime = race.scheduled_time || race.time || '';
     const raceInfo = `
       <span class="info-chip"><strong>R${race.race_number}</strong></span>
       ${race.race_name ? `<span class="info-chip">${race.race_name}</span>` : ''}
       ${race.distance ? `<span class="info-chip">${race.distance}m</span>` : ''}
       ${race.track_condition ? `<span class="info-chip">${race.track_condition}</span>` : ''}
       ${race.field_size ? `<span class="info-chip">${race.field_size} runners</span>` : ''}
-      ${race.scheduled_time ? `<span class="info-chip">${formatTime(race.scheduled_time)}</span>` : ''}
+      ${startTime ? `<span class="info-chip">${formatTime(startTime)}</span>` : ''}
+      ${startTime ? `<span class="info-chip countdown" id="race-countdown">…</span>` : ''}
     `;
     document.getElementById('infoBar').innerHTML = renderInfoBar(S.selectedMeeting) + raceInfo;
+    if (startTime) startCountdown(startTime);
 
     document.getElementById('raceContent').innerHTML = renderLoadingHTML('Loading predictions&hellip;');
 
