@@ -3,6 +3,7 @@ builder = "dockerfile"
 
 [deploy]
 healthcheckPath = "/api/health"
-healthcheckTimeout = 30
+healthcheckTimeout = 60
+startCommand = "uvicorn horse_engine.api.main:app --host 0.0.0.0 --port $PORT"
 restartPolicyType = "on_failure"
 restartPolicyMaxRetries = 3
