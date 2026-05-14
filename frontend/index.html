@@ -144,18 +144,30 @@
     }
     .hero-title {
       font-family: 'Barlow Condensed', sans-serif;
-      font-size: 2rem; font-weight: 900;
-      letter-spacing: 0.02em; text-transform: uppercase;
+      font-size: 1.6rem; font-weight: 800;
+      letter-spacing: 0.04em; text-transform: uppercase;
       line-height: 1;
     }
+    .hero-powered {
+      display: inline-flex; align-items: center; gap: 6px;
+      margin-top: 8px;
+      font-size: 0.7rem; font-weight: 600;
+      letter-spacing: 0.1em; text-transform: uppercase;
+      color: var(--text-dim);
+      background: var(--bg-elevated);
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      padding: 3px 10px;
+    }
+    .hero-powered span { color: var(--gold); }
     .hero-sub {
       font-size: 0.82rem; color: var(--text-dim);
-      margin-top: 4px;
+      margin-top: 6px;
     }
 
     @media (min-width: 768px) {
       .hero { margin-bottom: 28px; display: flex; align-items: flex-end; justify-content: space-between; }
-      .hero-title { font-size: 3rem; }
+      .hero-title { font-size: 2.4rem; }
       .hero-sub { font-size: 0.88rem; margin-top: 6px; }
     }
 
@@ -406,17 +418,35 @@
     }
 
     /* Narrative */
-    .narrative-section {
-      padding: 10px 12px 12px;
+    .narrative-section { border-top: 1px solid var(--border); }
+    .narrative-toggle {
+      display: flex; align-items: center; justify-content: space-between;
+      width: 100%; padding: 9px 12px;
+      background: none; border: none; cursor: pointer;
+      font-family: 'Outfit', sans-serif;
+      font-size: 0.72rem; font-weight: 600;
+      letter-spacing: 0.08em; text-transform: uppercase;
+      color: var(--text-dim);
+      transition: var(--transition);
     }
+    .narrative-toggle:hover { color: var(--text-secondary); }
+    .narrative-toggle-icon {
+      font-size: 0.65rem; transition: transform 0.2s ease;
+    }
+    .narrative-toggle.open .narrative-toggle-icon { transform: rotate(180deg); }
+    .narrative-body {
+      display: none;
+      padding: 0 12px 12px;
+    }
+    .narrative-body.open { display: block; }
     .narrative-text {
       font-size: 0.85rem; color: var(--text-secondary);
       line-height: 1.7; font-style: italic;
     }
-    .narrative-section:empty { display: none; }
 
     @media (min-width: 768px) {
-      .narrative-section { padding: 14px 20px 16px; }
+      .narrative-toggle { padding: 10px 20px; font-size: 0.75rem; }
+      .narrative-body { padding: 0 20px 16px; }
       .narrative-text { font-size: 0.9rem; }
     }
 
@@ -558,6 +588,7 @@
     <div>
       <div class="hero-label">AI-Powered Predictions</div>
       <div class="hero-title">Horse Racing<br>Intelligence</div>
+      <div class="hero-powered">Powered by <span>FunkyIQ™</span></div>
       <div class="hero-sub" id="heroSub">Loading today's meetings&hellip;</div>
     </div>
   </div>
@@ -886,10 +917,18 @@
     const flags = r.key_flags || [];
     const flagsHtml = flags.map(f => `<span class="flag-chip">${f}</span>`).join('');
 
-    // Narrative
-    const narrativeHtml = r.narrative
-      ? `<div class="narrative-section"><div class="narrative-text">${escHtml(r.narrative)}</div></div>`
-      : '';
+    // Narrative (collapsible, collapsed by default)
+    const nid = `narr-${rank}-${r.tab_number}`;
+    const narrativeHtml = r.narrative ? `
+      <div class="narrative-section">
+        <button class="narrative-toggle" onclick="toggleNarrative('${nid}', this)">
+          AI Commentary
+          <span class="narrative-toggle-icon">▼</span>
+        </button>
+        <div class="narrative-body" id="${nid}">
+          <div class="narrative-text">${escHtml(r.narrative)}</div>
+        </div>
+      </div>` : '';
 
     return `
       <div class="runner-card${isTop ? ' top-pick' : ''}">
@@ -954,6 +993,13 @@
       const d = new Date(iso);
       return d.toLocaleTimeString('en-AU', { hour: '2-digit', minute: '2-digit', hour12: true, timeZone: 'Australia/Sydney' });
     } catch { return iso.substring(11,16); }
+  }
+
+  function toggleNarrative(id, btn) {
+    const body = document.getElementById(id);
+    if (!body) return;
+    const open = body.classList.toggle('open');
+    btn.classList.toggle('open', open);
   }
 
   function scrollToTop() { window.scrollTo({ top: 0, behavior: 'smooth' }); }
