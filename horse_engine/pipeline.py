@@ -62,31 +62,37 @@ async def enrich_and_predict_race(
 
 async def enrich_meeting(
     race_date: str,
-    venue_code: str,
+    venue_slug: str,
     model: HorseModel,
 ) -> list[dict]:
     """Enrich all races at a meeting. Returns summary list."""
-    from horse_engine.clients.tab import TABClient
-    tab = TABClient()
-    meetings = await tab.get_meetings(race_date)
-    meeting_meta = next((m for m in meetings if m.get("meetingCode") == venue_code), {})
-    venue_name = meeting_meta.get("venueName", venue_code)
-    state = meeting_meta.get("location", {}).get("state", "")
+    from horse_engine.clients.factory import get_tab_client
+    client = get_tab_client()
 
-    raw_races = await tab.get_meeting_races(race_date, venue_code)
+    meeting_slug = f"{venue_slug}-{race_date.replace('-', '')}"
+    meeting_detail = await client.get_meeting_by_slug(meeting_slug)
+    if not meeting_detail:
+        log.warning("Meeting not found: %s", meeting_slug)
+        return []
+
+    venue_obj = meeting_detail.get("venue") or {}
+    venue_name = venue_obj.get("name", venue_slug)
+    state = venue_obj.get("state", "")
+
+    raw_events = await client.get_meeting_races(meeting_slug)
     summaries = []
 
-    for raw in raw_races:
-        race_num = raw.get("raceNumber")
+    for raw_event in raw_events:
+        race_num = raw_event.get("eventNumber")
         try:
-            full = await tab.get_race(race_date, venue_code, race_num)
-            if not full:
+            full_event = await client.get_race(meeting_slug, race_num)
+            if not full_event:
                 continue
-            race = tab.parse_race(full, race_date, venue_name, state)
+            race = client.parse_race(full_event, race_date, venue_name, state)
             predictions, meta = await enrich_and_predict_race(race, model)
             summaries.append({**meta, "status": "ok"})
         except Exception as e:
-            log.warning("Pipeline failed R%s at %s: %s", race_num, venue_code, e)
+            log.warning("Pipeline failed R%s at %s: %s", race_num, venue_slug, e)
             summaries.append({"race_number": race_num, "status": "error", "error": str(e)})
 
     return summaries

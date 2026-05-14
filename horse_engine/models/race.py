@@ -92,6 +92,7 @@ class Runner(BaseModel):
     # Market
     fixed_win_odds: Optional[float] = None
     tote_win_odds: Optional[float] = None
+    tote_place_odds: Optional[float] = None
     sportsbet_odds: Optional[float] = None
     ladbrokes_odds: Optional[float] = None
     best_available_odds: Optional[float] = None

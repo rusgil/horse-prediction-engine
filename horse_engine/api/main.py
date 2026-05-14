@@ -11,6 +11,10 @@ Endpoints:
   POST /api/admin/results/{date}             — seed race results (training data)
   POST /api/cron/enrich                       — daily cron enrichment
   GET  /api/health                            — liveness check
+
+Venue codes are the punters.com.au venue slug, e.g. "werribee", "randwick", "flemington".
+Meeting slugs follow the pattern "{venue}-{date}" e.g. "werribee-20260514".
+Race IDs follow the pattern "{date}_{venue}_R{num}" e.g. "2026-05-14_werribee_R3".
 """
 from __future__ import annotations
 
@@ -25,7 +29,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import select
 
 from horse_engine.api.database import get_session
-from horse_engine.clients.tab import TABClient
+from horse_engine.clients.factory import get_tab_client
 from horse_engine.config import settings
 from horse_engine.models.database import (
     HistoricalResultRow,
@@ -76,6 +80,11 @@ def _today() -> str:
     return date.today().isoformat()
 
 
+def _meeting_slug(venue: str, race_date: str) -> str:
+    """Build the punters.com.au meeting slug from venue slug and date."""
+    return f"{venue}-{race_date.replace('-', '')}"
+
+
 # ── Health ────────────────────────────────────────────────────────────────────
 
 @app.get("/api/health")
@@ -87,23 +96,22 @@ async def health():
 
 @app.get("/api/meetings/{race_date}")
 async def list_meetings(race_date: str = _today()):
-    """List all thoroughbred meetings for the given date."""
-    client = TABClient()
+    """List all Australian thoroughbred meetings for the given date."""
+    client = get_tab_client()
     try:
         meetings = await client.get_meetings(race_date)
     except Exception as e:
-        raise HTTPException(502, f"TAB API error: {e}")
+        raise HTTPException(502, f"Data fetch error: {e}")
 
     return {
         "date": race_date,
         "meetings": [
             {
-                "venue": m.get("venueName"),
-                "venue_code": m.get("meetingCode"),
-                "state": m.get("location", {}).get("state"),
-                "track_condition": m.get("trackCondition", {}).get("name"),
-                "races": m.get("numRaces"),
-                "first_race": m.get("raceStartTime"),
+                "venue": m.get("venue"),
+                "venue_code": m.get("slug", "").split("-")[0] if m.get("slug") else m.get("name", "").lower().replace(" ", "-"),
+                "state": m.get("state"),
+                "rail_position": m.get("rail_position"),
+                "slug": m.get("slug"),
             }
             for m in meetings
         ],
@@ -123,20 +131,21 @@ async def get_meeting(race_date: str, venue_code: str):
         races = result.scalars().all()
 
     if not races:
-        # Fall through to TAB for bare race card (no predictions yet)
-        client = TABClient()
-        raw_races = await client.get_meeting_races(race_date, venue_code)
+        client = get_tab_client()
+        slug = _meeting_slug(venue_code, race_date)
+        raw_races = await client.get_meeting_races(slug)
         return {
             "date": race_date,
             "venue": venue_code,
             "enriched": False,
             "races": [
                 {
-                    "race_id": f"{race_date}_{venue_code}_R{r.get('raceNumber')}",
-                    "race_number": r.get("raceNumber"),
-                    "race_name": r.get("raceName"),
-                    "distance": r.get("raceDistance"),
-                    "time": r.get("raceStartTime"),
+                    "race_id": f"{race_date}_{venue_code}_R{r.get('eventNumber')}",
+                    "race_number": r.get("eventNumber"),
+                    "race_name": r.get("name"),
+                    "distance": r.get("distance"),
+                    "time": r.get("startTime"),
+                    "status": r.get("status"),
                 }
                 for r in raw_races
             ],
@@ -174,7 +183,7 @@ async def get_race(race_id: str):
 
 @app.post("/api/races/{race_id}/enrich")
 async def enrich_race(race_id: str, force: bool = Query(False)):
-    """Enrich a specific race. race_id format: {date}_{venue_code}_R{num}"""
+    """Enrich a specific race. race_id format: {date}_{venue}_R{num}"""
     parts = race_id.split("_")
     if len(parts) < 3:
         raise HTTPException(400, "Invalid race_id format. Expected: {date}_{venue}_R{num}")
@@ -187,7 +196,6 @@ async def enrich_race(race_id: str, force: bool = Query(False)):
         raise HTTPException(400, "Invalid race number in race_id")
 
     async with get_session() as session:
-        # Check if already enriched (unless force)
         if not force:
             existing = await session.execute(
                 select(RunnerPredictionRow)
@@ -200,22 +208,19 @@ async def enrich_race(race_id: str, force: bool = Query(False)):
         model = await _load_model(session)
 
     try:
-        tab = TABClient()
-        raw_race = await tab.get_race(race_date, venue_code, race_num)
-        if not raw_race:
+        client = get_tab_client()
+        slug = _meeting_slug(venue_code, race_date)
+        raw_event = await client.get_race(slug, race_num)
+        if not raw_event:
             raise HTTPException(404, f"Race not found: {race_id}")
 
-        # Determine meeting metadata
-        meetings = await tab.get_meetings(race_date)
-        meeting_meta = next((m for m in meetings if m.get("meetingCode") == venue_code), {})
-        venue_name = meeting_meta.get("venueName", venue_code)
-        state = meeting_meta.get("location", {}).get("state", "")
-        track_condition = meeting_meta.get("trackCondition", {}).get("name", "Good 4")
+        meeting = raw_event.get("_meeting", {})
+        venue_obj = meeting.get("venue") or {}
+        venue_name = venue_obj.get("name", venue_code)
+        state = venue_obj.get("state", "")
 
-        race = tab.parse_race(raw_race, race_date, venue_name, state)
-        race.track_condition = track_condition
-
-        predictions, race_row_data = await enrich_and_predict_race(race, model)
+        race = client.parse_race(raw_event, race_date, venue_name, state)
+        predictions, _ = await enrich_and_predict_race(race, model)
 
         async with get_session() as session:
             await save_race_predictions(
@@ -241,28 +246,30 @@ async def enrich_race(race_id: str, force: bool = Query(False)):
 @app.post("/api/meetings/{race_date}/{venue_code}/enrich")
 async def enrich_meeting_endpoint(race_date: str, venue_code: str):
     """Enrich all races at a meeting."""
-    tab = TABClient()
-    raw_races = await tab.get_meeting_races(race_date, venue_code)
-    if not raw_races:
+    client = get_tab_client()
+    slug = _meeting_slug(venue_code, race_date)
+
+    raw_events = await client.get_meeting_races(slug)
+    if not raw_events:
         raise HTTPException(404, f"No races found for {venue_code} on {race_date}")
 
-    meetings = await tab.get_meetings(race_date)
-    meeting_meta = next((m for m in meetings if m.get("meetingCode") == venue_code), {})
-    venue_name = meeting_meta.get("venueName", venue_code)
-    state = meeting_meta.get("location", {}).get("state", "")
+    meeting_detail = await client.get_meeting_by_slug(slug)
+    venue_obj = (meeting_detail or {}).get("venue") or {}
+    venue_name = venue_obj.get("name", venue_code)
+    state = venue_obj.get("state", "")
 
     results = []
     async with get_session() as session:
         model = await _load_model(session)
 
-    for raw_race in raw_races:
-        race_num = raw_race.get("raceNumber")
+    for raw_event in raw_events:
+        race_num = raw_event.get("eventNumber")
         race_id = f"{race_date}_{venue_code}_R{race_num}"
         try:
-            full_raw = await tab.get_race(race_date, venue_code, race_num)
-            if not full_raw:
+            full_event = await client.get_race(slug, race_num)
+            if not full_event:
                 continue
-            race = tab.parse_race(full_raw, race_date, venue_name, state)
+            race = client.parse_race(full_event, race_date, venue_name, state)
             predictions, _ = await enrich_and_predict_race(race, model)
             async with get_session() as session:
                 await save_race_predictions(
@@ -317,39 +324,38 @@ async def retrain_model():
 @app.post("/api/admin/results/{race_date}")
 async def seed_results(race_date: str, x_cron_secret: Optional[str] = Header(None)):
     """
-    Fetch race results from TAB for a past date and store as training data.
-    Matched against stored RunnerPrediction feature vectors.
+    Fetch race results from punters for a past date and store as training data.
     """
-    # Basic auth for admin
     if settings.cron_secret and x_cron_secret != settings.cron_secret:
         raise HTTPException(403, "Forbidden")
 
-    tab = TABClient()
-    meetings = await tab.get_meetings(race_date)
+    client = get_tab_client()
+    meetings = await client.get_meetings(race_date)
     seeded = 0
 
     for meeting in meetings:
-        venue_code = meeting.get("meetingCode")
-        raw_races = await tab.get_meeting_races(race_date, venue_code)
-        for raw_race in raw_races:
-            race_num = raw_race.get("raceNumber")
+        slug = meeting.get("slug", "")
+        venue_code = slug.split("-")[0] if slug else meeting.get("name", "").lower().replace(" ", "-")
+        raw_events = await client.get_meeting_races(slug)
+
+        for raw_event in raw_events:
+            race_num = raw_event.get("eventNumber")
             race_id = f"{race_date}_{venue_code}_R{race_num}"
 
-            full = await tab.get_race(race_date, venue_code, race_num)
-            if not full:
+            full_event = await client.get_race(slug, race_num)
+            if not full_event:
                 continue
 
-            for runner_raw in full.get("runners", []):
-                if runner_raw.get("scratched"):
+            for sel in full_event.get("selections", []):
+                if (sel.get("status") or "").upper() == "SCRATCHED":
                     continue
-                position = runner_raw.get("finishingPosition") or runner_raw.get("position")
-                if not position:
+                position = sel.get("selectionResult")
+                if not position or int(position) <= 0:
                     continue
-                horse = runner_raw.get("runnerName", "")
-                sp = runner_raw.get("startingPrice") or runner_raw.get("spPrice")
-                beaten = runner_raw.get("margin", 0)
+                horse = (sel.get("competitor") or {}).get("name", "")
+                sp = sel.get("startingPrice")
+                beaten = sel.get("officialMargin", 0)
 
-                # Look up stored feature vector
                 async with get_session() as session:
                     fv_result = await session.execute(
                         select(RunnerPredictionRow)
@@ -386,27 +392,28 @@ async def cron_enrich(x_cron_secret: Optional[str] = Header(None)):
         raise HTTPException(403, "Forbidden")
 
     today = _today()
-    tab = TABClient()
-    meetings = await tab.get_meetings(today)
+    client = get_tab_client()
+    meetings = await client.get_meetings(today)
 
     summary = []
     async with get_session() as session:
         model = await _load_model(session)
 
     for m in meetings:
-        venue_code = m.get("meetingCode")
-        try:
-            raw_races = await tab.get_meeting_races(today, venue_code)
-            venue_name = m.get("venueName", venue_code)
-            state = m.get("location", {}).get("state", "")
+        slug = m.get("slug", "")
+        venue_code = slug.split("-")[0] if slug else m.get("name", "").lower().replace(" ", "-")
+        venue_name = m.get("venue", venue_code)
+        state = m.get("state", "")
 
-            for raw_race in raw_races:
-                race_num = raw_race.get("raceNumber")
+        try:
+            raw_events = await client.get_meeting_races(slug)
+            for raw_event in raw_events:
+                race_num = raw_event.get("eventNumber")
                 race_id = f"{today}_{venue_code}_R{race_num}"
-                full_raw = await tab.get_race(today, venue_code, race_num)
-                if not full_raw:
+                full_event = await client.get_race(slug, race_num)
+                if not full_event:
                     continue
-                race = tab.parse_race(full_raw, today, venue_name, state)
+                race = client.parse_race(full_event, today, venue_name, state)
                 predictions, _ = await enrich_and_predict_race(race, model)
                 async with get_session() as session:
                     await save_race_predictions(
@@ -416,6 +423,7 @@ async def cron_enrich(x_cron_secret: Optional[str] = Header(None)):
                     )
             summary.append({"venue": venue_code, "status": "ok"})
         except Exception as e:
+            log.warning("Cron failed for %s: %s", venue_code, e)
             summary.append({"venue": venue_code, "status": "error", "error": str(e)})
 
     return {"date": today, "summary": summary}
@@ -488,12 +496,6 @@ def _runner_response(row: RunnerPredictionRow) -> dict:
 
 
 def _race_summary(row: RacePredictionRow) -> dict:
-    runners_raw = []
-    if row.runners_json:
-        try:
-            runners_raw = json.loads(row.runners_json)
-        except Exception:
-            pass
     return {
         "race_id": row.race_id,
         "race_number": row.race_number,
