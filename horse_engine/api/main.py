@@ -26,6 +26,8 @@ from typing import Any, Optional
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 from sqlalchemy import select
 
 from horse_engine.api.database import get_session
@@ -83,6 +85,13 @@ def _today() -> str:
 def _meeting_slug(venue: str, race_date: str) -> str:
     """Build the punters.com.au meeting slug from venue slug and date."""
     return f"{venue}-{race_date.replace('-', '')}"
+
+
+# ── Frontend ─────────────────────────────────────────────────────────────────
+
+@app.get("/", include_in_schema=False)
+async def frontend():
+    return FileResponse("frontend/index.html")
 
 
 # ── Health ────────────────────────────────────────────────────────────────────
