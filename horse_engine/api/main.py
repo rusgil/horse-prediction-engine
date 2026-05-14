@@ -24,6 +24,8 @@ from contextlib import asynccontextmanager
 from datetime import date, datetime, timedelta
 from typing import Any, Optional
 
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from apscheduler.triggers.cron import CronTrigger
 from fastapi import Depends, FastAPI, Header, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
@@ -49,10 +51,38 @@ log = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
 
 
+async def _scheduled_enrich():
+    """Run by APScheduler — enrich today + next 2 days."""
+    log.info("[scheduler] Running scheduled enrichment")
+    try:
+        client = get_tab_client()
+        async with get_session() as session:
+            model = await _load_model(session)
+        for i in range(3):
+            race_date = (date.today() + timedelta(days=i)).isoformat()
+            log.info("[scheduler] Enriching %s", race_date)
+            await _enrich_date(race_date, client, model)
+        log.info("[scheduler] Enrichment complete")
+    except Exception as e:
+        log.exception("[scheduler] Enrichment failed: %s", e)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await init_db()
+
+    # Schedule enrichment at 6am, 10am, 1pm AEST (UTC+10 = subtract 10h)
+    scheduler = AsyncIOScheduler(timezone="Australia/Sydney")
+    scheduler.add_job(_scheduled_enrich, CronTrigger(hour=6,  minute=0, timezone="Australia/Sydney"))
+    scheduler.add_job(_scheduled_enrich, CronTrigger(hour=10, minute=0, timezone="Australia/Sydney"))
+    scheduler.add_job(_scheduled_enrich, CronTrigger(hour=13, minute=0, timezone="Australia/Sydney"))
+    scheduler.start()
+    log.info("[scheduler] Cron jobs scheduled: 6am, 10am, 1pm AEST")
+
     yield
+
+    scheduler.shutdown()
+    log.info("[scheduler] Shutdown")
 
 
 app = FastAPI(
