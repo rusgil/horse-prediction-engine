@@ -522,7 +522,7 @@ async def _run_backfill(days: int, x_secret: Optional[str]):
                             log.warning("[backfill] Race %s failed: %s", race_id, e)
 
                     _backfill["meetings"] += 1
-                    await asyncio.sleep(random.uniform(2, 5))
+                    await asyncio.sleep(random.uniform(1, 3))
 
                 _backfill["completed"].append(race_date)
             except Exception as e:
