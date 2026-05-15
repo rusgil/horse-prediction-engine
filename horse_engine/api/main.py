@@ -334,27 +334,35 @@ async def enrich_meeting_endpoint(race_date: str, venue_code: str):
 async def retrain_model():
     """Retrain logistic regression on stored historical results."""
     async with get_session() as session:
-        result = await session.execute(
-            select(HistoricalResultRow).where(HistoricalResultRow.feature_vector_json.isnot(None))
-        )
-        rows = result.scalars().all()
+        hr_result = await session.execute(select(HistoricalResultRow))
+        hr_rows = hr_result.scalars().all()
 
-    if len(rows) < 50:
-        raise HTTPException(400, f"Need at least 50 labelled results to retrain (have {len(rows)})")
+        pred_result = await session.execute(
+            select(RunnerPredictionRow).where(RunnerPredictionRow.enriched_json.isnot(None))
+        )
+        pred_rows = pred_result.scalars().all()
+
+    if len(hr_rows) < 50:
+        raise HTTPException(400, f"Need at least 50 labelled results to retrain (have {len(hr_rows)})")
+
+    # Join on (race_id, horse_name) — enriched_json lives on the prediction row
+    pred_by_key = {(p.race_id, p.horse_name): p for p in pred_rows}
 
     training_data = []
-    for row in rows:
+    for row in hr_rows:
+        pred = pred_by_key.get((row.race_id, row.horse_name))
+        if not pred:
+            continue
         try:
-            er = EnrichedRunner(**json.loads(row.feature_vector_json))
+            er = EnrichedRunner(**json.loads(pred.enriched_json))
             fv = build_feature_vector(er)
             label = 1 if row.winner else 0
             training_data.append((fv, label))
         except Exception as e:
-            log.debug("Skipping retrain row %s: %s", row.id, e)
-            continue
+            log.debug("Skipping retrain row %s/%s: %s", row.race_id, row.horse_name, e)
 
     if not training_data:
-        raise HTTPException(400, "No valid training examples could be built from stored data")
+        raise HTTPException(400, f"No matched training examples (have {len(hr_rows)} results, {len(pred_rows)} predictions — check race_id/horse_name alignment)")
 
     model = HorseModel()
     stats = model.train(training_data)
