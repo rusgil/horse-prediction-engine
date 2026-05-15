@@ -248,10 +248,7 @@ def get_wet_track_pedigree_score(sire_name: str, dam_sire_name: str, condition_c
     # Sire contributes 60%, dam's sire 40%
     combined = sire_wet * 0.6 + dam_wet * 0.4
 
-    # Only relevant on soft/heavy
-    if condition_category in ("soft", "heavy"):
-        return round(combined, 2)
-    return 5.0  # neutral on good ground
+    return round(combined, 2)
 
 
 CONDITION_CATEGORY = {
