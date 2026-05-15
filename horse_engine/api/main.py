@@ -456,6 +456,16 @@ async def _run_backfill(days: int, x_secret: Optional[str]):
         for i in range(1, days + 1):
             race_date = (date.today() - timedelta(days=i)).isoformat()
             _backfill["current"] = race_date
+            async with get_session() as session:
+                already = await session.execute(
+                    select(HistoricalResultRow)
+                    .where(HistoricalResultRow.race_id.like(f"{race_date}_%"))
+                    .limit(1)
+                )
+                if already.scalars().first():
+                    log.info("[backfill] Skipping %s — already loaded", race_date)
+                    _backfill["completed"].append(race_date)
+                    continue
             log.info("[backfill] Processing %s", race_date)
             try:
                 meetings = await client.get_meetings(race_date)
@@ -537,7 +547,7 @@ async def _run_backfill(days: int, x_secret: Optional[str]):
 
 @app.post("/api/admin/backfill")
 async def start_backfill(
-    days: int = Query(14, ge=1, le=90),
+    days: int = Query(14, ge=1, le=365),
     x_cron_secret: Optional[str] = Header(None),
 ):
     """Start background backfill of past N days. Check /api/admin/backfill/status for progress."""
