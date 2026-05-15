@@ -46,7 +46,9 @@ from horse_engine.models.database import (
     save_model_weights,
     save_race_predictions,
 )
+from horse_engine.models.enriched import EnrichedRunner
 from horse_engine.pipeline import enrich_and_predict_race, enrich_meeting
+from horse_engine.prediction.features import build_feature_vector
 from horse_engine.prediction.model import HorseModel
 
 log = logging.getLogger(__name__)
@@ -343,19 +345,22 @@ async def retrain_model():
     training_data = []
     for row in rows:
         try:
-            fv = json.loads(row.feature_vector_json)
+            er = EnrichedRunner(**json.loads(row.feature_vector_json))
+            fv = build_feature_vector(er)
             label = 1 if row.winner else 0
             training_data.append((fv, label))
-        except Exception:
+        except Exception as e:
+            log.debug("Skipping retrain row %s: %s", row.id, e)
             continue
+
+    if not training_data:
+        raise HTTPException(400, "No valid training examples could be built from stored data")
 
     model = HorseModel()
     stats = model.train(training_data)
 
     async with get_session() as session:
-        await save_model_weights(session, {k: v for k, v in zip(
-            [k for k in stats["weights"]], [v for v in stats["weights"].values()]
-        )})
+        await save_model_weights(session, stats["weights"])
 
     return {"status": "retrained", **stats}
 
