@@ -799,7 +799,8 @@ async def _run_calibration_sweep(holdout_days: int = 14) -> dict:
 
             win_probs, _ = model.predict_field([fv for _, fv in runner_fvs])
             best_idx = win_probs.index(max(win_probs))
-            top_runner, top_prob = runner_fvs[best_idx]
+            top_runner = runner_fvs[best_idx][0]
+            top_prob = win_probs[best_idx]
 
             actual = holdout_results.get((race_id, top_runner.horse_name))
             if not actual:
