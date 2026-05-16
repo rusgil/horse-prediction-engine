@@ -98,6 +98,17 @@ _MEETING_FULL_QUERY = """
           age
           colour
           sex
+          forms {
+            finishPosition
+            isDistance
+            isTrack
+            meetingDate
+            meetingName
+            weight
+            jockey { name }
+            prizeMoney
+            winnerName
+          }
         }
         jockey { id name slug apprentice }
         trainer { id name slug }
@@ -369,7 +380,10 @@ class PuntersClient:
         elif sp:
             best_odds = float(sp)
 
-        last_10_starts = self._parse_last_run(sel.get("lastRun"))
+        last_10_starts = self._parse_forms(
+            comp.get("forms") or [],
+            sel.get("lastRun"),
+        )
 
         return Runner(
             barrier=int(sel.get("barrierNumber") or 0),
@@ -394,30 +408,75 @@ class PuntersClient:
         )
 
     @staticmethod
-    def _parse_last_run(lr: dict | None) -> list[FormStart]:
-        """Convert a lastRun GraphQL object into a single-entry FormStart list."""
-        if not lr:
-            return []
-        try:
-            tc = lr.get("trackCondition") or "Good"
-            pos = int(lr.get("finishPosition") or 0)
-            if pos == 0:
-                return []
-            date_raw = lr.get("meetingDate") or ""
-            date_str = date_raw[:10] if date_raw else ""
-            return [FormStart(
-                date=date_str,
-                track=lr.get("meetingName") or "",
-                distance=int(lr.get("eventDistance") or 0),
-                track_condition=tc,
-                barrier=0,
-                weight=float(lr.get("weight") or 0),
-                jockey="",
-                position=pos,
-                finishers=max(pos, 10),  # conservative estimate when not available
-                beaten_margin=0.0,
-                race_class="",
-                prize_money=0,
-            )]
-        except Exception:
-            return []
+    def _parse_forms(forms: list[dict], last_run: dict | None) -> list[FormStart]:
+        """
+        Build up to 10 FormStart entries from the competitor's full forms history.
+        forms gives career depth; last_run supplements the most recent start with
+        exact distance and track condition (not available in forms).
+        """
+        # Index lastRun by date for enrichment
+        lr_date = ""
+        lr_distance = 0
+        lr_condition = "Good"
+        if last_run:
+            lr_date = (last_run.get("meetingDate") or "")[:10]
+            lr_distance = int(last_run.get("eventDistance") or 0)
+            lr_condition = last_run.get("trackCondition") or "Good"
+
+        # Sort forms by date descending, take last 10
+        valid = []
+        for f in forms:
+            date_raw = (f.get("meetingDate") or "")[:10]
+            pos = f.get("finishPosition")
+            if not pos or int(pos) <= 0 or not date_raw:
+                continue
+            valid.append((date_raw, f))
+        valid.sort(key=lambda x: x[0], reverse=True)
+
+        starts = []
+        for date_str, f in valid[:10]:
+            try:
+                pos = int(f.get("finishPosition") or 0)
+                # Supplement most recent start with lastRun distance/condition
+                distance = lr_distance if date_str == lr_date else 0
+                condition = lr_condition if date_str == lr_date else "Good"
+                starts.append(FormStart(
+                    date=date_str,
+                    track=f.get("meetingName") or "",
+                    distance=distance,
+                    track_condition=condition,
+                    barrier=0,
+                    weight=float(f.get("weight") or 0),
+                    jockey=(f.get("jockey") or {}).get("name", ""),
+                    position=pos,
+                    finishers=max(pos, 10),
+                    beaten_margin=0.0,
+                    race_class="",
+                    prize_money=int(f.get("prizeMoney") or 0),
+                ))
+            except Exception:
+                continue
+
+        # Fall back to lastRun alone if forms was empty
+        if not starts and last_run:
+            try:
+                pos = int(last_run.get("finishPosition") or 0)
+                if pos > 0:
+                    starts.append(FormStart(
+                        date=lr_date,
+                        track=last_run.get("meetingName") or "",
+                        distance=lr_distance,
+                        track_condition=lr_condition,
+                        barrier=0,
+                        weight=float(last_run.get("weight") or 0),
+                        jockey="",
+                        position=pos,
+                        finishers=max(pos, 10),
+                        beaten_margin=0.0,
+                        race_class="",
+                        prize_money=0,
+                    ))
+            except Exception:
+                pass
+
+        return starts
