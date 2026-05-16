@@ -331,10 +331,17 @@ async def enrich_meeting_endpoint(race_date: str, venue_code: str):
 # ── Retrain ───────────────────────────────────────────────────────────────────
 
 @app.post("/api/retrain")
-async def retrain_model():
-    """Retrain logistic regression on stored historical results."""
+async def retrain_model(days: int = Query(0, ge=0, le=365)):
+    """
+    Retrain logistic regression on stored historical results.
+    days=0 (default) uses all available data. days=N uses only the last N days.
+    """
     async with get_session() as session:
-        hr_result = await session.execute(select(HistoricalResultRow))
+        hr_query = select(HistoricalResultRow)
+        if days > 0:
+            cutoff = (date.today() - timedelta(days=days)).isoformat()
+            hr_query = hr_query.where(HistoricalResultRow.race_id >= cutoff)
+        hr_result = await session.execute(hr_query)
         hr_rows = hr_result.scalars().all()
 
         pred_result = await session.execute(
@@ -370,7 +377,7 @@ async def retrain_model():
     async with get_session() as session:
         await save_model_weights(session, stats["weights"])
 
-    return {"status": "retrained", **stats}
+    return {"status": "retrained", "training_days": days or "all", "training_examples": len(training_data), **stats}
 
 
 # ── Admin: seed results ───────────────────────────────────────────────────────
@@ -651,8 +658,8 @@ async def backtest_report(
         if placed:
             top_pick_places += 1
 
-        # Value bet: only when model ranks it #1 and overlay > 0.05
-        if overlay > 0.05 and sp > 0:
+        # Value bet: only when model ranks it #1 and overlay > 0.15
+        if overlay > 0.15 and sp > 0:
             value_bets += 1
             value_pnl += (sp - 1.0) if won else -1.0
 
