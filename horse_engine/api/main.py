@@ -452,7 +452,7 @@ _backfill: dict = {"running": False, "done": False, "current": None,
                    "completed": [], "errors": [], "meetings": 0, "races": 0, "runners": 0}
 
 
-async def _run_backfill(days: int, x_secret: Optional[str]):
+async def _run_backfill(days: int, x_secret: Optional[str], force: bool = False):
     global _backfill
     _backfill.update({"running": True, "done": False, "current": None,
                       "completed": [], "errors": [], "meetings": 0, "races": 0, "runners": 0,
@@ -465,16 +465,17 @@ async def _run_backfill(days: int, x_secret: Optional[str]):
         for i in range(1, days + 1):
             race_date = (date.today() - timedelta(days=i)).isoformat()
             _backfill["current"] = race_date
-            async with get_session() as session:
-                already = await session.execute(
-                    select(HistoricalResultRow)
-                    .where(HistoricalResultRow.race_id.like(f"{race_date}_%"))
-                    .limit(1)
-                )
-                if already.scalars().first():
-                    log.info("[backfill] Skipping %s — already loaded", race_date)
-                    _backfill["completed"].append(race_date)
-                    continue
+            if not force:
+                async with get_session() as session:
+                    already = await session.execute(
+                        select(HistoricalResultRow)
+                        .where(HistoricalResultRow.race_id.like(f"{race_date}_%"))
+                        .limit(1)
+                    )
+                    if already.scalars().first():
+                        log.info("[backfill] Skipping %s — already loaded", race_date)
+                        _backfill["completed"].append(race_date)
+                        continue
             log.info("[backfill] Processing %s", race_date)
             try:
                 meetings = await client.get_meetings(race_date)
@@ -516,25 +517,33 @@ async def _run_backfill(days: int, x_secret: Optional[str]):
                                 sp = sel.get("startingPrice")
                                 beaten = sel.get("officialMargin") or 0
                                 async with get_session() as session:
-                                    fv_q = await session.execute(
-                                        select(RunnerPredictionRow)
-                                        .where(RunnerPredictionRow.race_id == race_id)
-                                        .where(RunnerPredictionRow.horse_name == horse)
+                                    # Skip if historical result already exists
+                                    existing_hr = await session.execute(
+                                        select(HistoricalResultRow)
+                                        .where(HistoricalResultRow.race_id == race_id)
+                                        .where(HistoricalResultRow.horse_name == horse)
                                         .limit(1)
                                     )
-                                    fv_row = fv_q.scalars().first()
-                                    hr = HistoricalResultRow(
-                                        race_id=race_id,
-                                        horse_name=horse,
-                                        position=int(position),
-                                        beaten_margin=float(beaten),
-                                        winner=int(position) == 1,
-                                        placed=int(position) <= 3,
-                                        starting_price=float(sp) if sp else None,
-                                        feature_vector_json=fv_row.enriched_json if fv_row else None,
-                                    )
-                                    session.add(hr)
-                                    await session.commit()
+                                    if not existing_hr.scalars().first():
+                                        fv_q = await session.execute(
+                                            select(RunnerPredictionRow)
+                                            .where(RunnerPredictionRow.race_id == race_id)
+                                            .where(RunnerPredictionRow.horse_name == horse)
+                                            .limit(1)
+                                        )
+                                        fv_row = fv_q.scalars().first()
+                                        hr = HistoricalResultRow(
+                                            race_id=race_id,
+                                            horse_name=horse,
+                                            position=int(position),
+                                            beaten_margin=float(beaten),
+                                            winner=int(position) == 1,
+                                            placed=int(position) <= 3,
+                                            starting_price=float(sp) if sp else None,
+                                            feature_vector_json=fv_row.enriched_json if fv_row else None,
+                                        )
+                                        session.add(hr)
+                                        await session.commit()
                                 _backfill["runners"] += 1
                             _backfill["races"] += 1
                         except Exception as e:
@@ -557,15 +566,20 @@ async def _run_backfill(days: int, x_secret: Optional[str]):
 @app.post("/api/admin/backfill")
 async def start_backfill(
     days: int = Query(14, ge=1, le=365),
+    force: bool = Query(False),
     x_cron_secret: Optional[str] = Header(None),
 ):
-    """Start background backfill of past N days. Check /api/admin/backfill/status for progress."""
+    """
+    Start background backfill of past N days.
+    force=true re-runs predictions even for dates already in the DB (useful after model updates).
+    Historical results are never duplicated regardless.
+    """
     if settings.cron_secret and x_cron_secret != settings.cron_secret:
         raise HTTPException(403, "Forbidden")
     if _backfill["running"]:
         raise HTTPException(409, "Backfill already running")
-    asyncio.create_task(_run_backfill(days, x_cron_secret))
-    return {"status": "started", "days": days, "message": "Check /api/admin/backfill/status for progress"}
+    asyncio.create_task(_run_backfill(days, x_cron_secret, force=force))
+    return {"status": "started", "days": days, "force": force, "message": "Check /api/admin/backfill/status for progress"}
 
 
 @app.get("/api/admin/backfill/status")
