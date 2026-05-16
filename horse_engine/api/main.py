@@ -38,6 +38,7 @@ from horse_engine.api.database import get_session
 from horse_engine.clients.factory import get_tab_client
 from horse_engine.config import settings
 from horse_engine.models.database import (
+    CalibrationRow,
     HistoricalResultRow,
     RunnerPredictionRow,
     RacePredictionRow,
@@ -80,8 +81,9 @@ async def lifespan(app: FastAPI):
     scheduler.add_job(_scheduled_enrich, CronTrigger(hour=6,  minute=0, timezone="Australia/Sydney"))
     scheduler.add_job(_scheduled_enrich, CronTrigger(hour=10, minute=0, timezone="Australia/Sydney"))
     scheduler.add_job(_scheduled_enrich, CronTrigger(hour=13, minute=0, timezone="Australia/Sydney"))
+    scheduler.add_job(_scheduled_calibrate, CronTrigger(day_of_week="sun", hour=2, minute=0, timezone="Australia/Sydney"))
     scheduler.start()
-    log.info("[scheduler] Cron jobs scheduled: 6am, 10am, 1pm AEST")
+    log.info("[scheduler] Cron jobs scheduled: 6am, 10am, 1pm AEST daily + 2am Sunday calibration")
 
     yield
 
@@ -705,6 +707,262 @@ async def backtest_report(
         "value_pnl": round(value_pnl, 2),
         "value_roi_per_bet": value_roi,
         "recent_picks": recent_picks,
+    }
+
+
+# ── Calibration ───────────────────────────────────────────────────────────────
+
+_CANDIDATE_WINDOWS = [30, 60, 90, 180, 270]
+_DRIFT_THRESHOLD = 0.05   # 5% drop vs 4-week rolling avg triggers flag
+
+
+async def _run_calibration_sweep(holdout_days: int = 14) -> dict:
+    """
+    For each candidate training window, train the model excluding the holdout
+    period, then score holdout races in-memory to get true out-of-sample stats.
+    Saves the best window's weights to the DB and writes a CalibrationRow.
+    """
+    today = date.today()
+    holdout_cutoff = (today - timedelta(days=holdout_days)).isoformat()
+
+    async with get_session() as session:
+        # All historical results
+        hr_result = await session.execute(select(HistoricalResultRow))
+        all_hr = hr_result.scalars().all()
+        # All predictions with enriched data
+        pred_result = await session.execute(
+            select(RunnerPredictionRow).where(RunnerPredictionRow.enriched_json.isnot(None))
+        )
+        all_pred = pred_result.scalars().all()
+
+    pred_by_key = {(p.race_id, p.horse_name): p for p in all_pred}
+
+    # Group predictions by race_id for holdout scoring
+    holdout_races: dict[str, list] = {}
+    holdout_results: dict[tuple, HistoricalResultRow] = {}
+    for r in all_hr:
+        if r.race_id >= holdout_cutoff:
+            holdout_results[(r.race_id, r.horse_name)] = r
+    for p in all_pred:
+        if p.race_id >= holdout_cutoff:
+            holdout_races.setdefault(p.race_id, []).append(p)
+
+    window_results = []
+    best_window = None
+    best_score = float("-inf")
+    best_weights = None
+
+    for window in _CANDIDATE_WINDOWS:
+        train_cutoff = (today - timedelta(days=window)).isoformat()
+
+        # Training data: within window, outside holdout
+        training_data = []
+        for row in all_hr:
+            if row.race_id < train_cutoff or row.race_id >= holdout_cutoff:
+                continue
+            pred = pred_by_key.get((row.race_id, row.horse_name))
+            if not pred:
+                continue
+            try:
+                er = EnrichedRunner(**json.loads(pred.enriched_json))
+                fv = build_feature_vector(er)
+                training_data.append((fv, 1 if row.winner else 0))
+            except Exception:
+                continue
+
+        if len(training_data) < 50:
+            window_results.append({
+                "window_days": window,
+                "training_examples": len(training_data),
+                "skipped": True,
+                "reason": "insufficient training data",
+            })
+            continue
+
+        model = HorseModel()
+        stats = model.train(training_data)
+
+        # Score holdout races with candidate model
+        win_picks = place_picks = value_bets = total_races = 0
+        value_pnl = 0.0
+
+        for race_id, runners in holdout_races.items():
+            runner_fvs = []
+            for r in runners:
+                try:
+                    er = EnrichedRunner(**json.loads(r.enriched_json))
+                    runner_fvs.append((r, build_feature_vector(er)))
+                except Exception:
+                    continue
+            if not runner_fvs:
+                continue
+
+            win_probs, _ = model.predict_field([fv for _, fv in runner_fvs])
+            best_idx = win_probs.index(max(win_probs))
+            top_runner, top_prob = runner_fvs[best_idx]
+
+            actual = holdout_results.get((race_id, top_runner.horse_name))
+            if not actual:
+                continue
+
+            total_races += 1
+            if actual.winner:
+                win_picks += 1
+            if actual.placed:
+                place_picks += 1
+
+            sp = actual.starting_price or 0
+            implied = 1 / sp if sp > 1 else 0
+            if (top_prob - implied) > 0.05 and sp > 0:
+                value_bets += 1
+                value_pnl += (sp - 1.0) if actual.winner else -1.0
+
+        win_rate = round(win_picks / total_races, 3) if total_races else 0
+        place_rate = round(place_picks / total_races, 3) if total_races else 0
+        roi = round(value_pnl / value_bets, 3) if value_bets else 0
+
+        result = {
+            "window_days": window,
+            "training_examples": len(training_data),
+            "training_accuracy": stats["accuracy"],
+            "holdout_races": total_races,
+            "win_rate": win_rate,
+            "place_rate": place_rate,
+            "value_bets": value_bets,
+            "value_pnl": round(value_pnl, 2),
+            "value_roi": roi,
+        }
+        window_results.append(result)
+        log.info("[calibrate] window=%d win=%.1f%% roi=%.3f", window, win_rate * 100, roi)
+
+        # Best = highest ROI when we have enough value bets, else highest win rate
+        score = roi if value_bets >= 10 else win_rate
+        if score > best_score:
+            best_score = score
+            best_window = window
+            best_weights = stats["weights"]
+
+    if not best_weights:
+        return {"error": "no valid windows", "window_results": window_results}
+
+    # Save best weights
+    async with get_session() as session:
+        await save_model_weights(session, best_weights)
+
+    # Drift detection: compare vs last 4 calibrations
+    best_result = next((r for r in window_results if r.get("window_days") == best_window), {})
+    drift_flag = False
+    drift_reason = None
+
+    async with get_session() as session:
+        hist = await session.execute(
+            select(CalibrationRow).order_by(CalibrationRow.ran_at.desc()).limit(4)
+        )
+        prev_runs = hist.scalars().all()
+
+    if len(prev_runs) >= 4:
+        avg_win = sum(r.win_rate for r in prev_runs) / len(prev_runs)
+        avg_roi = sum(r.value_roi for r in prev_runs if r.value_roi is not None) / max(len(prev_runs), 1)
+        cur_win = best_result.get("win_rate", 0)
+        cur_roi = best_result.get("value_roi", 0)
+        if avg_win - cur_win > _DRIFT_THRESHOLD:
+            drift_flag = True
+            drift_reason = f"Win rate dropped {avg_win - cur_win:.1%} below 4-week avg ({avg_win:.1%} → {cur_win:.1%})"
+        elif avg_roi - cur_roi > _DRIFT_THRESHOLD:
+            drift_flag = True
+            drift_reason = f"Value ROI dropped {avg_roi - cur_roi:.3f} below 4-week avg ({avg_roi:.3f} → {cur_roi:.3f})"
+
+    # Persist calibration record
+    cal_row = CalibrationRow(
+        ran_at=datetime.utcnow(),
+        holdout_days=holdout_days,
+        best_window=best_window,
+        win_rate=best_result.get("win_rate"),
+        place_rate=best_result.get("place_rate"),
+        value_roi=best_result.get("value_roi"),
+        value_bets=best_result.get("value_bets"),
+        total_races=best_result.get("holdout_races"),
+        drift_flag=drift_flag,
+        drift_reason=drift_reason,
+        all_results_json=json.dumps(window_results),
+    )
+    async with get_session() as session:
+        session.add(cal_row)
+        await session.commit()
+
+    log.info("[calibrate] Best window=%d days, win=%.1f%%, roi=%.3f, drift=%s",
+             best_window, best_result.get("win_rate", 0) * 100,
+             best_result.get("value_roi", 0), drift_flag)
+
+    return {
+        "best_window": best_window,
+        "best_score": round(best_score, 3),
+        "drift_flag": drift_flag,
+        "drift_reason": drift_reason,
+        "window_results": window_results,
+    }
+
+
+async def _scheduled_calibrate():
+    """Run by APScheduler every Sunday at 2am AEST."""
+    log.info("[scheduler] Running weekly calibration sweep")
+    try:
+        result = await _run_calibration_sweep(holdout_days=14)
+        if result.get("drift_flag"):
+            log.warning("[calibrate] DRIFT DETECTED: %s", result.get("drift_reason"))
+        log.info("[calibrate] Complete. Best window: %d days", result.get("best_window", 0))
+    except Exception as e:
+        log.exception("[calibrate] Weekly calibration failed: %s", e)
+
+
+@app.post("/api/admin/calibrate")
+async def run_calibration(
+    holdout_days: int = Query(14, ge=7, le=30),
+    x_cron_secret: Optional[str] = Header(None),
+):
+    """
+    Run calibration sweep: test all training windows and select the best one.
+    Saves winning weights to DB. Reports drift if performance has dropped.
+    """
+    if settings.cron_secret and x_cron_secret != settings.cron_secret:
+        raise HTTPException(403, "Forbidden")
+    try:
+        result = await _run_calibration_sweep(holdout_days=holdout_days)
+        return result
+    except Exception as e:
+        log.exception("Calibration failed")
+        raise HTTPException(500, str(e))
+
+
+@app.get("/api/admin/calibration/history")
+async def calibration_history(
+    limit: int = Query(10, ge=1, le=50),
+    x_cron_secret: Optional[str] = Header(None),
+):
+    """Return the last N calibration runs with drift history."""
+    if settings.cron_secret and x_cron_secret != settings.cron_secret:
+        raise HTTPException(403, "Forbidden")
+    async with get_session() as session:
+        result = await session.execute(
+            select(CalibrationRow).order_by(CalibrationRow.ran_at.desc()).limit(limit)
+        )
+        rows = result.scalars().all()
+    return {
+        "calibrations": [
+            {
+                "ran_at": r.ran_at.isoformat(),
+                "best_window": r.best_window,
+                "win_rate": r.win_rate,
+                "place_rate": r.place_rate,
+                "value_roi": r.value_roi,
+                "value_bets": r.value_bets,
+                "total_races": r.total_races,
+                "drift_flag": r.drift_flag,
+                "drift_reason": r.drift_reason,
+                "window_results": json.loads(r.all_results_json or "[]"),
+            }
+            for r in rows
+        ]
     }
 
 

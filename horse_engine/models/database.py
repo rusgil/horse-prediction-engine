@@ -89,6 +89,23 @@ class HistoricalResultRow(Base):
     recorded_at = Column(DateTime, default=datetime.utcnow)
 
 
+class CalibrationRow(Base):
+    __tablename__ = "calibrations"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    ran_at = Column(DateTime, default=datetime.utcnow, index=True)
+    holdout_days = Column(Integer)
+    best_window = Column(Integer)           # winning training window in days
+    win_rate = Column(Float)
+    place_rate = Column(Float)
+    value_roi = Column(Float)
+    value_bets = Column(Integer)
+    total_races = Column(Integer)
+    drift_flag = Column(Boolean, default=False)
+    drift_reason = Column(Text, nullable=True)
+    all_results_json = Column(Text)         # JSON list of per-window stats
+
+
 async def init_db() -> None:
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
