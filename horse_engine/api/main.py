@@ -87,14 +87,17 @@ async def _seed_results_for_date(race_date: str) -> int:
     for meeting in meetings:
         slug = meeting.get("slug", "")
         venue_code = slug[:-len(date_sfx)] if slug.endswith(date_sfx) else slug.split("-")[0] if slug else ""
-        raw_events = await client.get_meeting_races(slug)
-        for raw_event in raw_events:
-            race_num = raw_event.get("eventNumber")
+        meeting_id = meeting.get("id")
+        if not meeting_id:
+            continue
+        # Fetch full meeting once — avoids re-fetching per race (was O(N) calls, now O(1))
+        full = await client._fetch_meeting_full(meeting_id)
+        if not full:
+            continue
+        for event in full.get("events", []):
+            race_num = event.get("eventNumber")
             race_id = f"{race_date}_{venue_code}_R{race_num}"
-            full_event = await client.get_race(slug, race_num)
-            if not full_event:
-                continue
-            for sel in full_event.get("selections", []):
+            for sel in event.get("selections", []):
                 if (sel.get("status") or "").upper() == "SCRATCHED":
                     continue
                 position = sel.get("selectionResult")
