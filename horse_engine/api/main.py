@@ -344,7 +344,7 @@ async def live_odds(race_id: str):
     if not raw_event:
         raise HTTPException(404, "Race not found on punters")
 
-    # Build updated odds snapshot
+    # Build updated odds snapshot — also capture settled result if available
     runners_odds = []
     all_tote = []
     for sel in raw_event.get("selections", []):
@@ -352,17 +352,23 @@ async def live_odds(race_id: str):
             continue
         horse = (sel.get("competitor") or {}).get("name", "")
         tote_win = sel.get("topToteWin")
-        tote_place = sel.get("topTotePlace")
         sp = sel.get("startingPrice")
         current_odds = float(tote_win) if tote_win else (float(sp) if sp else None)
-        all_tote.append((horse, current_odds))
+        result_pos = sel.get("selectionResult")
+        actual_position = int(result_pos) if result_pos and int(result_pos) > 0 else None
+        all_tote.append((horse, current_odds, actual_position))
 
     # Overround-free implied probs from current tote
-    valid_odds = [o for _, o in all_tote if o and o > 1.0]
+    valid_odds = [o for _, o, _ in all_tote if o and o > 1.0]
     total_implied = sum(1 / o for o in valid_odds) if valid_odds else 0
     scale = 1.0 / total_implied if total_implied > 0 else 1.0
 
-    for horse, current_odds in all_tote:
+    # Find winner for model-correct flag
+    winner_name = next((h for h, _, pos in all_tote if pos == 1), None)
+    top_model_pick = stored[0].horse_name if stored else None
+    model_correct = (winner_name == top_model_pick) if winner_name else None
+
+    for horse, current_odds, actual_position in all_tote:
         model_prob = model_probs.get(horse, 0.0)
         if current_odds and current_odds > 1.0:
             raw_implied = 1.0 / current_odds
@@ -377,6 +383,7 @@ async def live_odds(race_id: str):
             "model_win_prob": round(model_prob, 4),
             "overlay": overlay,
             "value": overlay > 0.05 and current_odds and current_odds >= 3.0,
+            "actual_position": actual_position,
         })
 
     runners_odds.sort(key=lambda x: x["model_win_prob"], reverse=True)
@@ -384,6 +391,9 @@ async def live_odds(race_id: str):
     return {
         "race_id": race_id,
         "fetched_at": datetime.utcnow().isoformat(),
+        "settled": winner_name is not None,
+        "winner": winner_name,
+        "model_correct": model_correct,
         "runners": runners_odds,
     }
 
@@ -831,6 +841,77 @@ async def backtest_report(
         "value_pnl": round(value_pnl, 2),
         "value_roi_per_bet": value_roi,
         "recent_picks": recent_picks,
+    }
+
+
+@app.get("/api/performance")
+async def performance_summary(days: int = Query(5, ge=1, le=30)):
+    """
+    Per-day performance strip for the last N days.
+    Shows top-pick win rate, place rate, and value P&L per day.
+    No auth required — displayed publicly on the frontend.
+    """
+    cutoff = (date.today() - timedelta(days=days)).isoformat()
+
+    async with get_session() as session:
+        hr_result = await session.execute(
+            select(HistoricalResultRow).where(HistoricalResultRow.race_id >= cutoff)
+        )
+        hr_rows = hr_result.scalars().all()
+
+        if not hr_rows:
+            return {"days": days, "summary": [], "overall_win_rate": None}
+
+        race_ids = list({r.race_id for r in hr_rows})
+        pred_result = await session.execute(
+            select(RunnerPredictionRow)
+            .where(RunnerPredictionRow.race_id.in_(race_ids))
+            .where(RunnerPredictionRow.model_rank == 1)
+        )
+        top_picks = {p.race_id: p for p in pred_result.scalars().all()}
+
+    result_by_key = {(r.race_id, r.horse_name): r for r in hr_rows}
+
+    # Group by date
+    by_date: dict[str, dict] = {}
+    for race_id, pick in top_picks.items():
+        race_date = race_id[:10]
+        actual = result_by_key.get((race_id, pick.horse_name))
+        if not actual:
+            continue
+        d = by_date.setdefault(race_date, {"races": 0, "wins": 0, "places": 0, "value_pnl": 0.0, "value_bets": 0})
+        d["races"] += 1
+        if actual.winner:
+            d["wins"] += 1
+        if actual.placed:
+            d["places"] += 1
+        sp = actual.starting_price or 0.0
+        overlay = pick.overlay or 0.0
+        if overlay > 0.05 and sp >= 3.0:
+            d["value_bets"] += 1
+            d["value_pnl"] += (sp - 1) if actual.winner else -1.0
+
+    summary = []
+    for day_str in sorted(by_date.keys(), reverse=True):
+        d = by_date[day_str]
+        races = d["races"]
+        summary.append({
+            "date": day_str,
+            "races": races,
+            "wins": d["wins"],
+            "win_rate": round(d["wins"] / races, 3) if races else 0,
+            "place_rate": round(d["places"] / races, 3) if races else 0,
+            "value_bets": d["value_bets"],
+            "value_pnl": round(d["value_pnl"], 2),
+        })
+
+    total_races = sum(d["races"] for d in by_date.values())
+    total_wins = sum(d["wins"] for d in by_date.values())
+    return {
+        "days": days,
+        "overall_win_rate": round(total_wins / total_races, 3) if total_races else None,
+        "overall_races": total_races,
+        "summary": summary,
     }
 
 
