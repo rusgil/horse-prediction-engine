@@ -263,6 +263,46 @@ async def get_meeting(race_date: str, venue_code: str):
         for r in raw_races
     ]
 
+    # For past dates punters returns nothing — derive race list from DB
+    if not race_list:
+        prefix = f"{race_date}_{venue_code}_R"
+        async with get_session() as session:
+            db_result = await session.execute(
+                select(RunnerPredictionRow.race_id)
+                .where(RunnerPredictionRow.race_id.like(f"{prefix}%"))
+                .where(RunnerPredictionRow.model_rank == 1)
+                .order_by(RunnerPredictionRow.race_id)
+            )
+            db_race_ids = [row[0] for row in db_result]
+        # Also check historical results if no predictions
+        if not db_race_ids:
+            async with get_session() as session:
+                hr_result = await session.execute(
+                    select(HistoricalResultRow.race_id)
+                    .where(HistoricalResultRow.race_id.like(f"{prefix}%"))
+                    .distinct()
+                    .order_by(HistoricalResultRow.race_id)
+                )
+                db_race_ids = [row[0] for row in hr_result]
+        for rid in db_race_ids:
+            try:
+                rnum = int(rid.split("_R")[-1])
+            except ValueError:
+                continue
+            race_list.append({
+                "race_id": rid,
+                "race_number": rnum,
+                "race_name": None,
+                "distance": None,
+                "scheduled_time": None,
+                "time": None,
+                "status": "closed",
+                "enriched_at": None,
+                "track_condition": None,
+                "field_size": None,
+                "prize_money": None,
+            })
+
     race_ids = [r["race_id"] for r in race_list]
 
     async with get_session() as session:
