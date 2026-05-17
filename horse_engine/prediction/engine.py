@@ -216,7 +216,7 @@ def enrich_runner(
         speed_map_advantage=pace_adv + tb_adv,
         gear_changes=gear_changes,
         gear_change_score=gear_score,
-        is_first_start=runner.career_starts == 0,
+        is_first_start=len(runner.last_10_starts) == 0,
         is_resuming=is_resuming,
         spell_weeks=spell_w,
         age_sex_weight_factor=age_sex_factor,
