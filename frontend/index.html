@@ -937,26 +937,6 @@
       S.perfByDate = {};
       for (const d of data.summary) S.perfByDate[d.date] = d;
       renderDatePills(); // re-render with accuracy annotations
-
-      const strip = document.getElementById('perfStrip');
-      const overallPct = data.overall_win_rate != null ? Math.round(data.overall_win_rate * 100) : null;
-      const cards = data.summary.map(d => {
-        const pct = Math.round(d.win_rate * 100);
-        const rateClass = pct >= 50 ? 'good' : pct >= 38 ? 'ok' : 'bad';
-        const pnlClass = d.value_pnl >= 0 ? 'pos' : 'neg';
-        const pnlStr = d.value_pnl >= 0 ? `+$${d.value_pnl.toFixed(1)}` : `-$${Math.abs(d.value_pnl).toFixed(1)}`;
-        return `
-          <div class="perf-card" style="cursor:pointer" onclick="selectDate('${d.date}')">
-            <div class="perf-date">${formatShortDate(d.date)}</div>
-            <div class="perf-win-rate ${rateClass}">${pct}%</div>
-            <div class="perf-sub">${d.wins}/${d.races} wins</div>
-            ${d.value_bets ? `<div class="perf-pnl ${pnlClass}">${pnlStr} val</div>` : ''}
-          </div>`;
-      }).join('');
-      strip.innerHTML = `
-        <div class="perf-strip-header">Model accuracy — last 7 days${overallPct != null ? ` · ${overallPct}% overall` : ''}</div>
-        <div class="perf-strip">${cards}</div>`;
-      strip.style.display = '';
     } catch (e) { /* silent */ }
   }
 
