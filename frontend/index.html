@@ -1364,8 +1364,34 @@
     ).join('');
 
     // Flags
+    const FLAG_TIPS = {
+      'VALUE OVERLAY': 'Model win probability is significantly higher than the implied market probability — potential value bet.',
+      'Outstanding recent form': 'Weighted form score ≥ 0.75 — horse has been finishing near the front consistently.',
+      'Ideal barrier': 'Inside or middle draw suits the horse\'s likely speed map position.',
+      'Blinkers on first time': 'First-time blinkers often sharpen focus and produce improved sectionals.',
+      'Dropping in class': 'Easier assignment than last start — likely to be more competitive.',
+      'Resuming after': 'Horse is returning from a spell — watch for first-up fitness and trainer/sire record fresh.',
+      'Race debutant': 'No prior race starts on record — unknown quantity, rely on market and trainer signals.',
+      'International form': 'Overseas form can be hard to assess — watch how they handle Australian conditions.',
+      'Wet track specialist': 'Strong record on soft or heavy going — an advantage if track conditions deteriorate.',
+      'Stable in form': 'Multiple runners from this stable winning recently — yard is firing.',
+      'Track bias advantage': 'Current rail position or track prep favours this horse\'s likely running position.',
+      'Speed map advantage': 'Expected to find a comfortable position in the run based on field dynamics.',
+      'Pure speed pedigree': 'Sire line suggests explosive early speed — well-suited to this trip.',
+    };
+    function _flagTip(f) {
+      for (const key of Object.keys(FLAG_TIPS)) {
+        if (f.includes(key)) return FLAG_TIPS[key];
+      }
+      return '';
+    }
     const flags = r.key_flags || [];
-    const flagsHtml = flags.map(f => `<span class="flag-chip">${f}</span>`).join('');
+    const flagsHtml = flags.map(f => {
+      const tip = _flagTip(f);
+      return tip
+        ? `<span class="flag-chip" title="${tip}">${f}</span>`
+        : `<span class="flag-chip">${f}</span>`;
+    }).join('');
 
     // Narrative (collapsible, collapsed by default)
     const nid = `narr-${rank}-${r.tab_number}`;
