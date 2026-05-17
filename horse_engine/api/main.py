@@ -173,7 +173,7 @@ async def lifespan(app: FastAPI):
         client = get_tab_client()
         async with get_session() as session:
             model = await _load_model(session)
-        for offset in (-3, -2, -1):
+        for offset in (-3, -2, -1, 0):
             seed_date = (date.today() + timedelta(days=offset)).isoformat()
             try:
                 # Enrich any meetings that are missing predictions
