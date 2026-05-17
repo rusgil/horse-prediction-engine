@@ -67,11 +67,12 @@ async def _scheduled_enrich():
             race_date = (date.today() + timedelta(days=i)).isoformat()
             log.info("[scheduler] Enriching %s", race_date)
             await _enrich_date(race_date, client, model)
-        # Seed today's settled results so result dots appear immediately
-        today = date.today().isoformat()
-        n = await _seed_results_for_date(today)
-        if n:
-            log.info("[scheduler] Seeded %d results for %s", n, today)
+        # Seed yesterday + today so every startup/deploy auto-backfills the most recent gap
+        for offset in (-1, 0):
+            seed_date = (date.today() + timedelta(days=offset)).isoformat()
+            n = await _seed_results_for_date(seed_date)
+            if n:
+                log.info("[scheduler] Seeded %d results for %s", n, seed_date)
         log.info("[scheduler] Enrichment complete")
     except Exception as e:
         log.exception("[scheduler] Enrichment failed: %s", e)

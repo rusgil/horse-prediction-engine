@@ -1145,12 +1145,18 @@
     try {
       const data = await fetchMeeting(S.date, key);
       const races = data.races || [];
+      const enriched = races.filter(r => r.enriched_at);
       const settled = races.filter(r => r.model_correct !== null && r.model_correct !== undefined);
-      if (!settled.length) return;
-      const wins = settled.filter(r => r.model_correct === true).length;
-      S.meetingStats[key] = { wins, total: settled.length };
+      S.meetingStats[key] = { wins: settled.filter(r => r.model_correct).length, total: settled.length, enriched: enriched.length };
       const el = document.getElementById(`pill-stat-${key}`);
-      if (el) el.textContent = `${wins}/${settled.length} wins`;
+      if (!el) return;
+      if (settled.length) {
+        const wins = settled.filter(r => r.model_correct === true).length;
+        el.textContent = `${wins}/${settled.length} wins`;
+      } else if (enriched.length) {
+        el.textContent = `${enriched.length} races`;
+        el.style.opacity = '0.45';
+      }
     } catch (_) {}
   }
 
