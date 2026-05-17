@@ -168,17 +168,23 @@ async def lifespan(app: FastAPI):
 
     # Enrich today on startup so deploys don't leave races un-loaded
     asyncio.create_task(_scheduled_enrich())
-    # Seed the last 3 days on startup to backfill any missing results
-    async def _startup_seed():
-        for offset in (-3, -2, -1, 0):
+    # Backfill last 3 days — enrich any un-enriched meetings then seed results
+    async def _startup_backfill():
+        client = get_tab_client()
+        async with get_session() as session:
+            model = await _load_model(session)
+        for offset in (-3, -2, -1):
             seed_date = (date.today() + timedelta(days=offset)).isoformat()
             try:
+                # Enrich any meetings that are missing predictions
+                await _enrich_date(seed_date, client, model)
+                # Then seed results
                 n = await _seed_results_for_date(seed_date)
                 if n:
                     log.info("[startup] Seeded %d results for %s", n, seed_date)
             except Exception as e:
-                log.warning("[startup] Seed failed for %s: %s", seed_date, e)
-    asyncio.create_task(_startup_seed())
+                log.warning("[startup] Backfill failed for %s: %s", seed_date, e)
+    asyncio.create_task(_startup_backfill())
 
     yield
 
@@ -1316,6 +1322,15 @@ async def _enrich_date(race_date: str, client, model) -> list[dict]:
             for raw_event in raw_events:
                 race_num = raw_event.get("eventNumber")
                 race_id = f"{race_date}_{venue_code}_R{race_num}"
+                # Skip if already enriched
+                async with get_session() as session:
+                    already = await session.execute(
+                        select(RunnerPredictionRow)
+                        .where(RunnerPredictionRow.race_id == race_id)
+                        .limit(1)
+                    )
+                    if already.scalars().first():
+                        continue
                 full_event = await client.get_race(slug, race_num)
                 if not full_event:
                     continue
