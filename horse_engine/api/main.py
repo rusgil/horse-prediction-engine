@@ -57,7 +57,7 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name
 
 
 async def _scheduled_enrich():
-    """Run by APScheduler — enrich today + next 2 days."""
+    """Run by APScheduler — enrich today + next 2 days, then seed today's results."""
     log.info("[scheduler] Running scheduled enrichment")
     try:
         client = get_tab_client()
@@ -67,6 +67,11 @@ async def _scheduled_enrich():
             race_date = (date.today() + timedelta(days=i)).isoformat()
             log.info("[scheduler] Enriching %s", race_date)
             await _enrich_date(race_date, client, model)
+        # Seed today's settled results so result dots appear immediately
+        today = date.today().isoformat()
+        n = await _seed_results_for_date(today)
+        if n:
+            log.info("[scheduler] Seeded %d results for %s", n, today)
         log.info("[scheduler] Enrichment complete")
     except Exception as e:
         log.exception("[scheduler] Enrichment failed: %s", e)
@@ -349,12 +354,6 @@ async def get_meeting(race_date: str, venue_code: str):
             "enriched_at": enriched_rows.get(rid).isoformat() if enriched_rows.get(rid) else None,
             "model_correct": _model_correct(rid),
         })
-
-    # If any closed races have no result yet, seed in background
-    has_closed = any(r.get("status") == "closed" for r in race_list)
-    no_results = not winners
-    if has_closed and no_results and enriched:
-        asyncio.create_task(_seed_results_for_date(race_date))
 
     return {
         "date": race_date,
