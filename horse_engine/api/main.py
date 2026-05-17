@@ -148,12 +148,17 @@ async def list_meetings(race_date: str = _today()):
     except Exception as e:
         raise HTTPException(502, f"Data fetch error: {e}")
 
+    date_suffix = f"-{race_date.replace('-', '')}"
     return {
         "date": race_date,
         "meetings": [
             {
                 "venue": m.get("venue"),
-                "venue_code": m.get("slug", "").split("-")[0] if m.get("slug") else m.get("name", "").lower().replace(" ", "-"),
+                "venue_code": (
+                    m["slug"][: -len(date_suffix)]
+                    if (slug := m.get("slug", "")) and slug.endswith(date_suffix)
+                    else slug.split("-")[0] if slug else m.get("name", "").lower().replace(" ", "-")
+                ),
                 "state": m.get("state"),
                 "rail_position": m.get("rail_position"),
                 "slug": m.get("slug"),
