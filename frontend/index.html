@@ -954,6 +954,7 @@
           </div>`;
       }).join('');
       strip.innerHTML = `
+        <div class="perf-strip-header">Model accuracy — last 7 days${overallPct != null ? ` · ${overallPct}% overall` : ''}</div>
         <div class="perf-strip">${cards}</div>`;
       strip.style.display = '';
     } catch (e) { /* silent */ }
