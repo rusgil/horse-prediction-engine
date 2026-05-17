@@ -602,7 +602,7 @@ async def enrich_race(race_id: str, force: bool = Query(False)):
         venue_name = venue_obj.get("name", venue_code)
         state = venue_obj.get("state", "")
 
-        race = client.parse_race(raw_event, race_date, venue_name, state)
+        race = await client.parse_race(raw_event, race_date, venue_name, state)
         predictions, _ = await enrich_and_predict_race(race, model)
 
         async with get_session() as session:
@@ -654,7 +654,7 @@ async def enrich_meeting_endpoint(race_date: str, venue_code: str):
             full_event = await client.get_race(slug, race_num)
             if not full_event:
                 continue
-            race = client.parse_race(full_event, race_date, venue_name, state)
+            race = await client.parse_race(full_event, race_date, venue_name, state)
             predictions, _ = await enrich_and_predict_race(race, model)
             async with get_session() as session:
                 await save_race_predictions(
@@ -788,7 +788,7 @@ async def _run_backfill(days: int, x_secret: Optional[str], force: bool = False)
                         race_id = f"{race_date}_{venue_code}_R{race_num}"
                         event["_meeting"] = full
                         try:
-                            race = client.parse_race(event, race_date, venue_name, state)
+                            race = await client.parse_race(event, race_date, venue_name, state)
                             if not race.runners:
                                 continue
                             predictions, _ = await enrich_and_predict_race(
@@ -1392,7 +1392,7 @@ async def _enrich_date(race_date: str, client, model) -> list[dict]:
                 full_event = await client.get_race(slug, race_num)
                 if not full_event:
                     continue
-                race = client.parse_race(full_event, race_date, venue_name, state)
+                race = await client.parse_race(full_event, race_date, venue_name, state)
                 predictions, _ = await enrich_and_predict_race(race, model)
                 async with get_session() as session:
                     await save_race_predictions(

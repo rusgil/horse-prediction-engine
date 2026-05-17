@@ -9,6 +9,7 @@ Auth: Authorization: Bearer none
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import re
@@ -19,7 +20,7 @@ import httpx
 from tenacity import retry, stop_after_attempt, wait_exponential
 
 from horse_engine.models.race import (
-    FormStart, PedigreeProfile, Race, Runner,
+    FormStart, JockeyStats, PedigreeProfile, Race, Runner, TrainerStats,
 )
 from horse_engine.pedigree.sire_profiles import SIRE_PROFILES
 
@@ -153,6 +154,15 @@ _MEETING_SLUG_QUERY = """
 """
 
 
+_JOCKEY_STATS_QUERY = """
+{ jockey(slug: "$SLUG") { stats { wins winPercentage placePercentage } } }
+"""
+
+_TRAINER_STATS_QUERY = """
+{ trainer(slug: "$SLUG") { stats { wins winPercentage placePercentage } } }
+"""
+
+
 def _today() -> str:
     return date.today().isoformat()
 
@@ -160,6 +170,7 @@ def _today() -> str:
 class PuntersClient:
     def __init__(self):
         self._cookie_jar: dict[str, str] = {}
+        self._person_cache: dict[str, dict] = {}  # slug -> raw stats dict
 
     # ── Internal helpers ────────────────────────────────────────────────
 
@@ -185,6 +196,51 @@ class PuntersClient:
             resp = await client.get(url, follow_redirects=True)
             resp.raise_for_status()
             return resp.text
+
+    async def _fetch_person_stats(self, slug: str, kind: str) -> dict:
+        """Fetch career stats for a jockey or trainer by slug. Returns raw stats dict."""
+        cache_key = f"{kind}:{slug}"
+        if cache_key in self._person_cache:
+            return self._person_cache[cache_key]
+        try:
+            template = _JOCKEY_STATS_QUERY if kind == "jockey" else _TRAINER_STATS_QUERY
+            query = template.replace("$SLUG", slug)
+            data = await self._gql(query)
+            stats = (data.get("data") or {}).get(kind, {}).get("stats") or {}
+            self._person_cache[cache_key] = stats
+        except Exception as e:
+            log.debug("Failed to fetch %s stats for %s: %s", kind, slug, e)
+            self._person_cache[cache_key] = {}
+        return self._person_cache[cache_key]
+
+    async def _fetch_all_people_stats(self, selections: list[dict]) -> tuple[dict, dict]:
+        """Concurrently fetch stats for all unique jockeys and trainers in a race."""
+        jockey_slugs = {
+            sel["jockey"]["slug"]
+            for sel in selections
+            if sel.get("jockey") and sel["jockey"].get("slug")
+        }
+        trainer_slugs = {
+            sel["trainer"]["slug"]
+            for sel in selections
+            if sel.get("trainer") and sel["trainer"].get("slug")
+        }
+        tasks = (
+            [self._fetch_person_stats(s, "jockey") for s in jockey_slugs] +
+            [self._fetch_person_stats(s, "trainer") for s in trainer_slugs]
+        )
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        slug_list = list(jockey_slugs) + list(trainer_slugs)
+        kind_list = ["jockey"] * len(jockey_slugs) + ["trainer"] * len(trainer_slugs)
+        jockey_stats: dict[str, dict] = {}
+        trainer_stats: dict[str, dict] = {}
+        for slug, kind, result in zip(slug_list, kind_list, results):
+            if isinstance(result, dict):
+                if kind == "jockey":
+                    jockey_stats[slug] = result
+                else:
+                    trainer_stats[slug] = result
+        return jockey_stats, trainer_stats
 
     # ── NUXT data decoder ────────────────────────────────────────────────
 
@@ -296,7 +352,7 @@ class PuntersClient:
 
     # ── Parsing ──────────────────────────────────────────────────────────
 
-    def parse_race(self, raw_event: dict, race_date: str, venue: str, state: str) -> Race:
+    async def parse_race(self, raw_event: dict, race_date: str, venue: str, state: str) -> Race:
         meeting = raw_event.get("_meeting", {})
         race_num = raw_event.get("eventNumber", 0)
         meeting_slug = meeting.get("slug") or ""
@@ -308,6 +364,9 @@ class PuntersClient:
         tc_overall = tc.get("overall", "Good")
         tc_rating = tc.get("rating", "4")
         track_condition = f"{tc_overall} {tc_rating}".strip()
+
+        selections = raw_event.get("selections", [])
+        jockey_stats, trainer_stats = await self._fetch_all_people_stats(selections)
 
         return Race(
             race_id=f"{race_date}_{venue_slug}_R{race_num}",
@@ -323,10 +382,10 @@ class PuntersClient:
             prize_money=0,
             scheduled_time=raw_event.get("startTime", ""),
             race_type="R",
-            runners=self._parse_runners(raw_event.get("selections", [])),
+            runners=self._parse_runners(selections, jockey_stats, trainer_stats),
         )
 
-    def _parse_runners(self, selections: list[dict]) -> list[Runner]:
+    def _parse_runners(self, selections: list[dict], jockey_stats: dict, trainer_stats: dict) -> list[Runner]:
         runners = []
         for sel in selections:
             if (sel.get("status") or "").upper() == "SCRATCHED":
@@ -334,14 +393,14 @@ class PuntersClient:
             if sel.get("selectionResult") == -1:
                 continue
             try:
-                runner = self._parse_runner(sel)
+                runner = self._parse_runner(sel, jockey_stats, trainer_stats)
                 if runner:
                     runners.append(runner)
             except Exception as e:
                 log.debug("Runner parse error: %s", e)
         return runners
 
-    def _parse_runner(self, sel: dict) -> Runner | None:
+    def _parse_runner(self, sel: dict, jockey_stats: dict, trainer_stats: dict) -> Runner | None:
         comp = sel.get("competitor") or {}
         jock = sel.get("jockey") or {}
         trnr = sel.get("trainer") or {}
@@ -385,6 +444,42 @@ class PuntersClient:
             sel.get("lastRun"),
         )
 
+        # Jockey stats from punters API
+        j_slug = jock.get("slug") or ""
+        j_raw = jockey_stats.get(j_slug) or {}
+        j_win = float(j_raw.get("winPercentage") or 10)
+        j_place = float(j_raw.get("placePercentage") or 29)
+        built_jockey_stats = JockeyStats(
+            name=jock.get("name") or "",
+            win_rate_overall=j_win,
+            win_rate_track=j_win,
+            win_rate_distance=j_win,
+            win_rate_barrier_low=j_win,
+            win_rate_barrier_mid=j_win,
+            win_rate_barrier_wide=j_win,
+            wins_today=0,
+            prizemoney_season=0,
+            wins_season=int(j_raw.get("wins") or 0),
+            trainer_jockey_combo_rate=j_win,
+        ) if j_slug else None
+
+        # Trainer stats from punters API
+        t_slug = trnr.get("slug") or ""
+        t_raw = trainer_stats.get(t_slug) or {}
+        t_win = float(t_raw.get("winPercentage") or 10)
+        built_trainer_stats = TrainerStats(
+            name=trnr.get("name") or "",
+            win_rate_overall=t_win,
+            win_rate_track=t_win,
+            win_rate_distance=t_win,
+            win_rate_first_up=t_win,
+            win_rate_second_up=t_win,
+            win_rate_wet=t_win,
+            prizemoney_season=0,
+            runners_season=0,
+            wins_season=int(t_raw.get("wins") or 0),
+        ) if t_slug else None
+
         return Runner(
             barrier=int(sel.get("barrierNumber") or 0),
             tab_number=int(sel.get("competitorNumber") or 0),
@@ -405,6 +500,8 @@ class PuntersClient:
             tote_place_odds=float(tote_place) if tote_place else None,
             fixed_win_odds=float(sp) if sp else None,
             best_available_odds=best_odds,
+            jockey_stats=built_jockey_stats,
+            trainer_stats=built_trainer_stats,
         )
 
     @staticmethod
