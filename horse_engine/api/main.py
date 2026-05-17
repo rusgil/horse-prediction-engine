@@ -85,6 +85,9 @@ async def lifespan(app: FastAPI):
     scheduler.start()
     log.info("[scheduler] Cron jobs scheduled: 6am, 10am, 1pm AEST daily + 2am Sunday calibration")
 
+    # Enrich today on startup so deploys don't leave races un-loaded
+    asyncio.create_task(_scheduled_enrich())
+
     yield
 
     scheduler.shutdown()
@@ -489,7 +492,8 @@ async def seed_results(race_date: str, x_cron_secret: Optional[str] = Header(Non
 
     for meeting in meetings:
         slug = meeting.get("slug", "")
-        venue_code = slug.split("-")[0] if slug else meeting.get("name", "").lower().replace(" ", "-")
+        date_sfx = f"-{race_date.replace('-', '')}"
+        venue_code = slug[:-len(date_sfx)] if slug.endswith(date_sfx) else slug.split("-")[0] if slug else meeting.get("name", "").lower().replace(" ", "-")
         raw_events = await client.get_meeting_races(slug)
 
         for raw_event in raw_events:
@@ -572,7 +576,8 @@ async def _run_backfill(days: int, x_secret: Optional[str], force: bool = False)
                 meetings = await client.get_meetings(race_date)
                 for m in meetings:
                     slug = m.get("slug", "")
-                    venue_code = slug.split("-")[0] if slug else ""
+                    date_sfx = f"-{race_date.replace('-', '')}"
+                    venue_code = slug[:-len(date_sfx)] if slug.endswith(date_sfx) else slug.split("-")[0] if slug else ""
                     venue_name = m.get("venue", venue_code)
                     state = m.get("state", "")
 
@@ -1105,7 +1110,8 @@ async def _enrich_date(race_date: str, client, model) -> list[dict]:
     summary = []
     for m in meetings:
         slug = m.get("slug", "")
-        venue_code = slug.split("-")[0] if slug else m.get("name", "").lower().replace(" ", "-")
+        date_sfx = f"-{race_date.replace('-', '')}"
+        venue_code = slug[:-len(date_sfx)] if slug.endswith(date_sfx) else slug.split("-")[0] if slug else m.get("name", "").lower().replace(" ", "-")
         venue_name = m.get("venue", venue_code)
         state = m.get("state", "")
         try:
