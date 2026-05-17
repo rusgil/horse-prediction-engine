@@ -215,6 +215,10 @@
       font-weight: 500; letter-spacing: 0.04em;
       margin-top: 1px;
     }
+    .pill-stat {
+      font-size: 0.65rem; color: var(--gold);
+      font-weight: 700; margin-top: 2px; min-height: 0.8em;
+    }
 
     /* Date pills */
     .date-pill {
@@ -817,6 +821,7 @@
     liveOdds: {},
     liveOddsTimer: null,
     perfByDate: {},   // date → {win_rate, place_rate, wins, races, value_pnl, value_bets}
+    meetingStats: {}, // venue_code → {wins, total} for win% pills
   };
 
   function todayISO() {
@@ -1065,6 +1070,7 @@
     document.getElementById('heroSub').textContent = `Loading meetings for ${formatDate(iso)}…`;
 
     try {
+      S.meetingStats = {};
       const data = await fetchMeetings(iso);
       S.meetings = data.meetings || [];
 
@@ -1097,13 +1103,36 @@
     S.meetings.forEach(m => {
       const el = document.createElement('div');
       el.className = 'pill' + (S.selectedMeeting?.venue_code === m.venue_code ? ' active' : '');
+      const statKey = m.venue_code;
+      const cached = S.meetingStats[statKey];
+      const statHtml = cached
+        ? `<span class="pill-stat" id="pill-stat-${statKey}">${cached.wins}/${cached.total} wins</span>`
+        : `<span class="pill-stat" id="pill-stat-${statKey}"></span>`;
       el.innerHTML = `
         <span class="pill-name">${m.venue}</span>
-        <span class="pill-sub">${m.state} · ${m.rail_position ? m.rail_position.substring(0,20) : 'Rail: Prov.'}</span>
+        <span class="pill-sub">${m.state}${m.rail_position && typeof m.rail_position === 'string' ? ' · ' + m.rail_position.substring(0,20) : ''}</span>
+        ${statHtml}
       `;
       el.addEventListener('click', () => selectMeeting(m));
       container.appendChild(el);
     });
+    // Background-load win% for all meetings
+    S.meetings.forEach(m => _loadMeetingWinRate(m));
+  }
+
+  async function _loadMeetingWinRate(m) {
+    const key = m.venue_code;
+    if (S.meetingStats[key]) return; // already cached
+    try {
+      const data = await fetchMeeting(S.date, key);
+      const races = data.races || [];
+      const settled = races.filter(r => r.model_correct !== null && r.model_correct !== undefined);
+      if (!settled.length) return;
+      const wins = settled.filter(r => r.model_correct === true).length;
+      S.meetingStats[key] = { wins, total: settled.length };
+      const el = document.getElementById(`pill-stat-${key}`);
+      if (el) el.textContent = `${wins}/${settled.length} wins`;
+    } catch (_) {}
   }
 
   async function selectMeeting(m) {
