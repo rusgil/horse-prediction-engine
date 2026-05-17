@@ -1343,13 +1343,11 @@
     const valueBadgeHtml = `<span id="lo-val-${r.tab_number}" class="value-badge" style="display:none">VALUE</span>`;
     const resultBadgeHtml = `<span id="lo-res-${r.tab_number}" class="result-badge" style="display:none"></span>`;
 
-    // Details row 1: barrier, jockey+rate, trainer+rate, weight
-    const jockeyRate = r.jockey_overall_rate != null ? ` <span style="color:var(--gold-light);font-weight:700">${r.jockey_overall_rate.toFixed(0)}%</span>` : '';
-    const trainerRate = r.trainer_overall_rate != null ? ` <span style="color:var(--gold-light);font-weight:700">${r.trainer_overall_rate.toFixed(0)}%</span>` : '';
+    // Details row 1: barrier, jockey, trainer, weight
     const detailChips1 = [
       r.barrier ? `<span class="runner-detail-chip">🚪 B${r.barrier}</span>` : null,
-      r.jockey ? `<span class="runner-detail-chip">Jockey: ${escHtml(r.jockey)}${jockeyRate}</span>` : null,
-      r.trainer ? `<span class="runner-detail-chip">Trainer: ${escHtml(r.trainer)}${trainerRate}</span>` : null,
+      r.jockey ? `<span class="runner-detail-chip">Jockey: ${escHtml(r.jockey)}</span>` : null,
+      r.trainer ? `<span class="runner-detail-chip">Trainer: ${escHtml(r.trainer)}</span>` : null,
       r.weight ? `<span class="runner-detail-chip">⚖ ${r.weight}kg</span>` : null,
     ].filter(Boolean).join('');
 
