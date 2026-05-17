@@ -89,6 +89,23 @@ class HistoricalResultRow(Base):
     recorded_at = Column(DateTime, default=datetime.utcnow)
 
 
+class BacktestResultRow(Base):
+    __tablename__ = "backtest_results"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    race_id = Column(String, index=True)
+    race_date = Column(String, index=True)
+    venue = Column(String)
+    horse_name = Column(String)
+    model_rank = Column(Integer)
+    win_probability = Column(Float)
+    starting_price = Column(Float, nullable=True)
+    actual_position = Column(Integer, nullable=True)
+    winner = Column(Boolean)
+    source = Column(String)   # "backtest" (retroactive) or "live" (predicted before race)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
 class CalibrationRow(Base):
     __tablename__ = "calibrations"
 

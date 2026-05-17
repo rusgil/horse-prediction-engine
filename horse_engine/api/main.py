@@ -34,12 +34,13 @@ from fastapi import Depends, FastAPI, Header, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from horse_engine.api.database import get_session
 from horse_engine.clients.factory import get_tab_client
 from horse_engine.config import settings
 from horse_engine.models.database import (
+    BacktestResultRow,
     CalibrationRow,
     HistoricalResultRow,
     RunnerPredictionRow,
@@ -1013,6 +1014,214 @@ async def backtest_report(
         "value_pnl": round(value_pnl, 2),
         "value_roi_per_bet": value_roi,
         "recent_picks": recent_picks,
+    }
+
+
+# ── Backtest (retroactive) ────────────────────────────────────────────────────
+
+_backtest_state: dict = {"running": False, "processed": 0, "total": 0, "errors": 0, "started_at": None}
+
+
+async def _run_backtest_range(start_date: str, end_date: str) -> None:
+    """Retroactively run model on historical races and store in backtest_results."""
+    global _backtest_state
+    client = get_tab_client()
+    async with get_session() as session:
+        model = await _load_model(session)
+
+    current = date.fromisoformat(start_date)
+    end = date.fromisoformat(end_date)
+    total_days = (end - current).days + 1
+    _backtest_state.update({"running": True, "processed": 0, "total": total_days, "errors": 0})
+
+    while current <= end:
+        date_str = current.isoformat()
+        try:
+            meetings = await client.get_meetings(date_str)
+            for m in meetings:
+                slug = m.get("slug", "")
+                venue_code = slug.replace(f"-{date_str.replace('-', '')}", "") if slug else ""
+                venue_name = m.get("venue", venue_code)
+                state_code = m.get("state", "")
+                try:
+                    events = await client.get_meeting_races(slug)
+                    rows_to_insert = []
+                    for event in events:
+                        selections = event.get("selections") or []
+                        # Only process races with official results
+                        if not any(
+                            isinstance(s.get("selectionResult"), int) and s["selectionResult"] >= 1
+                            for s in selections
+                        ):
+                            continue
+                        # Actual positions from selectionResult
+                        actuals = {
+                            (s.get("competitor") or {}).get("name"): s["selectionResult"]
+                            for s in selections
+                            if isinstance(s.get("selectionResult"), int) and s["selectionResult"] >= 1
+                        }
+                        try:
+                            race_num = event.get("eventNumber")
+                            race_id = f"{date_str}_{venue_code}_R{race_num}"
+                            event["_meeting"] = {"slug": slug, "railPosition": m.get("rail_position", "")}
+                            race = await client.parse_race(event, date_str, venue_name, state_code)
+                            predictions, _ = await enrich_and_predict_race(race, model)
+                            for pred in predictions:
+                                pos = actuals.get(pred.runner.horse_name)
+                                rows_to_insert.append(BacktestResultRow(
+                                    race_id=race_id,
+                                    race_date=date_str,
+                                    venue=venue_code,
+                                    horse_name=pred.runner.horse_name,
+                                    model_rank=pred.model_rank,
+                                    win_probability=round(pred.win_prob, 4),
+                                    starting_price=pred.runner.fixed_win_odds or pred.runner.best_available_odds,
+                                    actual_position=pos,
+                                    winner=(pos == 1),
+                                    source="backtest",
+                                ))
+                        except Exception as e:
+                            log.debug("Backtest race error %s: %s", slug, e)
+                            _backtest_state["errors"] += 1
+                    if rows_to_insert:
+                        async with get_session() as session:
+                            from sqlalchemy import delete as sa_delete
+                            await session.execute(
+                                sa_delete(BacktestResultRow)
+                                .where(BacktestResultRow.race_date == date_str)
+                                .where(BacktestResultRow.venue == venue_code)
+                            )
+                            for row in rows_to_insert:
+                                session.add(row)
+                            await session.commit()
+                except Exception as e:
+                    log.warning("Backtest meeting error %s: %s", slug, e)
+                    _backtest_state["errors"] += 1
+        except Exception as e:
+            log.warning("Backtest date error %s: %s", date_str, e)
+            _backtest_state["errors"] += 1
+
+        _backtest_state["processed"] += 1
+        current += timedelta(days=1)
+        await asyncio.sleep(0.1)  # be polite to punters API
+
+    _backtest_state["running"] = False
+
+
+@app.post("/api/admin/backtest/run")
+async def run_backtest(
+    start_date: str = Query(...),
+    end_date: str = Query(...),
+    x_cron_secret: Optional[str] = Header(None),
+):
+    """Retroactively run model on historical races. Fires in background — check /status."""
+    _check_admin(x_cron_secret)
+    _validate_date(start_date)
+    _validate_date(end_date)
+    if _backtest_state["running"]:
+        return {"status": "already_running", "state": _backtest_state}
+    _backtest_state["started_at"] = datetime.utcnow().isoformat()
+    asyncio.create_task(_run_backtest_range(start_date, end_date))
+    return {"status": "started", "start_date": start_date, "end_date": end_date}
+
+
+@app.get("/api/admin/backtest/status")
+async def backtest_status(x_cron_secret: Optional[str] = Header(None)):
+    _check_admin(x_cron_secret)
+    async with get_session() as session:
+        count_result = await session.execute(
+            select(func.count()).select_from(BacktestResultRow)
+        )
+        total_rows = count_result.scalar() or 0
+    return {**_backtest_state, "total_rows_stored": total_rows}
+
+
+@app.get("/api/admin/backtest/analysis")
+async def backtest_analysis(x_cron_secret: Optional[str] = Header(None)):
+    """
+    Threshold analysis across both retroactive backtest and live predictions.
+    Returns: cutover_date, and for each threshold the bet count, win rate, and ROI.
+    """
+    _check_admin(x_cron_secret)
+
+    async with get_session() as session:
+        # Cutover date = earliest date we have live predictions
+        cutover_result = await session.execute(
+            select(func.min(RunnerPredictionRow.race_id))
+            .where(RunnerPredictionRow.model_rank == 1)
+        )
+        earliest_race_id = cutover_result.scalar()
+        cutover_date = earliest_race_id[:10] if earliest_race_id else None
+
+        # --- Retroactive backtest rows ---
+        bt_result = await session.execute(
+            select(BacktestResultRow).where(BacktestResultRow.source == "backtest")
+        )
+        bt_rows = bt_result.scalars().all()
+
+        # --- Live: runner_predictions joined with historical_results ---
+        hr_result = await session.execute(select(HistoricalResultRow))
+        hr_map = {(r.race_id, r.horse_name): r for r in hr_result.scalars().all()}
+
+        live_result = await session.execute(
+            select(RunnerPredictionRow).where(RunnerPredictionRow.model_rank == 1)
+        )
+        live_rows = live_result.scalars().all()
+
+    # Build unified row list: (win_probability, starting_price, winner, source)
+    unified = []
+    for r in bt_rows:
+        if r.win_probability is not None:
+            unified.append({
+                "win_prob": r.win_probability,
+                "sp": r.starting_price,
+                "winner": bool(r.winner),
+                "source": "backtest",
+                "race_date": r.race_date,
+            })
+    for r in live_rows:
+        hr = hr_map.get((r.race_id, r.horse_name))
+        if hr and r.win_probability is not None:
+            unified.append({
+                "win_prob": r.win_probability,
+                "sp": hr.starting_price,
+                "winner": bool(hr.winner),
+                "source": "live",
+                "race_date": r.race_id[:10],
+            })
+
+    thresholds = [20, 25, 30, 35, 40, 45, 50]
+    analysis = []
+    for t in thresholds:
+        t_frac = t / 100.0
+        subset = [r for r in unified if r["win_prob"] >= t_frac]
+        if not subset:
+            analysis.append({"threshold_pct": t, "bets": 0})
+            continue
+        wins = sum(1 for r in subset if r["winner"])
+        sp_list = [r["sp"] for r in subset if r["sp"] and r["sp"] > 1.0]
+        pnl = sum((r["sp"] - 1.0) if r["winner"] and r["sp"] else (-1.0) for r in subset)
+        roi = round(pnl / len(subset) * 100, 1) if subset else 0
+        bt_count = sum(1 for r in subset if r["source"] == "backtest")
+        live_count = sum(1 for r in subset if r["source"] == "live")
+        analysis.append({
+            "threshold_pct": t,
+            "bets": len(subset),
+            "wins": wins,
+            "win_pct": round(wins / len(subset) * 100, 1),
+            "roi_pct": roi,
+            "avg_sp": round(sum(sp_list) / len(sp_list), 2) if sp_list else None,
+            "backtest_bets": bt_count,
+            "live_bets": live_count,
+        })
+
+    return {
+        "cutover_date": cutover_date,
+        "note": "Predictions before cutover_date are retroactive (backtest). After are live.",
+        "total_unified_rows": len(unified),
+        "backtest_rows": sum(1 for r in unified if r["source"] == "backtest"),
+        "live_rows": sum(1 for r in unified if r["source"] == "live"),
+        "thresholds": analysis,
     }
 
 
