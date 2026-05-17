@@ -168,6 +168,17 @@ async def lifespan(app: FastAPI):
 
     # Enrich today on startup so deploys don't leave races un-loaded
     asyncio.create_task(_scheduled_enrich())
+    # Seed the last 3 days on startup to backfill any missing results
+    async def _startup_seed():
+        for offset in (-3, -2, -1, 0):
+            seed_date = (date.today() + timedelta(days=offset)).isoformat()
+            try:
+                n = await _seed_results_for_date(seed_date)
+                if n:
+                    log.info("[startup] Seeded %d results for %s", n, seed_date)
+            except Exception as e:
+                log.warning("[startup] Seed failed for %s: %s", seed_date, e)
+    asyncio.create_task(_startup_seed())
 
     yield
 
