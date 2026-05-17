@@ -403,6 +403,7 @@ async def get_meeting(race_date: str, venue_code: str):
 
         # Top pick per race
         top_picks = {race_id: None for race_id in race_ids}
+        top_win_probs = {race_id: None for race_id in race_ids}
         tp_result = await session.execute(
             select(RunnerPredictionRow)
             .where(RunnerPredictionRow.race_id.in_(race_ids))
@@ -410,6 +411,7 @@ async def get_meeting(race_date: str, venue_code: str):
         )
         for p in tp_result.scalars().all():
             top_picks[p.race_id] = p.horse_name
+            top_win_probs[p.race_id] = p.win_probability
 
         # Winners per race from historical results
         hr_result = await session.execute(
@@ -435,6 +437,7 @@ async def get_meeting(race_date: str, venue_code: str):
             **r,
             "enriched_at": enriched_rows.get(rid).isoformat() if enriched_rows.get(rid) else None,
             "model_correct": _model_correct(rid),
+            "top_win_probability": top_win_probs.get(rid),
         })
 
     return {
