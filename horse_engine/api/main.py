@@ -350,6 +350,12 @@ async def get_meeting(race_date: str, venue_code: str):
             "model_correct": _model_correct(rid),
         })
 
+    # If any closed races have no result yet, seed in background
+    has_closed = any(r.get("status") == "closed" for r in race_list)
+    no_results = not winners
+    if has_closed and no_results and enriched:
+        asyncio.create_task(_seed_results_for_date(race_date))
+
     return {
         "date": race_date,
         "venue": venue_code,
