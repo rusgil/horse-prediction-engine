@@ -285,6 +285,11 @@
       width: 6px; height: 6px; border-radius: 50%;
       background: var(--green); box-shadow: 0 0 5px var(--green);
     }
+    .race-pill .result-dot {
+      width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0;
+    }
+    .race-pill .result-dot.correct { background: #10b981; box-shadow: 0 0 5px #10b981; }
+    .race-pill .result-dot.wrong   { background: #f87171; box-shadow: 0 0 5px #f87171; }
 
     /* ── Info bar (meeting context) ──────────────────────────── */
     .info-bar {
@@ -1169,10 +1174,11 @@
       const enriched = S.enrichedRaceIds.has(raceId);
       const el = document.createElement('div');
       el.className = 'race-pill' + (S.selectedRaceId === raceId ? ' active' : '');
-      el.innerHTML = `
-        R${r.race_number}
-        ${enriched ? '<span class="enriched-dot"></span>' : ''}
-      `;
+      let dotHtml = '';
+      if (r.model_correct === true)       dotHtml = '<span class="result-dot correct"></span>';
+      else if (r.model_correct === false)  dotHtml = '<span class="result-dot wrong"></span>';
+      else if (enriched)                   dotHtml = '<span class="enriched-dot"></span>';
+      el.innerHTML = `R${r.race_number}${dotHtml ? ' ' + dotHtml : ''}`;
       el.addEventListener('click', () => selectRace(r));
       container.appendChild(el);
     });

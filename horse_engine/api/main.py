@@ -272,11 +272,36 @@ async def get_meeting(race_date: str, venue_code: str):
             ],
         }
 
+    race_ids = [r.race_id for r in races]
+    async with get_session() as session:
+        # Top pick per race
+        tp_result = await session.execute(
+            select(RunnerPredictionRow)
+            .where(RunnerPredictionRow.race_id.in_(race_ids))
+            .where(RunnerPredictionRow.model_rank == 1)
+        )
+        top_picks = {p.race_id: p.horse_name for p in tp_result.scalars().all()}
+
+        # Winners per race
+        hr_result = await session.execute(
+            select(HistoricalResultRow)
+            .where(HistoricalResultRow.race_id.in_(race_ids))
+            .where(HistoricalResultRow.winner == True)
+        )
+        winners = {r.race_id: r.horse_name for r in hr_result.scalars().all()}
+
+    def model_correct(race_id: str) -> bool | None:
+        pick = top_picks.get(race_id)
+        winner = winners.get(race_id)
+        if not pick or not winner:
+            return None
+        return pick == winner
+
     return {
         "date": race_date,
         "venue": venue_code,
         "enriched": True,
-        "races": [_race_summary(r) for r in races],
+        "races": [{**_race_summary(r), "model_correct": model_correct(r.race_id)} for r in races],
     }
 
 
