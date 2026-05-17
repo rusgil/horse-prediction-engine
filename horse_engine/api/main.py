@@ -72,6 +72,73 @@ async def _scheduled_enrich():
         log.exception("[scheduler] Enrichment failed: %s", e)
 
 
+async def _seed_results_for_date(race_date: str) -> int:
+    """Fetch settled results for race_date and store as training data. Returns count seeded."""
+    client = get_tab_client()
+    meetings = await client.get_meetings(race_date)
+    seeded = 0
+    date_sfx = f"-{race_date.replace('-', '')}"
+    for meeting in meetings:
+        slug = meeting.get("slug", "")
+        venue_code = slug[:-len(date_sfx)] if slug.endswith(date_sfx) else slug.split("-")[0] if slug else ""
+        raw_events = await client.get_meeting_races(slug)
+        for raw_event in raw_events:
+            race_num = raw_event.get("eventNumber")
+            race_id = f"{race_date}_{venue_code}_R{race_num}"
+            full_event = await client.get_race(slug, race_num)
+            if not full_event:
+                continue
+            for sel in full_event.get("selections", []):
+                if (sel.get("status") or "").upper() == "SCRATCHED":
+                    continue
+                position = sel.get("selectionResult")
+                if not position or int(position) <= 0:
+                    continue
+                horse = (sel.get("competitor") or {}).get("name", "")
+                sp = sel.get("startingPrice")
+                beaten = sel.get("officialMargin", 0)
+                async with get_session() as session:
+                    existing = await session.execute(
+                        select(HistoricalResultRow)
+                        .where(HistoricalResultRow.race_id == race_id)
+                        .where(HistoricalResultRow.horse_name == horse)
+                        .limit(1)
+                    )
+                    if existing.scalars().first():
+                        continue
+                    fv_result = await session.execute(
+                        select(RunnerPredictionRow)
+                        .where(RunnerPredictionRow.race_id == race_id)
+                        .where(RunnerPredictionRow.horse_name == horse)
+                        .limit(1)
+                    )
+                    fv_row = fv_result.scalars().first()
+                    session.add(HistoricalResultRow(
+                        race_id=race_id,
+                        horse_name=horse,
+                        position=int(position),
+                        beaten_margin=float(beaten or 0),
+                        winner=int(position) == 1,
+                        placed=int(position) <= 3,
+                        starting_price=float(sp) if sp else None,
+                        feature_vector_json=fv_row.enriched_json if fv_row else None,
+                    ))
+                    await session.commit()
+                    seeded += 1
+    return seeded
+
+
+async def _scheduled_seed_results():
+    """Run by APScheduler nightly — seed yesterday's settled results."""
+    yesterday = (date.today() - timedelta(days=1)).isoformat()
+    log.info("[scheduler] Seeding results for %s", yesterday)
+    try:
+        n = await _seed_results_for_date(yesterday)
+        log.info("[scheduler] Seeded %d results for %s", n, yesterday)
+    except Exception as e:
+        log.exception("[scheduler] Result seeding failed for %s: %s", yesterday, e)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await init_db()
@@ -81,9 +148,10 @@ async def lifespan(app: FastAPI):
     scheduler.add_job(_scheduled_enrich, CronTrigger(hour=6,  minute=0, timezone="Australia/Sydney"))
     scheduler.add_job(_scheduled_enrich, CronTrigger(hour=10, minute=0, timezone="Australia/Sydney"))
     scheduler.add_job(_scheduled_enrich, CronTrigger(hour=13, minute=0, timezone="Australia/Sydney"))
+    scheduler.add_job(_scheduled_seed_results, CronTrigger(hour=23, minute=0, timezone="Australia/Sydney"))
     scheduler.add_job(_scheduled_calibrate, CronTrigger(day_of_week="sun", hour=2, minute=0, timezone="Australia/Sydney"))
     scheduler.start()
-    log.info("[scheduler] Cron jobs scheduled: 6am, 10am, 1pm AEST daily + 2am Sunday calibration")
+    log.info("[scheduler] Cron jobs scheduled: 6am/10am/1pm enrich, 11pm seed results, 2am Sun calibration")
 
     # Enrich today on startup so deploys don't leave races un-loaded
     asyncio.create_task(_scheduled_enrich())
@@ -480,64 +548,10 @@ async def retrain_model(days: int = Query(0, ge=0, le=365)):
 
 @app.post("/api/admin/results/{race_date}")
 async def seed_results(race_date: str, x_cron_secret: Optional[str] = Header(None)):
-    """
-    Fetch race results from punters for a past date and store as training data.
-    """
+    """Fetch race results from punters for a past date and store as training data."""
     if settings.cron_secret and x_cron_secret != settings.cron_secret:
         raise HTTPException(403, "Forbidden")
-
-    client = get_tab_client()
-    meetings = await client.get_meetings(race_date)
-    seeded = 0
-
-    for meeting in meetings:
-        slug = meeting.get("slug", "")
-        date_sfx = f"-{race_date.replace('-', '')}"
-        venue_code = slug[:-len(date_sfx)] if slug.endswith(date_sfx) else slug.split("-")[0] if slug else meeting.get("name", "").lower().replace(" ", "-")
-        raw_events = await client.get_meeting_races(slug)
-
-        for raw_event in raw_events:
-            race_num = raw_event.get("eventNumber")
-            race_id = f"{race_date}_{venue_code}_R{race_num}"
-
-            full_event = await client.get_race(slug, race_num)
-            if not full_event:
-                continue
-
-            for sel in full_event.get("selections", []):
-                if (sel.get("status") or "").upper() == "SCRATCHED":
-                    continue
-                position = sel.get("selectionResult")
-                if not position or int(position) <= 0:
-                    continue
-                horse = (sel.get("competitor") or {}).get("name", "")
-                sp = sel.get("startingPrice")
-                beaten = sel.get("officialMargin", 0)
-
-                async with get_session() as session:
-                    fv_result = await session.execute(
-                        select(RunnerPredictionRow)
-                        .where(RunnerPredictionRow.race_id == race_id)
-                        .where(RunnerPredictionRow.horse_name == horse)
-                        .limit(1)
-                    )
-                    fv_row = fv_result.scalars().first()
-                    fv_json = fv_row.enriched_json if fv_row else None
-
-                    row = HistoricalResultRow(
-                        race_id=race_id,
-                        horse_name=horse,
-                        position=int(position),
-                        beaten_margin=float(beaten or 0),
-                        winner=int(position) == 1,
-                        placed=int(position) <= 3,
-                        starting_price=float(sp) if sp else None,
-                        feature_vector_json=fv_json,
-                    )
-                    session.add(row)
-                    await session.commit()
-                    seeded += 1
-
+    seeded = await _seed_results_for_date(race_date)
     return {"status": "seeded", "results": seeded}
 
 
