@@ -1130,8 +1130,8 @@
         ? `<span class="pill-stat" id="pill-stat-${statKey}">${cached.wins}/${cached.total} wins</span>`
         : `<span class="pill-stat" id="pill-stat-${statKey}"></span>`;
       el.innerHTML = `
-        <span class="pill-name">${m.venue}</span>
-        <span class="pill-sub">${m.state}${m.rail_position && typeof m.rail_position === 'string' ? ' · ' + m.rail_position.substring(0,20) : ''}</span>
+        <span class="pill-name">${escHtml(m.venue)}</span>
+        <span class="pill-sub">${escHtml(m.state)}${m.rail_position && typeof m.rail_position === 'string' ? ' · ' + escHtml(m.rail_position.substring(0,20)) : ''}</span>
         ${statHtml}
       `;
       el.addEventListener('click', () => selectMeeting(m));
@@ -1193,9 +1193,9 @@
 
   function renderInfoBar(m) {
     return `
-      <span class="info-chip"><strong>${m.venue}</strong></span>
-      <span class="info-chip">${m.state}</span>
-      ${m.rail_position ? `<span class="info-chip">Rail: <strong>${m.rail_position}</strong></span>` : ''}
+      <span class="info-chip"><strong>${escHtml(m.venue)}</strong></span>
+      <span class="info-chip">${escHtml(m.state)}</span>
+      ${m.rail_position ? `<span class="info-chip">Rail: <strong>${escHtml(m.rail_position)}</strong></span>` : ''}
       <span class="info-chip">${formatDate(S.date)}</span>
     `;
   }
@@ -1229,10 +1229,10 @@
     const startTime = race.scheduled_time || race.time || '';
     const raceInfo = `
       <span class="info-chip"><strong>R${race.race_number}</strong></span>
-      ${race.race_name ? `<span class="info-chip">${race.race_name}</span>` : ''}
-      ${race.distance ? `<span class="info-chip">${race.distance}m</span>` : ''}
-      ${race.track_condition ? `<span class="info-chip">${race.track_condition}</span>` : ''}
-      ${race.field_size ? `<span class="info-chip">${race.field_size} runners</span>` : ''}
+      ${race.race_name ? `<span class="info-chip">${escHtml(race.race_name)}</span>` : ''}
+      ${race.distance ? `<span class="info-chip">${escHtml(String(race.distance))}m</span>` : ''}
+      ${race.track_condition ? `<span class="info-chip">${escHtml(race.track_condition)}</span>` : ''}
+      ${race.field_size ? `<span class="info-chip">${escHtml(String(race.field_size))} runners</span>` : ''}
       ${startTime ? `<span class="info-chip">${formatTime(startTime)}</span>` : ''}
       ${startTime ? `<span class="info-chip countdown" id="race-countdown">…</span>` : ''}
     `;
@@ -1248,6 +1248,8 @@
       if (!data) {
         // Not enriched yet
         document.getElementById('raceContent').innerHTML = renderEnrichPanel(race);
+        const enrichBtn = document.getElementById('enrichBtn');
+        if (enrichBtn) enrichBtn.addEventListener('click', () => doEnrich(enrichBtn.dataset.raceId));
       } else {
         S.runners = data.runners || [];
         S.enrichedRaceIds.add(race.race_id);
@@ -1272,7 +1274,7 @@
           R${race.race_number}${race.race_name ? ` — ${race.race_name}` : ''}${race.distance ? `, ${race.distance}m` : ''}.
           Run the AI model to generate win probabilities, rankings, and insights for every runner.
         </div>
-        <button class="btn-analyse" id="enrichBtn" onclick="doEnrich('${race.race_id}')">
+        <button class="btn-analyse" id="enrichBtn" data-race-id="${escHtml(race.race_id)}">
           Analyse This Race
         </button>
       </div>
@@ -1401,8 +1403,8 @@
     const flagsHtml = flags.map(f => {
       const tip = _flagTip(f);
       return tip
-        ? `<span class="flag-chip" title="${tip}">${f}</span>`
-        : `<span class="flag-chip">${f}</span>`;
+        ? `<span class="flag-chip" title="${escHtml(tip)}">${escHtml(f)}</span>`
+        : `<span class="flag-chip">${escHtml(f)}</span>`;
     }).join('');
 
     // Narrative (collapsible, collapsed by default)

@@ -7,4 +7,7 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
+RUN adduser --disabled-password --gecos "" appuser && chown -R appuser /app
+USER appuser
+
 CMD ["sh", "-c", "uvicorn horse_engine.api.main:app --host 0.0.0.0 --port ${PORT:-8000}"]
