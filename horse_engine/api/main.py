@@ -87,7 +87,11 @@ async def _seed_results_for_date(race_date: str) -> int:
     for meeting in meetings:
         slug = meeting.get("slug", "")
         venue_code = slug[:-len(date_sfx)] if slug.endswith(date_sfx) else slug.split("-")[0] if slug else ""
+        # Resolve meeting id: prefer id from get_meetings, fall back to slug lookup
         meeting_id = meeting.get("id")
+        if not meeting_id:
+            meta = await client.get_meeting_by_slug(slug)
+            meeting_id = (meta or {}).get("id")
         if not meeting_id:
             continue
         # Fetch full meeting once — avoids re-fetching per race (was O(N) calls, now O(1))
