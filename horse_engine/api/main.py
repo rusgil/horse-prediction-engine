@@ -242,47 +242,49 @@ async def list_meetings(race_date: str = _today()):
 @app.get("/api/meetings/{race_date}/{venue_code}")
 async def get_meeting(race_date: str, venue_code: str):
     """Get all races at a meeting with current predictions if available."""
-    async with get_session() as session:
-        result = await session.execute(
-            select(RacePredictionRow)
-            .where(RacePredictionRow.date == race_date)
-            .where(RacePredictionRow.venue == venue_code)
-            .order_by(RacePredictionRow.race_number)
-        )
-        races = result.scalars().all()
+    client = get_tab_client()
+    slug = _meeting_slug(venue_code, race_date)
+    raw_races = await client.get_meeting_races(slug)
 
-    if not races:
-        client = get_tab_client()
-        slug = _meeting_slug(venue_code, race_date)
-        raw_races = await client.get_meeting_races(slug)
-        return {
-            "date": race_date,
-            "venue": venue_code,
-            "enriched": False,
-            "races": [
-                {
-                    "race_id": f"{race_date}_{venue_code}_R{r.get('eventNumber')}",
-                    "race_number": r.get("eventNumber"),
-                    "race_name": r.get("name"),
-                    "distance": r.get("distance"),
-                    "time": r.get("startTime"),
-                    "status": r.get("status"),
-                }
-                for r in raw_races
-            ],
+    race_list = [
+        {
+            "race_id": f"{race_date}_{venue_code}_R{r.get('eventNumber')}",
+            "race_number": r.get("eventNumber"),
+            "race_name": r.get("name"),
+            "distance": r.get("distance"),
+            "scheduled_time": r.get("startTime"),
+            "time": r.get("startTime"),
+            "status": r.get("status"),
+            "enriched_at": None,
+            "track_condition": None,
+            "field_size": None,
+            "prize_money": None,
         }
+        for r in raw_races
+    ]
 
-    race_ids = [r.race_id for r in races]
+    race_ids = [r["race_id"] for r in race_list]
+
     async with get_session() as session:
+        # Which races have been enriched
+        enriched_result = await session.execute(
+            select(RunnerPredictionRow.race_id, RunnerPredictionRow.enriched_at)
+            .where(RunnerPredictionRow.race_id.in_(race_ids))
+            .where(RunnerPredictionRow.model_rank == 1)
+        )
+        enriched_rows = {row.race_id: row.enriched_at for row in enriched_result}
+
         # Top pick per race
+        top_picks = {race_id: None for race_id in race_ids}
         tp_result = await session.execute(
             select(RunnerPredictionRow)
             .where(RunnerPredictionRow.race_id.in_(race_ids))
             .where(RunnerPredictionRow.model_rank == 1)
         )
-        top_picks = {p.race_id: p.horse_name for p in tp_result.scalars().all()}
+        for p in tp_result.scalars().all():
+            top_picks[p.race_id] = p.horse_name
 
-        # Winners per race
+        # Winners per race from historical results
         hr_result = await session.execute(
             select(HistoricalResultRow)
             .where(HistoricalResultRow.race_id.in_(race_ids))
@@ -290,18 +292,29 @@ async def get_meeting(race_date: str, venue_code: str):
         )
         winners = {r.race_id: r.horse_name for r in hr_result.scalars().all()}
 
-    def model_correct(race_id: str) -> bool | None:
+    enriched = bool(enriched_rows)
+
+    def _model_correct(race_id: str):
         pick = top_picks.get(race_id)
         winner = winners.get(race_id)
         if not pick or not winner:
             return None
         return pick == winner
 
+    races_out = []
+    for r in race_list:
+        rid = r["race_id"]
+        races_out.append({
+            **r,
+            "enriched_at": enriched_rows.get(rid).isoformat() if enriched_rows.get(rid) else None,
+            "model_correct": _model_correct(rid),
+        })
+
     return {
         "date": race_date,
         "venue": venue_code,
-        "enriched": True,
-        "races": [{**_race_summary(r), "model_correct": model_correct(r.race_id)} for r in races],
+        "enriched": enriched,
+        "races": races_out,
     }
 
 
