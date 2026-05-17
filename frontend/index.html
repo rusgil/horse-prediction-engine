@@ -179,13 +179,23 @@
     }
 
     /* ── Scrollable pills row ────────────────────────────────── */
+    .pills-scroller {
+      position: relative; margin-bottom: 20px;
+    }
     .pills-row {
       display: flex; gap: 8px;
       overflow-x: auto; padding-bottom: 4px;
       scrollbar-width: none; -webkit-overflow-scrolling: touch;
-      margin-bottom: 20px;
+      overscroll-behavior-x: contain;
+      cursor: grab;
+      user-select: none;
     }
     .pills-row::-webkit-scrollbar { display: none; }
+    .pills-fade-right {
+      position: absolute; right: 0; top: 0; bottom: 4px;
+      width: 48px; pointer-events: none;
+      background: linear-gradient(to right, transparent, var(--bg-base) 90%);
+    }
 
     .pill {
       display: flex; flex-direction: column; align-items: flex-start;
@@ -738,7 +748,10 @@
   </div>
 
   <!-- Date selector -->
-  <div class="pills-row" id="datePills" style="margin-bottom:20px"></div>
+  <div class="pills-scroller">
+    <div class="pills-row" id="datePills"></div>
+    <div class="pills-fade-right"></div>
+  </div>
 
   <!-- 5-day performance strip -->
   <div id="perfStrip" style="display:none"></div>
@@ -747,14 +760,20 @@
   <div id="meetingsSection" style="display:none">
     <div id="dayAccuracyBanner"></div>
     <div class="section-label" id="meetingsLabel">Today's Meetings</div>
-    <div class="pills-row" id="meetingPills"></div>
+    <div class="pills-scroller">
+      <div class="pills-row" id="meetingPills"></div>
+      <div class="pills-fade-right"></div>
+    </div>
   </div>
 
   <!-- Meeting info + races -->
   <div id="racesSection" style="display:none">
     <div class="info-bar" id="infoBar"></div>
     <div class="section-label">Races</div>
-    <div class="pills-row" id="racePills"></div>
+    <div class="pills-scroller">
+      <div class="pills-row" id="racePills"></div>
+      <div class="pills-fade-right"></div>
+    </div>
   </div>
 
   <!-- Race content -->
@@ -1434,6 +1453,33 @@
     const el = document.getElementById('racesSection');
     if (el) el.scrollIntoView({ behavior: 'smooth' });
   }
+
+  // ── Drag-to-scroll for pills rows (desktop mouse users) ──────────────────
+  (function addDragScroll() {
+    let isDown = false, startX = 0, scrollLeft = 0, target = null;
+    document.addEventListener('mousedown', e => {
+      const row = e.target.closest('.pills-row');
+      if (!row) return;
+      isDown = true; target = row;
+      startX = e.pageX - row.offsetLeft;
+      scrollLeft = row.scrollLeft;
+      row.style.cursor = 'grabbing';
+      e.preventDefault();
+    });
+    document.addEventListener('mouseup', () => {
+      if (target) target.style.cursor = '';
+      isDown = false; target = null;
+    });
+    document.addEventListener('mouseleave', () => {
+      if (target) target.style.cursor = '';
+      isDown = false; target = null;
+    });
+    document.addEventListener('mousemove', e => {
+      if (!isDown || !target) return;
+      const x = e.pageX - target.offsetLeft;
+      target.scrollLeft = scrollLeft - (x - startX);
+    });
+  })();
 
   // ── Start ─────────────────────────────────────────────────────────────────
   init();
