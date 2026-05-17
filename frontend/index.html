@@ -240,6 +240,29 @@
       font-size: 0.68rem; color: var(--text-dim);
       font-weight: 500; display: block; margin-top: 1px;
     }
+    .date-pill-acc {
+      font-size: 0.68rem; font-weight: 700; display: block; margin-top: 2px;
+    }
+    .date-pill-acc.good { color: #10b981; }
+    .date-pill-acc.ok   { color: var(--gold); }
+    .date-pill-acc.bad  { color: #f87171; }
+    .date-pill.past { opacity: 0.8; }
+
+    /* Day accuracy banner (shown on past dates) */
+    .day-accuracy-bar {
+      display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
+      background: var(--bg-elevated); border: 1px solid var(--border);
+      border-radius: 10px; padding: 12px 16px; margin-bottom: 16px;
+    }
+    .day-acc-stat { display: flex; flex-direction: column; gap: 1px; }
+    .day-acc-val {
+      font-family: 'Barlow Condensed', sans-serif;
+      font-size: 1.3rem; font-weight: 700; line-height: 1;
+    }
+    .day-acc-val.good { color: #10b981; }
+    .day-acc-val.ok   { color: var(--gold); }
+    .day-acc-val.bad  { color: #f87171; }
+    .day-acc-label { font-size: 0.68rem; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.06em; }
 
     /* Race pills (simpler) */
     .race-pill {
@@ -713,6 +736,7 @@
 
   <!-- Meetings -->
   <div id="meetingsSection" style="display:none">
+    <div id="dayAccuracyBanner"></div>
     <div class="section-label" id="meetingsLabel">Today's Meetings</div>
     <div class="pills-row" id="meetingPills"></div>
   </div>
@@ -787,6 +811,7 @@
     loadingRace: false,
     liveOdds: {},
     liveOddsTimer: null,
+    perfByDate: {},   // date → {win_rate, place_rate, wins, races, value_pnl, value_bets}
   };
 
   function todayISO() {
@@ -822,14 +847,27 @@
     const container = document.getElementById('datePills');
     container.innerHTML = '';
     const today = todayISO();
-    for (let i = 0; i < 3; i++) {
+    let todayEl = null;
+    // 5 past days → today → 2 future days
+    for (let i = -5; i <= 2; i++) {
       const iso = addDays(today, i);
+      const isPast = i < 0;
       const el = document.createElement('div');
-      el.className = 'date-pill' + (S.date === iso ? ' active' : '');
-      el.innerHTML = `<span class="date-pill-day">${formatDayLabel(iso)}</span><span class="date-pill-date">${formatShortDate(iso)}</span>`;
+      el.className = 'date-pill' + (S.date === iso ? ' active' : '') + (isPast ? ' past' : '');
+      const perf = isPast ? S.perfByDate[iso] : null;
+      let accHtml = '';
+      if (perf) {
+        const pct = Math.round(perf.win_rate * 100);
+        const cls = pct >= 50 ? 'good' : pct >= 38 ? 'ok' : 'bad';
+        accHtml = `<span class="date-pill-acc ${cls}">${pct}% (${perf.wins}/${perf.races})</span>`;
+      }
+      el.innerHTML = `<span class="date-pill-day">${formatDayLabel(iso)}</span><span class="date-pill-date">${formatShortDate(iso)}</span>${accHtml}`;
       el.addEventListener('click', () => selectDate(iso));
       container.appendChild(el);
+      if (i === 0) todayEl = el;
     }
+    // Scroll today into view (horizontally)
+    if (todayEl) setTimeout(() => todayEl.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' }), 50);
   }
 
   async function selectDate(iso) {
@@ -841,6 +879,8 @@
     S.selectedRaceId = null;
     S.runners = [];
     renderDatePills();
+    const dayBanner = document.getElementById('dayAccuracyBanner');
+    if (dayBanner) dayBanner.innerHTML = '';
     document.getElementById('meetingsSection').style.display = 'none';
     document.getElementById('racesSection').style.display = 'none';
     document.getElementById('raceContent').innerHTML = '';
@@ -883,10 +923,16 @@
 
   async function loadPerformanceStrip() {
     try {
-      const r = await fetch(`${API}/api/performance?days=5`);
+      const r = await fetch(`${API}/api/performance?days=7`);
       if (!r.ok) return;
       const data = await r.json();
       if (!data.summary || !data.summary.length) return;
+
+      // Store per-date for date pills and day banners
+      S.perfByDate = {};
+      for (const d of data.summary) S.perfByDate[d.date] = d;
+      renderDatePills(); // re-render with accuracy annotations
+
       const strip = document.getElementById('perfStrip');
       const overallPct = data.overall_win_rate != null ? Math.round(data.overall_win_rate * 100) : null;
       const cards = data.summary.map(d => {
@@ -894,17 +940,16 @@
         const rateClass = pct >= 50 ? 'good' : pct >= 38 ? 'ok' : 'bad';
         const pnlClass = d.value_pnl >= 0 ? 'pos' : 'neg';
         const pnlStr = d.value_pnl >= 0 ? `+$${d.value_pnl.toFixed(1)}` : `-$${Math.abs(d.value_pnl).toFixed(1)}`;
-        const label = formatShortDate(d.date);
         return `
-          <div class="perf-card">
-            <div class="perf-date">${label}</div>
+          <div class="perf-card" style="cursor:pointer" onclick="selectDate('${d.date}')">
+            <div class="perf-date">${formatShortDate(d.date)}</div>
             <div class="perf-win-rate ${rateClass}">${pct}%</div>
             <div class="perf-sub">${d.wins}/${d.races} wins</div>
             ${d.value_bets ? `<div class="perf-pnl ${pnlClass}">${pnlStr} val</div>` : ''}
           </div>`;
       }).join('');
       strip.innerHTML = `
-        <div class="perf-strip-header">Model accuracy — last 5 days${overallPct != null ? ` · ${overallPct}% overall` : ''}</div>
+        <div class="perf-strip-header">Model accuracy — last 7 days${overallPct != null ? ` · ${overallPct}% overall` : ''}</div>
         <div class="perf-strip">${cards}</div>`;
       strip.style.display = '';
     } catch (e) { /* silent */ }
@@ -990,6 +1035,38 @@
 
   // ── Init ──────────────────────────────────────────────────────────────────
 
+  function renderDayAccuracyBanner(iso) {
+    const el = document.getElementById('dayAccuracyBanner');
+    if (!el) return;
+    const perf = S.perfByDate[iso];
+    if (!perf || iso >= todayISO()) { el.innerHTML = ''; return; }
+    const pct = Math.round(perf.win_rate * 100);
+    const placePct = Math.round(perf.place_rate * 100);
+    const rateClass = pct >= 50 ? 'good' : pct >= 38 ? 'ok' : 'bad';
+    const pnlClass = perf.value_pnl >= 0 ? 'good' : 'bad';
+    const pnlStr = perf.value_pnl >= 0 ? `+$${perf.value_pnl.toFixed(1)}` : `-$${Math.abs(perf.value_pnl).toFixed(1)}`;
+    el.innerHTML = `
+      <div class="day-accuracy-bar">
+        <div class="day-acc-stat">
+          <span class="day-acc-val ${rateClass}">${pct}%</span>
+          <span class="day-acc-label">Win rate</span>
+        </div>
+        <div class="day-acc-stat">
+          <span class="day-acc-val ok">${placePct}%</span>
+          <span class="day-acc-label">Place rate</span>
+        </div>
+        <div class="day-acc-stat">
+          <span class="day-acc-val">${perf.wins}/${perf.races}</span>
+          <span class="day-acc-label">Races</span>
+        </div>
+        ${perf.value_bets ? `
+        <div class="day-acc-stat">
+          <span class="day-acc-val ${pnlClass}">${pnlStr}</span>
+          <span class="day-acc-label">${perf.value_bets} value bets</span>
+        </div>` : ''}
+      </div>`;
+  }
+
   async function init() {
     document.getElementById('navDate').textContent = formatDate(S.date);
     renderDatePills();
@@ -1016,6 +1093,7 @@
         `${S.meetings.length} meeting${S.meetings.length > 1 ? 's' : ''} — ${formatDate(iso)}`;
 
       renderMeetingPills();
+      renderDayAccuracyBanner(iso);
       document.getElementById('meetingsSection').style.display = '';
 
       await selectMeeting(S.meetings[0]);
