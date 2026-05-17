@@ -292,7 +292,7 @@ def _generate_flags(er: EnrichedRunner, win_prob: float, overlay: float) -> list
         flags.append("💰 STEAMED — money in")
     if er.is_drifted:
         flags.append("📉 DRIFTED — market moving away")
-    if overlay > 0.08:
+    if overlay > 0.15:
         flags.append(f"🎯 VALUE OVERLAY +{overlay:.0%}")
     if er.runs_this_prep == 0 and er.pedigree_first_up_score >= 7:
         flags.append("🔥 First-up specialist bloodlines")

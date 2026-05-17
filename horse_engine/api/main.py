@@ -226,6 +226,92 @@ async def get_race(race_id: str):
     }
 
 
+@app.get("/api/races/{race_id}/live-odds")
+async def live_odds(race_id: str):
+    """
+    Re-fetch current tote odds from punters for a race and compute updated overlays.
+    Fast (~1s) — does not regenerate model predictions, just refreshes market data.
+    """
+    parts = race_id.split("_")
+    if len(parts) < 3:
+        raise HTTPException(400, "Invalid race_id format")
+
+    race_date = parts[0]
+    venue_code = parts[1]
+    try:
+        race_num = int(parts[2].replace("R", ""))
+    except ValueError:
+        raise HTTPException(400, "Invalid race number in race_id")
+
+    # Load stored model predictions
+    async with get_session() as session:
+        result = await session.execute(
+            select(RunnerPredictionRow)
+            .where(RunnerPredictionRow.race_id == race_id)
+            .order_by(RunnerPredictionRow.model_rank)
+        )
+        stored = result.scalars().all()
+
+    if not stored:
+        raise HTTPException(404, f"No predictions for {race_id} — enrich first")
+
+    model_probs = {r.horse_name: r.win_probability or 0.0 for r in stored}
+
+    # Fetch current odds from punters
+    try:
+        client = get_tab_client()
+        slug = _meeting_slug(venue_code, race_date)
+        raw_event = await client.get_race(slug, race_num)
+    except Exception as e:
+        raise HTTPException(502, f"Could not fetch live odds: {e}")
+
+    if not raw_event:
+        raise HTTPException(404, "Race not found on punters")
+
+    # Build updated odds snapshot
+    runners_odds = []
+    all_tote = []
+    for sel in raw_event.get("selections", []):
+        if (sel.get("status") or "").upper() == "SCRATCHED":
+            continue
+        horse = (sel.get("competitor") or {}).get("name", "")
+        tote_win = sel.get("topToteWin")
+        tote_place = sel.get("topTotePlace")
+        sp = sel.get("startingPrice")
+        current_odds = float(tote_win) if tote_win else (float(sp) if sp else None)
+        all_tote.append((horse, current_odds))
+
+    # Overround-free implied probs from current tote
+    valid_odds = [o for _, o in all_tote if o and o > 1.0]
+    total_implied = sum(1 / o for o in valid_odds) if valid_odds else 0
+    scale = 1.0 / total_implied if total_implied > 0 else 1.0
+
+    for horse, current_odds in all_tote:
+        model_prob = model_probs.get(horse, 0.0)
+        if current_odds and current_odds > 1.0:
+            raw_implied = 1.0 / current_odds
+            orf_implied = round(raw_implied * scale, 4)
+        else:
+            orf_implied = 0.0
+        overlay = round(model_prob - orf_implied, 4) if orf_implied else 0.0
+        runners_odds.append({
+            "horse_name": horse,
+            "current_tote_win": current_odds,
+            "implied_prob": orf_implied,
+            "model_win_prob": round(model_prob, 4),
+            "overlay": overlay,
+            "value": overlay > 0.05 and current_odds and current_odds >= 3.0,
+        })
+
+    runners_odds.sort(key=lambda x: x["model_win_prob"], reverse=True)
+
+    return {
+        "race_id": race_id,
+        "fetched_at": datetime.utcnow().isoformat(),
+        "runners": runners_odds,
+    }
+
+
 @app.post("/api/races/{race_id}/enrich")
 async def enrich_race(race_id: str, force: bool = Query(False)):
     """Enrich a specific race. race_id format: {date}_{venue}_R{num}"""
