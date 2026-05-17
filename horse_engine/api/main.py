@@ -930,23 +930,48 @@ async def _scheduled_calibrate():
         log.exception("[calibrate] Weekly calibration failed: %s", e)
 
 
+_calibration_status: dict = {"running": False, "done": False, "result": None, "error": None}
+
+
+async def _run_calibration_task(holdout_days: int):
+    global _calibration_status
+    _calibration_status = {"running": True, "done": False, "result": None, "error": None,
+                           "started_at": datetime.utcnow().isoformat()}
+    try:
+        result = await _run_calibration_sweep(holdout_days=holdout_days)
+        _calibration_status.update({"running": False, "done": True, "result": result,
+                                    "finished_at": datetime.utcnow().isoformat()})
+        log.info("[calibrate] Background task complete. Best window: %s", result.get("best_window"))
+    except Exception as e:
+        log.exception("[calibrate] Background task failed: %s", e)
+        _calibration_status.update({"running": False, "done": True, "error": str(e),
+                                    "finished_at": datetime.utcnow().isoformat()})
+
+
 @app.post("/api/admin/calibrate")
 async def run_calibration(
     holdout_days: int = Query(14, ge=7, le=30),
     x_cron_secret: Optional[str] = Header(None),
 ):
     """
-    Run calibration sweep: test all training windows and select the best one.
-    Saves winning weights to DB. Reports drift if performance has dropped.
+    Start background calibration sweep. Check /api/admin/calibrate/status for progress.
+    Saves winning weights to DB when done.
     """
     if settings.cron_secret and x_cron_secret != settings.cron_secret:
         raise HTTPException(403, "Forbidden")
-    try:
-        result = await _run_calibration_sweep(holdout_days=holdout_days)
-        return result
-    except Exception as e:
-        log.exception("Calibration failed")
-        raise HTTPException(500, str(e))
+    if _calibration_status.get("running"):
+        raise HTTPException(409, "Calibration already running")
+    asyncio.create_task(_run_calibration_task(holdout_days))
+    return {"status": "started", "holdout_days": holdout_days,
+            "message": "Check /api/admin/calibrate/status for progress"}
+
+
+@app.get("/api/admin/calibrate/status")
+async def calibration_task_status(x_cron_secret: Optional[str] = Header(None)):
+    """Current calibration task progress and result when done."""
+    if settings.cron_secret and x_cron_secret != settings.cron_secret:
+        raise HTTPException(403, "Forbidden")
+    return _calibration_status
 
 
 @app.get("/api/admin/calibration/history")
