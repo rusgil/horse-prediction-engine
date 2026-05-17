@@ -591,6 +591,36 @@
       padding: 2px 8px; border-radius: 999px;
       background: var(--gold-dim); color: var(--gold);
       border: 1px solid var(--gold-mid);
+      transition: background 0.3s, color 0.3s;
+    }
+    .odds-pill.value-bet {
+      background: rgba(16,185,129,0.18); color: #10b981;
+      border-color: #10b981;
+    }
+
+    /* ── Value badge ─────────────────────────────────────────── */
+    .value-badge {
+      font-family: 'Barlow Condensed', sans-serif;
+      font-size: 0.72rem; font-weight: 800; letter-spacing: 0.08em;
+      padding: 2px 7px; border-radius: 999px;
+      background: rgba(16,185,129,0.18); color: #10b981;
+      border: 1px solid #10b981;
+    }
+
+    /* ── Live odds bar ───────────────────────────────────────── */
+    .live-odds-bar {
+      display: flex; align-items: center; gap: 6px;
+      font-size: 0.78rem; color: var(--text-dim);
+      padding: 8px 16px 4px;
+    }
+    .live-dot {
+      display: inline-block; width: 7px; height: 7px;
+      border-radius: 50%; background: #10b981;
+      box-shadow: 0 0 6px #10b981;
+      animation: pulse 2s ease-in-out infinite;
+    }
+    @keyframes pulse {
+      0%, 100% { opacity: 1; } 50% { opacity: 0.4; }
     }
 
     /* ── Inline spinner ───────────────────────────────────────── */
@@ -704,6 +734,8 @@
     runners: [],
     enriching: false,
     loadingRace: false,
+    liveOdds: {},
+    liveOddsTimer: null,
   };
 
   function todayISO() {
@@ -792,6 +824,58 @@
     return r.json();
   }
 
+  async function fetchLiveOdds(raceId) {
+    const r = await fetch(`${API}/api/races/${raceId}/live-odds`);
+    if (!r.ok) return null;
+    return r.json();
+  }
+
+  function startLiveOddsPolling(raceId) {
+    stopLiveOddsPolling();
+    const tick = async () => {
+      if (S.selectedRaceId !== raceId) return;
+      try {
+        const data = await fetchLiveOdds(raceId);
+        if (data) {
+          S.liveOdds = {};
+          for (const row of (data.runners || [])) S.liveOdds[row.horse_name] = row;
+          updateLiveOddsDisplay(data.fetched_at);
+        }
+      } catch (e) { /* silent */ }
+    };
+    tick();
+    S.liveOddsTimer = setInterval(tick, 120_000);
+  }
+
+  function stopLiveOddsPolling() {
+    if (S.liveOddsTimer) { clearInterval(S.liveOddsTimer); S.liveOddsTimer = null; }
+    S.liveOdds = {};
+  }
+
+  function updateLiveOddsDisplay(fetchedAt) {
+    const bar = document.getElementById('live-odds-bar');
+    if (bar) {
+      const t = fetchedAt ? new Date(fetchedAt + 'Z').toLocaleTimeString('en-AU', { hour: '2-digit', minute: '2-digit', hour12: true }) : '';
+      bar.innerHTML = `<span class="live-dot"></span> Live Odds${t ? ` · Updated ${t}` : ''}`;
+      bar.style.display = '';
+    }
+    S.runners.forEach(r => {
+      const live = S.liveOdds[r.horse_name];
+      if (!live) return;
+      const oddsEl = document.getElementById(`lo-odds-${r.tab_number}`);
+      if (oddsEl && live.current_tote_win) {
+        oddsEl.textContent = `$${live.current_tote_win.toFixed(1)}`;
+        oddsEl.title = `Overlay: ${(live.overlay * 100).toFixed(1)}%`;
+        oddsEl.className = 'odds-pill' + (live.value ? ' value-bet' : '');
+        oddsEl.style.display = '';
+      }
+      const valEl = document.getElementById(`lo-val-${r.tab_number}`);
+      if (valEl) {
+        valEl.style.display = live.value ? '' : 'none';
+      }
+    });
+  }
+
   // ── Init ──────────────────────────────────────────────────────────────────
 
   async function init() {
@@ -847,6 +931,7 @@
   }
 
   async function selectMeeting(m) {
+    stopLiveOddsPolling();
     S.selectedMeeting = m;
     S.selectedRaceId = null;
     S.races = [];
@@ -903,6 +988,7 @@
   }
 
   async function selectRace(race) {
+    stopLiveOddsPolling();
     S.selectedRaceId = race.race_id;
     S.loadingRace = true;
     renderRacePills();
@@ -934,6 +1020,7 @@
         S.enrichedRaceIds.add(race.race_id);
         renderRacePills();
         document.getElementById('raceContent').innerHTML = renderRunners(race);
+        startLiveOddsPolling(race.race_id);
       }
     } catch (e) {
       S.loadingRace = false;
@@ -974,6 +1061,7 @@
         renderRacePills();
         const race = S.races.find(r => r.race_id === raceId) || { race_id: raceId };
         document.getElementById('raceContent').innerHTML = renderRunners(race);
+        startLiveOddsPolling(raceId);
       }
     } catch (e) {
       btn.disabled = false;
@@ -990,7 +1078,9 @@
     }
 
     const cards = S.runners.map((r, i) => renderRunnerCard(r, i)).join('');
-    return `<div class="runners-list">${cards}</div>`;
+    return `
+      <div id="live-odds-bar" class="live-odds-bar" style="display:none"></div>
+      <div class="runners-list">${cards}</div>`;
   }
 
   function renderRunnerCard(r, i) {
@@ -1012,9 +1102,11 @@
       }
     }
 
-    // Odds
-    const oddsHtml = r.best_available_odds && r.best_available_odds > 1
-      ? `<span class="odds-pill">$${r.best_available_odds.toFixed(1)}</span>` : '';
+    // Odds — id'd so live-odds polling can update in-place
+    const oddsVal = r.best_available_odds && r.best_available_odds > 1 ? `$${r.best_available_odds.toFixed(1)}` : '';
+    const oddsHtml = oddsVal
+      ? `<span class="odds-pill" id="lo-odds-${r.tab_number}">${oddsVal}</span>` : `<span id="lo-odds-${r.tab_number}" style="display:none" class="odds-pill"></span>`;
+    const valueBadgeHtml = `<span id="lo-val-${r.tab_number}" class="value-badge" style="display:none">VALUE</span>`;
 
     // Details row
     const details = [
@@ -1066,6 +1158,7 @@
               ${details ? `<span class="runner-detail-chip">${escHtml(details)}</span>` : ''}
               ${rankCompareHtml}
               ${oddsHtml}
+              ${valueBadgeHtml}
             </div>
           </div>
           <div class="win-badge">
