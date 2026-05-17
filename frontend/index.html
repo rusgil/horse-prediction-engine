@@ -387,7 +387,9 @@
       margin-top: 3px; display: flex; gap: 8px; flex-wrap: wrap;
     }
     .runner-detail-chip {
-      display: flex; align-items: center; gap: 3px;
+      display: inline-flex; align-items: center; gap: 3px;
+      background: rgba(255,255,255,0.04); border-radius: 4px;
+      padding: 1px 6px; margin-right: 4px;
     }
 
     .win-badge {
@@ -1341,13 +1343,23 @@
     const valueBadgeHtml = `<span id="lo-val-${r.tab_number}" class="value-badge" style="display:none">VALUE</span>`;
     const resultBadgeHtml = `<span id="lo-res-${r.tab_number}" class="result-badge" style="display:none"></span>`;
 
-    // Details row
-    const details = [
-      r.barrier ? `Barrier ${r.barrier}` : null,
-      r.weight ? `${r.weight}kg` : null,
-      r.jockey ? `J: ${r.jockey}` : null,
-      r.trainer ? `T: ${r.trainer}` : null,
-    ].filter(Boolean).join(' · ');
+    // Details row 1: barrier, jockey+rate, trainer+rate, weight
+    const jockeyRate = r.jockey_overall_rate != null ? ` <span style="color:var(--gold-light);font-weight:700">${r.jockey_overall_rate.toFixed(0)}%</span>` : '';
+    const trainerRate = r.trainer_overall_rate != null ? ` <span style="color:var(--gold-light);font-weight:700">${r.trainer_overall_rate.toFixed(0)}%</span>` : '';
+    const detailChips1 = [
+      r.barrier ? `<span class="runner-detail-chip">🚪 B${r.barrier}</span>` : null,
+      r.jockey ? `<span class="runner-detail-chip">Jockey: ${escHtml(r.jockey)}${jockeyRate}</span>` : null,
+      r.trainer ? `<span class="runner-detail-chip">Trainer: ${escHtml(r.trainer)}${trainerRate}</span>` : null,
+      r.weight ? `<span class="runner-detail-chip">⚖ ${r.weight}kg</span>` : null,
+    ].filter(Boolean).join('');
+
+    // Details row 2: prep runs, distance win rate, class drop
+    const distPct = r.win_rate_distance != null && r.win_rate_distance > 0
+      ? `<span class="runner-detail-chip">${(r.win_rate_distance * 100).toFixed(0)}% at distance</span>` : null;
+    const prepRuns = r.runs_this_prep != null
+      ? `<span class="runner-detail-chip">Run ${r.runs_this_prep + 1} this prep</span>` : null;
+    const classDrop = r.class_change === 1 ? `<span class="runner-detail-chip">↓ Class drop</span>` : null;
+    const detailChips2 = [prepRuns, distPct, classDrop].filter(Boolean).join('');
 
     // Stats
     const statsItems = [
@@ -1414,12 +1426,13 @@
             <div class="runner-name">${escHtml(r.horse_name)}</div>
             <div class="runner-details">
               <span class="runner-detail-chip">#${r.tab_number}</span>
-              ${details ? `<span class="runner-detail-chip">${escHtml(details)}</span>` : ''}
+              ${detailChips1}
               ${rankCompareHtml}
               ${oddsHtml}
               ${valueBadgeHtml}
               ${resultBadgeHtml}
             </div>
+            ${detailChips2 ? `<div class="runner-details" style="margin-top:2px;opacity:0.75">${detailChips2}</div>` : ''}
           </div>
           <div class="win-badge">
             ${winPct}%

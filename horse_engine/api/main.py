@@ -22,6 +22,8 @@ import asyncio
 import json
 import logging
 import random
+import re
+import secrets
 from contextlib import asynccontextmanager
 from datetime import date, datetime, timedelta
 from typing import Any, Optional
@@ -54,6 +56,34 @@ from horse_engine.prediction.model import HorseModel
 
 log = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
+
+_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+_VENUE_RE = re.compile(r"^[a-z0-9-]{1,60}$")
+
+
+def _validate_date(race_date: str) -> str:
+    if not _DATE_RE.match(race_date):
+        raise HTTPException(400, "Invalid date format — expected YYYY-MM-DD")
+    return race_date
+
+
+def _validate_venue(venue_code: str) -> str:
+    if not _VENUE_RE.match(venue_code):
+        raise HTTPException(400, "Invalid venue code")
+    return venue_code
+
+
+def _check_admin(x_secret: Optional[str]) -> None:
+    """Fail-closed admin auth: requires CRON_SECRET env var to be set."""
+    if not settings.cron_secret:
+        raise HTTPException(403, "Admin access not configured")
+    if not secrets.compare_digest(x_secret or "", settings.cron_secret):
+        raise HTTPException(403, "Forbidden")
+
+
+def _like_safe(value: str) -> str:
+    """Escape LIKE metacharacters to prevent pattern injection."""
+    return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
 
 async def _scheduled_enrich():
@@ -205,6 +235,29 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.requests import Request as StarletteRequest
+
+class SecurityHeadersMiddleware(BaseHTTPMiddleware):
+    async def dispatch(self, request: StarletteRequest, call_next):
+        response = await call_next(request)
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        response.headers["X-Frame-Options"] = "DENY"
+        response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+        response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+        response.headers["Content-Security-Policy"] = (
+            "default-src 'self'; "
+            "script-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
+            "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://fonts.gstatic.com; "
+            "font-src https://fonts.gstatic.com; "
+            "connect-src 'self'; "
+            "img-src 'self' data:; "
+            "frame-ancestors 'none'"
+        )
+        return response
+
+app.add_middleware(SecurityHeadersMiddleware)
+
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -243,11 +296,13 @@ async def health():
 @app.get("/api/meetings/{race_date}")
 async def list_meetings(race_date: str = _today()):
     """List all Australian thoroughbred meetings for the given date."""
+    _validate_date(race_date)
     client = get_tab_client()
     try:
         meetings = await client.get_meetings(race_date)
     except Exception as e:
-        raise HTTPException(502, f"Data fetch error: {e}")
+        log.exception("list_meetings failed for %s", race_date)
+        raise HTTPException(502, "Failed to fetch meetings from data provider")
 
     date_suffix = f"-{race_date.replace('-', '')}"
     return {
@@ -271,6 +326,8 @@ async def list_meetings(race_date: str = _today()):
 
 @app.get("/api/meetings/{race_date}/{venue_code}")
 async def get_meeting(race_date: str, venue_code: str):
+    _validate_date(race_date)
+    _validate_venue(venue_code)
     """Get all races at a meeting with current predictions if available."""
     client = get_tab_client()
     slug = _meeting_slug(venue_code, race_date)
@@ -295,7 +352,7 @@ async def get_meeting(race_date: str, venue_code: str):
 
     # For past dates punters returns nothing — derive race list from DB
     if not race_list:
-        prefix = f"{race_date}_{venue_code}_R"
+        prefix = f"{_like_safe(race_date)}_{_like_safe(venue_code)}_R"
         async with get_session() as session:
             db_result = await session.execute(
                 select(RunnerPredictionRow.race_id)
@@ -506,13 +563,14 @@ async def live_odds(race_id: str):
     }
 
 
+_RACE_ID_RE = re.compile(r"^\d{4}-\d{2}-\d{2}_[a-z0-9-]{1,60}_R\d{1,2}$")
+
 @app.post("/api/races/{race_id}/enrich")
 async def enrich_race(race_id: str, force: bool = Query(False)):
     """Enrich a specific race. race_id format: {date}_{venue}_R{num}"""
+    if not _RACE_ID_RE.match(race_id):
+        raise HTTPException(400, "Invalid race_id format. Expected: YYYY-MM-DD_venue_RN")
     parts = race_id.split("_")
-    if len(parts) < 3:
-        raise HTTPException(400, "Invalid race_id format. Expected: {date}_{venue}_R{num}")
-
     race_date = parts[0]
     venue_code = parts[1]
     try:
@@ -563,14 +621,16 @@ async def enrich_race(race_id: str, force: bool = Query(False)):
 
     except HTTPException:
         raise
-    except Exception as e:
+    except Exception:
         log.exception("Enrich failed for %s", race_id)
-        raise HTTPException(500, str(e))
+        raise HTTPException(500, "Enrichment failed — check server logs")
 
 
 @app.post("/api/meetings/{race_date}/{venue_code}/enrich")
 async def enrich_meeting_endpoint(race_date: str, venue_code: str):
     """Enrich all races at a meeting."""
+    _validate_date(race_date)
+    _validate_venue(venue_code)
     client = get_tab_client()
     slug = _meeting_slug(venue_code, race_date)
 
@@ -613,11 +673,15 @@ async def enrich_meeting_endpoint(race_date: str, venue_code: str):
 # ── Retrain ───────────────────────────────────────────────────────────────────
 
 @app.post("/api/retrain")
-async def retrain_model(days: int = Query(0, ge=0, le=365)):
+async def retrain_model(
+    days: int = Query(0, ge=0, le=365),
+    x_cron_secret: Optional[str] = Header(None),
+):
     """
     Retrain logistic regression on stored historical results.
     days=0 (default) uses all available data. days=N uses only the last N days.
     """
+    _check_admin(x_cron_secret)
     async with get_session() as session:
         hr_query = select(HistoricalResultRow)
         if days > 0:
@@ -667,8 +731,7 @@ async def retrain_model(days: int = Query(0, ge=0, le=365)):
 @app.post("/api/admin/results/{race_date}")
 async def seed_results(race_date: str, x_cron_secret: Optional[str] = Header(None)):
     """Fetch race results from punters for a past date and store as training data."""
-    if settings.cron_secret and x_cron_secret != settings.cron_secret:
-        raise HTTPException(403, "Forbidden")
+    _check_admin(x_cron_secret)
     seeded = await _seed_results_for_date(race_date)
     return {"status": "seeded", "results": seeded}
 
@@ -802,8 +865,7 @@ async def start_backfill(
     force=true re-runs predictions even for dates already in the DB (useful after model updates).
     Historical results are never duplicated regardless.
     """
-    if settings.cron_secret and x_cron_secret != settings.cron_secret:
-        raise HTTPException(403, "Forbidden")
+    _check_admin(x_cron_secret)
     if _backfill["running"]:
         raise HTTPException(409, "Backfill already running")
     asyncio.create_task(_run_backfill(days, x_cron_secret, force=force))
@@ -827,8 +889,7 @@ async def backtest_report(
     Performance report: join predictions vs actual results.
     Returns top-pick win/place rate, value P&L, and per-condition breakdown.
     """
-    if settings.cron_secret and x_cron_secret != settings.cron_secret:
-        raise HTTPException(403, "Forbidden")
+    _check_admin(x_cron_secret)
 
     cutoff = (date.today() - timedelta(days=days)).isoformat()
 
@@ -1256,8 +1317,7 @@ async def run_calibration(
     Start background calibration sweep. Check /api/admin/calibrate/status for progress.
     Saves winning weights to DB when done.
     """
-    if settings.cron_secret and x_cron_secret != settings.cron_secret:
-        raise HTTPException(403, "Forbidden")
+    _check_admin(x_cron_secret)
     if _calibration_status.get("running"):
         raise HTTPException(409, "Calibration already running")
     asyncio.create_task(_run_calibration_task(holdout_days))
@@ -1268,8 +1328,7 @@ async def run_calibration(
 @app.get("/api/admin/calibrate/status")
 async def calibration_task_status(x_cron_secret: Optional[str] = Header(None)):
     """Current calibration task progress and result when done."""
-    if settings.cron_secret and x_cron_secret != settings.cron_secret:
-        raise HTTPException(403, "Forbidden")
+    _check_admin(x_cron_secret)
     return _calibration_status
 
 
@@ -1279,8 +1338,7 @@ async def calibration_history(
     x_cron_secret: Optional[str] = Header(None),
 ):
     """Return the last N calibration runs with drift history."""
-    if settings.cron_secret and x_cron_secret != settings.cron_secret:
-        raise HTTPException(403, "Forbidden")
+    _check_admin(x_cron_secret)
     async with get_session() as session:
         result = await session.execute(
             select(CalibrationRow).order_by(CalibrationRow.ran_at.desc()).limit(limit)
@@ -1355,8 +1413,7 @@ async def cron_enrich(
     x_cron_secret: Optional[str] = Header(None),
 ):
     """Cron: enrich all meetings for today + next N days (default 3)."""
-    if settings.cron_secret and x_cron_secret != settings.cron_secret:
-        raise HTTPException(403, "Forbidden")
+    _check_admin(x_cron_secret)
 
     client = get_tab_client()
     async with get_session() as session:
@@ -1430,6 +1487,8 @@ def _runner_response(row: RunnerPredictionRow) -> dict:
         "jockey_overall_rate": enriched.get("jockey_overall_rate"),
         "days_since_last_run": enriched.get("days_since_last_run"),
         "runs_this_prep": enriched.get("runs_this_prep"),
+        "win_rate_distance": enriched.get("win_rate_distance"),
+        "class_change": enriched.get("class_change"),
         "wet_track_record": enriched.get("wet_track_record"),
         "dosage_index": enriched.get("dosage_index"),
         "track_condition_category": enriched.get("track_condition_category"),
