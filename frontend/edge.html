@@ -819,17 +819,17 @@
     <span class="legend-title">FunkyIQ&#8482; Edge Ranking:</span>
     <span class="legend-item">
       <span class="legend-badge hot">🔥 Hot Pick</span>
-      <span class="legend-desc">≥45% confidence <span class="legend-odds">· 82% win rate · avg $2.35</span></span>
+      <span class="legend-desc"><span class="legend-odds">82% win rate</span> · 222 races</span>
     </span>
     <span class="legend-sep">·</span>
     <span class="legend-item">
       <span class="legend-badge high">⚡ High Confidence</span>
-      <span class="legend-desc">35–44% confidence <span class="legend-odds">· 71–76% win rate · avg $2.55</span></span>
+      <span class="legend-desc"><span class="legend-odds">71–76% win rate</span> · 809 races</span>
     </span>
     <span class="legend-sep">·</span>
     <span class="legend-item">
       <span class="legend-badge standard">Strong Pick</span>
-      <span class="legend-desc">30–34% confidence <span class="legend-odds">· 66% win rate · avg $2.79</span></span>
+      <span class="legend-desc"><span class="legend-odds">66% win rate</span> · 1,086 races</span>
     </span>
   </div>
 
@@ -918,25 +918,31 @@
     const conf = pick.model_pct;
     const barW = Math.min(100, (conf / 70) * 100);
 
-    // Badge — show result if race is done, otherwise confidence tier
-    let badgeHtml;
+    // Tier badge — always shown
+    let tierBadge;
+    if (conf >= 45) {
+      tierBadge = `<span class="pick-badge-hot">🔥 Hot Pick</span>`;
+    } else if (conf >= 35) {
+      tierBadge = `<span class="pick-badge-hot" style="background:rgba(59,130,246,0.12);color:#60a5fa;border-color:rgba(59,130,246,0.28);">⚡ High Confidence</span>`;
+    } else {
+      tierBadge = `<span class="pick-badge-standard">Strong Pick</span>`;
+    }
+
+    // Result badge — shown for past races alongside tier badge
+    let resultBadge = '';
     if (isPast && result) {
       if (result.scratched) {
-        badgeHtml = `<span class="pick-badge-standard" style="background:var(--bg-elevated);color:var(--text-dim);border-color:var(--border);">Scratched</span>`;
+        resultBadge = `<span class="pick-badge-standard" style="background:var(--bg-elevated);color:var(--text-dim);border-color:var(--border);">Scratched</span>`;
       } else if (result.winner) {
-        badgeHtml = `<span class="pick-badge-standard" style="background:var(--green-dim);color:var(--green);border-color:rgba(34,197,94,0.25);">✓ Correct</span>`;
+        resultBadge = `<span class="pick-badge-standard" style="background:var(--green-dim);color:var(--green);border-color:rgba(34,197,94,0.25);">✓ Correct</span>`;
       } else {
-        badgeHtml = `<span class="pick-badge-standard" style="background:rgba(239,68,68,0.10);color:#f87171;border-color:rgba(239,68,68,0.25);">✗ Wrong</span>`;
+        resultBadge = `<span class="pick-badge-standard" style="background:rgba(239,68,68,0.10);color:#f87171;border-color:rgba(239,68,68,0.25);">✗ Wrong</span>`;
       }
     } else if (isPast) {
-      badgeHtml = `<span class="pick-badge-standard" style="background:var(--bg-elevated);color:var(--text-dim);border-color:var(--border);">Completed</span>`;
-    } else if (conf >= 45) {
-      badgeHtml = `<span class="pick-badge-hot">🔥 Hot Pick</span>`;
-    } else if (conf >= 35) {
-      badgeHtml = `<span class="pick-badge-hot" style="background:rgba(59,130,246,0.12);color:#60a5fa;border-color:rgba(59,130,246,0.28);">⚡ High Confidence</span>`;
-    } else {
-      badgeHtml = `<span class="pick-badge-standard">Strong Pick</span>`;
+      resultBadge = `<span class="pick-badge-standard" style="background:var(--bg-elevated);color:var(--text-dim);border-color:var(--border);">Completed</span>`;
     }
+
+    const badgeHtml = tierBadge + resultBadge;
 
     const timeStr = fmtTime(pick.scheduled_time);
     const countdownId = `cd-${escHtml(pick.race_id).replace(/[^a-z0-9]/gi, '-')}`;
