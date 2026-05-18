@@ -1,6 +1,5 @@
 {
   "rewrites": [
-    { "source": "/edge", "destination": "/frontend/edge.html" },
-    { "source": "/",     "destination": "/frontend/index.html" }
+    { "source": "/edge", "destination": "/edge.html" }
   ]
 }
