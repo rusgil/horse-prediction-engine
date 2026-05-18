@@ -1050,9 +1050,10 @@
       ? `<span class="pick-footer-chip" style="margin-left:auto;color:var(--gold)">${starsFromValue(pick.value_rating)} value</span>` : '';
 
     const cardStyle = isPast && result && !result.winner && !result.scratched ? 'opacity:0.75;' : '';
+    const pastAttr  = isPast && result ? 'data-past-result="true"' : '';
 
     return `
-      <div class="pick-card ${isHot && !isPast ? 'hot' : ''}" style="${cardStyle}">
+      <div class="pick-card ${isHot && !isPast ? 'hot' : ''}" style="${cardStyle}" ${pastAttr}>
         <div class="pick-card-top-bar">
           ${badgeHtml}
           <div class="pick-race-ref">
@@ -1168,6 +1169,7 @@
 
   function updatePayouts(stake) {
     document.querySelectorAll('.pick-card').forEach(card => {
+      if (card.dataset.pastResult) return; // actual result — never overwrite
       const oddsEl = card.querySelector('.odds-badge');
       if (!oddsEl) return;
       const oddsText = oddsEl.textContent.trim().replace(/[^0-9.]/g, '');
