@@ -357,6 +357,78 @@ async def get_edge_picks():
     }
 
 
+_odds_refresh_last: datetime | None = None
+_ODDS_REFRESH_COOLDOWN = 120  # seconds — prevents hammering punters API
+
+@app.post("/api/edge/refresh-odds")
+async def refresh_edge_odds():
+    """
+    Fetch fresh odds from punters for upcoming edge picks and update DB.
+    No Claude calls — zero AI cost. Only updates best_available_odds.
+    Rate-limited to once per 2 minutes globally.
+    """
+    global _odds_refresh_last
+    now = datetime.utcnow()
+    if _odds_refresh_last and (now - _odds_refresh_last).total_seconds() < _ODDS_REFRESH_COOLDOWN:
+        return {"updated": {}, "count": 0, "cached": True}
+    threshold = 0.30
+    today = date.today()
+    client = get_tab_client()
+    updated: dict[str, float] = {}  # race_id → new odds
+
+    for i in range(2):  # today + tomorrow only (future days have no odds yet)
+        target_date = (today + timedelta(days=i)).isoformat()
+        prefix = f"{target_date}_"
+
+        async with get_session() as session:
+            result = await session.execute(
+                select(RunnerPredictionRow)
+                .where(RunnerPredictionRow.model_rank == 1)
+                .where(RunnerPredictionRow.win_probability >= threshold)
+                .where(RunnerPredictionRow.race_id.like(f"{prefix}%"))
+            )
+            picks = result.scalars().all()
+
+        # Group by meeting slug so we only call punters once per meeting
+        slugs: dict[str, list[RunnerPredictionRow]] = {}
+        for p in picks:
+            _, venue_code, _ = _parse_race_id(p.race_id)
+            slug = _meeting_slug(venue_code, target_date)
+            slugs.setdefault(slug, []).append(p)
+
+        for slug, slug_picks in slugs.items():
+            try:
+                events = await asyncio.wait_for(client.get_meeting_races(slug), timeout=30)
+                # Build horse → odds map from all selections across all events
+                horse_odds: dict[str, float] = {}
+                for event in events:
+                    for sel in event.get("selections") or []:
+                        name = (sel.get("competitor") or {}).get("name")
+                        if not name:
+                            continue
+                        tote = sel.get("topToteWin")
+                        sp = sel.get("startingPrice")
+                        best = float(tote) if tote else (float(sp) if sp else 0.0)
+                        if best:
+                            horse_odds[name] = best
+
+                # Update DB rows that have a fresh odds value
+                async with get_session() as session:
+                    for pick in slug_picks:
+                        new_odds = horse_odds.get(pick.horse_name)
+                        if new_odds and new_odds != pick.best_available_odds:
+                            pick_row = await session.get(RunnerPredictionRow, pick.id)
+                            if pick_row:
+                                pick_row.best_available_odds = new_odds
+                                updated[pick.race_id] = new_odds
+                    await session.commit()
+            except Exception as e:
+                log.warning("refresh-odds failed for %s: %s", slug, e)
+
+    _odds_refresh_last = now
+    return {"updated": updated, "count": len(updated)}
+
+
 # ── Frontend ─────────────────────────────────────────────────────────────────
 
 @app.get("/", include_in_schema=False)
