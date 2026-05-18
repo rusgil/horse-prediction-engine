@@ -6,10 +6,10 @@
   <script>
     fetch('/api/check', {credentials:'include'})
       .then(function(r){
-        if(r.ok){ document.body.style.visibility=''; }
+        if(r.ok){ document.body.style.visibility='visible'; }
         else{ window.location.replace('/login?next='+encodeURIComponent(location.pathname)); }
       })
-      .catch(function(){ document.body.style.visibility=''; });
+      .catch(function(){ document.body.style.visibility='visible'; });
   </script>
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <meta name="google-adsense-account" content="ca-pub-0111543436976557">
