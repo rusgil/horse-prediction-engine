@@ -775,6 +775,14 @@
   </div>
 
   <div id="panelYesterday" style="display:none">
+    <div class="stake-bar">
+      <span class="stake-label">Stake per bet:</span>
+      <div class="stake-input-wrap">
+        <span class="stake-currency">$</span>
+        <input type="number" class="stake-input" id="stakeInputYesterday" value="10" min="1" max="10000" />
+      </div>
+      <span class="stake-note">Change stake to see what you would have won or lost.</span>
+    </div>
     <div id="yesterdayContent">
       <div class="loading">
         <div class="loading-spinner"></div>
@@ -1015,6 +1023,7 @@
   const API = 'https://web-production-dec62.up.railway.app';
   let picksData = null;
   let yesterdayLoaded = false;
+  let yesterdayData = null;
 
   function switchTab(tab) {
     document.getElementById('tabUpcoming').classList.toggle('active', tab === 'upcoming');
@@ -1030,7 +1039,7 @@
     return n + (s[(v-20)%10] || s[v] || s[0]);
   }
 
-  function renderYesterdayCard(p) {
+  function renderYesterdayCard(p, stake) {
     const isWin = p.winner;
     const barW = Math.min(100, (p.model_pct / 70) * 100);
 
@@ -1055,25 +1064,27 @@
       ? `<div class="odds-badge"><span class="odds-label">Starting Price</span>$${p.sp.toFixed(2)}</div>`
       : `<div class="odds-badge" style="color:var(--text-dim)"><span class="odds-label">Starting Price</span>N/A</div>`;
 
-    // Payout panel
+    // Payout panel — computed from SP and user stake
+    const gross = p.sp ? +(p.sp * stake).toFixed(2) : 0;
+    const profit = p.sp ? +(gross - stake).toFixed(2) : 0;
     let payoutHtml;
     if (p.scratched) {
       payoutHtml = `<div class="no-odds">Scratched — no bet</div>`;
     } else if (isWin && p.sp) {
       payoutHtml = `
         <div class="payout-box">
-          <div class="payout-profit-label">$${p.stake} profit</div>
-          <div class="payout-profit">+$${p.profit.toFixed(2)}</div>
-          <div class="payout-return">Return: <span class="return-amt">$${p.payout.toFixed(2)}</span></div>
-          <div class="payout-stake">Stake: $${p.stake}</div>
+          <div class="payout-profit-label">$${stake} profit</div>
+          <div class="payout-profit">+$${profit.toFixed(2)}</div>
+          <div class="payout-return">Return: <span class="return-amt">$${gross.toFixed(2)}</span></div>
+          <div class="payout-stake">Stake: $${stake}</div>
         </div>`;
     } else {
       payoutHtml = `
         <div class="payout-box" style="background:rgba(239,68,68,0.08);border-color:rgba(239,68,68,0.2);">
-          <div class="payout-profit-label" style="color:var(--text-dim)">$${p.stake} loss</div>
-          <div class="payout-profit" style="color:#f87171;">-$${p.stake.toFixed(2)}</div>
+          <div class="payout-profit-label" style="color:var(--text-dim)">$${stake} loss</div>
+          <div class="payout-profit" style="color:#f87171;">-$${(+stake).toFixed(2)}</div>
           ${p.position ? `<div class="payout-return" style="color:var(--text-dim)">Finished ${ordinal(p.position)}</div>` : ''}
-          <div class="payout-stake">Stake: $${p.stake}</div>
+          <div class="payout-stake">Stake: $${stake}</div>
         </div>`;
     }
 
@@ -1113,7 +1124,7 @@
           </div>
         </div>
         <div class="pick-footer">
-          <span class="pick-footer-chip" style="color:var(--text-dim)">$10 stake assumed</span>
+          <span class="pick-footer-chip" style="color:var(--text-dim)">$${stake} stake</span>
         </div>
       </div>`;
   }
@@ -1123,45 +1134,56 @@
     try {
       const res = await fetch(`${API}/api/edge/yesterday`);
       if (!res.ok) throw new Error(res.statusText);
-      const data = await res.json();
-      const el = document.getElementById('yesterdayContent');
-
-      if (!data.picks.length) {
-        el.innerHTML = `<div class="empty-state"><div class="empty-icon">📭</div><div class="empty-title">No qualifying picks yesterday</div><div class="empty-sub">No races had ≥30% confidence on ${data.date}.</div></div>`;
-        return;
-      }
-
-      const s = data.summary;
-      const pnlCls = s.pnl >= 0 ? 'pnl-positive' : 'pnl-negative';
-      const pnlSign = s.pnl >= 0 ? '+' : '';
-      const roiSign = s.roi_pct >= 0 ? '+' : '';
-
-      let html = `
-        <div class="pnl-bar">
-          <div class="pnl-cell">
-            <div class="pnl-cell-num">${s.total}</div>
-            <div class="pnl-cell-label">Picks ($${s.total_staked} staked)</div>
-          </div>
-          <div class="pnl-cell">
-            <div class="pnl-cell-num pnl-positive">${s.wins}</div>
-            <div class="pnl-cell-label">Wins (${s.win_rate}%)</div>
-          </div>
-          <div class="pnl-cell">
-            <div class="pnl-cell-num pnl-negative">${s.losses}</div>
-            <div class="pnl-cell-label">Losses</div>
-          </div>
-          <div class="pnl-cell">
-            <div class="pnl-cell-num ${pnlCls}">${pnlSign}$${s.pnl.toFixed(2)}</div>
-            <div class="pnl-cell-label">P&L (${roiSign}${s.roi_pct}% ROI)</div>
-          </div>
-        </div>
-        ${data.picks.map(renderYesterdayCard).join('')}`;
-
-      el.innerHTML = html;
+      yesterdayData = await res.json();
+      const stake = parseFloat(document.getElementById('stakeInputYesterday').value) || 10;
+      renderYesterdayContent(yesterdayData, stake);
     } catch (e) {
       document.getElementById('yesterdayContent').innerHTML = `
         <div class="empty-state"><div class="empty-icon">⚠️</div><div class="empty-title">Could not load results</div><div class="empty-sub">${escHtml(e.message)}</div></div>`;
     }
+  }
+
+  function renderYesterdayContent(data, stake) {
+    const el = document.getElementById('yesterdayContent');
+    if (!data.picks.length) {
+      el.innerHTML = `<div class="empty-state"><div class="empty-icon">📭</div><div class="empty-title">No qualifying picks yesterday</div><div class="empty-sub">No races had ≥30% confidence on ${data.date}.</div></div>`;
+      return;
+    }
+
+    // Recalculate P&L from SP + current stake
+    const activePicks = data.picks.filter(p => !p.scratched);
+    const totalStaked = +(activePicks.length * stake).toFixed(2);
+    const totalReturns = +activePicks.filter(p => p.winner && p.sp).reduce((s, p) => s + p.sp * stake, 0).toFixed(2);
+    const pnl = +(totalReturns - totalStaked).toFixed(2);
+    const winRate = activePicks.length ? +(activePicks.filter(p => p.winner).length / activePicks.length * 100).toFixed(1) : 0;
+    const roi = totalStaked ? +(pnl / totalStaked * 100).toFixed(1) : 0;
+
+    const pnlCls  = pnl >= 0 ? 'pnl-positive' : 'pnl-negative';
+    const pnlSign = pnl >= 0 ? '+' : '';
+    const roiSign = roi >= 0 ? '+' : '';
+    const wins   = activePicks.filter(p => p.winner).length;
+    const losses = activePicks.filter(p => !p.winner).length;
+
+    el.innerHTML = `
+      <div class="pnl-bar">
+        <div class="pnl-cell">
+          <div class="pnl-cell-num">${activePicks.length}</div>
+          <div class="pnl-cell-label">Picks ($${totalStaked} staked)</div>
+        </div>
+        <div class="pnl-cell">
+          <div class="pnl-cell-num pnl-positive">${wins}</div>
+          <div class="pnl-cell-label">Wins (${winRate}%)</div>
+        </div>
+        <div class="pnl-cell">
+          <div class="pnl-cell-num pnl-negative">${losses}</div>
+          <div class="pnl-cell-label">Losses</div>
+        </div>
+        <div class="pnl-cell">
+          <div class="pnl-cell-num ${pnlCls}">${pnlSign}$${pnl.toFixed(2)}</div>
+          <div class="pnl-cell-label">P&L (${roiSign}${roi}% ROI)</div>
+        </div>
+      </div>
+      ${data.picks.map(p => renderYesterdayCard(p, stake)).join('')}`;
   }
 
   async function load() {
@@ -1222,6 +1244,11 @@
   document.getElementById('stakeInput').addEventListener('input', function() {
     const stake = parseFloat(this.value) || 10;
     if (picksData) updatePayouts(stake);
+  });
+
+  document.getElementById('stakeInputYesterday').addEventListener('input', function() {
+    const stake = parseFloat(this.value) || 10;
+    if (yesterdayData) renderYesterdayContent(yesterdayData, stake);
   });
 
   load();
