@@ -842,15 +842,28 @@
     return '★'.repeat(n) + '☆'.repeat(5 - n);
   }
 
-  function renderCard(pick, stake) {
+  function renderCard(pick, stake, result) {
+    const now = Date.now();
+    const jumpMs = pick.scheduled_time ? new Date(pick.scheduled_time).getTime() : null;
+    const isPast = jumpMs && jumpMs < now;
+
     const isHot = pick.hot_pick;
-    const odds = pick.best_available_odds;
-    const pay = calcPayout(odds, stake);
     const conf = pick.model_pct;
     const barW = Math.min(100, (conf / 70) * 100);
 
+    // Badge — show result if race is done, otherwise confidence tier
     let badgeHtml;
-    if (conf >= 45) {
+    if (isPast && result) {
+      if (result.scratched) {
+        badgeHtml = `<span class="pick-badge-standard" style="background:var(--bg-elevated);color:var(--text-dim);border-color:var(--border);">Scratched</span>`;
+      } else if (result.winner) {
+        badgeHtml = `<span class="pick-badge-standard" style="background:var(--green-dim);color:var(--green);border-color:rgba(34,197,94,0.25);">✓ Correct</span>`;
+      } else {
+        badgeHtml = `<span class="pick-badge-standard" style="background:rgba(239,68,68,0.10);color:#f87171;border-color:rgba(239,68,68,0.25);">✗ Wrong</span>`;
+      }
+    } else if (isPast) {
+      badgeHtml = `<span class="pick-badge-standard" style="background:var(--bg-elevated);color:var(--text-dim);border-color:var(--border);">Completed</span>`;
+    } else if (conf >= 45) {
       badgeHtml = `<span class="pick-badge-hot">🔥 Hot Pick</span>`;
     } else if (conf >= 35) {
       badgeHtml = `<span class="pick-badge-hot" style="background:rgba(59,130,246,0.12);color:#60a5fa;border-color:rgba(59,130,246,0.28);">⚡ High Confidence</span>`;
@@ -861,12 +874,36 @@
     const timeStr = fmtTime(pick.scheduled_time);
     const countdownId = `cd-${escHtml(pick.race_id).replace(/[^a-z0-9]/gi, '-')}`;
 
-    const oddsHtml = odds
-      ? `<div class="odds-badge"><span class="odds-label">Best Odds</span>$${odds.toFixed(2)}</div>`
+    // Use SP for completed races, tote odds for upcoming
+    const displayOdds = (result && result.sp) ? result.sp : pick.best_available_odds;
+    const oddsLabel   = (result && result.sp) ? 'Starting Price' : 'Best Odds';
+    const pay = calcPayout(displayOdds, stake);
+
+    const oddsHtml = displayOdds
+      ? `<div class="odds-badge"><span class="odds-label">${oddsLabel}</span>$${displayOdds.toFixed(2)}</div>`
       : `<div class="odds-badge" style="color:var(--text-dim)"><span class="odds-label">Odds</span>TBA</div>`;
 
     let payoutHtml;
-    if (pay) {
+    if (isPast && result) {
+      if (result.scratched) {
+        payoutHtml = `<div class="no-odds">Scratched — no bet</div>`;
+      } else if (result.winner && pay) {
+        payoutHtml = `
+          <div class="payout-box">
+            <div class="payout-profit-label">$${stake} profit</div>
+            <div class="payout-profit">+$${pay.profit.toFixed(2)}</div>
+            <div class="payout-return">Return: <span class="return-amt">$${pay.gross.toFixed(2)}</span></div>
+            <div class="payout-stake">Stake: $${stake}</div>
+          </div>`;
+      } else {
+        payoutHtml = `
+          <div class="payout-box" style="background:rgba(239,68,68,0.08);border-color:rgba(239,68,68,0.2);">
+            <div class="payout-profit-label" style="color:var(--text-dim)">$${stake} loss</div>
+            <div class="payout-profit" style="color:#f87171;">-$${(+stake).toFixed(2)}</div>
+            <div class="payout-stake">Stake: $${stake}</div>
+          </div>`;
+      }
+    } else if (pay) {
       payoutHtml = `
         <div class="payout-box">
           <div class="payout-profit-label">$${stake} profit</div>
@@ -878,24 +915,26 @@
       payoutHtml = `<div class="no-odds">Odds not yet available</div>`;
     }
 
-    const edgeHtml = (pick.edge_pct != null && odds)
+    const edgeHtml = (!isPast && pick.edge_pct != null && displayOdds)
       ? `<span class="${pick.edge_pct >= 0 ? 'edge-positive' : 'edge-negative'}">${pick.edge_pct >= 0 ? '+' : ''}${pick.edge_pct}% edge</span>
          <span class="edge-label">model ${conf}% vs market ${pick.market_implied_pct}%</span>`
       : '';
 
-    const jockeyChip = pick.jockey ? `<span class="chip">J: ${escHtml(pick.jockey)}</span>` : '';
+    const jockeyChip  = pick.jockey  ? `<span class="chip">J: ${escHtml(pick.jockey)}</span>` : '';
     const trainerChip = pick.trainer ? `<span class="chip">T: ${escHtml(pick.trainer)}</span>` : '';
     const barrierChip = pick.barrier ? `<span class="chip">B${pick.barrier}</span>` : '';
-    const weightChip = pick.weight ? `<span class="chip">${pick.weight}kg</span>` : '';
+    const weightChip  = pick.weight  ? `<span class="chip">${pick.weight}kg</span>` : '';
 
     const trackChip = pick.track_condition ? `<span class="pick-footer-chip"><strong>${escHtml(pick.track_condition)}</strong></span><span class="pick-footer-sep">·</span>` : '';
-    const distChip = pick.distance ? `<span class="pick-footer-chip"><strong>${pick.distance}m</strong></span><span class="pick-footer-sep">·</span>` : '';
+    const distChip  = pick.distance ? `<span class="pick-footer-chip"><strong>${pick.distance}m</strong></span><span class="pick-footer-sep">·</span>` : '';
     const stateChip = pick.state ? `<span class="pick-footer-chip">${escHtml(pick.state)}</span>` : '';
-    const valueChip = pick.value_rating != null
+    const valueChip = (!isPast && pick.value_rating != null)
       ? `<span class="pick-footer-chip" style="margin-left:auto;color:var(--gold)">${starsFromValue(pick.value_rating)} value</span>` : '';
 
+    const cardStyle = isPast && result && !result.winner && !result.scratched ? 'opacity:0.75;' : '';
+
     return `
-      <div class="pick-card ${isHot ? 'hot' : ''}">
+      <div class="pick-card ${isHot && !isPast ? 'hot' : ''}" style="${cardStyle}">
         <div class="pick-card-top-bar">
           ${badgeHtml}
           <div class="pick-race-ref">
@@ -910,9 +949,7 @@
         <div class="pick-body">
           <div class="pick-left">
             <div class="pick-horse-name">${escHtml(pick.horse_name)}</div>
-            <div class="pick-details">
-              ${barrierChip}${jockeyChip}${trainerChip}${weightChip}
-            </div>
+            <div class="pick-details">${barrierChip}${jockeyChip}${trainerChip}${weightChip}</div>
             <div class="conf-row">
               <div class="conf-bar-track">
                 <div class="conf-bar-fill" style="width:${barW}%"></div>
@@ -937,26 +974,20 @@
       </div>`;
   }
 
-  function renderContent(data, stake) {
-    const now = Date.now();
-    // Drop picks whose scheduled_time is more than 60 min in the past
-    const visiblePicks = data.picks.filter(p => {
-      if (!p.scheduled_time) return true;
-      const jump = new Date(p.scheduled_time).getTime();
-      return (now - jump) < 60 * 60 * 1000;
-    });
+  function renderContent(data, stake, results) {
+    const picks = data.picks;
+    results = results || {};
 
-    const today = new Date().toISOString().slice(0, 10);
     const picksByDate = {};
-    for (const p of visiblePicks) {
+    for (const p of picks) {
       if (!picksByDate[p.date]) picksByDate[p.date] = [];
       picksByDate[p.date].push(p);
     }
 
     // Stats
-    const total = visiblePicks.length;
-    const hot = visiblePicks.filter(p => p.hot_pick).length;
-    const avgConf = total ? (visiblePicks.reduce((s, p) => s + p.model_pct, 0) / total).toFixed(0) + '%' : '—';
+    const total = picks.length;
+    const hot = picks.filter(p => p.hot_pick).length;
+    const avgConf = total ? (picks.reduce((s, p) => s + p.model_pct, 0) / total).toFixed(0) + '%' : '—';
     document.getElementById('statTotal').textContent = total;
     document.getElementById('statHot').textContent = hot;
     document.getElementById('statAvgConf').textContent = avgConf;
@@ -989,7 +1020,7 @@
             <span class="day-date">${escHtml(dateStr)}</span>
             <span class="day-count">${count} pick${count !== 1 ? 's' : ''}</span>
           </div>
-          ${picks.map(p => renderCard(p, stake)).join('')}
+          ${picks.map(p => renderCard(p, stake, results[p.race_id])).join('')}
         </div>`;
     });
 
@@ -1209,7 +1240,23 @@
       if (!res.ok) throw new Error(res.statusText);
       picksData = await res.json();
       const stake = parseFloat(document.getElementById('stakeInput').value) || 10;
-      renderContent(picksData, stake);
+
+      // If any picks have already jumped, fetch today's results to show outcomes
+      const now = Date.now();
+      const hasPast = picksData.picks.some(p => p.scheduled_time && new Date(p.scheduled_time).getTime() < now);
+      let resultsMap = {};
+      if (hasPast) {
+        try {
+          const today = new Date().toISOString().slice(0, 10);
+          const rr = await fetch(`${API}/api/edge/yesterday?date=${today}`);
+          if (rr.ok) {
+            const rd = await rr.json();
+            for (const r of rd.picks) resultsMap[r.race_id] = r;
+          }
+        } catch (e) { /* results are best-effort */ }
+      }
+
+      renderContent(picksData, stake, resultsMap);
       refreshOdds();
     } catch (e) {
       document.getElementById('content').innerHTML = `
