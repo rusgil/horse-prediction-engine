@@ -459,6 +459,111 @@ async def refresh_edge_odds():
     return {"updated": updated, "count": len(updated)}
 
 
+@app.get("/api/edge/yesterday")
+async def get_edge_yesterday():
+    """Yesterday's qualifying picks with actual results and SP odds from punters."""
+    yesterday = (date.today() - timedelta(days=1)).isoformat()
+    threshold = 0.30
+    prefix = f"{yesterday}_"
+    stake = 10
+
+    async with get_session() as session:
+        result = await session.execute(
+            select(RunnerPredictionRow)
+            .where(RunnerPredictionRow.model_rank == 1)
+            .where(RunnerPredictionRow.win_probability >= threshold)
+            .where(RunnerPredictionRow.race_id.like(f"{prefix}%"))
+            .order_by(RunnerPredictionRow.win_probability.desc())
+        )
+        picks = result.scalars().all()
+
+    if not picks:
+        return {"date": yesterday, "picks": [], "summary": None}
+
+    client = get_tab_client()
+    unique_venues = {_parse_race_id(p.race_id)[1] for p in picks}
+
+    async def fetch_results(venue: str) -> dict:
+        slug = _meeting_slug(venue, yesterday)
+        try:
+            events = await asyncio.wait_for(client.get_meeting_races(slug), timeout=30)
+            out = {}
+            for event in events:
+                race_num = event.get("eventNumber")
+                for sel in event.get("selections") or []:
+                    name = (sel.get("competitor") or {}).get("name")
+                    if name:
+                        pos = sel.get("selectionResult")
+                        sp = sel.get("startingPrice")
+                        out[(venue, race_num, name)] = {
+                            "position": int(pos) if isinstance(pos, (int, float)) and pos > 0 else None,
+                            "sp": float(sp) if sp else None,
+                            "winner": pos == 1,
+                            "scratched": sel.get("status") == "SCRATCHED",
+                        }
+            return out
+        except Exception as e:
+            log.warning("yesterday results fetch failed for %s: %s", venue, e)
+            return {}
+
+    results_list = await asyncio.gather(*[fetch_results(v) for v in unique_venues])
+    all_results: dict = {}
+    for r in results_list:
+        all_results.update(r)
+
+    output = []
+    for p in picks:
+        _, venue_code, race_num = _parse_race_id(p.race_id)
+        r = all_results.get((venue_code, race_num, p.horse_name), {})
+        sp = r.get("sp") or p.best_available_odds or None
+        winner = r.get("winner", False)
+        position = r.get("position")
+        scratched = r.get("scratched", False)
+        model_pct = round(p.win_probability * 100, 1)
+        payout = round(sp * stake, 2) if winner and sp else 0
+        profit = round(payout - stake, 2) if winner and sp else -stake
+
+        output.append({
+            "race_id": p.race_id,
+            "venue": venue_code,
+            "race_number": race_num,
+            "horse_name": p.horse_name,
+            "jockey": p.jockey,
+            "trainer": p.trainer,
+            "barrier": p.barrier,
+            "weight": p.weight,
+            "model_pct": model_pct,
+            "calibrated_win_rate": next((r2 for t, r2 in _CALIBRATED_WIN_RATES if model_pct >= t), 66),
+            "sp": sp,
+            "winner": winner,
+            "position": position,
+            "scratched": scratched,
+            "payout": payout,
+            "profit": profit,
+            "stake": stake,
+        })
+
+    wins = [o for o in output if o["winner"]]
+    total_staked = len(output) * stake
+    total_returns = sum(o["payout"] for o in output)
+    pnl = round(total_returns - total_staked, 2)
+
+    return {
+        "date": yesterday,
+        "picks": output,
+        "summary": {
+            "total": len(output),
+            "wins": len(wins),
+            "losses": len(output) - len(wins),
+            "win_rate": round(len(wins) / len(output) * 100, 1) if output else 0,
+            "pnl": pnl,
+            "total_staked": total_staked,
+            "total_returns": round(total_returns, 2),
+            "roi_pct": round((pnl / total_staked) * 100, 1) if total_staked else 0,
+        },
+    }
+
+
 # ── Frontend ─────────────────────────────────────────────────────────────────
 
 @app.get("/", include_in_schema=False)

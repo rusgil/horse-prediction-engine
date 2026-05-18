@@ -539,6 +539,180 @@
       .pick-right { align-items: flex-start; flex-direction: row; flex-wrap: wrap; }
       .hero-meta { gap: 10px; }
     }
+
+    /* ── Tabs ────────────────────────────────────────────── */
+    .tabs {
+      display: flex; gap: 4px;
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 4px;
+      margin-bottom: 24px;
+      width: fit-content;
+    }
+    .tab-btn {
+      font-family: 'Barlow Condensed', sans-serif;
+      font-size: 0.85rem; font-weight: 700;
+      letter-spacing: 0.08em; text-transform: uppercase;
+      background: none; border: none; cursor: pointer;
+      color: var(--text-dim);
+      border-radius: 8px;
+      padding: 7px 18px;
+      transition: all 0.15s;
+    }
+    .tab-btn:hover { color: var(--text-primary); }
+    .tab-btn.active {
+      background: var(--bg-elevated);
+      color: var(--text-primary);
+      border: 1px solid var(--border);
+    }
+
+    /* ── P&L summary bar ─────────────────────────────────── */
+    .pnl-bar {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(100px, 1fr));
+      gap: 12px;
+      margin-bottom: 24px;
+    }
+    .pnl-cell {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 14px 16px;
+      text-align: center;
+    }
+    .pnl-cell-num {
+      font-family: 'Barlow Condensed', sans-serif;
+      font-size: 1.6rem; font-weight: 900;
+      line-height: 1;
+    }
+    .pnl-cell-label {
+      font-size: 0.65rem; color: var(--text-dim);
+      text-transform: uppercase; letter-spacing: 0.1em;
+      margin-top: 4px;
+    }
+    .pnl-positive { color: var(--green-bright); }
+    .pnl-negative { color: #f87171; }
+
+    /* ── Result card ─────────────────────────────────────── */
+    .result-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      margin-bottom: 10px;
+      overflow: hidden;
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 0;
+    }
+    .result-card.win { border-color: rgba(34,197,94,0.4); }
+    .result-card.loss { border-color: rgba(239,68,68,0.2); }
+    .result-card.scratched { opacity: 0.5; }
+
+    .result-left { padding: 14px 16px; }
+    .result-top {
+      display: flex; align-items: center; gap: 8px;
+      margin-bottom: 8px; flex-wrap: wrap;
+    }
+    .result-badge-win {
+      font-family: 'Barlow Condensed', sans-serif;
+      font-size: 0.7rem; font-weight: 800;
+      letter-spacing: 0.1em; text-transform: uppercase;
+      background: var(--green-dim); color: var(--green);
+      border: 1px solid rgba(34,197,94,0.3);
+      border-radius: 999px; padding: 2px 10px;
+    }
+    .result-badge-loss {
+      font-family: 'Barlow Condensed', sans-serif;
+      font-size: 0.7rem; font-weight: 800;
+      letter-spacing: 0.1em; text-transform: uppercase;
+      background: rgba(239,68,68,0.1); color: #f87171;
+      border: 1px solid rgba(239,68,68,0.25);
+      border-radius: 999px; padding: 2px 10px;
+    }
+    .result-badge-scratched {
+      font-family: 'Barlow Condensed', sans-serif;
+      font-size: 0.7rem; font-weight: 800;
+      letter-spacing: 0.1em; text-transform: uppercase;
+      background: var(--bg-elevated); color: var(--text-dim);
+      border: 1px solid var(--border);
+      border-radius: 999px; padding: 2px 10px;
+    }
+    .result-race-ref {
+      font-size: 0.72rem; color: var(--text-dim);
+      display: flex; align-items: center; gap: 6px;
+    }
+    .result-race-ref .venue-name {
+      font-weight: 600; color: var(--text-secondary);
+      text-transform: uppercase;
+      font-family: 'Barlow Condensed', sans-serif;
+      font-size: 0.85rem; letter-spacing: 0.06em;
+    }
+    .result-horse {
+      font-family: 'Barlow Condensed', sans-serif;
+      font-size: 1.5rem; font-weight: 900;
+      text-transform: uppercase; line-height: 1;
+      margin-bottom: 4px;
+    }
+    .result-card.win .result-horse { color: var(--green-bright); }
+    .result-card.loss .result-horse { color: var(--text-secondary); }
+    .result-details {
+      font-size: 0.7rem; color: var(--text-dim);
+      display: flex; gap: 6px; flex-wrap: wrap; align-items: center;
+      margin-bottom: 8px;
+    }
+    .result-details .chip {
+      background: var(--bg-elevated); border: 1px solid var(--border);
+      border-radius: 6px; padding: 1px 6px; color: var(--text-secondary);
+    }
+    .result-conf {
+      font-size: 0.7rem; color: var(--text-dim);
+      display: flex; align-items: center; gap: 8px;
+    }
+    .result-conf-bar {
+      flex: 1; max-width: 120px; height: 5px;
+      background: var(--bg-elevated); border-radius: 999px; overflow: hidden;
+    }
+    .result-conf-fill {
+      height: 100%; border-radius: 999px;
+      background: var(--green);
+    }
+    .result-card.loss .result-conf-fill { background: var(--text-dim); }
+
+    .result-right {
+      display: flex; flex-direction: column;
+      align-items: center; justify-content: center;
+      padding: 16px 20px;
+      background: var(--bg-elevated);
+      border-left: 1px solid var(--border);
+      min-width: 120px; text-align: center; gap: 4px;
+    }
+    .result-sp {
+      font-family: 'Barlow Condensed', sans-serif;
+      font-size: 1.4rem; font-weight: 900;
+      color: var(--text-primary);
+    }
+    .result-sp-label {
+      font-size: 0.6rem; color: var(--text-dim);
+      text-transform: uppercase; letter-spacing: 0.1em;
+    }
+    .result-payout-win {
+      font-family: 'Barlow Condensed', sans-serif;
+      font-size: 1.1rem; font-weight: 800;
+      color: var(--green-bright); margin-top: 6px;
+    }
+    .result-payout-loss {
+      font-family: 'Barlow Condensed', sans-serif;
+      font-size: 1.1rem; font-weight: 800;
+      color: #f87171; margin-top: 6px;
+    }
+    .result-stake-label {
+      font-size: 0.62rem; color: var(--text-dim);
+    }
+    .result-position {
+      font-size: 0.7rem; color: var(--text-dim);
+      margin-top: 2px;
+    }
   </style>
 </head>
 <body>
@@ -578,19 +752,34 @@
     </div>
   </div>
 
-  <div class="stake-bar">
-    <span class="stake-label">Stake per bet:</span>
-    <div class="stake-input-wrap">
-      <span class="stake-currency">$</span>
-      <input type="number" class="stake-input" id="stakeInput" value="10" min="1" max="10000" />
-    </div>
-    <span class="stake-note">Profit figures update as you type. <strong>At 30%+ confidence — historically 66%+ win rate.</strong></span>
+  <div class="tabs">
+    <button class="tab-btn active" id="tabUpcoming" onclick="switchTab('upcoming')">Upcoming</button>
+    <button class="tab-btn" id="tabYesterday" onclick="switchTab('yesterday')">Yesterday's Results</button>
   </div>
 
-  <div id="content">
-    <div class="loading">
-      <div class="loading-spinner"></div>
-      Loading picks…
+  <div id="panelUpcoming">
+    <div class="stake-bar">
+      <span class="stake-label">Stake per bet:</span>
+      <div class="stake-input-wrap">
+        <span class="stake-currency">$</span>
+        <input type="number" class="stake-input" id="stakeInput" value="10" min="1" max="10000" />
+      </div>
+      <span class="stake-note">Profit figures update as you type. <strong>At 30%+ confidence — historically 66%+ win rate.</strong></span>
+    </div>
+    <div id="content">
+      <div class="loading">
+        <div class="loading-spinner"></div>
+        Loading picks…
+      </div>
+    </div>
+  </div>
+
+  <div id="panelYesterday" style="display:none">
+    <div id="yesterdayContent">
+      <div class="loading">
+        <div class="loading-spinner"></div>
+        Loading yesterday's results…
+      </div>
     </div>
   </div>
 
@@ -825,6 +1014,117 @@
 
   const API = 'https://web-production-dec62.up.railway.app';
   let picksData = null;
+  let yesterdayLoaded = false;
+
+  function switchTab(tab) {
+    document.getElementById('tabUpcoming').classList.toggle('active', tab === 'upcoming');
+    document.getElementById('tabYesterday').classList.toggle('active', tab === 'yesterday');
+    document.getElementById('panelUpcoming').style.display = tab === 'upcoming' ? '' : 'none';
+    document.getElementById('panelYesterday').style.display = tab === 'yesterday' ? '' : 'none';
+    if (tab === 'yesterday' && !yesterdayLoaded) loadYesterday();
+  }
+
+  function ordinal(n) {
+    if (!n) return '—';
+    const s = ['th','st','nd','rd'], v = n % 100;
+    return n + (s[(v-20)%10] || s[v] || s[0]);
+  }
+
+  function renderYesterdayCard(p) {
+    const cls = p.scratched ? 'scratched' : p.winner ? 'win' : 'loss';
+    const badge = p.scratched
+      ? `<span class="result-badge-scratched">Scratched</span>`
+      : p.winner
+        ? `<span class="result-badge-win">✓ Won</span>`
+        : `<span class="result-badge-loss">✗ Lost</span>`;
+    const barW = Math.min(100, (p.model_pct / 70) * 100);
+    const jChip = p.jockey ? `<span class="chip">J: ${escHtml(p.jockey)}</span>` : '';
+    const bChip = p.barrier ? `<span class="chip">B${p.barrier}</span>` : '';
+    const wChip = p.weight ? `<span class="chip">${p.weight}kg</span>` : '';
+
+    const spHtml = p.sp
+      ? `<div class="result-sp">$${p.sp.toFixed(2)}</div><div class="result-sp-label">Starting Price</div>`
+      : `<div class="result-sp" style="color:var(--text-dim)">N/A</div><div class="result-sp-label">Starting Price</div>`;
+
+    let payoutHtml;
+    if (p.scratched) {
+      payoutHtml = `<div class="result-payout-loss" style="color:var(--text-dim)">—</div>`;
+    } else if (p.winner && p.sp) {
+      payoutHtml = `<div class="result-payout-win">+$${p.profit.toFixed(2)}</div><div class="result-stake-label">Return $${p.payout.toFixed(2)}</div>`;
+    } else {
+      payoutHtml = `<div class="result-payout-loss">-$${p.stake.toFixed(2)}</div>`;
+    }
+
+    return `
+      <div class="result-card ${cls}">
+        <div class="result-left">
+          <div class="result-top">
+            ${badge}
+            <div class="result-race-ref">
+              <span class="venue-name">${escHtml(p.venue)}</span>
+              <span>·</span><span>R${p.race_number}</span>
+            </div>
+          </div>
+          <div class="result-horse">${escHtml(p.horse_name)}</div>
+          <div class="result-details">${bChip}${jChip}${wChip}</div>
+          <div class="result-conf">
+            <div class="result-conf-bar"><div class="result-conf-fill" style="width:${barW}%"></div></div>
+            <span>${p.model_pct}% confidence · ${p.calibrated_win_rate}% hist. win rate</span>
+          </div>
+          ${p.position && !p.winner ? `<div class="result-position" style="margin-top:4px">Finished ${ordinal(p.position)}</div>` : ''}
+        </div>
+        <div class="result-right">
+          ${spHtml}
+          ${payoutHtml}
+        </div>
+      </div>`;
+  }
+
+  async function loadYesterday() {
+    yesterdayLoaded = true;
+    try {
+      const res = await fetch(`${API}/api/edge/yesterday`);
+      if (!res.ok) throw new Error(res.statusText);
+      const data = await res.json();
+      const el = document.getElementById('yesterdayContent');
+
+      if (!data.picks.length) {
+        el.innerHTML = `<div class="empty-state"><div class="empty-icon">📭</div><div class="empty-title">No qualifying picks yesterday</div><div class="empty-sub">No races had ≥30% confidence on ${data.date}.</div></div>`;
+        return;
+      }
+
+      const s = data.summary;
+      const pnlCls = s.pnl >= 0 ? 'pnl-positive' : 'pnl-negative';
+      const pnlSign = s.pnl >= 0 ? '+' : '';
+      const roiSign = s.roi_pct >= 0 ? '+' : '';
+
+      let html = `
+        <div class="pnl-bar">
+          <div class="pnl-cell">
+            <div class="pnl-cell-num">${s.total}</div>
+            <div class="pnl-cell-label">Picks ($${s.total_staked} staked)</div>
+          </div>
+          <div class="pnl-cell">
+            <div class="pnl-cell-num pnl-positive">${s.wins}</div>
+            <div class="pnl-cell-label">Wins (${s.win_rate}%)</div>
+          </div>
+          <div class="pnl-cell">
+            <div class="pnl-cell-num pnl-negative">${s.losses}</div>
+            <div class="pnl-cell-label">Losses</div>
+          </div>
+          <div class="pnl-cell">
+            <div class="pnl-cell-num ${pnlCls}">${pnlSign}$${s.pnl.toFixed(2)}</div>
+            <div class="pnl-cell-label">P&L (${roiSign}${s.roi_pct}% ROI)</div>
+          </div>
+        </div>
+        ${data.picks.map(renderYesterdayCard).join('')}`;
+
+      el.innerHTML = html;
+    } catch (e) {
+      document.getElementById('yesterdayContent').innerHTML = `
+        <div class="empty-state"><div class="empty-icon">⚠️</div><div class="empty-title">Could not load results</div><div class="empty-sub">${escHtml(e.message)}</div></div>`;
+    }
+  }
 
   async function load() {
     try {
