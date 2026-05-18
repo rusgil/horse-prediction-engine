@@ -194,9 +194,9 @@ async def lifespan(app: FastAPI):
     scheduler.add_job(_scheduled_enrich, CronTrigger(hour=10, minute=0, timezone="Australia/Sydney"))
     scheduler.add_job(_scheduled_enrich, CronTrigger(hour=13, minute=0, timezone="Australia/Sydney"))
     scheduler.add_job(_scheduled_seed_results, CronTrigger(hour=23, minute=0, timezone="Australia/Sydney"))
-    scheduler.add_job(_scheduled_calibrate, CronTrigger(day_of_week="sun", hour=2, minute=0, timezone="Australia/Sydney"))
+    scheduler.add_job(_scheduled_calibrate, CronTrigger(hour=2, minute=0, timezone="Australia/Sydney"))
     scheduler.start()
-    log.info("[scheduler] Cron jobs scheduled: 6am/10am/1pm enrich, 11pm seed results, 2am Sun calibration")
+    log.info("[scheduler] Cron jobs scheduled: 6am/10am/1pm enrich, 11pm seed results, 2am daily calibration")
 
     # Enrich today on startup so deploys don't leave races un-loaded
     asyncio.create_task(_scheduled_enrich())
