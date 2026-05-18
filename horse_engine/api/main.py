@@ -1074,14 +1074,14 @@ async def _run_backtest_range(start_date: str, end_date: str) -> None:
     while current <= end:
         date_str = current.isoformat()
         try:
-            meetings = await client.get_meetings(date_str)
+            meetings = await asyncio.wait_for(client.get_meetings(date_str), timeout=90)
             for m in meetings:
                 slug = m.get("slug", "")
                 venue_code = slug.replace(f"-{date_str.replace('-', '')}", "") if slug else ""
                 venue_name = m.get("venue", venue_code)
                 state_code = m.get("state", "")
                 try:
-                    events = await asyncio.wait_for(client.get_meeting_races(slug), timeout=60)
+                    events = await asyncio.wait_for(client.get_meeting_races(slug), timeout=120)
                     rows_to_insert = []
                     for event in events:
                         selections = event.get("selections") or []
@@ -1102,7 +1102,7 @@ async def _run_backtest_range(start_date: str, end_date: str) -> None:
                             race_id = f"{date_str}_{venue_code}_R{race_num}"
                             event["_meeting"] = {"slug": slug, "railPosition": m.get("rail_position", "")}
                             race = await asyncio.wait_for(
-                                client.parse_race(event, date_str, venue_name, state_code), timeout=30
+                                client.parse_race(event, date_str, venue_name, state_code), timeout=60
                             )
                             predictions, _ = await enrich_and_predict_race(race, model)
                             for pred in predictions:
@@ -1120,7 +1120,7 @@ async def _run_backtest_range(start_date: str, end_date: str) -> None:
                                     source="backtest",
                                 ))
                         except Exception as e:
-                            log.debug("Backtest race error %s: %s", slug, e)
+                            log.debug("Backtest race error %s R%s: %s", slug, event.get("eventNumber"), e)
                             _backtest_state["errors"] += 1
                     if rows_to_insert:
                         async with get_session() as session:

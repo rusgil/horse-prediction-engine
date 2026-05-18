@@ -174,9 +174,9 @@ class PuntersClient:
 
     # ── Internal helpers ────────────────────────────────────────────────
 
-    @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=8))
+    @retry(stop=stop_after_attempt(2), wait=wait_exponential(multiplier=1, min=2, max=5))
     async def _gql(self, query: str) -> dict:
-        async with httpx.AsyncClient(headers=_HEADERS_GQL, timeout=20.0) as client:
+        async with httpx.AsyncClient(headers=_HEADERS_GQL, timeout=15.0) as client:
             resp = await client.post(_GRAPHQL, json={"query": query})
             resp.raise_for_status()
             return resp.json()
