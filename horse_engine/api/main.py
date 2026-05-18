@@ -283,6 +283,19 @@ def _meeting_slug(venue: str, race_date: str) -> str:
 
 _CALIBRATED_WIN_RATES = [(50, 88), (45, 82), (40, 76), (35, 71), (30, 66)]
 
+def _parse_race_id(race_id: str) -> tuple[str, str, int | None]:
+    """Parse race_id '{date}_{venue}_R{num}' → (date, venue, race_number)."""
+    try:
+        parts = race_id.split("_R")
+        race_num = int(parts[-1])
+        rest = "_R".join(parts[:-1])          # handles venues with underscores
+        date_part = rest[:10]
+        venue_part = rest[11:]
+        return date_part, venue_part, race_num
+    except Exception:
+        return "", race_id, None
+
+
 @app.get("/api/edge")
 async def get_edge_picks():
     """High-confidence picks for today + next 3 days. Threshold: model win_probability >= 30%."""
@@ -292,34 +305,35 @@ async def get_edge_picks():
 
     for i in range(4):
         target_date = (today + timedelta(days=i)).isoformat()
+        # Filter by race_id prefix — avoids join with unpopulated race_predictions table
+        prefix = f"{target_date}_"
         async with get_session() as session:
             result = await session.execute(
-                select(RunnerPredictionRow, RacePredictionRow)
-                .join(RacePredictionRow, RunnerPredictionRow.race_id == RacePredictionRow.race_id)
+                select(RunnerPredictionRow)
                 .where(RunnerPredictionRow.model_rank == 1)
                 .where(RunnerPredictionRow.win_probability >= threshold)
-                .where(RacePredictionRow.date == target_date)
+                .where(RunnerPredictionRow.race_id.like(f"{prefix}%"))
                 .order_by(RunnerPredictionRow.win_probability.desc())
             )
-            rows = result.all()
-            for runner_row, race_row in rows:
+            rows = result.scalars().all()
+            for runner_row in rows:
                 odds = runner_row.best_available_odds or 0
                 model_pct = round(runner_row.win_probability * 100, 1)
                 market_implied_pct = round((1 / odds) * 100, 1) if odds else None
                 edge_pct = round(model_pct - market_implied_pct, 1) if market_implied_pct else None
-                calibrated = next((r for t, r in _CALIBRATED_WIN_RATES if model_pct >= t), 76)
-                hot = model_pct >= 45
+                calibrated = next((r for t, r in _CALIBRATED_WIN_RATES if model_pct >= t), 66)
+                _, venue_code, race_num = _parse_race_id(runner_row.race_id)
 
                 picks.append({
                     "date": target_date,
                     "race_id": runner_row.race_id,
-                    "venue": race_row.venue,
-                    "state": race_row.state,
-                    "race_number": race_row.race_number,
-                    "race_name": race_row.race_name,
-                    "distance": race_row.distance,
-                    "track_condition": race_row.track_condition,
-                    "scheduled_time": race_row.scheduled_time,
+                    "venue": venue_code,
+                    "state": None,
+                    "race_number": race_num,
+                    "race_name": None,
+                    "distance": None,
+                    "track_condition": None,
+                    "scheduled_time": None,
                     "horse_name": runner_row.horse_name,
                     "jockey": runner_row.jockey,
                     "trainer": runner_row.trainer,
