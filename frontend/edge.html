@@ -795,7 +795,8 @@
 
   async function load() {
     try {
-      const res = await fetch('/api/edge');
+      const API = 'https://web-production-dec62.up.railway.app';
+      const res = await fetch(`${API}/api/edge`);
       if (!res.ok) throw new Error(res.statusText);
       picksData = await res.json();
       const stake = parseFloat(document.getElementById('stakeInput').value) || 10;
