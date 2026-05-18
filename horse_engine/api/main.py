@@ -281,12 +281,12 @@ def _meeting_slug(venue: str, race_date: str) -> str:
 
 # ── Edge picks ───────────────────────────────────────────────────────────────
 
-_CALIBRATED_WIN_RATES = [(50, 88), (45, 82), (40, 76)]
+_CALIBRATED_WIN_RATES = [(50, 88), (45, 82), (40, 76), (35, 71), (30, 66)]
 
 @app.get("/api/edge")
 async def get_edge_picks():
-    """High-confidence picks for today + next 3 days. Threshold: model win_probability >= 40%."""
-    threshold = 0.40
+    """High-confidence picks for today + next 3 days. Threshold: model win_probability >= 30%."""
+    threshold = 0.30
     picks = []
     today = date.today()
 

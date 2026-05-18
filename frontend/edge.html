@@ -559,7 +559,7 @@
       <span class="stake-currency">$</span>
       <input type="number" class="stake-input" id="stakeInput" value="10" min="1" max="10000" />
     </div>
-    <span class="stake-note">Profit figures update as you type. <strong>At 40%+ confidence — historically 76%+ win rate.</strong></span>
+    <span class="stake-note">Profit figures update as you type. <strong>At 30%+ confidence — historically 66%+ win rate.</strong></span>
   </div>
 
   <div id="content">
@@ -618,9 +618,14 @@
     const conf = pick.model_pct;
     const barW = Math.min(100, (conf / 70) * 100);
 
-    const badgeHtml = isHot
-      ? `<span class="pick-badge-hot">🔥 Hot Pick</span>`
-      : `<span class="pick-badge-standard">Strong Pick</span>`;
+    let badgeHtml;
+    if (conf >= 45) {
+      badgeHtml = `<span class="pick-badge-hot">🔥 Hot Pick</span>`;
+    } else if (conf >= 35) {
+      badgeHtml = `<span class="pick-badge-hot" style="background:rgba(59,130,246,0.12);color:#60a5fa;border-color:rgba(59,130,246,0.28);">⚡ High Confidence</span>`;
+    } else {
+      badgeHtml = `<span class="pick-badge-standard">Strong Pick</span>`;
+    }
 
     const timeStr = fmtTime(pick.scheduled_time);
 
@@ -723,7 +728,7 @@
         <div class="empty-state">
           <div class="empty-icon">🔍</div>
           <div class="empty-title">No high-confidence picks right now</div>
-          <div class="empty-sub">The model hasn't found any races with ≥${data.threshold_pct}% confidence in the next 4 days.<br>Check back after today's races are enriched.</div>
+          <div class="empty-sub">The model hasn't found any races with ≥${data.threshold_pct}% confidence in the next 4 days.<br>Check back once today's races have been enriched, or try again closer to race time.</div>
         </div>`;
       return;
     }
