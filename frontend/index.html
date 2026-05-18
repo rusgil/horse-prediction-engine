@@ -1144,10 +1144,15 @@
       const statHtml = cached
         ? `<span class="pill-stat" id="pill-stat-${statKey}">${cached.wins}/${cached.total} wins</span>`
         : `<span class="pill-stat" id="pill-stat-${statKey}"></span>`;
+      const confColor = (cached && cached.maxConf >= 40) ? 'var(--green)' : 'var(--gold)';
+      const confHtml = (cached && cached.maxConf >= 25)
+        ? `<span class="pill-stat" id="pill-conf-${statKey}" style="color:${confColor}">${cached.maxConf}% best pick</span>`
+        : `<span class="pill-stat" id="pill-conf-${statKey}" style="display:none"></span>`;
       el.innerHTML = `
         <span class="pill-name">${escHtml(m.venue)}</span>
         <span class="pill-sub">${escHtml(m.state)}${m.rail_position && typeof m.rail_position === 'string' ? ' · ' + escHtml(m.rail_position.substring(0,20)) : ''}</span>
         ${statHtml}
+        ${confHtml}
       `;
       el.addEventListener('click', () => selectMeeting(m));
       container.appendChild(el);
@@ -1164,15 +1169,28 @@
       const races = data.races || [];
       const enriched = races.filter(r => r.enriched_at);
       const settled = races.filter(r => r.model_correct !== null && r.model_correct !== undefined);
-      S.meetingStats[key] = { wins: settled.filter(r => r.model_correct).length, total: settled.length, enriched: enriched.length };
-      const el = document.getElementById(`pill-stat-${key}`);
-      if (!el) return;
-      if (settled.length) {
-        const wins = settled.filter(r => r.model_correct === true).length;
-        el.textContent = `${wins}/${settled.length} wins`;
-      } else if (enriched.length) {
-        el.textContent = `${enriched.length} races`;
-        el.style.opacity = '0.45';
+      const maxConf = enriched.reduce((max, r) => {
+        const pct = r.top_win_probability ? Math.round(r.top_win_probability * 100) : 0;
+        return Math.max(max, pct);
+      }, 0);
+      S.meetingStats[key] = { wins: settled.filter(r => r.model_correct).length, total: settled.length, enriched: enriched.length, maxConf };
+
+      const statEl = document.getElementById(`pill-stat-${key}`);
+      if (statEl) {
+        if (settled.length) {
+          const wins = settled.filter(r => r.model_correct === true).length;
+          statEl.textContent = `${wins}/${settled.length} wins`;
+        } else if (enriched.length) {
+          statEl.textContent = `${enriched.length} races`;
+          statEl.style.opacity = '0.45';
+        }
+      }
+
+      const confEl = document.getElementById(`pill-conf-${key}`);
+      if (confEl && maxConf >= 25) {
+        confEl.textContent = `${maxConf}% best pick`;
+        confEl.style.color = maxConf >= 40 ? 'var(--green)' : 'var(--gold)';
+        confEl.style.display = '';
       }
     } catch (_) {}
   }
