@@ -1031,51 +1031,89 @@
   }
 
   function renderYesterdayCard(p) {
-    const cls = p.scratched ? 'scratched' : p.winner ? 'win' : 'loss';
-    const badge = p.scratched
-      ? `<span class="result-badge-scratched">Scratched</span>`
-      : p.winner
-        ? `<span class="result-badge-win">✓ Won</span>`
-        : `<span class="result-badge-loss">✗ Lost</span>`;
+    const isWin = p.winner;
     const barW = Math.min(100, (p.model_pct / 70) * 100);
-    const jChip = p.jockey ? `<span class="chip">J: ${escHtml(p.jockey)}</span>` : '';
-    const bChip = p.barrier ? `<span class="chip">B${p.barrier}</span>` : '';
-    const wChip = p.weight ? `<span class="chip">${p.weight}kg</span>` : '';
 
-    const spHtml = p.sp
-      ? `<div class="result-sp">$${p.sp.toFixed(2)}</div><div class="result-sp-label">Starting Price</div>`
-      : `<div class="result-sp" style="color:var(--text-dim)">N/A</div><div class="result-sp-label">Starting Price</div>`;
-
-    let payoutHtml;
+    // Badge — same slot as upcoming confidence badge
+    let badge;
     if (p.scratched) {
-      payoutHtml = `<div class="result-payout-loss" style="color:var(--text-dim)">—</div>`;
-    } else if (p.winner && p.sp) {
-      payoutHtml = `<div class="result-payout-win">+$${p.profit.toFixed(2)}</div><div class="result-stake-label">Return $${p.payout.toFixed(2)}</div>`;
+      badge = `<span class="pick-badge-standard" style="background:var(--bg-elevated);color:var(--text-dim);border-color:var(--border);">Scratched</span>`;
+    } else if (isWin) {
+      badge = `<span class="pick-badge-standard" style="background:var(--green-dim);color:var(--green);border-color:rgba(34,197,94,0.25);">✓ Won</span>`;
     } else {
-      payoutHtml = `<div class="result-payout-loss">-$${p.stake.toFixed(2)}</div>`;
+      badge = `<span class="pick-badge-standard" style="background:rgba(239,68,68,0.10);color:#f87171;border-color:rgba(239,68,68,0.25);">✗ Lost</span>`;
     }
 
+    // Chips
+    const barrierChip = p.barrier ? `<span class="chip">B${p.barrier}</span>` : '';
+    const jockeyChip  = p.jockey  ? `<span class="chip">J: ${escHtml(p.jockey)}</span>` : '';
+    const trainerChip = p.trainer ? `<span class="chip">T: ${escHtml(p.trainer)}</span>` : '';
+    const weightChip  = p.weight  ? `<span class="chip">${p.weight}kg</span>` : '';
+
+    // Odds panel (SP in place of Best Odds)
+    const oddsHtml = p.sp
+      ? `<div class="odds-badge"><span class="odds-label">Starting Price</span>$${p.sp.toFixed(2)}</div>`
+      : `<div class="odds-badge" style="color:var(--text-dim)"><span class="odds-label">Starting Price</span>N/A</div>`;
+
+    // Payout panel
+    let payoutHtml;
+    if (p.scratched) {
+      payoutHtml = `<div class="no-odds">Scratched — no bet</div>`;
+    } else if (isWin && p.sp) {
+      payoutHtml = `
+        <div class="payout-box">
+          <div class="payout-profit-label">$${p.stake} profit</div>
+          <div class="payout-profit">+$${p.profit.toFixed(2)}</div>
+          <div class="payout-return">Return: <span class="return-amt">$${p.payout.toFixed(2)}</span></div>
+          <div class="payout-stake">Stake: $${p.stake}</div>
+        </div>`;
+    } else {
+      payoutHtml = `
+        <div class="payout-box" style="background:rgba(239,68,68,0.08);border-color:rgba(239,68,68,0.2);">
+          <div class="payout-profit-label" style="color:var(--text-dim)">$${p.stake} loss</div>
+          <div class="payout-profit" style="color:#f87171;">-$${p.stake.toFixed(2)}</div>
+          ${p.position ? `<div class="payout-return" style="color:var(--text-dim)">Finished ${ordinal(p.position)}</div>` : ''}
+          <div class="payout-stake">Stake: $${p.stake}</div>
+        </div>`;
+    }
+
+    // Win rate pill — same as upcoming but shows actual result inline
+    const winRateHtml = `
+      <div class="win-rate-row">
+        <span class="win-rate-pill" ${!isWin && !p.scratched ? 'style="background:rgba(239,68,68,0.08);color:#f87171;border-color:rgba(239,68,68,0.2);"' : ''}>${p.calibrated_win_rate}% historical win rate</span>
+        <span class="win-rate-label">at this confidence level</span>
+      </div>`;
+
     return `
-      <div class="result-card ${cls}">
-        <div class="result-left">
-          <div class="result-top">
-            ${badge}
-            <div class="result-race-ref">
-              <span class="venue-name">${escHtml(p.venue)}</span>
-              <span>·</span><span>R${p.race_number}</span>
-            </div>
+      <div class="pick-card ${isWin ? 'hot' : ''}" style="${!isWin && !p.scratched ? 'border-color:rgba(239,68,68,0.2);' : ''}${p.scratched ? 'opacity:0.55;' : ''}">
+        <div class="pick-card-top-bar">
+          ${badge}
+          <div class="pick-race-ref">
+            <span class="venue-name">${escHtml(p.venue)}</span>
+            <span class="sep">·</span>
+            <span>R${p.race_number}</span>
           </div>
-          <div class="result-horse">${escHtml(p.horse_name)}</div>
-          <div class="result-details">${bChip}${jChip}${wChip}</div>
-          <div class="result-conf">
-            <div class="result-conf-bar"><div class="result-conf-fill" style="width:${barW}%"></div></div>
-            <span>${p.model_pct}% confidence · ${p.calibrated_win_rate}% hist. win rate</span>
-          </div>
-          ${p.position && !p.winner ? `<div class="result-position" style="margin-top:4px">Finished ${ordinal(p.position)}</div>` : ''}
         </div>
-        <div class="result-right">
-          ${spHtml}
-          ${payoutHtml}
+        <div class="pick-body">
+          <div class="pick-left">
+            <div class="pick-horse-name" ${!isWin && !p.scratched ? 'style="color:var(--text-secondary)"' : ''}>${escHtml(p.horse_name)}</div>
+            <div class="pick-details">${barrierChip}${jockeyChip}${trainerChip}${weightChip}</div>
+            <div class="conf-row">
+              <div class="conf-bar-track">
+                <div class="conf-bar-fill" style="width:${barW}%;${!isWin ? 'background:var(--text-dim);' : ''}"></div>
+              </div>
+              <span class="conf-pct" ${!isWin ? 'style="color:var(--text-dim)"' : ''}>${p.model_pct}%</span>
+            </div>
+            <div class="conf-label" style="margin-bottom:8px">Model confidence</div>
+            ${winRateHtml}
+          </div>
+          <div class="pick-right">
+            ${oddsHtml}
+            ${payoutHtml}
+          </div>
+        </div>
+        <div class="pick-footer">
+          <span class="pick-footer-chip" style="color:var(--text-dim)">$10 stake assumed</span>
         </div>
       </div>`;
   }
