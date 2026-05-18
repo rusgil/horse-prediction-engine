@@ -106,6 +106,17 @@ class BacktestResultRow(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
+class BacktestStateRow(Base):
+    """Single-row table tracking backtest progress across restarts."""
+    __tablename__ = "backtest_state"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    start_date = Column(String)
+    end_date = Column(String)
+    last_completed_date = Column(String, nullable=True)  # last day fully written
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
 class CalibrationRow(Base):
     __tablename__ = "calibrations"
 

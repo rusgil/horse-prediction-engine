@@ -41,6 +41,7 @@ from horse_engine.clients.factory import get_tab_client
 from horse_engine.config import settings
 from horse_engine.models.database import (
     BacktestResultRow,
+    BacktestStateRow,
     CalibrationRow,
     HistoricalResultRow,
     RunnerPredictionRow,
@@ -1022,6 +1023,31 @@ async def backtest_report(
 _backtest_state: dict = {"running": False, "processed": 0, "total": 0, "errors": 0, "started_at": None}
 
 
+async def _save_backtest_state(start_date: str, end_date: str, last_completed: str | None) -> None:
+    from sqlalchemy import delete as sa_delete2
+    async with get_session() as session:
+        await session.execute(sa_delete2(BacktestStateRow))
+        session.add(BacktestStateRow(
+            start_date=start_date,
+            end_date=end_date,
+            last_completed_date=last_completed,
+        ))
+        await session.commit()
+
+
+async def _load_backtest_state() -> dict | None:
+    async with get_session() as session:
+        result = await session.execute(select(BacktestStateRow))
+        row = result.scalars().first()
+        if not row:
+            return None
+        return {
+            "start_date": row.start_date,
+            "end_date": row.end_date,
+            "last_completed_date": row.last_completed_date,
+        }
+
+
 async def _run_backtest_range(start_date: str, end_date: str) -> None:
     """Retroactively run model on historical races and store in backtest_results."""
     global _backtest_state
@@ -1029,10 +1055,21 @@ async def _run_backtest_range(start_date: str, end_date: str) -> None:
     async with get_session() as session:
         model = await _load_model(session)
 
-    current = date.fromisoformat(start_date)
+    # Resume from last completed date if available
+    saved = await _load_backtest_state()
+    if saved and saved["last_completed_date"] and saved["last_completed_date"] >= start_date:
+        resume_from = (date.fromisoformat(saved["last_completed_date"]) + timedelta(days=1)).isoformat()
+        log.info("Resuming backtest from %s (last completed: %s)", resume_from, saved["last_completed_date"])
+        current = date.fromisoformat(resume_from)
+    else:
+        current = date.fromisoformat(start_date)
+
+    await _save_backtest_state(start_date, end_date, saved["last_completed_date"] if saved else None)
+
     end = date.fromisoformat(end_date)
-    total_days = (end - current).days + 1
-    _backtest_state.update({"running": True, "processed": 0, "total": total_days, "errors": 0})
+    total_days = (date.fromisoformat(end_date) - date.fromisoformat(start_date)).days + 1
+    days_done = (current - date.fromisoformat(start_date)).days
+    _backtest_state.update({"running": True, "processed": days_done, "total": total_days, "errors": 0})
 
     while current <= end:
         date_str = current.isoformat()
@@ -1104,6 +1141,7 @@ async def _run_backtest_range(start_date: str, end_date: str) -> None:
             _backtest_state["errors"] += 1
 
         _backtest_state["processed"] += 1
+        await _save_backtest_state(start_date, end_date, date_str)  # persist progress
         current += timedelta(days=1)
         await asyncio.sleep(0.1)  # be polite to punters API
 
@@ -1112,18 +1150,30 @@ async def _run_backtest_range(start_date: str, end_date: str) -> None:
 
 @app.post("/api/admin/backtest/run")
 async def run_backtest(
-    start_date: str = Query(...),
-    end_date: str = Query(...),
+    start_date: Optional[str] = Query(None),
+    end_date: Optional[str] = Query(None),
     force: bool = Query(False),
     x_cron_secret: Optional[str] = Header(None),
 ):
-    """Retroactively run model on historical races. Fires in background — check /status."""
+    """
+    Retroactively run model on historical races. Fires in background — check /status.
+    If start_date/end_date omitted, resumes from saved DB state automatically.
+    """
     _check_admin(x_cron_secret)
-    _validate_date(start_date)
-    _validate_date(end_date)
     if _backtest_state["running"] and not force:
         return {"status": "already_running", "state": _backtest_state}
-    _backtest_state["running"] = False  # reset before starting
+
+    # Load saved state if no dates provided
+    if not start_date or not end_date:
+        saved = await _load_backtest_state()
+        if not saved:
+            raise HTTPException(400, "No saved backtest state — provide start_date and end_date")
+        start_date = saved["start_date"]
+        end_date = saved["end_date"]
+
+    _validate_date(start_date)
+    _validate_date(end_date)
+    _backtest_state["running"] = False
     _backtest_state["started_at"] = datetime.utcnow().isoformat()
     asyncio.create_task(_run_backtest_range(start_date, end_date))
     return {"status": "started", "start_date": start_date, "end_date": end_date}
@@ -1137,7 +1187,12 @@ async def backtest_status(x_cron_secret: Optional[str] = Header(None)):
             select(func.count()).select_from(BacktestResultRow)
         )
         total_rows = count_result.scalar() or 0
-    return {**_backtest_state, "total_rows_stored": total_rows}
+    saved = await _load_backtest_state()
+    return {
+        **_backtest_state,
+        "total_rows_stored": total_rows,
+        "saved_state": saved,
+    }
 
 
 @app.get("/api/admin/backtest/analysis")
