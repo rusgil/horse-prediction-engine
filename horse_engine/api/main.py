@@ -322,6 +322,7 @@ async def get_edge_picks():
                 market_implied_pct = round((1 / odds) * 100, 1) if odds else None
                 edge_pct = round(model_pct - market_implied_pct, 1) if market_implied_pct else None
                 calibrated = next((r for t, r in _CALIBRATED_WIN_RATES if model_pct >= t), 66)
+                hot = model_pct >= 45
                 _, venue_code, race_num = _parse_race_id(runner_row.race_id)
 
                 picks.append({
