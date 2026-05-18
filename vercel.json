@@ -1,5 +1,7 @@
 {
+  "outputDirectory": "frontend",
   "rewrites": [
-    { "source": "/edge", "destination": "/edge.html" }
+    { "source": "/login", "destination": "/login.html" },
+    { "source": "/edge",  "destination": "/edge.html" }
   ]
 }
