@@ -1,0 +1,821 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>The Edge — High Confidence Picks | FunkyIQ</title>
+  <meta name="robots" content="noindex" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@400;600;700;800;900&family=Outfit:wght@300;400;500;600&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --bg-base:       #07090f;
+      --bg-card:       #0e1220;
+      --bg-hover:      #131828;
+      --bg-elevated:   #1a2035;
+      --border:        #1e2840;
+
+      --gold:          #e8a020;
+      --gold-light:    #f5b83a;
+      --gold-dim:      rgba(232,160,32,0.12);
+      --gold-mid:      rgba(232,160,32,0.28);
+
+      --green:         #22c55e;
+      --green-bright:  #4ade80;
+      --green-dim:     rgba(34,197,94,0.12);
+      --green-mid:     rgba(34,197,94,0.25);
+
+      --blue:          #3b82f6;
+      --blue-dim:      rgba(59,130,246,0.14);
+
+      --red:           #ef4444;
+      --red-dim:       rgba(239,68,68,0.12);
+
+      --text-primary:  #f0f4ff;
+      --text-secondary:#8a9bc4;
+      --text-dim:      #4a5a7a;
+
+      --radius:        12px;
+      --radius-sm:     8px;
+      --radius-lg:     18px;
+      --shadow:        0 4px 24px rgba(0,0,0,0.5);
+    }
+
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html { scroll-behavior: smooth; }
+    body {
+      font-family: 'Outfit', sans-serif;
+      background: var(--bg-base);
+      color: var(--text-primary);
+      min-height: 100vh;
+      -webkit-font-smoothing: antialiased;
+      background-image:
+        radial-gradient(ellipse 80% 50% at 50% -20%, rgba(34,197,94,0.05), transparent),
+        radial-gradient(ellipse 60% 40% at 90% 90%, rgba(232,160,32,0.04), transparent);
+    }
+    ::-webkit-scrollbar { width: 5px; }
+    ::-webkit-scrollbar-track { background: var(--bg-base); }
+    ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+    /* ── Nav ─────────────────────────────────────────────── */
+    .nav {
+      background: rgba(7,9,15,0.85);
+      backdrop-filter: blur(14px);
+      border-bottom: 1px solid var(--border);
+      position: sticky; top: 0; z-index: 100;
+      padding: 0 14px;
+    }
+    .nav-inner {
+      max-width: 1100px; margin: 0 auto;
+      display: flex; align-items: center; height: 52px; gap: 12px;
+    }
+    .nav-brand {
+      font-family: 'Barlow Condensed', sans-serif;
+      font-size: 1.1rem; font-weight: 900;
+      letter-spacing: 0.08em; text-transform: uppercase;
+      color: var(--text-primary); text-decoration: none;
+      display: flex; align-items: center; gap: 8px;
+      flex-shrink: 0;
+    }
+    .nav-dot {
+      width: 8px; height: 8px; border-radius: 50%;
+      background: var(--green); box-shadow: 0 0 8px var(--green);
+    }
+    .nav-back {
+      font-size: 0.75rem; color: var(--text-dim);
+      text-decoration: none;
+      background: var(--bg-elevated);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      padding: 5px 10px;
+      font-family: 'Barlow Condensed', sans-serif;
+      font-weight: 600; letter-spacing: 0.05em;
+      transition: all 0.15s;
+      margin-left: auto;
+    }
+    .nav-back:hover { border-color: var(--green); color: var(--green); }
+
+    @media (min-width: 768px) {
+      .nav { padding: 0 24px; }
+      .nav-inner { height: 64px; }
+      .nav-brand { font-size: 1.35rem; }
+      .nav-dot { width: 10px; height: 10px; }
+    }
+
+    /* ── Page ────────────────────────────────────────────── */
+    .page { max-width: 1100px; margin: 0 auto; padding: 20px 12px 80px; }
+    @media (min-width: 768px) { .page { padding: 32px 24px 64px; } }
+
+    /* ── Hero ────────────────────────────────────────────── */
+    .hero { margin-bottom: 28px; }
+    .hero-eyebrow {
+      font-size: 0.68rem; font-weight: 700;
+      letter-spacing: 0.16em; text-transform: uppercase;
+      color: var(--green); margin-bottom: 6px;
+    }
+    .hero-title {
+      font-family: 'Barlow Condensed', sans-serif;
+      font-size: 2rem; font-weight: 900;
+      letter-spacing: 0.04em; text-transform: uppercase;
+      line-height: 1;
+    }
+    .hero-title span { color: var(--green); }
+    .hero-sub {
+      font-size: 0.82rem; color: var(--text-secondary);
+      margin-top: 8px; max-width: 520px; line-height: 1.5;
+    }
+    .hero-meta {
+      display: flex; align-items: center; gap: 16px;
+      margin-top: 14px; flex-wrap: wrap;
+    }
+    .hero-stat {
+      display: flex; align-items: baseline; gap: 6px;
+    }
+    .hero-stat-num {
+      font-family: 'Barlow Condensed', sans-serif;
+      font-size: 1.6rem; font-weight: 800;
+      color: var(--green);
+    }
+    .hero-stat-label {
+      font-size: 0.72rem; color: var(--text-dim);
+      text-transform: uppercase; letter-spacing: 0.08em;
+    }
+    .hero-divider {
+      width: 1px; height: 28px;
+      background: var(--border);
+    }
+    .updated-at {
+      font-size: 0.72rem; color: var(--text-dim);
+      margin-left: auto;
+    }
+
+    @media (min-width: 768px) {
+      .hero-title { font-size: 3rem; }
+    }
+
+    /* ── Stake control ───────────────────────────────────── */
+    .stake-bar {
+      display: flex; align-items: center; gap: 12px;
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 12px 18px;
+      margin-bottom: 28px;
+      flex-wrap: wrap;
+    }
+    .stake-label {
+      font-size: 0.78rem; color: var(--text-secondary);
+      font-weight: 500;
+    }
+    .stake-input-wrap {
+      display: flex; align-items: center; gap: 6px;
+    }
+    .stake-currency {
+      font-family: 'Barlow Condensed', sans-serif;
+      font-size: 1.1rem; font-weight: 700;
+      color: var(--gold);
+    }
+    .stake-input {
+      background: var(--bg-elevated);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      color: var(--text-primary);
+      font-family: 'Barlow Condensed', sans-serif;
+      font-size: 1.2rem; font-weight: 800;
+      width: 80px; padding: 6px 10px;
+      text-align: center;
+      outline: none;
+      transition: border-color 0.15s;
+    }
+    .stake-input:focus { border-color: var(--green); }
+    .stake-note {
+      font-size: 0.72rem; color: var(--text-dim);
+      margin-left: auto;
+    }
+    .stake-note strong { color: var(--green-bright); }
+
+    /* ── Day group ───────────────────────────────────────── */
+    .day-group { margin-bottom: 36px; }
+    .day-header {
+      display: flex; align-items: center; gap: 12px;
+      margin-bottom: 14px;
+    }
+    .day-label {
+      font-family: 'Barlow Condensed', sans-serif;
+      font-size: 1rem; font-weight: 800;
+      letter-spacing: 0.1em; text-transform: uppercase;
+      color: var(--text-primary);
+    }
+    .day-date {
+      font-size: 0.72rem; color: var(--text-dim);
+      font-weight: 500;
+    }
+    .day-count {
+      font-size: 0.68rem; font-weight: 700;
+      letter-spacing: 0.08em; text-transform: uppercase;
+      background: var(--green-dim);
+      color: var(--green);
+      border: 1px solid rgba(34,197,94,0.2);
+      border-radius: 999px;
+      padding: 2px 8px;
+    }
+    .day-empty {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 18px 20px;
+      font-size: 0.8rem; color: var(--text-dim);
+    }
+
+    /* ── Pick card ───────────────────────────────────────── */
+    .pick-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      margin-bottom: 12px;
+      overflow: hidden;
+      transition: border-color 0.15s;
+      position: relative;
+    }
+    .pick-card:hover { border-color: rgba(34,197,94,0.3); }
+    .pick-card.hot { border-color: rgba(232,160,32,0.3); }
+    .pick-card.hot:hover { border-color: var(--gold); }
+
+    .pick-card-top-bar {
+      display: flex; align-items: center; gap: 8px;
+      padding: 10px 16px 0;
+      flex-wrap: wrap;
+    }
+    .pick-badge-hot {
+      font-family: 'Barlow Condensed', sans-serif;
+      font-size: 0.7rem; font-weight: 800;
+      letter-spacing: 0.12em; text-transform: uppercase;
+      background: var(--gold-dim);
+      color: var(--gold-light);
+      border: 1px solid var(--gold-mid);
+      border-radius: 999px;
+      padding: 2px 10px;
+    }
+    .pick-badge-standard {
+      font-family: 'Barlow Condensed', sans-serif;
+      font-size: 0.7rem; font-weight: 800;
+      letter-spacing: 0.12em; text-transform: uppercase;
+      background: var(--green-dim);
+      color: var(--green);
+      border: 1px solid rgba(34,197,94,0.25);
+      border-radius: 999px;
+      padding: 2px 10px;
+    }
+    .pick-race-ref {
+      font-size: 0.72rem; color: var(--text-dim);
+      display: flex; align-items: center; gap: 6px;
+      margin-left: auto;
+    }
+    .pick-race-ref .venue-name {
+      font-weight: 600; color: var(--text-secondary);
+      text-transform: uppercase;
+      font-family: 'Barlow Condensed', sans-serif;
+      font-size: 0.85rem; letter-spacing: 0.06em;
+    }
+    .pick-race-ref .sep { color: var(--text-dim); }
+    .pick-time {
+      font-size: 0.72rem; color: var(--text-dim);
+      background: var(--bg-elevated);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 2px 8px;
+      font-family: 'Barlow Condensed', sans-serif;
+      font-weight: 600;
+    }
+
+    .pick-body {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 16px;
+      padding: 12px 16px 14px;
+      align-items: start;
+    }
+
+    .pick-left {}
+    .pick-horse-name {
+      font-family: 'Barlow Condensed', sans-serif;
+      font-size: 1.6rem; font-weight: 900;
+      letter-spacing: 0.04em; text-transform: uppercase;
+      line-height: 1; margin-bottom: 4px;
+      color: var(--text-primary);
+    }
+    .pick-card.hot .pick-horse-name { color: var(--gold-light); }
+
+    .pick-details {
+      font-size: 0.72rem; color: var(--text-dim);
+      display: flex; align-items: center; gap: 8px;
+      flex-wrap: wrap; margin-bottom: 14px;
+    }
+    .pick-details .chip {
+      background: var(--bg-elevated);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 2px 7px;
+      color: var(--text-secondary);
+      font-size: 0.7rem;
+    }
+
+    /* Confidence bar */
+    .conf-row {
+      display: flex; align-items: center; gap: 10px;
+      margin-bottom: 10px;
+    }
+    .conf-bar-track {
+      flex: 1; height: 7px;
+      background: var(--bg-elevated);
+      border-radius: 999px;
+      overflow: hidden;
+    }
+    .conf-bar-fill {
+      height: 100%; border-radius: 999px;
+      background: linear-gradient(to right, var(--green), var(--green-bright));
+      transition: width 0.4s ease;
+    }
+    .pick-card.hot .conf-bar-fill {
+      background: linear-gradient(to right, var(--gold), var(--gold-light));
+    }
+    .conf-pct {
+      font-family: 'Barlow Condensed', sans-serif;
+      font-size: 1.1rem; font-weight: 800;
+      color: var(--green); min-width: 42px; text-align: right;
+    }
+    .pick-card.hot .conf-pct { color: var(--gold-light); }
+    .conf-label {
+      font-size: 0.68rem; color: var(--text-dim);
+      text-transform: uppercase; letter-spacing: 0.08em;
+    }
+
+    .win-rate-row {
+      display: flex; align-items: center; gap: 8px;
+      margin-bottom: 8px;
+    }
+    .win-rate-pill {
+      font-size: 0.7rem; font-weight: 600;
+      background: var(--green-dim);
+      color: var(--green);
+      border: 1px solid rgba(34,197,94,0.2);
+      border-radius: 999px;
+      padding: 2px 8px;
+    }
+    .pick-card.hot .win-rate-pill {
+      background: var(--gold-dim);
+      color: var(--gold-light);
+      border-color: var(--gold-mid);
+    }
+    .win-rate-label { font-size: 0.68rem; color: var(--text-dim); }
+
+    .edge-row {
+      display: flex; align-items: center; gap: 8px;
+      flex-wrap: wrap;
+    }
+    .edge-positive {
+      font-size: 0.72rem; font-weight: 600;
+      color: var(--green); background: var(--green-dim);
+      border: 1px solid rgba(34,197,94,0.2);
+      border-radius: 6px; padding: 2px 8px;
+    }
+    .edge-negative {
+      font-size: 0.72rem; font-weight: 600;
+      color: var(--text-dim); background: var(--bg-elevated);
+      border: 1px solid var(--border);
+      border-radius: 6px; padding: 2px 8px;
+    }
+    .edge-label { font-size: 0.68rem; color: var(--text-dim); }
+
+    /* Payout panel */
+    .pick-right {
+      display: flex; flex-direction: column; align-items: flex-end;
+      gap: 8px; min-width: 140px;
+    }
+    .odds-badge {
+      font-family: 'Barlow Condensed', sans-serif;
+      font-size: 1.4rem; font-weight: 900;
+      letter-spacing: 0.04em;
+      color: var(--text-primary);
+      background: var(--bg-elevated);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      padding: 4px 12px;
+      text-align: center;
+      min-width: 80px;
+    }
+    .odds-badge .odds-label {
+      display: block;
+      font-size: 0.6rem; font-weight: 700;
+      letter-spacing: 0.12em; color: var(--text-dim);
+      text-transform: uppercase; margin-bottom: 1px;
+    }
+    .payout-box {
+      background: var(--green-dim);
+      border: 1px solid rgba(34,197,94,0.25);
+      border-radius: var(--radius-sm);
+      padding: 10px 14px;
+      text-align: center;
+      min-width: 130px;
+    }
+    .pick-card.hot .payout-box {
+      background: var(--gold-dim);
+      border-color: var(--gold-mid);
+    }
+    .payout-profit {
+      font-family: 'Barlow Condensed', sans-serif;
+      font-size: 1.5rem; font-weight: 900;
+      color: var(--green-bright);
+      line-height: 1;
+    }
+    .pick-card.hot .payout-profit { color: var(--gold-light); }
+    .payout-profit-label {
+      font-size: 0.62rem; color: var(--text-secondary);
+      text-transform: uppercase; letter-spacing: 0.08em;
+      margin-bottom: 4px;
+    }
+    .payout-return {
+      font-size: 0.7rem; color: var(--text-secondary);
+      margin-top: 3px;
+    }
+    .payout-return .return-amt {
+      font-weight: 600; color: var(--text-primary);
+    }
+    .payout-stake {
+      font-size: 0.62rem; color: var(--text-dim);
+      margin-top: 2px;
+    }
+    .no-odds {
+      font-size: 0.72rem; color: var(--text-dim);
+      text-align: center; padding: 12px;
+      background: var(--bg-elevated);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      min-width: 130px;
+    }
+
+    /* Bottom strip */
+    .pick-footer {
+      display: flex; align-items: center; gap: 8px;
+      padding: 8px 16px;
+      background: var(--bg-elevated);
+      border-top: 1px solid var(--border);
+      flex-wrap: wrap;
+    }
+    .pick-footer-chip {
+      font-size: 0.68rem; color: var(--text-dim);
+      display: flex; align-items: center; gap: 4px;
+    }
+    .pick-footer-chip strong { color: var(--text-secondary); font-weight: 600; }
+    .pick-footer-sep { color: var(--border); font-size: 0.7rem; }
+
+    /* ── Loading / Empty ─────────────────────────────────── */
+    .loading {
+      text-align: center; padding: 60px 20px;
+      color: var(--text-dim);
+    }
+    .loading-spinner {
+      width: 32px; height: 32px;
+      border: 3px solid var(--border);
+      border-top-color: var(--green);
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+      margin: 0 auto 14px;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    .empty-state {
+      text-align: center; padding: 48px 20px;
+      color: var(--text-dim);
+    }
+    .empty-icon { font-size: 2rem; margin-bottom: 10px; }
+    .empty-title {
+      font-family: 'Barlow Condensed', sans-serif;
+      font-size: 1.1rem; font-weight: 700;
+      text-transform: uppercase; letter-spacing: 0.06em;
+      color: var(--text-secondary); margin-bottom: 6px;
+    }
+    .empty-sub { font-size: 0.78rem; line-height: 1.5; }
+
+    /* ── Disclaimer ──────────────────────────────────────── */
+    .disclaimer {
+      margin-top: 40px;
+      padding: 14px 18px;
+      background: var(--bg-elevated);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      font-size: 0.7rem; color: var(--text-dim);
+      line-height: 1.6;
+    }
+
+    @media (max-width: 540px) {
+      .pick-body { grid-template-columns: 1fr; }
+      .pick-right { align-items: flex-start; flex-direction: row; flex-wrap: wrap; }
+      .hero-meta { gap: 10px; }
+    }
+  </style>
+</head>
+<body>
+
+<nav class="nav">
+  <div class="nav-inner">
+    <a href="/" class="nav-brand">
+      <div class="nav-dot"></div>
+      FunkyIQ
+    </a>
+    <a href="/" class="nav-back">← Predictions</a>
+  </div>
+</nav>
+
+<div class="page">
+
+  <div class="hero">
+    <div class="hero-eyebrow">AI Analysis · Expert Picks</div>
+    <div class="hero-title">The <span>Edge</span></div>
+    <div class="hero-sub">Races where the model has highest confidence — compared against market odds so you can see exactly where the value is.</div>
+    <div class="hero-meta" id="heroMeta">
+      <div class="hero-stat">
+        <span class="hero-stat-num" id="statTotal">—</span>
+        <span class="hero-stat-label">Picks</span>
+      </div>
+      <div class="hero-divider"></div>
+      <div class="hero-stat">
+        <span class="hero-stat-num" id="statHot">—</span>
+        <span class="hero-stat-label">Hot</span>
+      </div>
+      <div class="hero-divider"></div>
+      <div class="hero-stat">
+        <span class="hero-stat-num" id="statAvgConf">—</span>
+        <span class="hero-stat-label">Avg Confidence</span>
+      </div>
+      <span class="updated-at" id="updatedAt"></span>
+    </div>
+  </div>
+
+  <div class="stake-bar">
+    <span class="stake-label">Stake per bet:</span>
+    <div class="stake-input-wrap">
+      <span class="stake-currency">$</span>
+      <input type="number" class="stake-input" id="stakeInput" value="10" min="1" max="10000" />
+    </div>
+    <span class="stake-note">Profit figures update as you type. <strong>At 40%+ confidence — historically 76%+ win rate.</strong></span>
+  </div>
+
+  <div id="content">
+    <div class="loading">
+      <div class="loading-spinner"></div>
+      Loading picks…
+    </div>
+  </div>
+
+  <div class="disclaimer">
+    <strong>Disclaimer:</strong> FunkyIQ is an AI-based prediction tool for informational purposes only. These picks do not constitute betting advice. Past performance is not indicative of future results. Please gamble responsibly. If gambling is causing issues, contact the National Gambling Helpline on 1800 858 858.
+  </div>
+
+</div>
+
+<script>
+  const DAY_LABELS = ['TODAY', 'TOMORROW'];
+
+  function escHtml(s) {
+    if (s == null) return '';
+    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+  }
+
+  function fmtDate(iso) {
+    const d = new Date(iso + 'T00:00:00');
+    return d.toLocaleDateString('en-AU', { weekday:'long', day:'numeric', month:'long' });
+  }
+
+  function fmtTime(t) {
+    if (!t) return '';
+    // Handle ISO datetime or time string
+    try {
+      const d = new Date(t);
+      if (!isNaN(d)) return d.toLocaleTimeString('en-AU', { hour:'2-digit', minute:'2-digit', hour12: true, timeZone: 'Australia/Sydney' });
+    } catch(e) {}
+    return t;
+  }
+
+  function calcPayout(odds, stake) {
+    if (!odds || odds <= 0) return null;
+    const gross = +(odds * stake).toFixed(2);
+    const profit = +(gross - stake).toFixed(2);
+    return { gross, profit };
+  }
+
+  function starsFromValue(v) {
+    if (v == null) return '';
+    const n = Math.min(5, Math.max(0, Math.round(v * 5)));
+    return '★'.repeat(n) + '☆'.repeat(5 - n);
+  }
+
+  function renderCard(pick, stake) {
+    const isHot = pick.hot_pick;
+    const odds = pick.best_available_odds;
+    const pay = calcPayout(odds, stake);
+    const conf = pick.model_pct;
+    const barW = Math.min(100, (conf / 70) * 100);
+
+    const badgeHtml = isHot
+      ? `<span class="pick-badge-hot">🔥 Hot Pick</span>`
+      : `<span class="pick-badge-standard">Strong Pick</span>`;
+
+    const timeStr = fmtTime(pick.scheduled_time);
+
+    const oddsHtml = odds
+      ? `<div class="odds-badge"><span class="odds-label">Best Odds</span>$${odds.toFixed(2)}</div>`
+      : `<div class="odds-badge" style="color:var(--text-dim)"><span class="odds-label">Odds</span>TBA</div>`;
+
+    let payoutHtml;
+    if (pay) {
+      payoutHtml = `
+        <div class="payout-box">
+          <div class="payout-profit-label">$${stake} profit</div>
+          <div class="payout-profit">+$${pay.profit.toFixed(2)}</div>
+          <div class="payout-return">Return: <span class="return-amt">$${pay.gross.toFixed(2)}</span></div>
+          <div class="payout-stake">Stake: $${stake}</div>
+        </div>`;
+    } else {
+      payoutHtml = `<div class="no-odds">Odds not yet available</div>`;
+    }
+
+    const edgeHtml = (pick.edge_pct != null && odds)
+      ? `<span class="${pick.edge_pct >= 0 ? 'edge-positive' : 'edge-negative'}">${pick.edge_pct >= 0 ? '+' : ''}${pick.edge_pct}% edge</span>
+         <span class="edge-label">model ${conf}% vs market ${pick.market_implied_pct}%</span>`
+      : '';
+
+    const jockeyChip = pick.jockey ? `<span class="chip">J: ${escHtml(pick.jockey)}</span>` : '';
+    const trainerChip = pick.trainer ? `<span class="chip">T: ${escHtml(pick.trainer)}</span>` : '';
+    const barrierChip = pick.barrier ? `<span class="chip">B${pick.barrier}</span>` : '';
+    const weightChip = pick.weight ? `<span class="chip">${pick.weight}kg</span>` : '';
+
+    const trackChip = pick.track_condition ? `<span class="pick-footer-chip"><strong>${escHtml(pick.track_condition)}</strong></span><span class="pick-footer-sep">·</span>` : '';
+    const distChip = pick.distance ? `<span class="pick-footer-chip"><strong>${pick.distance}m</strong></span><span class="pick-footer-sep">·</span>` : '';
+    const stateChip = pick.state ? `<span class="pick-footer-chip">${escHtml(pick.state)}</span>` : '';
+    const valueChip = pick.value_rating != null
+      ? `<span class="pick-footer-chip" style="margin-left:auto;color:var(--gold)">${starsFromValue(pick.value_rating)} value</span>` : '';
+
+    return `
+      <div class="pick-card ${isHot ? 'hot' : ''}">
+        <div class="pick-card-top-bar">
+          ${badgeHtml}
+          <div class="pick-race-ref">
+            <span class="venue-name">${escHtml(pick.venue)}</span>
+            <span class="sep">·</span>
+            <span>R${pick.race_number}</span>
+            ${pick.race_name ? `<span class="sep">·</span><span style="color:var(--text-secondary)">${escHtml(pick.race_name)}</span>` : ''}
+          </div>
+          ${timeStr ? `<span class="pick-time">${escHtml(timeStr)}</span>` : ''}
+        </div>
+        <div class="pick-body">
+          <div class="pick-left">
+            <div class="pick-horse-name">${escHtml(pick.horse_name)}</div>
+            <div class="pick-details">
+              ${barrierChip}${jockeyChip}${trainerChip}${weightChip}
+            </div>
+            <div class="conf-row">
+              <div class="conf-bar-track">
+                <div class="conf-bar-fill" style="width:${barW}%"></div>
+              </div>
+              <span class="conf-pct">${conf}%</span>
+            </div>
+            <div class="conf-label" style="margin-bottom:8px">Model confidence</div>
+            <div class="win-rate-row">
+              <span class="win-rate-pill">${pick.calibrated_win_rate}% historical win rate</span>
+              <span class="win-rate-label">at this confidence level</span>
+            </div>
+            <div class="edge-row" style="margin-top:8px">${edgeHtml}</div>
+          </div>
+          <div class="pick-right">
+            ${oddsHtml}
+            ${payoutHtml}
+          </div>
+        </div>
+        <div class="pick-footer">
+          ${trackChip}${distChip}${stateChip}${valueChip}
+        </div>
+      </div>`;
+  }
+
+  function renderContent(data, stake) {
+    const today = new Date().toISOString().slice(0, 10);
+    const picksByDate = {};
+    for (const p of data.picks) {
+      if (!picksByDate[p.date]) picksByDate[p.date] = [];
+      picksByDate[p.date].push(p);
+    }
+
+    // Stats
+    const total = data.picks.length;
+    const hot = data.picks.filter(p => p.hot_pick).length;
+    const avgConf = total ? (data.picks.reduce((s, p) => s + p.model_pct, 0) / total).toFixed(0) + '%' : '—';
+    document.getElementById('statTotal').textContent = total;
+    document.getElementById('statHot').textContent = hot;
+    document.getElementById('statAvgConf').textContent = avgConf;
+
+    const genAt = new Date(data.generated_at + 'Z');
+    document.getElementById('updatedAt').textContent = 'Updated ' + genAt.toLocaleTimeString('en-AU', { hour:'2-digit', minute:'2-digit', hour12: true });
+
+    if (total === 0) {
+      document.getElementById('content').innerHTML = `
+        <div class="empty-state">
+          <div class="empty-icon">🔍</div>
+          <div class="empty-title">No high-confidence picks right now</div>
+          <div class="empty-sub">The model hasn't found any races with ≥${data.threshold_pct}% confidence in the next 4 days.<br>Check back after today's races are enriched.</div>
+        </div>`;
+      return;
+    }
+
+    let html = '';
+    const dates = Object.keys(picksByDate).sort();
+    dates.forEach((d, i) => {
+      const picks = picksByDate[d];
+      const label = i === 0 ? 'Today' : i === 1 ? 'Tomorrow' : fmtDate(d).split(',')[0];
+      const dateStr = fmtDate(d);
+      const count = picks.length;
+
+      html += `
+        <div class="day-group">
+          <div class="day-header">
+            <span class="day-label">${escHtml(label)}</span>
+            <span class="day-date">${escHtml(dateStr)}</span>
+            <span class="day-count">${count} pick${count !== 1 ? 's' : ''}</span>
+          </div>
+          ${picks.map(p => renderCard(p, stake)).join('')}
+        </div>`;
+    });
+
+    // Show empty day groups for dates with no picks
+    const allDates = [];
+    const todayDate = new Date().toISOString().slice(0, 10);
+    for (let i = 0; i < 4; i++) {
+      const d = new Date(); d.setDate(d.getDate() + i);
+      allDates.push(d.toISOString().slice(0, 10));
+    }
+    allDates.forEach((d, i) => {
+      if (!picksByDate[d]) {
+        const label = i === 0 ? 'Today' : i === 1 ? 'Tomorrow' : fmtDate(d).split(',')[0];
+        html += `
+          <div class="day-group">
+            <div class="day-header">
+              <span class="day-label">${label}</span>
+              <span class="day-date">${fmtDate(d)}</span>
+            </div>
+            <div class="day-empty">No picks above ${data.threshold_pct}% confidence — races may not be enriched yet.</div>
+          </div>`;
+      }
+    });
+
+    document.getElementById('content').innerHTML = html;
+  }
+
+  function updatePayouts(stake) {
+    document.querySelectorAll('.pick-card').forEach(card => {
+      const oddsEl = card.querySelector('.odds-badge');
+      if (!oddsEl) return;
+      const oddsText = oddsEl.textContent.trim().replace(/[^0-9.]/g, '');
+      const odds = parseFloat(oddsText);
+      if (!odds) return;
+      const pay = calcPayout(odds, stake);
+      if (!pay) return;
+      const profitEl = card.querySelector('.payout-profit');
+      const returnEl = card.querySelector('.payout-return .return-amt');
+      const stakeEl = card.querySelector('.payout-stake');
+      const labelEl = card.querySelector('.payout-profit-label');
+      if (profitEl) profitEl.textContent = `+$${pay.profit.toFixed(2)}`;
+      if (returnEl) returnEl.textContent = `$${pay.gross.toFixed(2)}`;
+      if (stakeEl) stakeEl.textContent = `Stake: $${stake}`;
+      if (labelEl) labelEl.textContent = `$${stake} profit`;
+    });
+  }
+
+  let picksData = null;
+
+  async function load() {
+    try {
+      const res = await fetch('/api/edge');
+      if (!res.ok) throw new Error(res.statusText);
+      picksData = await res.json();
+      const stake = parseFloat(document.getElementById('stakeInput').value) || 10;
+      renderContent(picksData, stake);
+    } catch (e) {
+      document.getElementById('content').innerHTML = `
+        <div class="empty-state">
+          <div class="empty-icon">⚠️</div>
+          <div class="empty-title">Could not load picks</div>
+          <div class="empty-sub">${escHtml(e.message)}</div>
+        </div>`;
+    }
+  }
+
+  document.getElementById('stakeInput').addEventListener('input', function() {
+    const stake = parseFloat(this.value) || 10;
+    if (picksData) updatePayouts(stake);
+  });
+
+  load();
+</script>
+</body>
+</html>

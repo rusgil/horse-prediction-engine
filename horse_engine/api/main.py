@@ -279,11 +279,78 @@ def _meeting_slug(venue: str, race_date: str) -> str:
     return f"{venue}-{race_date.replace('-', '')}"
 
 
+# ── Edge picks ───────────────────────────────────────────────────────────────
+
+_CALIBRATED_WIN_RATES = [(50, 88), (45, 82), (40, 76)]
+
+@app.get("/api/edge")
+async def get_edge_picks():
+    """High-confidence picks for today + next 3 days. Threshold: model win_probability >= 40%."""
+    threshold = 0.40
+    picks = []
+    today = date.today()
+
+    for i in range(4):
+        target_date = (today + timedelta(days=i)).isoformat()
+        async with get_session() as session:
+            result = await session.execute(
+                select(RunnerPredictionRow, RacePredictionRow)
+                .join(RacePredictionRow, RunnerPredictionRow.race_id == RacePredictionRow.race_id)
+                .where(RunnerPredictionRow.model_rank == 1)
+                .where(RunnerPredictionRow.win_probability >= threshold)
+                .where(RacePredictionRow.date == target_date)
+                .order_by(RunnerPredictionRow.win_probability.desc())
+            )
+            rows = result.all()
+            for runner_row, race_row in rows:
+                odds = runner_row.best_available_odds or 0
+                model_pct = round(runner_row.win_probability * 100, 1)
+                market_implied_pct = round((1 / odds) * 100, 1) if odds else None
+                edge_pct = round(model_pct - market_implied_pct, 1) if market_implied_pct else None
+                calibrated = next((r for t, r in _CALIBRATED_WIN_RATES if model_pct >= t), 76)
+                hot = model_pct >= 45
+
+                picks.append({
+                    "date": target_date,
+                    "race_id": runner_row.race_id,
+                    "venue": race_row.venue,
+                    "state": race_row.state,
+                    "race_number": race_row.race_number,
+                    "race_name": race_row.race_name,
+                    "distance": race_row.distance,
+                    "track_condition": race_row.track_condition,
+                    "scheduled_time": race_row.scheduled_time,
+                    "horse_name": runner_row.horse_name,
+                    "jockey": runner_row.jockey,
+                    "trainer": runner_row.trainer,
+                    "barrier": runner_row.barrier,
+                    "weight": runner_row.weight,
+                    "model_pct": model_pct,
+                    "calibrated_win_rate": calibrated,
+                    "best_available_odds": odds,
+                    "market_implied_pct": market_implied_pct,
+                    "edge_pct": edge_pct,
+                    "hot_pick": hot,
+                    "overlay": runner_row.overlay,
+                    "value_rating": runner_row.value_rating,
+                })
+
+    return {
+        "generated_at": datetime.utcnow().isoformat(),
+        "threshold_pct": int(threshold * 100),
+        "picks": picks,
+    }
+
+
 # ── Frontend ─────────────────────────────────────────────────────────────────
 
 @app.get("/", include_in_schema=False)
 async def frontend():
     return FileResponse("frontend/index.html")
+
+@app.get("/edge", include_in_schema=False)
+async def edge_page():
+    return FileResponse("frontend/edge.html")
 
 
 # ── Health ────────────────────────────────────────────────────────────────────
