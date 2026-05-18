@@ -1044,7 +1044,7 @@ async def _run_backtest_range(start_date: str, end_date: str) -> None:
                 venue_name = m.get("venue", venue_code)
                 state_code = m.get("state", "")
                 try:
-                    events = await client.get_meeting_races(slug)
+                    events = await asyncio.wait_for(client.get_meeting_races(slug), timeout=60)
                     rows_to_insert = []
                     for event in events:
                         selections = event.get("selections") or []
@@ -1064,7 +1064,9 @@ async def _run_backtest_range(start_date: str, end_date: str) -> None:
                             race_num = event.get("eventNumber")
                             race_id = f"{date_str}_{venue_code}_R{race_num}"
                             event["_meeting"] = {"slug": slug, "railPosition": m.get("rail_position", "")}
-                            race = await client.parse_race(event, date_str, venue_name, state_code)
+                            race = await asyncio.wait_for(
+                                client.parse_race(event, date_str, venue_name, state_code), timeout=30
+                            )
                             predictions, _ = await enrich_and_predict_race(race, model)
                             for pred in predictions:
                                 pos = actuals.get(pred.runner.horse_name)

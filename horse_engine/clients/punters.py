@@ -205,7 +205,7 @@ class PuntersClient:
         try:
             template = _JOCKEY_STATS_QUERY if kind == "jockey" else _TRAINER_STATS_QUERY
             query = template.replace("$SLUG", slug)
-            data = await self._gql(query)
+            data = await asyncio.wait_for(self._gql(query), timeout=10)
             stats = (data.get("data") or {}).get(kind, {}).get("stats") or {}
             self._person_cache[cache_key] = stats
         except Exception as e:
