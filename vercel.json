@@ -1,13 +1,6 @@
 {
-  "outputDirectory": "frontend",
-  "functions": {
-    "api/gate.js": {
-      "includeFiles": "pages/**"
-    }
-  },
   "rewrites": [
-    { "source": "/login",      "destination": "/login.html" },
-    { "source": "/login.html", "destination": "/login.html" },
-    { "source": "/(.*)",       "destination": "/api/gate" }
+    { "source": "/edge", "destination": "/edge.html" },
+    { "source": "/login", "destination": "/login.html" }
   ]
 }

@@ -2,6 +2,9 @@
   "name": "funkyiq-frontend",
   "version": "1.0.0",
   "private": true,
+  "scripts": {
+    "build": "echo 'static site — no build step'"
+  },
   "engines": {
     "node": "22.x"
   }

@@ -1,0 +1,9 @@
+horse_engine/
+*.py
+*.db
+requirements.txt
+pyproject.toml
+railway.toml
+Dockerfile
+.dockerignore
+.env*

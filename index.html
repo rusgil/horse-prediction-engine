@@ -2,6 +2,15 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
+  <style>body{visibility:hidden}</style>
+  <script>
+    fetch('/api/check', {credentials:'include'})
+      .then(function(r){
+        if(r.ok){ document.body.style.visibility=''; }
+        else{ window.location.replace('/login?next='+encodeURIComponent(location.pathname)); }
+      })
+      .catch(function(){ document.body.style.visibility=''; });
+  </script>
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <meta name="google-adsense-account" content="ca-pub-0111543436976557">
   <title>Horse Racing Predictions | AI Tips | FunkyIQ</title>
