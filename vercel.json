@@ -8,9 +8,6 @@
   "rewrites": [
     { "source": "/login",      "destination": "/login.html" },
     { "source": "/login.html", "destination": "/login.html" },
-    { "source": "/edge",       "destination": "/api/gate" },
-    { "source": "/edge.html",  "destination": "/api/gate" },
-    { "source": "/",           "destination": "/api/gate" },
-    { "source": "/index.html", "destination": "/api/gate" }
+    { "source": "/(.*)",       "destination": "/api/gate" }
   ]
 }
