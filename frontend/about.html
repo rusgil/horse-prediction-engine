@@ -1,0 +1,410 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <style>body{visibility:hidden}</style>
+  <script>
+    fetch('/api/check', {credentials:'include'})
+      .then(function(r){
+        if(r.ok){ document.body.style.visibility='visible'; }
+        else{ window.location.replace('/login?next='+encodeURIComponent(location.pathname)); }
+      })
+      .catch(function(){ document.body.style.visibility='visible'; });
+  </script>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>About FunkyIQ™ Edge | AI Horse Racing Predictions</title>
+  <meta name="robots" content="noindex" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@400;600;700;800;900&family=Outfit:wght@300;400;500;600&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --bg-base:       #07090f;
+      --bg-card:       #0e1220;
+      --bg-elevated:   #1a2035;
+      --border:        #1e2840;
+      --gold:          #e8a020;
+      --gold-light:    #f5b83a;
+      --gold-dim:      rgba(232,160,32,0.12);
+      --gold-mid:      rgba(232,160,32,0.28);
+      --green:         #22c55e;
+      --green-bright:  #4ade80;
+      --green-dim:     rgba(34,197,94,0.12);
+      --blue:          #3b82f6;
+      --blue-dim:      rgba(59,130,246,0.14);
+      --red:           #ef4444;
+      --text-primary:  #f0f4ff;
+      --text-secondary:#8a9bc4;
+      --text-dim:      #4a5a7a;
+      --radius:        12px;
+      --radius-sm:     8px;
+      --radius-lg:     18px;
+    }
+
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html { scroll-behavior: smooth; }
+    body {
+      font-family: 'Outfit', sans-serif;
+      background: var(--bg-base);
+      color: var(--text-primary);
+      min-height: 100vh;
+      -webkit-font-smoothing: antialiased;
+      background-image:
+        radial-gradient(ellipse 80% 50% at 50% -20%, rgba(34,197,94,0.05), transparent),
+        radial-gradient(ellipse 60% 40% at 90% 90%, rgba(232,160,32,0.04), transparent);
+    }
+    ::-webkit-scrollbar { width: 5px; }
+    ::-webkit-scrollbar-track { background: var(--bg-base); }
+    ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+    /* ── Nav ──────────────────────────────────────────────── */
+    .nav {
+      background: rgba(7,9,15,0.85);
+      backdrop-filter: blur(14px);
+      border-bottom: 1px solid var(--border);
+      position: sticky; top: 0; z-index: 100;
+      padding: 0 14px;
+    }
+    .nav-inner {
+      max-width: 720px; margin: 0 auto;
+      display: flex; align-items: center; height: 52px; gap: 12px;
+    }
+    .nav-brand {
+      font-family: 'Barlow Condensed', sans-serif;
+      font-size: 1.1rem; font-weight: 900;
+      letter-spacing: 0.08em; text-transform: uppercase;
+      color: var(--text-primary); text-decoration: none;
+      display: flex; align-items: center; gap: 8px;
+      flex-shrink: 0;
+    }
+    .nav-dot {
+      width: 8px; height: 8px; border-radius: 50%;
+      background: var(--green); box-shadow: 0 0 8px var(--green);
+    }
+    .nav-back {
+      font-size: 0.75rem; color: var(--text-dim);
+      text-decoration: none;
+      background: var(--bg-elevated);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      padding: 5px 10px;
+      font-family: 'Barlow Condensed', sans-serif;
+      font-weight: 600; letter-spacing: 0.05em;
+      transition: all 0.15s;
+      margin-left: auto;
+    }
+    .nav-back:hover { border-color: var(--green); color: var(--green); }
+
+    @media (min-width: 768px) {
+      .nav { padding: 0 24px; }
+      .nav-inner { height: 64px; }
+      .nav-brand { font-size: 1.35rem; }
+      .nav-dot { width: 10px; height: 10px; }
+    }
+
+    /* ── Page ─────────────────────────────────────────────── */
+    .page { max-width: 720px; margin: 0 auto; padding: 0 0 80px; }
+
+    /* ── Hero ─────────────────────────────────────────────── */
+    .hero {
+      padding: 40px 24px 32px;
+      border-bottom: 1px solid var(--border);
+    }
+    .hero-eyebrow {
+      font-size: 0.68rem; font-weight: 700;
+      letter-spacing: 0.16em; text-transform: uppercase;
+      color: var(--green); margin-bottom: 10px;
+    }
+    .hero-title {
+      font-family: 'Barlow Condensed', sans-serif;
+      font-size: 2.6rem; font-weight: 900;
+      letter-spacing: 0.04em; text-transform: uppercase;
+      line-height: 1; margin-bottom: 16px;
+      color: var(--text-primary);
+    }
+    .hero-title span { color: var(--green); }
+    .hero-desc {
+      font-size: 1rem; color: var(--text-secondary);
+      line-height: 1.7; max-width: 580px;
+    }
+
+    @media (min-width: 768px) {
+      .hero { padding: 48px 32px 36px; }
+      .hero-title { font-size: 3.2rem; }
+    }
+
+    /* ── Section ──────────────────────────────────────────── */
+    .section {
+      padding: 28px 24px;
+      border-bottom: 1px solid var(--border);
+    }
+    @media (min-width: 768px) { .section { padding: 32px 32px; } }
+
+    .section-title {
+      font-family: 'Barlow Condensed', sans-serif;
+      font-size: 1.4rem; font-weight: 800;
+      text-transform: uppercase; letter-spacing: 0.06em;
+      color: var(--text-primary); margin-bottom: 20px;
+    }
+
+    /* ── Feature cards ────────────────────────────────────── */
+    .feature-card {
+      display: flex; gap: 14px;
+      padding: 16px;
+      background: var(--bg-elevated);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      margin-bottom: 12px;
+    }
+    .feature-card:last-child { margin-bottom: 0; }
+    .feature-icon { font-size: 1.6rem; flex-shrink: 0; line-height: 1; margin-top: 2px; }
+    .feature-title {
+      font-weight: 700; font-size: 0.95rem;
+      color: var(--text-primary); margin-bottom: 5px;
+    }
+    .feature-desc {
+      font-size: 0.85rem; color: var(--text-secondary);
+      line-height: 1.65;
+    }
+
+    /* ── Stats table ──────────────────────────────────────── */
+    .stats-table {
+      width: 100%; border-collapse: collapse;
+      font-size: 0.88rem;
+    }
+    .stats-table th {
+      font-family: 'Barlow Condensed', sans-serif;
+      font-size: 0.72rem; font-weight: 800;
+      letter-spacing: 0.1em; text-transform: uppercase;
+      color: var(--text-dim);
+      padding: 8px 12px;
+      border-bottom: 1px solid var(--border);
+      text-align: left;
+    }
+    .stats-table td {
+      padding: 12px 12px;
+      border-bottom: 1px solid var(--border);
+      color: var(--text-secondary);
+      vertical-align: middle;
+    }
+    .stats-table tr:last-child td { border-bottom: none; }
+    .stats-table tr:hover td { background: rgba(255,255,255,0.02); }
+
+    .tier-badge {
+      font-family: 'Barlow Condensed', sans-serif;
+      font-size: 0.75rem; font-weight: 800;
+      letter-spacing: 0.1em; text-transform: uppercase;
+      border-radius: 999px; padding: 3px 10px;
+      white-space: nowrap;
+    }
+    .tier-hot  { background: var(--gold-dim); color: var(--gold-light); border: 1px solid var(--gold-mid); }
+    .tier-high { background: rgba(59,130,246,0.12); color: #60a5fa; border: 1px solid rgba(59,130,246,0.28); }
+    .tier-strong { background: var(--green-dim); color: var(--green); border: 1px solid rgba(34,197,94,0.25); }
+
+    .win-rate {
+      font-family: 'Barlow Condensed', sans-serif;
+      font-size: 1.3rem; font-weight: 900;
+    }
+    .win-rate.hot    { color: var(--gold-light); }
+    .win-rate.high   { color: #60a5fa; }
+    .win-rate.strong { color: var(--green); }
+
+    .sample-size { font-size: 0.78rem; color: var(--text-dim); }
+
+    /* ── How to use ───────────────────────────────────────── */
+    .steps { list-style: none; counter-reset: steps; }
+    .step {
+      counter-increment: steps;
+      display: flex; gap: 14px; align-items: flex-start;
+      margin-bottom: 16px;
+    }
+    .step:last-child { margin-bottom: 0; }
+    .step-num {
+      font-family: 'Barlow Condensed', sans-serif;
+      font-size: 1rem; font-weight: 900;
+      width: 30px; height: 30px;
+      border-radius: 50%; flex-shrink: 0;
+      display: flex; align-items: center; justify-content: center;
+      background: var(--gold-dim);
+      border: 1px solid var(--gold-mid);
+      color: var(--gold-light);
+    }
+    .step-num::before { content: counter(steps); }
+    .step-body { padding-top: 4px; }
+    .step-title { font-weight: 700; font-size: 0.92rem; color: var(--text-primary); margin-bottom: 3px; }
+    .step-desc { font-size: 0.83rem; color: var(--text-secondary); line-height: 1.6; }
+
+    /* ── Disclaimer ───────────────────────────────────────── */
+    .disclaimer {
+      padding: 24px 24px;
+      font-size: 0.75rem; color: var(--text-dim);
+      line-height: 1.7;
+    }
+    @media (min-width: 768px) { .disclaimer { padding: 24px 32px; } }
+  </style>
+</head>
+<body>
+
+<nav class="nav">
+  <div class="nav-inner">
+    <a href="/" class="nav-brand">
+      <div class="nav-dot"></div>
+      FunkyIQ
+    </a>
+    <a href="/edge" class="nav-back">← The Edge</a>
+  </div>
+</nav>
+
+<div class="page">
+
+  <!-- Hero -->
+  <div class="hero">
+    <div class="hero-eyebrow">AI-Powered · Data Driven · Continuously Learning</div>
+    <h1 class="hero-title">About FunkyIQ™ <span>Edge</span></h1>
+    <p class="hero-desc">
+      FunkyIQ™ Edge is a progressive AI prediction engine that scans every Australian
+      thoroughbred race, processing millions of data points to surface the races where
+      the model has a genuine edge over the market. Not tips. Not gut feel. Pure data.
+    </p>
+  </div>
+
+  <!-- What Sets Us Apart -->
+  <div class="section">
+    <div class="section-title">What Sets Us Apart</div>
+
+    <div class="feature-card">
+      <span class="feature-icon">🧠</span>
+      <div>
+        <div class="feature-title">Proprietary AI Engine</div>
+        <div class="feature-desc">
+          FunkyIQ™ goes far beyond form guides. Our multi-layered model synthesises
+          barrier draws, jockey and trainer patterns, pedigree signals, track conditions,
+          and live market movements — cross-referencing dozens of independent factors
+          that the market consistently underweights.
+        </div>
+      </div>
+    </div>
+
+    <div class="feature-card">
+      <span class="feature-icon">⚡</span>
+      <div>
+        <div class="feature-title">Ruthlessly Selective</div>
+        <div class="feature-desc">
+          Most races don't make the cut. The Edge only surfaces picks where the model
+          has genuine conviction — benchmarked against thousands of historical races —
+          where the data has aligned in a way the market hasn't fully priced in.
+          That gap is your edge.
+        </div>
+      </div>
+    </div>
+
+    <div class="feature-card">
+      <span class="feature-icon">📈</span>
+      <div>
+        <div class="feature-title">Continuously Learning</div>
+        <div class="feature-desc">
+          The engine recalibrates weekly against real race outcomes, sharpening its
+          weights as it sees more results. The more it runs, the better it gets.
+        </div>
+      </div>
+    </div>
+
+    <div class="feature-card">
+      <span class="feature-icon">🎯</span>
+      <div>
+        <div class="feature-title">Real-Time Intelligence</div>
+        <div class="feature-desc">
+          Picks are enriched automatically with live odds and market movements right up
+          to jump time — ensuring every tip reflects the most current information available,
+          not yesterday's form.
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- The Numbers -->
+  <div class="section">
+    <div class="section-title">The Numbers</div>
+    <table class="stats-table">
+      <thead>
+        <tr>
+          <th>Tier</th>
+          <th>Win Rate</th>
+          <th>Races</th>
+          <th>Avg SP</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><span class="tier-badge tier-hot">🔥 Hot Pick</span></td>
+          <td><span class="win-rate hot">82%</span></td>
+          <td><span class="sample-size">222 races</span></td>
+          <td><span style="color:var(--text-primary);font-weight:600">$2.35</span></td>
+        </tr>
+        <tr>
+          <td><span class="tier-badge tier-high">⚡ High Confidence</span></td>
+          <td><span class="win-rate high">71–76%</span></td>
+          <td><span class="sample-size">809 races</span></td>
+          <td><span style="color:var(--text-primary);font-weight:600">$2.55</span></td>
+        </tr>
+        <tr>
+          <td><span class="tier-badge tier-strong">Strong Pick</span></td>
+          <td><span class="win-rate strong">66%</span></td>
+          <td><span class="sample-size">1,086 races</span></td>
+          <td><span style="color:var(--text-primary);font-weight:600">$2.79</span></td>
+        </tr>
+      </tbody>
+    </table>
+    <p style="font-size:0.72rem;color:var(--text-dim);margin-top:14px;line-height:1.6;">
+      Measured across 2,117 qualifying races — live Australian thoroughbred results since August 2025.
+      Win rate reflects the model's top-ranked pick per race at each confidence tier.
+    </p>
+  </div>
+
+  <!-- How to Use It -->
+  <div class="section">
+    <div class="section-title">How to Use It</div>
+    <ol class="steps">
+      <li class="step">
+        <div class="step-num"></div>
+        <div class="step-body">
+          <div class="step-title">Pick your tier</div>
+          <div class="step-desc">Hot Picks are the highest-conviction plays. High Confidence gives you more volume. Strong Picks cast the widest net — all have a proven edge.</div>
+        </div>
+      </li>
+      <li class="step">
+        <div class="step-num"></div>
+        <div class="step-body">
+          <div class="step-title">Set your stake</div>
+          <div class="step-desc">Use the stake slider to see projected payouts before you bet. Flat staking per pick is the approach the numbers are built around.</div>
+        </div>
+      </li>
+      <li class="step">
+        <div class="step-num"></div>
+        <div class="step-body">
+          <div class="step-title">Check the odds</div>
+          <div class="step-desc">Each pick shows the best available market odds alongside the model's implied fair price. The gap between the two is where the value lives.</div>
+        </div>
+      </li>
+      <li class="step">
+        <div class="step-num"></div>
+        <div class="step-body">
+          <div class="step-title">Let the numbers work</div>
+          <div class="step-desc">The edge compounds over volume, not on single bets. Consistency and discipline are what turn a statistical advantage into real returns.</div>
+        </div>
+      </li>
+    </ol>
+  </div>
+
+  <!-- Disclaimer -->
+  <div class="disclaimer">
+    ⚠️ FunkyIQ™ Edge is an AI-based prediction tool for informational purposes only.
+    These picks do not constitute betting advice. Past performance is not indicative of
+    future results. Please gamble responsibly. If gambling is causing you issues,
+    contact the National Gambling Helpline on <strong>1800 858 858</strong>.
+  </div>
+
+</div>
+
+</body>
+</html>
