@@ -590,6 +590,7 @@
       white-space: nowrap;
     }
     .legend-desc { color: var(--text-dim); }
+    .legend-odds { color: var(--text-secondary); font-weight: 600; }
     .legend-sep { color: var(--border); font-size: 0.8rem; }
 
     @media (max-width: 600px) {
@@ -815,20 +816,20 @@
   </div>
 
   <div class="legend-bar">
-    <span class="legend-title">FunkyIQ&#8482; Rating:</span>
+    <span class="legend-title">FunkyIQ Ranking:</span>
     <span class="legend-item">
-      <span class="legend-badge hot">🔥 Hot</span>
-      <span class="legend-desc">&gt;45% confidence</span>
+      <span class="legend-badge hot">🔥 Hot Pick</span>
+      <span class="legend-desc">≥45% confidence <span class="legend-odds">(≈$2.20)</span></span>
     </span>
     <span class="legend-sep">·</span>
     <span class="legend-item">
       <span class="legend-badge high">⚡ High Confidence</span>
-      <span class="legend-desc">35–44% confidence</span>
+      <span class="legend-desc">35–44% confidence <span class="legend-odds">(≈$2.85)</span></span>
     </span>
     <span class="legend-sep">·</span>
     <span class="legend-item">
       <span class="legend-badge standard">Strong Pick</span>
-      <span class="legend-desc">30–34% confidence</span>
+      <span class="legend-desc">30–34% confidence <span class="legend-odds">(≈$3.30)</span></span>
     </span>
   </div>
 
