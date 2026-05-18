@@ -2,17 +2,15 @@
   "outputDirectory": "frontend",
   "functions": {
     "api/gate.js": {
-      "includeFiles": "frontend/**"
+      "includeFiles": "pages/**"
     }
   },
   "rewrites": [
-    { "source": "/api/login",   "destination": "/api/login" },
-    { "source": "/api/logout",  "destination": "/api/logout" },
-    { "source": "/login",       "destination": "/login.html" },
-    { "source": "/login.html",  "destination": "/login.html" },
-    { "source": "/edge",        "destination": "/api/gate" },
-    { "source": "/edge.html",   "destination": "/api/gate" },
-    { "source": "/",            "destination": "/api/gate" },
-    { "source": "/index.html",  "destination": "/api/gate" }
+    { "source": "/login",      "destination": "/login.html" },
+    { "source": "/login.html", "destination": "/login.html" },
+    { "source": "/edge",       "destination": "/api/gate" },
+    { "source": "/edge.html",  "destination": "/api/gate" },
+    { "source": "/",           "destination": "/api/gate" },
+    { "source": "/index.html", "destination": "/api/gate" }
   ]
 }
