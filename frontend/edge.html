@@ -582,6 +582,13 @@
       background: var(--green-dim); color: var(--green);
       border: 1px solid rgba(34,197,94,0.25);
     }
+    .legend-title {
+      font-family: 'Barlow Condensed', sans-serif;
+      font-size: 0.78rem; font-weight: 800;
+      letter-spacing: 0.06em; text-transform: uppercase;
+      color: var(--text-secondary);
+      white-space: nowrap;
+    }
     .legend-desc { color: var(--text-dim); }
     .legend-sep { color: var(--border); font-size: 0.8rem; }
 
@@ -808,19 +815,20 @@
   </div>
 
   <div class="legend-bar">
+    <span class="legend-title">FunkyIQ&#8482; Rating:</span>
     <span class="legend-item">
-      <span class="legend-badge hot">🔥 Hot Pick</span>
-      <span class="legend-desc">≥45% FunkyIQ rating</span>
+      <span class="legend-badge hot">🔥 Hot</span>
+      <span class="legend-desc">&gt;45% confidence</span>
     </span>
     <span class="legend-sep">·</span>
     <span class="legend-item">
       <span class="legend-badge high">⚡ High Confidence</span>
-      <span class="legend-desc">35–44% FunkyIQ rating</span>
+      <span class="legend-desc">35–44% confidence</span>
     </span>
     <span class="legend-sep">·</span>
     <span class="legend-item">
       <span class="legend-badge standard">Strong Pick</span>
-      <span class="legend-desc">30–34% FunkyIQ rating</span>
+      <span class="legend-desc">30–34% confidence</span>
     </span>
   </div>
 
