@@ -460,11 +460,12 @@ async def refresh_edge_odds():
 
 
 @app.get("/api/edge/yesterday")
-async def get_edge_yesterday():
-    """Yesterday's qualifying picks with actual results and SP odds from punters."""
-    yesterday = (date.today() - timedelta(days=1)).isoformat()
+async def get_edge_yesterday(for_date: Optional[str] = Query(None, alias="date")):
+    """Qualifying picks with actual results and SP odds from punters.
+    Accepts ?date=YYYY-MM-DD (defaults to yesterday)."""
+    target_date = for_date or (date.today() - timedelta(days=1)).isoformat()
     threshold = 0.30
-    prefix = f"{yesterday}_"
+    prefix = f"{target_date}_"
     stake = 10
 
     async with get_session() as session:
@@ -478,13 +479,13 @@ async def get_edge_yesterday():
         picks = result.scalars().all()
 
     if not picks:
-        return {"date": yesterday, "picks": [], "summary": None}
+        return {"date": target_date, "picks": [], "summary": None}
 
     client = get_tab_client()
     unique_venues = {_parse_race_id(p.race_id)[1] for p in picks}
 
     async def fetch_results(venue: str) -> dict:
-        slug = _meeting_slug(venue, yesterday)
+        slug = _meeting_slug(venue, target_date)
         try:
             events = await asyncio.wait_for(client.get_meeting_races(slug), timeout=30)
             out = {}
@@ -549,7 +550,7 @@ async def get_edge_yesterday():
     pnl = round(total_returns - total_staked, 2)
 
     return {
-        "date": yesterday,
+        "date": target_date,
         "picks": output,
         "summary": {
             "total": len(output),

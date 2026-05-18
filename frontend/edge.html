@@ -763,7 +763,7 @@
 
   <div class="tabs">
     <button class="tab-btn active" id="tabUpcoming" onclick="switchTab('upcoming')">Upcoming</button>
-    <button class="tab-btn" id="tabYesterday" onclick="switchTab('yesterday')">Yesterday's Results</button>
+    <button class="tab-btn" id="tabYesterday" onclick="switchTab('yesterday')">Results</button>
   </div>
 
   <div id="panelUpcoming">
@@ -792,10 +792,29 @@
       </div>
       <span class="stake-note">Change stake to see what you would have won or lost.</span>
     </div>
-    <div id="yesterdayContent">
-      <div class="loading">
-        <div class="loading-spinner"></div>
-        Loading yesterday's results…
+
+    <div style="margin-bottom:10px">
+      <div class="day-header" style="margin-bottom:12px">
+        <span class="day-label">Today's Completed</span>
+        <span class="day-date" id="todayDateLabel"></span>
+        <span class="day-count" id="todayCount" style="display:none"></span>
+        <button onclick="loadTodayCompleted(true)" style="margin-left:auto;background:var(--bg-elevated);border:1px solid var(--border);color:var(--text-dim);border-radius:6px;padding:4px 10px;font-size:0.7rem;cursor:pointer;">↻ Refresh</button>
+      </div>
+      <div id="todayContent">
+        <div class="day-empty">Loading today's completed races…</div>
+      </div>
+    </div>
+
+    <div>
+      <div class="day-header" style="margin-bottom:12px">
+        <span class="day-label">Yesterday</span>
+        <span class="day-date" id="yesterdayDateLabel"></span>
+      </div>
+      <div id="yesterdayContent">
+        <div class="loading">
+          <div class="loading-spinner"></div>
+          Loading yesterday's results…
+        </div>
       </div>
     </div>
   </div>
@@ -1033,13 +1052,18 @@
   let picksData = null;
   let yesterdayLoaded = false;
   let yesterdayData = null;
+  let todayData = null;
 
   function switchTab(tab) {
     document.getElementById('tabUpcoming').classList.toggle('active', tab === 'upcoming');
     document.getElementById('tabYesterday').classList.toggle('active', tab === 'yesterday');
     document.getElementById('panelUpcoming').style.display = tab === 'upcoming' ? '' : 'none';
     document.getElementById('panelYesterday').style.display = tab === 'yesterday' ? '' : 'none';
-    if (tab === 'yesterday' && !yesterdayLoaded) loadYesterday();
+    if (tab === 'yesterday' && !yesterdayLoaded) {
+      yesterdayLoaded = true;
+      loadTodayCompleted(false);
+      loadYesterday();
+    }
   }
 
   function ordinal(n) {
@@ -1138,9 +1162,44 @@
       </div>`;
   }
 
-  async function loadYesterday() {
-    yesterdayLoaded = true;
+  async function loadTodayCompleted(showSpinner) {
+    const today = new Date().toISOString().slice(0, 10);
+    document.getElementById('todayDateLabel').textContent = fmtDate(today);
+    if (showSpinner) {
+      document.getElementById('todayContent').innerHTML = '<div class="day-empty">Refreshing…</div>';
+    }
     try {
+      const res = await fetch(`${API}/api/edge/yesterday?date=${today}`);
+      if (!res.ok) throw new Error(res.statusText);
+      todayData = await res.json();
+      const stake = parseFloat(document.getElementById('stakeInputYesterday').value) || 10;
+      renderTodayContent(todayData, stake);
+    } catch (e) {
+      document.getElementById('todayContent').innerHTML =
+        `<div class="day-empty">Could not load: ${escHtml(e.message)}</div>`;
+    }
+  }
+
+  function renderTodayContent(data, stake) {
+    const el = document.getElementById('todayContent');
+    const countEl = document.getElementById('todayCount');
+    // Only show races that have a result (sp or winner flag set)
+    const completed = data.picks.filter(p => p.sp != null || p.winner || p.scratched);
+    if (!completed.length) {
+      countEl.style.display = 'none';
+      el.innerHTML = '<div class="day-empty">No completed results yet — check back after races run.</div>';
+      return;
+    }
+    countEl.textContent = `${completed.length} result${completed.length !== 1 ? 's' : ''}`;
+    countEl.style.display = '';
+    el.innerHTML = completed.map(p => renderYesterdayCard(p, stake)).join('');
+  }
+
+  async function loadYesterday() {
+    try {
+      const yesterday = new Date(); yesterday.setDate(yesterday.getDate() - 1);
+      const yStr = yesterday.toISOString().slice(0, 10);
+      document.getElementById('yesterdayDateLabel').textContent = fmtDate(yStr);
       const res = await fetch(`${API}/api/edge/yesterday`);
       if (!res.ok) throw new Error(res.statusText);
       yesterdayData = await res.json();
@@ -1257,6 +1316,7 @@
 
   document.getElementById('stakeInputYesterday').addEventListener('input', function() {
     const stake = parseFloat(this.value) || 10;
+    if (todayData) renderTodayContent(todayData, stake);
     if (yesterdayData) renderYesterdayContent(yesterdayData, stake);
   });
 
