@@ -288,6 +288,31 @@
       font-family: 'Barlow Condensed', sans-serif;
       font-weight: 600;
     }
+    .pick-countdown {
+      font-family: 'Barlow Condensed', sans-serif;
+      font-size: 0.72rem; font-weight: 700;
+      letter-spacing: 0.05em;
+      border-radius: 6px;
+      padding: 2px 8px;
+      background: var(--green-dim);
+      color: var(--green);
+      border: 1px solid rgba(34,197,94,0.25);
+    }
+    .pick-countdown.urgent {
+      background: rgba(239,68,68,0.12);
+      color: #f87171;
+      border-color: rgba(239,68,68,0.3);
+      animation: pulse 1s ease-in-out infinite;
+    }
+    .pick-countdown.done {
+      background: var(--bg-elevated);
+      color: var(--text-dim);
+      border-color: var(--border);
+    }
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.5; }
+    }
 
     .pick-body {
       display: grid;
@@ -628,6 +653,7 @@
     }
 
     const timeStr = fmtTime(pick.scheduled_time);
+    const countdownId = `cd-${escHtml(pick.race_id).replace(/[^a-z0-9]/gi, '-')}`;
 
     const oddsHtml = odds
       ? `<div class="odds-badge"><span class="odds-label">Best Odds</span>$${odds.toFixed(2)}</div>`
@@ -673,6 +699,7 @@
             ${pick.race_name ? `<span class="sep">·</span><span style="color:var(--text-secondary)">${escHtml(pick.race_name)}</span>` : ''}
           </div>
           ${timeStr ? `<span class="pick-time">${escHtml(timeStr)}</span>` : ''}
+          ${pick.scheduled_time ? `<span class="pick-countdown" id="${countdownId}" data-jump="${escHtml(pick.scheduled_time)}"></span>` : ''}
         </div>
         <div class="pick-body">
           <div class="pick-left">
@@ -830,6 +857,29 @@
       renderContent(picksData, stake);
     } catch (e) { /* silent — odds refresh is best-effort */ }
   }
+
+  function tickCountdowns() {
+    const now = Date.now();
+    document.querySelectorAll('.pick-countdown[data-jump]').forEach(el => {
+      const jump = new Date(el.dataset.jump).getTime();
+      const diff = Math.floor((jump - now) / 1000);
+      if (isNaN(diff)) return;
+      el.classList.remove('urgent', 'done');
+      if (diff <= 0) {
+        el.textContent = 'RACING';
+        el.classList.add('done');
+      } else if (diff < 3600) {
+        const m = Math.floor(diff / 60), s = diff % 60;
+        el.textContent = `${m}m ${String(s).padStart(2,'0')}s`;
+        if (diff < 600) el.classList.add('urgent');
+      } else {
+        const h = Math.floor(diff / 3600), m = Math.floor((diff % 3600) / 60);
+        el.textContent = `${h}h ${m}m`;
+      }
+    });
+  }
+
+  setInterval(tickCountdowns, 1000);
 
   document.getElementById('stakeInput').addEventListener('input', function() {
     const stake = parseFloat(this.value) || 10;

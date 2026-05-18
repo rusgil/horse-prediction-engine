@@ -296,16 +296,33 @@ def _parse_race_id(race_id: str) -> tuple[str, str, int | None]:
         return "", race_id, None
 
 
+# Cache meeting start times for 5 min to avoid hitting punters on every edge load
+_edge_times_cache: dict[str, tuple[datetime, dict[int, str]]] = {}
+
+async def _fetch_race_times(client, slug: str) -> dict[int, str]:
+    """Return {race_number: startTime ISO string} for a meeting slug. Cached 5 min."""
+    cached = _edge_times_cache.get(slug)
+    if cached and (datetime.utcnow() - cached[0]).total_seconds() < 300:
+        return cached[1]
+    try:
+        events = await asyncio.wait_for(client.get_meeting_races(slug), timeout=20)
+        times = {e["eventNumber"]: e.get("startTime") for e in events if e.get("eventNumber")}
+        _edge_times_cache[slug] = (datetime.utcnow(), times)
+        return times
+    except Exception:
+        return {}
+
+
 @app.get("/api/edge")
 async def get_edge_picks():
     """High-confidence picks for today + next 3 days. Threshold: model win_probability >= 30%."""
     threshold = 0.30
     picks = []
     today = date.today()
+    client = get_tab_client()
 
     for i in range(4):
         target_date = (today + timedelta(days=i)).isoformat()
-        # Filter by race_id prefix — avoids join with unpopulated race_predictions table
         prefix = f"{target_date}_"
         async with get_session() as session:
             result = await session.execute(
@@ -316,39 +333,52 @@ async def get_edge_picks():
                 .order_by(RunnerPredictionRow.win_probability.desc())
             )
             rows = result.scalars().all()
-            for runner_row in rows:
-                odds = runner_row.best_available_odds or 0
-                model_pct = round(runner_row.win_probability * 100, 1)
-                market_implied_pct = round((1 / odds) * 100, 1) if odds else None
-                edge_pct = round(model_pct - market_implied_pct, 1) if market_implied_pct else None
-                calibrated = next((r for t, r in _CALIBRATED_WIN_RATES if model_pct >= t), 66)
-                hot = model_pct >= 45
-                _, venue_code, race_num = _parse_race_id(runner_row.race_id)
 
-                picks.append({
-                    "date": target_date,
-                    "race_id": runner_row.race_id,
-                    "venue": venue_code,
-                    "state": None,
-                    "race_number": race_num,
-                    "race_name": None,
-                    "distance": None,
-                    "track_condition": None,
-                    "scheduled_time": None,
-                    "horse_name": runner_row.horse_name,
-                    "jockey": runner_row.jockey,
-                    "trainer": runner_row.trainer,
-                    "barrier": runner_row.barrier,
-                    "weight": runner_row.weight,
-                    "model_pct": model_pct,
-                    "calibrated_win_rate": calibrated,
-                    "best_available_odds": odds,
-                    "market_implied_pct": market_implied_pct,
-                    "edge_pct": edge_pct,
-                    "hot_pick": hot,
-                    "overlay": runner_row.overlay,
-                    "value_rating": runner_row.value_rating,
-                })
+        if not rows:
+            continue
+
+        # Fetch scheduled times per unique meeting in parallel
+        unique_venues = {_parse_race_id(r.race_id)[1] for r in rows}
+        slug_map = {v: _meeting_slug(v, target_date) for v in unique_venues}
+        time_results = await asyncio.gather(*[_fetch_race_times(client, slug) for slug in slug_map.values()])
+        race_times: dict[str, str | None] = {}  # race_id → startTime
+        for venue, times in zip(slug_map.keys(), time_results):
+            for race_num, start_time in times.items():
+                race_times[f"{target_date}_{venue}_R{race_num}"] = start_time
+
+        for runner_row in rows:
+            odds = runner_row.best_available_odds or 0
+            model_pct = round(runner_row.win_probability * 100, 1)
+            market_implied_pct = round((1 / odds) * 100, 1) if odds else None
+            edge_pct = round(model_pct - market_implied_pct, 1) if market_implied_pct else None
+            calibrated = next((r for t, r in _CALIBRATED_WIN_RATES if model_pct >= t), 66)
+            hot = model_pct >= 45
+            _, venue_code, race_num = _parse_race_id(runner_row.race_id)
+
+            picks.append({
+                "date": target_date,
+                "race_id": runner_row.race_id,
+                "venue": venue_code,
+                "state": None,
+                "race_number": race_num,
+                "race_name": None,
+                "distance": None,
+                "track_condition": None,
+                "scheduled_time": race_times.get(runner_row.race_id),
+                "horse_name": runner_row.horse_name,
+                "jockey": runner_row.jockey,
+                "trainer": runner_row.trainer,
+                "barrier": runner_row.barrier,
+                "weight": runner_row.weight,
+                "model_pct": model_pct,
+                "calibrated_win_rate": calibrated,
+                "best_available_odds": odds,
+                "market_implied_pct": market_implied_pct,
+                "edge_pct": edge_pct,
+                "hot_pick": hot,
+                "overlay": runner_row.overlay,
+                "value_rating": runner_row.value_rating,
+            })
 
     return {
         "generated_at": datetime.utcnow().isoformat(),
