@@ -810,17 +810,17 @@
   <div class="legend-bar">
     <span class="legend-item">
       <span class="legend-badge hot">🔥 Hot Pick</span>
-      <span class="legend-desc">≥45% model confidence</span>
+      <span class="legend-desc">≥45% FunkyIQ rating</span>
     </span>
     <span class="legend-sep">·</span>
     <span class="legend-item">
       <span class="legend-badge high">⚡ High Confidence</span>
-      <span class="legend-desc">35–44% model confidence</span>
+      <span class="legend-desc">35–44% FunkyIQ rating</span>
     </span>
     <span class="legend-sep">·</span>
     <span class="legend-item">
       <span class="legend-badge standard">Strong Pick</span>
-      <span class="legend-desc">30–34% model confidence</span>
+      <span class="legend-desc">30–34% FunkyIQ rating</span>
     </span>
   </div>
 
@@ -1014,7 +1014,7 @@
               </div>
               <span class="conf-pct">${conf}%</span>
             </div>
-            <div class="conf-label" style="margin-bottom:8px">Model confidence</div>
+            <div class="conf-label" style="margin-bottom:8px">FunkyIQ Rating</div>
             <div class="win-rate-row">
               <span class="win-rate-pill">${pick.calibrated_win_rate}% historical win rate</span>
               <span class="win-rate-label">at this confidence level</span>
@@ -1221,7 +1221,7 @@
               </div>
               <span class="conf-pct" ${!isWin ? 'style="color:var(--text-dim)"' : ''}>${p.model_pct}%</span>
             </div>
-            <div class="conf-label" style="margin-bottom:8px">Model confidence</div>
+            <div class="conf-label" style="margin-bottom:8px">FunkyIQ Rating</div>
             ${winRateHtml}
           </div>
           <div class="pick-right">
