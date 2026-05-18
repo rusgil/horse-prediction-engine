@@ -1112,14 +1112,16 @@ async def _run_backtest_range(start_date: str, end_date: str) -> None:
 async def run_backtest(
     start_date: str = Query(...),
     end_date: str = Query(...),
+    force: bool = Query(False),
     x_cron_secret: Optional[str] = Header(None),
 ):
     """Retroactively run model on historical races. Fires in background — check /status."""
     _check_admin(x_cron_secret)
     _validate_date(start_date)
     _validate_date(end_date)
-    if _backtest_state["running"]:
+    if _backtest_state["running"] and not force:
         return {"status": "already_running", "state": _backtest_state}
+    _backtest_state["running"] = False  # reset before starting
     _backtest_state["started_at"] = datetime.utcnow().isoformat()
     asyncio.create_task(_run_backtest_range(start_date, end_date))
     return {"status": "started", "start_date": start_date, "end_date": end_date}
