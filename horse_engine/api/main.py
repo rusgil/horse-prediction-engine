@@ -26,6 +26,7 @@ import re
 import secrets
 from contextlib import asynccontextmanager
 from datetime import date, datetime, timedelta
+from zoneinfo import ZoneInfo
 from typing import Any, Optional
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
@@ -62,6 +63,11 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name
 _DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 _VENUE_RE = re.compile(r"^[a-z0-9-]{1,60}$")
 
+_AEST = ZoneInfo("Australia/Sydney")
+
+def _today_aest() -> date:
+    return datetime.now(_AEST).date()
+
 
 def _validate_date(race_date: str) -> str:
     if not _DATE_RE.match(race_date):
@@ -96,12 +102,12 @@ async def _scheduled_enrich():
         async with get_session() as session:
             model = await _load_model(session)
         for i in range(3):
-            race_date = (date.today() + timedelta(days=i)).isoformat()
+            race_date = (_today_aest() + timedelta(days=i)).isoformat()
             log.info("[scheduler] Enriching %s", race_date)
             await _enrich_date(race_date, client, model)
         # Seed yesterday + today so every startup/deploy auto-backfills the most recent gap
         for offset in (-1, 0):
-            seed_date = (date.today() + timedelta(days=offset)).isoformat()
+            seed_date = (_today_aest() + timedelta(days=offset)).isoformat()
             n = await _seed_results_for_date(seed_date)
             if n:
                 log.info("[scheduler] Seeded %d results for %s", n, seed_date)
@@ -175,7 +181,7 @@ async def _seed_results_for_date(race_date: str) -> int:
 
 async def _scheduled_seed_results():
     """Run by APScheduler nightly — seed yesterday's settled results."""
-    yesterday = (date.today() - timedelta(days=1)).isoformat()
+    yesterday = (_today_aest() - timedelta(days=1)).isoformat()
     log.info("[scheduler] Seeding results for %s", yesterday)
     try:
         n = await _seed_results_for_date(yesterday)
@@ -206,7 +212,7 @@ async def lifespan(app: FastAPI):
         async with get_session() as session:
             model = await _load_model(session)
         for offset in (-3, -2, -1, 0):
-            seed_date = (date.today() + timedelta(days=offset)).isoformat()
+            seed_date = (_today_aest() + timedelta(days=offset)).isoformat()
             try:
                 # Enrich any meetings that are missing predictions
                 await _enrich_date(seed_date, client, model)
@@ -271,7 +277,7 @@ async def _load_model(session) -> HorseModel:
 
 
 def _today() -> str:
-    return date.today().isoformat()
+    return _today_aest().isoformat()
 
 
 def _meeting_slug(venue: str, race_date: str) -> str:
@@ -318,7 +324,7 @@ async def get_edge_picks():
     """High-confidence picks for today + next 3 days. Threshold: model win_probability >= 30%."""
     threshold = 0.30
     picks = []
-    today = date.today()
+    today = _today_aest()
     client = get_tab_client()
 
     for i in range(4):
@@ -402,7 +408,7 @@ async def refresh_edge_odds():
     if _odds_refresh_last and (now - _odds_refresh_last).total_seconds() < _ODDS_REFRESH_COOLDOWN:
         return {"updated": {}, "count": 0, "cached": True}
     threshold = 0.30
-    today = date.today()
+    today = _today_aest()
     client = get_tab_client()
     updated: dict[str, float] = {}  # race_id → new odds
 
@@ -463,7 +469,7 @@ async def refresh_edge_odds():
 async def get_edge_yesterday(for_date: Optional[str] = Query(None, alias="date")):
     """Qualifying picks with actual results and SP odds from punters.
     Accepts ?date=YYYY-MM-DD (defaults to yesterday)."""
-    target_date = for_date or (date.today() - timedelta(days=1)).isoformat()
+    target_date = for_date or (_today_aest() - timedelta(days=1)).isoformat()
     threshold = 0.30
     prefix = f"{target_date}_"
     stake = 10

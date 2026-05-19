@@ -1127,10 +1127,14 @@
     }
 
     let html = '';
+    const todayStr = new Date().toLocaleDateString('en-CA', { timeZone: 'Australia/Sydney' });
+    const tomorrowDate = new Date(); tomorrowDate.setDate(tomorrowDate.getDate() + 1);
+    const tomorrowStr = tomorrowDate.toLocaleDateString('en-CA', { timeZone: 'Australia/Sydney' });
+
     const dates = Object.keys(picksByDate).sort();
     dates.forEach((d, i) => {
       const picks = picksByDate[d];
-      const label = i === 0 ? 'Today' : i === 1 ? 'Tomorrow' : fmtDate(d).split(',')[0];
+      const label = d === todayStr ? 'Today' : d === tomorrowStr ? 'Tomorrow' : fmtDate(d).split(',')[0];
       const dateStr = fmtDate(d);
       const count = picks.length;
 
@@ -1147,14 +1151,13 @@
 
     // Show empty day groups for dates with no picks
     const allDates = [];
-    const todayDate = new Date().toISOString().slice(0, 10);
     for (let i = 0; i < 4; i++) {
       const d = new Date(); d.setDate(d.getDate() + i);
-      allDates.push(d.toISOString().slice(0, 10));
+      allDates.push(d.toLocaleDateString('en-CA', { timeZone: 'Australia/Sydney' }));
     }
     allDates.forEach((d, i) => {
       if (!picksByDate[d]) {
-        const label = i === 0 ? 'Today' : i === 1 ? 'Tomorrow' : fmtDate(d).split(',')[0];
+        const label = d === todayStr ? 'Today' : d === tomorrowStr ? 'Tomorrow' : fmtDate(d).split(',')[0];
         html += `
           <div class="day-group">
             <div class="day-header">
