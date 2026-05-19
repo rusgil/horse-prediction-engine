@@ -739,6 +739,38 @@
     }
     .tr-model-note strong { color: var(--text-secondary); }
 
+    /* ── Info icon tooltip ───────────────────────────────── */
+    .info-icon {
+      display: inline-flex; align-items: center; justify-content: center;
+      width: 13px; height: 13px;
+      border-radius: 50%;
+      background: var(--bg-elevated);
+      border: 1px solid var(--border);
+      color: var(--text-dim);
+      font-size: 0.55rem; font-style: normal;
+      cursor: default;
+      position: relative;
+      vertical-align: middle; margin-left: 3px;
+      font-family: 'Outfit', sans-serif;
+    }
+    .info-icon::after {
+      content: attr(data-tooltip);
+      position: absolute;
+      bottom: calc(100% + 6px);
+      left: 50%; transform: translateX(-50%);
+      background: var(--bg-elevated);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      padding: 6px 10px;
+      font-size: 0.68rem; color: var(--text-secondary);
+      white-space: nowrap;
+      pointer-events: none;
+      opacity: 0; transition: opacity 0.15s;
+      z-index: 10;
+      box-shadow: var(--shadow);
+    }
+    .info-icon:hover::after { opacity: 1; }
+
     @media (max-width: 600px) {
       .tr-explainer-row { grid-template-columns: 1fr; }
       .tr-explainer-vs { text-align: center; }
@@ -1108,7 +1140,7 @@
             </div>
             <div class="tr-tier-stat">
               <div class="tr-tier-stat-num">222</div>
-              <div class="tr-tier-stat-label">Races analysed</div>
+              <div class="tr-tier-stat-label">Races analysed <span class="info-icon" data-tooltip="Number of past races where this confidence level was found and tested against">ℹ</span></div>
             </div>
             <div class="tr-tier-stat">
               <div class="tr-tier-stat-num" style="color:var(--gold-light)">≥45%</div>
@@ -1130,7 +1162,7 @@
             </div>
             <div class="tr-tier-stat">
               <div class="tr-tier-stat-num">809</div>
-              <div class="tr-tier-stat-label">Races analysed</div>
+              <div class="tr-tier-stat-label">Races analysed <span class="info-icon" data-tooltip="Number of past races where this confidence level was found and tested against">ℹ</span></div>
             </div>
             <div class="tr-tier-stat">
               <div class="tr-tier-stat-num" style="color:#60a5fa">35–44%</div>
@@ -1152,7 +1184,7 @@
             </div>
             <div class="tr-tier-stat">
               <div class="tr-tier-stat-num">1,086</div>
-              <div class="tr-tier-stat-label">Races analysed</div>
+              <div class="tr-tier-stat-label">Races analysed <span class="info-icon" data-tooltip="Number of past races where this confidence level was found and tested against">ℹ</span></div>
             </div>
             <div class="tr-tier-stat">
               <div class="tr-tier-stat-num" style="color:var(--green)">30–34%</div>
