@@ -441,6 +441,34 @@
     }
     .win-rate-label { font-size: 0.68rem; color: var(--text-dim); }
 
+    /* ── Dual stat row ───────────────────────────────────── */
+    .dual-stat-row {
+      display: flex; align-items: center; gap: 12px;
+      margin-bottom: 8px;
+      background: var(--bg-elevated);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      padding: 8px 12px;
+    }
+    .dual-stat {
+      display: flex; flex-direction: column; gap: 2px;
+      flex: 1;
+    }
+    .dual-stat-num {
+      font-family: 'Barlow Condensed', sans-serif;
+      font-size: 1.3rem; font-weight: 900;
+      color: var(--green); line-height: 1;
+    }
+    .dual-stat-num.hot { color: var(--gold-light); }
+    .dual-stat-label {
+      font-size: 0.62rem; color: var(--text-dim);
+      line-height: 1.3;
+    }
+    .dual-stat-sep {
+      width: 1px; height: 32px;
+      background: var(--border); flex-shrink: 0;
+    }
+
     .edge-row {
       display: flex; align-items: center; gap: 8px;
       flex-wrap: wrap;
@@ -1071,16 +1099,16 @@
           <div class="pick-left">
             <div class="pick-horse-name">${escHtml(pick.horse_name)}</div>
             <div class="pick-details">${barrierChip}${jockeyChip}${trainerChip}${weightChip}</div>
-            <div class="conf-row">
-              <div class="conf-bar-track">
-                <div class="conf-bar-fill" style="width:${barW}%"></div>
+            <div class="dual-stat-row">
+              <div class="dual-stat">
+                <span class="dual-stat-num">${conf}%</span>
+                <span class="dual-stat-label">how likely this horse wins today</span>
               </div>
-              <span class="conf-pct">${conf}%</span>
-            </div>
-            <div class="conf-label" style="margin-bottom:8px">FunkyIQ Rating</div>
-            <div class="win-rate-row">
-              <span class="win-rate-pill">${pick.calibrated_win_rate}% historical win rate</span>
-              <span class="win-rate-label">at this confidence level</span>
+              <div class="dual-stat-sep"></div>
+              <div class="dual-stat">
+                <span class="dual-stat-num ${pick.hot_pick ? 'hot' : ''}">${pick.calibrated_win_rate}%</span>
+                <span class="dual-stat-label">model accuracy at this level</span>
+              </div>
             </div>
             <div class="edge-row" style="margin-top:8px">${edgeHtml}</div>
           </div>
