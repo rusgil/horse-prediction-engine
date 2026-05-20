@@ -453,14 +453,19 @@ async def refresh_edge_odds():
                         if best:
                             horse_odds[name] = best
 
-                # Update DB rows that have a fresh odds value
+                # Update DB rows that have a fresh odds value or stale value_rating
                 async with get_session() as session:
                     for pick in slug_picks:
                         new_odds = horse_odds.get(pick.horse_name)
-                        if new_odds and new_odds != pick.best_available_odds:
+                        odds_changed = new_odds and new_odds != pick.best_available_odds
+                        stale_rating = pick.best_available_odds and (not pick.value_rating)
+                        if odds_changed or stale_rating:
                             pick_row = await session.get(RunnerPredictionRow, pick.id)
                             if pick_row:
-                                pick_row.best_available_odds = new_odds
+                                if odds_changed:
+                                    pick_row.best_available_odds = new_odds
+                                else:
+                                    new_odds = pick_row.best_available_odds
                                 market_implied = 1.0 / new_odds if new_odds else 0.0
                                 pick_row.overlay = round(pick_row.win_probability - market_implied, 4)
                                 pick_row.value_rating = _value_rating(pick_row.win_probability, new_odds, pick_row.overlay)
