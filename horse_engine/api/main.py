@@ -714,7 +714,7 @@ async def get_track_record():
     for tier in tiers:
         picks = [r for r in unified if tier["min"] <= r["win_prob"] < tier["max"]]
         wins  = [r for r in picks if r["winner"]]
-        win_pct = round(len(wins) / len(picks) * 100, 1) if picks else 0
+        win_pct = round(len(wins) / len(picks) * 100) if picks else 0
         output.append({
             "badge":    tier["badge"],
             "win_pct":  win_pct,
