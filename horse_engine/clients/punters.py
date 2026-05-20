@@ -85,6 +85,7 @@ _MEETING_FULL_QUERY = """
         topToteWin
         topTotePlace
         startingPrice
+        flucs { open high low }
         selectionResult
         officialMargin
         officialTime
@@ -432,10 +433,15 @@ class PuntersClient:
         tote_win = sel.get("topToteWin")
         tote_place = sel.get("topTotePlace")
         sp = sel.get("startingPrice")
+        flucs = sel.get("flucs") or {}
 
         best_odds = None
         if tote_win:
             best_odds = float(tote_win)
+        elif flucs.get("high"):
+            best_odds = float(flucs["high"])
+        elif flucs.get("open"):
+            best_odds = float(flucs["open"])
         elif sp:
             best_odds = float(sp)
 
