@@ -1536,6 +1536,15 @@
         <span class="win-rate-label">at this confidence level</span>
       </div>`;
 
+    const marketImplied = p.sp ? +(100 / p.sp).toFixed(1) : null;
+    const edgePct = marketImplied ? +(p.model_pct - marketImplied).toFixed(1) : null;
+    const edgeHtml = edgePct != null
+      ? `<div class="edge-row" style="margin-top:8px">
+           <span class="${edgePct >= 0 ? 'edge-positive' : 'edge-negative'}">${edgePct >= 0 ? `Model beats market by ${edgePct}` : `Market prefers by ${Math.abs(edgePct)}`}</span>
+           <span class="edge-label">model ${p.model_pct}% vs market ${marketImplied}%</span>
+         </div>`
+      : '';
+
     return `
       <div class="pick-card ${isWin ? 'hot' : ''}" style="${!isWin && !p.scratched ? 'border-color:rgba(239,68,68,0.2);' : ''}${p.scratched ? 'opacity:0.55;' : ''}">
         <div class="pick-card-top-bar">
@@ -1558,6 +1567,7 @@
             </div>
             <div class="conf-label" style="margin-bottom:8px">FunkyIQ Rating</div>
             ${winRateHtml}
+            ${edgeHtml}
           </div>
           <div class="pick-right">
             ${oddsHtml}
