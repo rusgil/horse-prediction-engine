@@ -1530,10 +1530,18 @@
     }
 
     // Win rate pill — same as upcoming but shows actual result inline
+    let tierBadgeHtml;
+    if (p.model_pct >= 45) {
+      tierBadgeHtml = `<span class="pick-badge-hot">🔥 Hot Pick</span>`;
+    } else if (p.model_pct >= 35) {
+      tierBadgeHtml = `<span class="pick-badge-hot" style="background:rgba(59,130,246,0.12);color:#60a5fa;border-color:rgba(59,130,246,0.28);">⚡ High Confidence</span>`;
+    } else {
+      tierBadgeHtml = `<span class="pick-badge-standard">Strong Pick</span>`;
+    }
     const winRateHtml = `
       <div class="win-rate-row">
-        <span class="win-rate-pill">${p.calibrated_win_rate}% historical win rate</span>
-        <span class="win-rate-label">at this confidence level</span>
+        ${tierBadgeHtml}
+        <span class="win-rate-label">${p.calibrated_win_rate}% historical win rate</span>
       </div>`;
 
     const marketImplied = p.sp ? +(100 / p.sp).toFixed(1) : null;
