@@ -509,7 +509,7 @@ async def refresh_edge_odds():
     client = get_tab_client()
     updated: dict[str, float] = {}  # race_id → new odds
 
-    for i in range(2):  # today + tomorrow only (future days have no odds yet)
+    for i in range(4):  # today + next 3 days — covers weekend picks
         target_date = (today + timedelta(days=i)).isoformat()
         prefix = f"{target_date}_"
 
