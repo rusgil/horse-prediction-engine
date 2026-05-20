@@ -495,18 +495,18 @@
       flex-wrap: wrap;
     }
     .edge-positive {
-      font-size: 0.72rem; font-weight: 600;
+      font-size: 0.78rem; font-weight: 700;
       color: var(--green); background: var(--green-dim);
-      border: 1px solid rgba(34,197,94,0.2);
-      border-radius: 6px; padding: 2px 8px;
+      border: 1px solid rgba(34,197,94,0.3);
+      border-radius: 6px; padding: 3px 10px;
     }
     .edge-negative {
-      font-size: 0.72rem; font-weight: 600;
+      font-size: 0.78rem; font-weight: 700;
       color: #f87171; background: rgba(239,68,68,0.08);
       border: 1px solid rgba(239,68,68,0.2);
-      border-radius: 6px; padding: 2px 8px;
+      border-radius: 6px; padding: 3px 10px;
     }
-    .edge-label { font-size: 0.68rem; color: var(--text-dim); }
+    .edge-label { font-size: 0.7rem; color: var(--text-secondary); }
 
     /* Payout panel */
     .pick-right {
@@ -1145,7 +1145,7 @@
         <span class="stake-currency">$</span>
         <input type="number" class="stake-input" id="stakeInput" value="10" min="1" max="500" />
       </div>
-      <span class="stake-note">Profit figures update as you type. <strong>At 30%+ confidence — historically 66%+ win rate.</strong></span>
+      <span class="stake-note">For best results, focus on picks where <strong>the model beats the market</strong> and odds are <strong>$3.00 or better</strong>.</span>
       <div class="stake-slider-wrap">
         <input type="range" class="stake-slider" id="stakeSlider" min="5" max="500" step="5" value="10" />
         <div class="stake-slider-labels"><span>$5</span><span>$100</span><span>$250</span><span>$500</span></div>
