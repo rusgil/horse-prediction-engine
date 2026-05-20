@@ -448,25 +448,24 @@
             <div class="drift-explainer-title">What does drift mean?</div>
             <div class="drift-explainer-grid">
               <div class="drift-explainer-item">
-                <strong>What it is</strong>
-                The model's Value ROI has slipped below its own 4-week rolling average — meaning it's finding fewer profitable bets than it was recently.
+                <strong>What drift measures</strong>
+                Today's Value ROI versus the 4-week rolling average of past calibration runs. It's a profitability benchmark, not a model quality check.
               </div>
               <div class="drift-explainer-item">
-                <strong>Common causes</strong>
-                A strong run rolling off the 4-week window, a shift in track conditions, or race compositions the model hasn't seen before.
+                <strong>Best window vs drift</strong>
+                These are independent signals. The 30d window winning every day means the model is well-tuned. Drift just means this week is less profitable than a strong patch 3–4 weeks ago.
               </div>
               <div class="drift-explainer-item">
-                <strong>What it doesn't mean</strong>
-                The model is broken or losing money. Value ROI is still positive — it's an early warning, not a crisis signal.
+                <strong>Most likely cause</strong>
+                A high-ROI period from late April is rolling off the 4-week window. As it drops out, the average falls to meet current performance and the flag clears automatically.
               </div>
               <div class="drift-explainer-item">
-                <strong>What to watch</strong>
-                If the gap narrows over the next 3–4 days, the 4-week average is adjusting down. If it keeps widening, investigate feature weights or data quality.
+                <strong>Real health signals</strong>
+                Win rate and place rate. If win rate stays above 50% and place rate above 70%, the model is performing well regardless of the drift flag.
               </div>
             </div>
             <div class="drift-explainer-note">
-              The flag triggers automatically each night after calibration. It compares today's Value ROI against the average of the previous 28 days of calibration runs.
-              <em>Win rate and place rate are the most reliable health signals — if those stay above 50% and 70% respectively, the model is still performing well.</em>
+              The flag triggers nightly when Value ROI drops below the 28-day average. It is <em>not</em> triggered by the training window selection — a well-tuned model (30d window) can still show drift if the current market is less favourable than it was a few weeks ago. No action is needed unless the gap widens over 5+ consecutive days or win rate drops below 45%.
             </div>
           </div>`;
       } else {
