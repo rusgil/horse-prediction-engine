@@ -638,10 +638,18 @@
           <div class="two-col">
             <div class="chart-card">
               <div class="chart-card-title">Win Rate %</div>
+              <div style="display:flex;gap:12px;margin-bottom:10px;font-size:0.7rem;color:var(--text-dim)">
+                <span><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:rgba(34,197,94,0.6);margin-right:4px;vertical-align:middle"></span>≥ 50% — on target</span>
+                <span><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:rgba(239,68,68,0.4);margin-right:4px;vertical-align:middle"></span>&lt; 50% — below target</span>
+              </div>
               <div class="chart-wrap"><canvas id="winRateChart"></canvas></div>
             </div>
             <div class="chart-card">
               <div class="chart-card-title">Value P&L ($10 stake)</div>
+              <div style="display:flex;gap:12px;margin-bottom:10px;font-size:0.7rem;color:var(--text-dim)">
+                <span><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:rgba(59,130,246,0.6);margin-right:4px;vertical-align:middle"></span>Profitable day</span>
+                <span><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:rgba(239,68,68,0.4);margin-right:4px;vertical-align:middle"></span>Loss day</span>
+              </div>
               <div class="chart-wrap"><canvas id="pnlChart"></canvas></div>
             </div>
           </div>
