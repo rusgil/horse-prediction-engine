@@ -41,6 +41,11 @@
       --red:           #ef4444;
       --red-dim:       rgba(239,68,68,0.12);
 
+      --purple:        #a855f7;
+      --purple-dim:    rgba(168,85,247,0.12);
+      --purple-mid:    rgba(168,85,247,0.28);
+      --purple-bright: #c084fc;
+
       --text-primary:  #f0f4ff;
       --text-secondary:#8a9bc4;
       --text-dim:      #4a5a7a;
@@ -287,6 +292,12 @@
     .pick-card:hover { border-color: rgba(34,197,94,0.3); }
     .pick-card.hot { border-color: rgba(232,160,32,0.3); }
     .pick-card.hot:hover { border-color: var(--gold); }
+    .pick-card.premium { border-color: rgba(168,85,247,0.4); }
+    .pick-card.premium:hover { border-color: var(--purple); }
+    .pick-card.premium .pick-horse-name { color: var(--purple-bright); }
+    .pick-card.premium .payout-box { background: var(--purple-dim); border-color: var(--purple-mid); }
+    .pick-card.premium .payout-profit { color: var(--purple-bright); }
+    .pick-card.premium .dual-stat-num { color: var(--purple-bright); }
 
     .pick-card-top-bar {
       display: flex; align-items: center; gap: 8px;
@@ -310,6 +321,16 @@
       background: var(--green-dim);
       color: var(--green);
       border: 1px solid rgba(34,197,94,0.25);
+      border-radius: 999px;
+      padding: 2px 10px;
+    }
+    .pick-badge-premium {
+      font-family: 'Barlow Condensed', sans-serif;
+      font-size: 0.7rem; font-weight: 800;
+      letter-spacing: 0.12em; text-transform: uppercase;
+      background: var(--purple-dim);
+      color: var(--purple-bright);
+      border: 1px solid var(--purple-mid);
       border-radius: 999px;
       padding: 2px 10px;
     }
@@ -739,6 +760,46 @@
     }
     .tr-model-note strong { color: var(--text-secondary); }
 
+    /* ── Premium Picks explainer ─────────────────────────── */
+    .tr-premium-card {
+      background: var(--bg-card);
+      border: 1px solid rgba(168,85,247,0.3);
+      border-radius: var(--radius);
+      padding: 18px 20px;
+    }
+    .tr-premium-criteria {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 12px; margin: 14px 0;
+    }
+    .tr-premium-criterion {
+      text-align: center;
+      background: var(--bg-elevated);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      padding: 12px 8px;
+    }
+    .tr-premium-criterion-num {
+      font-family: 'Barlow Condensed', sans-serif;
+      font-size: 1.5rem; font-weight: 900;
+      color: var(--purple-bright); line-height: 1;
+      margin-bottom: 4px;
+    }
+    .tr-premium-criterion-label {
+      font-size: 0.62rem; color: var(--text-dim);
+      text-transform: uppercase; letter-spacing: 0.08em;
+      line-height: 1.3;
+    }
+    .tr-premium-desc {
+      font-size: 0.78rem; color: var(--text-secondary);
+      line-height: 1.6;
+      border-top: 1px solid var(--border);
+      padding-top: 12px;
+    }
+    @media (max-width: 480px) {
+      .tr-premium-criteria { grid-template-columns: 1fr; }
+    }
+
     /* ── Info icon tooltip ───────────────────────────────── */
     .info-icon {
       display: inline-flex; align-items: center; justify-content: center;
@@ -808,6 +869,10 @@
     .legend-badge.standard {
       background: var(--green-dim); color: var(--green);
       border: 1px solid rgba(34,197,94,0.25);
+    }
+    .legend-badge.premium {
+      background: var(--purple-dim); color: var(--purple-bright);
+      border: 1px solid var(--purple-mid);
     }
     .legend-title {
       font-family: 'Barlow Condensed', sans-serif;
@@ -1026,6 +1091,11 @@
       </div>
       <div class="hero-divider"></div>
       <div class="hero-stat">
+        <span class="hero-stat-num" id="statPremium" style="color:var(--purple-bright)">—</span>
+        <span class="hero-stat-label">Premium</span>
+      </div>
+      <div class="hero-divider"></div>
+      <div class="hero-stat">
         <span class="hero-stat-num" id="statHot">—</span>
         <span class="hero-stat-label">Hot</span>
       </div>
@@ -1046,6 +1116,11 @@
 
   <div class="legend-bar">
     <span class="legend-title">FunkyIQ&#8482; Edge Ranking:</span>
+    <span class="legend-item">
+      <span class="legend-badge premium">💎 Premium</span>
+      <span class="legend-desc">≥40% confidence · <span class="legend-odds">$3.50+ odds</span> · model beats market</span>
+    </span>
+    <span class="legend-sep">·</span>
     <span class="legend-item">
       <span class="legend-badge hot">🔥 Hot Pick</span>
       <span class="legend-desc"><span class="legend-odds">82% win rate</span> · 222 races</span>
@@ -1106,6 +1181,32 @@
 
   <div id="panelInsights" style="display:none">
     <div class="tr-section">
+      <div class="tr-section-title">Premium Picks</div>
+      <div class="tr-premium-card">
+        <div class="tr-tier-header">
+          <span class="legend-badge premium">💎 Premium Pick</span>
+          <span style="font-size:0.78rem;color:var(--text-dim)">The value sweet spot</span>
+        </div>
+        <div class="tr-premium-criteria">
+          <div class="tr-premium-criterion">
+            <div class="tr-premium-criterion-num">≥ 40%</div>
+            <div class="tr-premium-criterion-label">Model confidence</div>
+          </div>
+          <div class="tr-premium-criterion">
+            <div class="tr-premium-criterion-num">$3.50+</div>
+            <div class="tr-premium-criterion-label">Minimum odds</div>
+          </div>
+          <div class="tr-premium-criterion">
+            <div class="tr-premium-criterion-num">+ve</div>
+            <div class="tr-premium-criterion-label">Model beats market</div>
+          </div>
+        </div>
+        <div class="tr-premium-desc">
+          A Premium Pick is a race where the model has high confidence the horse will win, but the market hasn't fully priced that in — so the odds remain generous enough to generate meaningful returns when correct. At $3.50 minimum, a $10 bet returns $35. At $5.00 it returns $50. Every Premium Pick passed all three tests: the model rated it ≥40%, the market offered $3.50 or better, and the model's probability was higher than what the market implied.
+        </div>
+      </div>
+    </div>
+    <div class="tr-section">
       <div class="tr-section-title">Performance by Tier</div>
       <div id="trTierGrid" class="tr-tier-grid">
         <div class="loading"><div class="loading-spinner"></div>Loading track record…</div>
@@ -1155,12 +1256,19 @@
     return '★'.repeat(n) + '☆'.repeat(5 - n);
   }
 
+  function isPremiumPick(pick) {
+    return pick.model_pct >= 40
+      && pick.best_available_odds != null && pick.best_available_odds >= 3.5
+      && pick.edge_pct != null && pick.edge_pct > 0;
+  }
+
   function renderCard(pick, stake, result) {
     const now = Date.now();
     const jumpMs = pick.scheduled_time ? new Date(pick.scheduled_time).getTime() : null;
     const isPast = jumpMs && jumpMs < now;
 
     const isHot = pick.hot_pick;
+    const isPremium = isPremiumPick(pick);
     const conf = pick.model_pct;
     const barW = Math.min(100, (conf / 70) * 100);
 
@@ -1173,6 +1281,8 @@
     } else {
       tierBadge = `<span class="pick-badge-standard">Strong Pick</span>`;
     }
+
+    const premiumBadge = isPremium ? `<span class="pick-badge-premium">💎 Premium</span>` : '';
 
     // Result badge — shown for past races alongside tier badge
     let resultBadge = '';
@@ -1188,7 +1298,7 @@
       resultBadge = `<span class="pick-badge-standard" style="background:var(--bg-elevated);color:var(--text-dim);border-color:var(--border);">Completed</span>`;
     }
 
-    const badgeHtml = tierBadge + resultBadge;
+    const badgeHtml = tierBadge + premiumBadge + resultBadge;
 
     const timeStr = fmtTime(pick.scheduled_time);
     const countdownId = `cd-${escHtml(pick.race_id).replace(/[^a-z0-9]/gi, '-')}`;
@@ -1253,7 +1363,7 @@
     const pastAttr  = isPast && result ? 'data-past-result="true"' : '';
 
     return `
-      <div class="pick-card ${isHot && !isPast ? 'hot' : ''}" style="${cardStyle}" ${pastAttr}>
+      <div class="pick-card ${isHot && !isPast ? 'hot' : ''} ${isPremium && !isPast ? 'premium' : ''}" style="${cardStyle}" ${pastAttr}>
         <div class="pick-card-top-bar">
           ${badgeHtml}
           <div class="pick-race-ref">
@@ -1306,9 +1416,11 @@
     // Stats
     const total = picks.length;
     const hot = picks.filter(p => p.hot_pick).length;
+    const premium = picks.filter(p => isPremiumPick(p)).length;
     const avgConf = total ? (picks.reduce((s, p) => s + p.model_pct, 0) / total).toFixed(0) + '%' : '—';
     document.getElementById('statTotal').textContent = total;
     document.getElementById('statHot').textContent = hot;
+    document.getElementById('statPremium').textContent = premium;
     document.getElementById('statAvgConf').textContent = avgConf;
 
     const genAt = new Date(data.generated_at + 'Z');
@@ -1331,7 +1443,12 @@
 
     const dates = Object.keys(picksByDate).sort();
     dates.forEach((d, i) => {
-      const picks = picksByDate[d];
+      const picks = [...picksByDate[d]].sort((a, b) => {
+        const ap = isPremiumPick(a) ? 1 : 0;
+        const bp = isPremiumPick(b) ? 1 : 0;
+        if (bp !== ap) return bp - ap;
+        return b.model_pct - a.model_pct;
+      });
       const label = d === todayStr ? 'Today' : d === tomorrowStr ? 'Tomorrow' : fmtDate(d).split(',')[0];
       const dateStr = fmtDate(d);
       const count = picks.length;
@@ -1514,6 +1631,9 @@
         </div>`;
     }
 
+    const marketImplied = p.sp ? +(100 / p.sp).toFixed(1) : null;
+    const edgePct = marketImplied ? +(p.model_pct - marketImplied).toFixed(1) : null;
+
     // Win rate pill — same as upcoming but shows actual result inline
     let tierBadgeHtml;
     if (p.model_pct >= 45) {
@@ -1523,14 +1643,13 @@
     } else {
       tierBadgeHtml = `<span class="pick-badge-standard">Strong Pick</span>`;
     }
+    const yesterdayIsPremium = p.model_pct >= 40 && p.sp && p.sp >= 3.5 && edgePct != null && edgePct > 0;
+    const yesterdayPremiumBadge = yesterdayIsPremium ? `<span class="pick-badge-premium">💎 Premium</span>` : '';
     const winRateHtml = `
       <div class="win-rate-row">
-        ${tierBadgeHtml}
+        ${tierBadgeHtml}${yesterdayPremiumBadge}
         <span class="win-rate-label">${p.calibrated_win_rate}% historical win rate</span>
       </div>`;
-
-    const marketImplied = p.sp ? +(100 / p.sp).toFixed(1) : null;
-    const edgePct = marketImplied ? +(p.model_pct - marketImplied).toFixed(1) : null;
     const edgeHtml = edgePct != null
       ? `<div class="edge-row" style="margin-top:8px">
            <span class="${edgePct >= 0 ? 'edge-positive' : 'edge-negative'}">${edgePct >= 0 ? `Model beats market by ${edgePct}` : `Market prefers by ${Math.abs(edgePct)}`}</span>
