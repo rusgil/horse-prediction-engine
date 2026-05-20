@@ -134,6 +134,19 @@ class CalibrationRow(Base):
     all_results_json = Column(Text)         # JSON list of per-window stats
 
 
+class OddsSnapshotRow(Base):
+    __tablename__ = "odds_snapshots"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    race_id = Column(String, index=True)
+    horse_name = Column(String)
+    snapshotted_at = Column(DateTime, default=datetime.utcnow, index=True)
+    minutes_to_jump = Column(Integer, nullable=True)   # negative = post-jump
+    win_odds = Column(Float, nullable=True)
+    place_odds = Column(Float, nullable=True)
+    source = Column(String, default="flucs")           # "tote" or "flucs"
+
+
 async def init_db() -> None:
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)

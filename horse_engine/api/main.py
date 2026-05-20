@@ -45,6 +45,7 @@ from horse_engine.models.database import (
     BacktestStateRow,
     CalibrationRow,
     HistoricalResultRow,
+    OddsSnapshotRow,
     RunnerPredictionRow,
     RacePredictionRow,
     init_db,
@@ -93,6 +94,97 @@ def _check_admin(x_secret: Optional[str]) -> None:
 def _like_safe(value: str) -> str:
     """Escape LIKE metacharacters to prevent pattern injection."""
     return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+
+
+async def _scheduled_odds_snapshot():
+    """Snapshot current odds for all upcoming races within the next 3 hours."""
+    log.info("[odds-snapshot] Running odds snapshot")
+    try:
+        client = get_tab_client()
+        now_aest = datetime.now(_AEST)
+        today = now_aest.date().isoformat()
+        tomorrow = (now_aest.date() + timedelta(days=1)).isoformat()
+
+        for target_date in [today, tomorrow]:
+            prefix = f"{target_date}_"
+            async with get_session() as session:
+                result = await session.execute(
+                    select(RunnerPredictionRow)
+                    .where(RunnerPredictionRow.model_rank == 1)
+                    .where(RunnerPredictionRow.race_id.like(f"{prefix}%"))
+                )
+                picks = result.scalars().all()
+
+            if not picks:
+                continue
+
+            slugs: dict[str, list[RunnerPredictionRow]] = {}
+            for p in picks:
+                _, venue_code, _ = _parse_race_id(p.race_id)
+                slug = _meeting_slug(venue_code, target_date)
+                slugs.setdefault(slug, []).append(p)
+
+            for slug, slug_picks in slugs.items():
+                try:
+                    events = await asyncio.wait_for(client.get_meeting_races(slug), timeout=30)
+                    snapped_at = datetime.utcnow()
+
+                    # Build lookup: horse_name → (win_odds, place_odds, source, jump_time)
+                    horse_data: dict[str, dict] = {}
+                    for event in events:
+                        start_time = event.get("startTime")
+                        for sel in event.get("selections") or []:
+                            name = (sel.get("competitor") or {}).get("name")
+                            if not name:
+                                continue
+                            tote = sel.get("topToteWin")
+                            place = sel.get("topTotePlace")
+                            flucs = sel.get("flucs") or {}
+                            if tote:
+                                win = float(tote)
+                                source = "tote"
+                            elif flucs.get("high"):
+                                win = float(flucs["high"])
+                                source = "flucs"
+                            elif flucs.get("open"):
+                                win = float(flucs["open"])
+                                source = "flucs"
+                            else:
+                                continue
+                            horse_data[name] = {
+                                "win": win,
+                                "place": float(place) if place else None,
+                                "source": source,
+                                "start_time": start_time,
+                            }
+
+                    async with get_session() as session:
+                        for pick in slug_picks:
+                            hd = horse_data.get(pick.horse_name)
+                            if not hd:
+                                continue
+                            mins_to_jump = None
+                            if hd["start_time"]:
+                                try:
+                                    jump = datetime.fromisoformat(hd["start_time"].replace("Z", "+00:00"))
+                                    mins_to_jump = round((jump.timestamp() - snapped_at.replace(tzinfo=None).timestamp()) / 60)
+                                except Exception:
+                                    pass
+                            session.add(OddsSnapshotRow(
+                                race_id=pick.race_id,
+                                horse_name=pick.horse_name,
+                                snapshotted_at=snapped_at,
+                                minutes_to_jump=mins_to_jump,
+                                win_odds=hd["win"],
+                                place_odds=hd["place"],
+                                source=hd["source"],
+                            ))
+                        await session.commit()
+                    log.info("[odds-snapshot] Snapped %d runners for %s", len(horse_data), slug)
+                except Exception as e:
+                    log.warning("[odds-snapshot] Failed for %s: %s", slug, e)
+    except Exception as e:
+        log.exception("[odds-snapshot] Snapshot failed: %s", e)
 
 
 async def _scheduled_enrich():
@@ -202,8 +294,12 @@ async def lifespan(app: FastAPI):
     scheduler.add_job(_scheduled_enrich, CronTrigger(hour=13, minute=0, timezone="Australia/Sydney"))
     scheduler.add_job(_scheduled_seed_results, CronTrigger(hour=23, minute=0, timezone="Australia/Sydney"))
     scheduler.add_job(_scheduled_calibrate, CronTrigger(hour=2, minute=0, timezone="Australia/Sydney"))
+    scheduler.add_job(
+        _scheduled_odds_snapshot,
+        CronTrigger(hour="9-18", minute="0,15,30,45", timezone="Australia/Sydney")
+    )
     scheduler.start()
-    log.info("[scheduler] Cron jobs scheduled: 6am/10am/1pm enrich, 11pm seed results, 2am daily calibration")
+    log.info("[scheduler] Cron jobs scheduled: 6am/10am/1pm enrich, 11pm seed results, 2am daily calibration, every 15min odds snapshots 9am-6pm")
 
     # Enrich today on startup so deploys don't leave races un-loaded
     asyncio.create_task(_scheduled_enrich())
