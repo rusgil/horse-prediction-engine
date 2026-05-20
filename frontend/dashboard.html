@@ -465,7 +465,7 @@
               </div>
             </div>
             <div class="drift-explainer-note">
-              The flag triggers nightly when Value ROI drops below the 28-day average. It is <em>not</em> triggered by the training window selection — a well-tuned model (30d window) can still show drift if the current market is less favourable than it was a few weeks ago. No action is needed unless the gap widens over 5+ consecutive days or win rate drops below 45%.
+              Drift is assessed nightly after calibration. The flag is raised when today's Value ROI (or win rate) drops more than 5% below the average of the previous 4 calibration runs. It is <em>not</em> triggered by the training window selection — a well-tuned model (30d window winning) can still show drift if the current market is less favourable than recent weeks. No action is needed unless the gap widens over 5+ consecutive days or win rate drops below 45%.
             </div>
           </div>`;
       } else {
