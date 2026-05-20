@@ -1784,7 +1784,7 @@ async def performance_summary(days: int = Query(5, ge=1, le=30)):
         if overlay > 0.05 and sp >= 3.0:
             d["value_bets"] += 1
             d["value_pnl"] += (sp - 1) if actual.winner else -1.0
-            if model_pct >= 40 and sp >= 3.5 and overlay > 0:
+            if model_pct >= 40 and sp >= 2.5 and overlay > 0:
                 d["tier_premium"] += 1
             elif model_pct >= 45:
                 d["tier_hot"] += 1

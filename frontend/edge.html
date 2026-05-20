@@ -1119,7 +1119,7 @@
     <span class="legend-title">FunkyIQ&#8482; Edge Ranking:</span>
     <span class="legend-item">
       <span class="legend-badge premium">💎 Premium</span>
-      <span class="legend-desc">≥40% confidence · <span class="legend-odds">$3.50+ odds</span> · model beats market</span>
+      <span class="legend-desc">≥40% confidence · <span class="legend-odds">$2.50+ odds</span> · model beats market</span>
     </span>
     <span class="legend-sep">·</span>
     <span class="legend-item">
@@ -1194,7 +1194,7 @@
             <div class="tr-premium-criterion-label">Model confidence</div>
           </div>
           <div class="tr-premium-criterion">
-            <div class="tr-premium-criterion-num">$3.50+</div>
+            <div class="tr-premium-criterion-num">$2.50+</div>
             <div class="tr-premium-criterion-label">Minimum odds</div>
           </div>
           <div class="tr-premium-criterion">
@@ -1203,7 +1203,7 @@
           </div>
         </div>
         <div class="tr-premium-desc">
-          A Premium Pick is a race where the model has high confidence the horse will win, but the market hasn't fully priced that in — so the odds remain generous enough to generate meaningful returns when correct. At $3.50 minimum, a $10 bet returns $35. At $5.00 it returns $50. Every Premium Pick passed all three tests: the model rated it ≥40%, the market offered $3.50 or better, and the model's probability was higher than what the market implied.
+          A Premium Pick is a race where the model has high confidence the horse will win, but the market hasn't fully priced that in — so the odds remain generous enough to generate meaningful returns when correct. At $2.50 minimum, a $10 bet returns $25. At $5.00 it returns $50. Every Premium Pick passed all three tests: the model rated it ≥40%, the market offered $2.50 or better, and the model's probability was higher than what the market implied.
         </div>
       </div>
     </div>
@@ -1259,7 +1259,7 @@
 
   function isPremiumPick(pick) {
     return pick.model_pct >= 40
-      && pick.best_available_odds != null && pick.best_available_odds >= 3.5
+      && pick.best_available_odds != null && pick.best_available_odds >= 2.5
       && pick.edge_pct != null && pick.edge_pct > 0;
   }
 
@@ -1644,7 +1644,7 @@
     } else {
       tierBadgeHtml = `<span class="pick-badge-standard">Strong Pick</span>`;
     }
-    const yesterdayIsPremium = p.model_pct >= 40 && p.sp && p.sp >= 3.5 && edgePct != null && edgePct > 0;
+    const yesterdayIsPremium = p.model_pct >= 40 && p.sp && p.sp >= 2.5 && edgePct != null && edgePct > 0;
     const yesterdayPremiumBadge = yesterdayIsPremium ? `<span class="pick-badge-premium">💎 Premium</span>` : '';
     const winRateHtml = `
       <div class="win-rate-row">
@@ -1730,7 +1730,7 @@
     const premiumCount = data.picks.filter(p => {
       const mi = p.sp ? +(100 / p.sp).toFixed(1) : null;
       const ep = mi ? +(p.model_pct - mi).toFixed(1) : null;
-      return p.model_pct >= 40 && p.sp && p.sp >= 3.5 && ep != null && ep > 0;
+      return p.model_pct >= 40 && p.sp && p.sp >= 2.5 && ep != null && ep > 0;
     }).length;
 
     el.innerHTML = `
