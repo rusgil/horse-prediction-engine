@@ -1,0 +1,708 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Model Dashboard | FunkyIQ</title>
+  <meta name="robots" content="noindex" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@400;600;700;800;900&family=Outfit:wght@300;400;500;600&display=swap" rel="stylesheet" />
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <style>
+    :root {
+      --bg-base:       #07090f;
+      --bg-card:       #0e1220;
+      --bg-elevated:   #1a2035;
+      --border:        #1e2840;
+      --gold:          #e8a020;
+      --gold-light:    #f5b83a;
+      --gold-dim:      rgba(232,160,32,0.12);
+      --gold-mid:      rgba(232,160,32,0.28);
+      --blue:          #3b82f6;
+      --blue-dim:      rgba(59,130,246,0.14);
+      --green:         #22c55e;
+      --green-bright:  #4ade80;
+      --green-dim:     rgba(34,197,94,0.12);
+      --red:           #ef4444;
+      --red-dim:       rgba(239,68,68,0.12);
+      --purple:        #a855f7;
+      --purple-dim:    rgba(168,85,247,0.12);
+      --purple-bright: #c084fc;
+      --text-primary:  #f0f4ff;
+      --text-secondary:#8a9bc4;
+      --text-dim:      #4a5a7a;
+      --radius:        12px;
+      --radius-sm:     8px;
+      --shadow:        0 4px 24px rgba(0,0,0,0.5);
+    }
+
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: 'Outfit', sans-serif;
+      background: var(--bg-base);
+      color: var(--text-primary);
+      min-height: 100vh;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    /* ── Nav ─────────────────────────────────────────────── */
+    .nav {
+      background: rgba(7,9,15,0.9);
+      backdrop-filter: blur(14px);
+      border-bottom: 1px solid var(--border);
+      position: sticky; top: 0; z-index: 100;
+      padding: 0 16px;
+    }
+    .nav-inner {
+      max-width: 1200px; margin: 0 auto;
+      display: flex; align-items: center; height: 52px; gap: 12px;
+    }
+    .nav-brand {
+      font-family: 'Barlow Condensed', sans-serif;
+      font-size: 1.1rem; font-weight: 900;
+      letter-spacing: 0.08em; text-transform: uppercase;
+      color: var(--text-primary); text-decoration: none;
+      display: flex; align-items: center; gap: 8px;
+    }
+    .nav-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--blue); box-shadow: 0 0 8px var(--blue); }
+    .nav-title {
+      font-family: 'Barlow Condensed', sans-serif;
+      font-size: 0.9rem; font-weight: 700;
+      letter-spacing: 0.1em; text-transform: uppercase;
+      color: var(--text-dim);
+    }
+    .nav-back {
+      font-size: 0.75rem; color: var(--text-dim);
+      text-decoration: none;
+      background: var(--bg-elevated);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      padding: 5px 10px;
+      font-family: 'Barlow Condensed', sans-serif;
+      font-weight: 600; letter-spacing: 0.05em;
+      margin-left: auto;
+    }
+    .nav-back:hover { border-color: var(--blue); color: var(--blue); }
+
+    /* ── Page ────────────────────────────────────────────── */
+    .page { max-width: 1200px; margin: 0 auto; padding: 24px 16px 80px; }
+
+    /* ── Login gate ──────────────────────────────────────── */
+    .login-gate {
+      max-width: 400px; margin: 80px auto;
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 32px;
+      text-align: center;
+    }
+    .login-gate-title {
+      font-family: 'Barlow Condensed', sans-serif;
+      font-size: 1.4rem; font-weight: 900;
+      letter-spacing: 0.06em; text-transform: uppercase;
+      margin-bottom: 8px;
+    }
+    .login-gate-sub { font-size: 0.8rem; color: var(--text-dim); margin-bottom: 20px; }
+    .login-input {
+      width: 100%;
+      background: var(--bg-elevated);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      color: var(--text-primary);
+      font-family: 'Outfit', sans-serif;
+      font-size: 0.9rem;
+      padding: 10px 14px;
+      outline: none;
+      margin-bottom: 12px;
+      transition: border-color 0.15s;
+    }
+    .login-input:focus { border-color: var(--blue); }
+    .login-btn {
+      width: 100%;
+      background: var(--blue);
+      color: #fff;
+      border: none; cursor: pointer;
+      font-family: 'Barlow Condensed', sans-serif;
+      font-size: 1rem; font-weight: 800;
+      letter-spacing: 0.1em; text-transform: uppercase;
+      padding: 10px;
+      border-radius: var(--radius-sm);
+      transition: opacity 0.15s;
+    }
+    .login-btn:hover { opacity: 0.85; }
+    .login-error { font-size: 0.75rem; color: #f87171; margin-top: 8px; }
+
+    /* ── Section ─────────────────────────────────────────── */
+    .section { margin-bottom: 32px; }
+    .section-title {
+      font-family: 'Barlow Condensed', sans-serif;
+      font-size: 0.85rem; font-weight: 800;
+      letter-spacing: 0.12em; text-transform: uppercase;
+      color: var(--text-dim);
+      margin-bottom: 14px;
+    }
+
+    /* ── Drift banner ────────────────────────────────────── */
+    .drift-banner {
+      border-radius: var(--radius);
+      padding: 14px 18px;
+      display: flex; align-items: center; gap: 12px;
+      margin-bottom: 28px;
+      font-size: 0.82rem;
+    }
+    .drift-banner.ok   { background: var(--green-dim);  border: 1px solid rgba(34,197,94,0.25); }
+    .drift-banner.warn { background: rgba(232,160,32,0.1); border: 1px solid var(--gold-mid); }
+    .drift-banner-icon { font-size: 1.2rem; }
+    .drift-banner-text { flex: 1; line-height: 1.5; }
+    .drift-banner-title {
+      font-family: 'Barlow Condensed', sans-serif;
+      font-size: 0.95rem; font-weight: 800;
+      letter-spacing: 0.06em; text-transform: uppercase;
+    }
+    .drift-banner.ok   .drift-banner-title { color: var(--green); }
+    .drift-banner.warn .drift-banner-title { color: var(--gold-light); }
+    .drift-banner-sub  { color: var(--text-secondary); font-size: 0.75rem; margin-top: 2px; }
+
+    /* ── Stat grid ───────────────────────────────────────── */
+    .stat-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+      gap: 12px;
+    }
+    .stat-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 16px 18px;
+    }
+    .stat-card-num {
+      font-family: 'Barlow Condensed', sans-serif;
+      font-size: 2rem; font-weight: 900;
+      line-height: 1; margin-bottom: 4px;
+    }
+    .stat-card-label {
+      font-size: 0.68rem; color: var(--text-dim);
+      text-transform: uppercase; letter-spacing: 0.1em;
+    }
+    .stat-card-sub {
+      font-size: 0.7rem; color: var(--text-secondary);
+      margin-top: 4px;
+    }
+
+    /* ── Chart card ──────────────────────────────────────── */
+    .chart-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 20px;
+    }
+    .chart-card-title {
+      font-family: 'Barlow Condensed', sans-serif;
+      font-size: 0.85rem; font-weight: 800;
+      letter-spacing: 0.1em; text-transform: uppercase;
+      color: var(--text-secondary);
+      margin-bottom: 16px;
+    }
+    .chart-wrap { position: relative; height: 220px; }
+
+    /* ── Two col ─────────────────────────────────────────── */
+    .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+    @media (max-width: 700px) { .two-col { grid-template-columns: 1fr; } }
+
+    /* ── Window table ────────────────────────────────────── */
+    .window-table { width: 100%; border-collapse: collapse; font-size: 0.78rem; }
+    .window-table th {
+      font-family: 'Barlow Condensed', sans-serif;
+      font-size: 0.7rem; font-weight: 800;
+      letter-spacing: 0.1em; text-transform: uppercase;
+      color: var(--text-dim);
+      padding: 6px 10px; text-align: left;
+      border-bottom: 1px solid var(--border);
+    }
+    .window-table td {
+      padding: 8px 10px;
+      border-bottom: 1px solid rgba(30,40,64,0.5);
+      color: var(--text-secondary);
+    }
+    .window-table tr:last-child td { border-bottom: none; }
+    .window-table tr.best td { color: var(--text-primary); }
+    .window-table .best-badge {
+      font-family: 'Barlow Condensed', sans-serif;
+      font-size: 0.65rem; font-weight: 800;
+      letter-spacing: 0.08em; text-transform: uppercase;
+      background: var(--green-dim); color: var(--green);
+      border: 1px solid rgba(34,197,94,0.25);
+      border-radius: 999px; padding: 1px 7px;
+      margin-left: 6px;
+    }
+
+    /* ── History table ───────────────────────────────────── */
+    .history-table { width: 100%; border-collapse: collapse; font-size: 0.78rem; }
+    .history-table th {
+      font-family: 'Barlow Condensed', sans-serif;
+      font-size: 0.7rem; font-weight: 800;
+      letter-spacing: 0.1em; text-transform: uppercase;
+      color: var(--text-dim);
+      padding: 6px 10px; text-align: left;
+      border-bottom: 1px solid var(--border);
+      white-space: nowrap;
+    }
+    .history-table td {
+      padding: 8px 10px;
+      border-bottom: 1px solid rgba(30,40,64,0.5);
+      color: var(--text-secondary);
+      white-space: nowrap;
+    }
+    .history-table tr:last-child td { border-bottom: none; }
+    .drift-dot {
+      display: inline-block;
+      width: 8px; height: 8px;
+      border-radius: 50%;
+      margin-right: 4px;
+    }
+    .drift-dot.ok   { background: var(--green); }
+    .drift-dot.warn { background: var(--gold); }
+
+    /* ── Loading ─────────────────────────────────────────── */
+    .loading {
+      text-align: center; padding: 60px 20px;
+      color: var(--text-dim);
+    }
+    .loading-spinner {
+      width: 32px; height: 32px;
+      border: 3px solid var(--border);
+      border-top-color: var(--blue);
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+      margin: 0 auto 14px;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* ── Retrain button ──────────────────────────────────── */
+    .action-bar { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 28px; }
+    .btn {
+      font-family: 'Barlow Condensed', sans-serif;
+      font-size: 0.82rem; font-weight: 800;
+      letter-spacing: 0.1em; text-transform: uppercase;
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      padding: 8px 16px;
+      cursor: pointer;
+      background: var(--bg-elevated);
+      color: var(--text-secondary);
+      transition: all 0.15s;
+    }
+    .btn:hover { border-color: var(--blue); color: var(--blue); }
+    .btn.primary { background: var(--blue); color: #fff; border-color: var(--blue); }
+    .btn.primary:hover { opacity: 0.85; }
+    .btn:disabled { opacity: 0.4; cursor: not-allowed; }
+    .btn-status { font-size: 0.72rem; color: var(--text-dim); align-self: center; }
+  </style>
+</head>
+<body>
+
+<nav class="nav">
+  <div class="nav-inner">
+    <a href="/" class="nav-brand">
+      <div class="nav-dot"></div>
+      FunkyIQ
+    </a>
+    <span class="nav-title">Model Dashboard</span>
+    <a href="/edge" class="nav-back">← The Edge</a>
+  </div>
+</nav>
+
+<div class="page">
+
+  <!-- Login gate -->
+  <div id="loginGate" class="login-gate" style="display:none">
+    <div class="login-gate-title">Admin Access</div>
+    <div class="login-gate-sub">Enter the admin secret to view model performance data.</div>
+    <input type="password" class="login-input" id="secretInput" placeholder="Admin secret" />
+    <button class="login-btn" onclick="submitSecret()">Unlock Dashboard</button>
+    <div class="login-error" id="loginError" style="display:none">Incorrect secret — try again.</div>
+  </div>
+
+  <!-- Dashboard content -->
+  <div id="dashContent">
+    <div class="loading">
+      <div class="loading-spinner"></div>
+      Loading dashboard…
+    </div>
+  </div>
+
+</div>
+
+<script>
+  const API = 'https://web-production-dec62.up.railway.app';
+  const SECRET_KEY = 'fiq_admin_secret';
+
+  let adminSecret = sessionStorage.getItem(SECRET_KEY) || '';
+
+  function submitSecret() {
+    const val = document.getElementById('secretInput').value.trim();
+    if (!val) return;
+    adminSecret = val;
+    document.getElementById('loginGate').style.display = 'none';
+    document.getElementById('dashContent').innerHTML = '<div class="loading"><div class="loading-spinner"></div>Loading dashboard…</div>';
+    loadDashboard();
+  }
+
+  document.getElementById('secretInput')?.addEventListener('keydown', e => {
+    if (e.key === 'Enter') submitSecret();
+  });
+
+  function fmtDate(iso) {
+    return new Date(iso).toLocaleDateString('en-AU', { day: 'numeric', month: 'short', timeZone: 'Australia/Sydney' });
+  }
+
+  function fmtDateTime(iso) {
+    return new Date(iso + (iso.includes('Z') ? '' : 'Z')).toLocaleString('en-AU', {
+      day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit',
+      hour12: true, timeZone: 'Australia/Sydney'
+    });
+  }
+
+  function pct(v) { return (v * 100).toFixed(1) + '%'; }
+
+  async function loadDashboard() {
+    try {
+      const [calRes, perfRes, analysisRes] = await Promise.all([
+        fetch(`${API}/api/admin/calibration/history?limit=14`, { headers: { 'x-cron-secret': adminSecret } }),
+        fetch(`${API}/api/performance?days=30`),
+        fetch(`${API}/api/admin/backtest/analysis`, { headers: { 'x-cron-secret': adminSecret } }),
+      ]);
+
+      if (calRes.status === 403) {
+        sessionStorage.removeItem(SECRET_KEY);
+        document.getElementById('dashContent').style.display = 'none';
+        document.getElementById('loginGate').style.display = '';
+        document.getElementById('loginError').style.display = '';
+        return;
+      }
+
+      const calData      = calRes.ok      ? await calRes.json()      : null;
+      const perfData     = perfRes.ok     ? await perfRes.json()     : null;
+      const analysisData = analysisRes.ok ? await analysisRes.json() : null;
+
+      sessionStorage.setItem(SECRET_KEY, adminSecret);
+      renderDashboard(calData, perfData, analysisData);
+    } catch (e) {
+      document.getElementById('dashContent').innerHTML =
+        `<div class="loading"><div style="font-size:1.5rem;margin-bottom:10px">⚠️</div>${e.message}</div>`;
+    }
+  }
+
+  function renderDashboard(calData, perfData, analysisData) {
+    const cals   = calData?.calibrations || [];
+    const latest = cals[0] || null;
+
+    // ── Drift banner
+    let driftHtml = '';
+    if (latest) {
+      if (latest.drift_flag) {
+        driftHtml = `
+          <div class="drift-banner warn">
+            <div class="drift-banner-icon">⚠️</div>
+            <div class="drift-banner-text">
+              <div class="drift-banner-title">Drift Detected</div>
+              <div class="drift-banner-sub">${latest.drift_reason || 'Value ROI dropped below 4-week average'} &nbsp;·&nbsp; Last run ${fmtDateTime(latest.ran_at)}</div>
+            </div>
+          </div>`;
+      } else {
+        driftHtml = `
+          <div class="drift-banner ok">
+            <div class="drift-banner-icon">✓</div>
+            <div class="drift-banner-text">
+              <div class="drift-banner-title">Model Healthy</div>
+              <div class="drift-banner-sub">No drift detected &nbsp;·&nbsp; Last calibration ${fmtDateTime(latest.ran_at)}</div>
+            </div>
+          </div>`;
+      }
+    }
+
+    // ── Latest calibration stats
+    const latestStatsHtml = latest ? `
+      <div class="section">
+        <div class="section-title">Latest Calibration — ${fmtDateTime(latest.ran_at)}</div>
+        <div class="stat-grid">
+          <div class="stat-card">
+            <div class="stat-card-num" style="color:var(--green-bright)">${pct(latest.win_rate)}</div>
+            <div class="stat-card-label">Win Rate</div>
+            <div class="stat-card-sub">Holdout set</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-card-num" style="color:var(--blue)">${pct(latest.place_rate)}</div>
+            <div class="stat-card-label">Place Rate</div>
+            <div class="stat-card-sub">Top 3 finish</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-card-num" style="color:${latest.value_roi >= 4 ? 'var(--green-bright)' : latest.value_roi >= 2 ? 'var(--gold-light)' : '#f87171'}">${latest.value_roi.toFixed(2)}%</div>
+            <div class="stat-card-label">Value ROI</div>
+            <div class="stat-card-sub">${latest.value_bets} value bets</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-card-num" style="color:var(--purple-bright)">${latest.best_window}d</div>
+            <div class="stat-card-label">Best Window</div>
+            <div class="stat-card-sub">Training days</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-card-num">${latest.total_races.toLocaleString()}</div>
+            <div class="stat-card-label">Races Tested</div>
+            <div class="stat-card-sub">Holdout sample</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-card-num" style="color:${latest.drift_flag ? 'var(--gold-light)' : 'var(--green)'}">
+              ${latest.drift_flag ? 'DRIFT' : 'OK'}
+            </div>
+            <div class="stat-card-label">Drift Status</div>
+            <div class="stat-card-sub">${latest.drift_flag ? 'Below 4-week avg' : 'Within range'}</div>
+          </div>
+        </div>
+      </div>` : '';
+
+    // ── Window comparison table
+    let windowHtml = '';
+    if (latest?.window_results?.length) {
+      const rows = latest.window_results.map(w => {
+        const isBest = w.window_days === latest.best_window;
+        return `<tr class="${isBest ? 'best' : ''}">
+          <td>${w.window_days}d${isBest ? '<span class="best-badge">Best</span>' : ''}</td>
+          <td>${w.training_examples.toLocaleString()}</td>
+          <td>${(w.training_accuracy * 100).toFixed(1)}%</td>
+          <td>${(w.win_rate * 100).toFixed(1)}%</td>
+          <td>${w.value_roi.toFixed(2)}%</td>
+          <td>${w.value_bets}</td>
+        </tr>`;
+      }).join('');
+      windowHtml = `
+        <div class="section">
+          <div class="section-title">Training Window Comparison</div>
+          <div class="chart-card">
+            <table class="window-table">
+              <thead>
+                <tr>
+                  <th>Window</th>
+                  <th>Training Examples</th>
+                  <th>Train Accuracy</th>
+                  <th>Win Rate</th>
+                  <th>Value ROI</th>
+                  <th>Value Bets</th>
+                </tr>
+              </thead>
+              <tbody>${rows}</tbody>
+            </table>
+          </div>
+        </div>`;
+    }
+
+    // ── Calibration history table
+    let historyHtml = '';
+    if (cals.length > 1) {
+      const rows = cals.map(c => `
+        <tr>
+          <td>${fmtDate(c.ran_at)}</td>
+          <td>${(c.win_rate * 100).toFixed(1)}%</td>
+          <td>${(c.place_rate * 100).toFixed(1)}%</td>
+          <td>${c.value_roi.toFixed(2)}%</td>
+          <td>${c.value_bets}</td>
+          <td>${c.best_window}d</td>
+          <td><span class="drift-dot ${c.drift_flag ? 'warn' : 'ok'}"></span>${c.drift_flag ? 'Drift' : 'OK'}</td>
+        </tr>`).join('');
+      historyHtml = `
+        <div class="section">
+          <div class="section-title">Calibration History (Last ${cals.length} Runs)</div>
+          <div class="chart-card">
+            <table class="history-table">
+              <thead>
+                <tr>
+                  <th>Date</th>
+                  <th>Win Rate</th>
+                  <th>Place Rate</th>
+                  <th>Value ROI</th>
+                  <th>Value Bets</th>
+                  <th>Window</th>
+                  <th>Drift</th>
+                </tr>
+              </thead>
+              <tbody>${rows}</tbody>
+            </table>
+          </div>
+        </div>`;
+    }
+
+    // ── Threshold performance
+    let thresholdHtml = '';
+    if (analysisData?.thresholds?.length) {
+      const rows = analysisData.thresholds.filter(t => t.threshold_pct >= 25).map(t => `
+        <tr>
+          <td>≥${t.threshold_pct}%</td>
+          <td>${t.bets.toLocaleString()}</td>
+          <td>${t.win_pct.toFixed(1)}%</td>
+          <td>${t.roi_pct.toFixed(1)}%</td>
+          <td>$${t.avg_sp.toFixed(2)}</td>
+          <td style="color:var(--text-dim);font-size:0.7rem">${t.live_bets.toLocaleString()} live / ${t.backtest_bets} backtest</td>
+        </tr>`).join('');
+      thresholdHtml = `
+        <div class="section">
+          <div class="section-title">Model Performance by Confidence Threshold</div>
+          <div class="chart-card">
+            <div class="chart-card-title" style="margin-bottom:4px">All-time · ${analysisData.total_unified_rows?.toLocaleString()} predictions &nbsp;·&nbsp; Live from ${analysisData.cutover_date}</div>
+            <table class="window-table">
+              <thead>
+                <tr>
+                  <th>Confidence</th>
+                  <th>Total Bets</th>
+                  <th>Win Rate</th>
+                  <th>ROI</th>
+                  <th>Avg SP</th>
+                  <th>Source split</th>
+                </tr>
+              </thead>
+              <tbody>${rows}</tbody>
+            </table>
+          </div>
+        </div>`;
+    }
+
+    // ── 30-day daily P&L
+    let perfHtml = '';
+    if (perfData?.summary?.length) {
+      const days = [...perfData.summary].reverse().slice(-14);
+      const labels = days.map(d => fmtDate(d.date));
+      const winRates = days.map(d => +(d.win_rate * 100).toFixed(1));
+      const roiRates = days.map(d => +(d.value_pnl).toFixed(1));
+
+      perfHtml = `
+        <div class="section">
+          <div class="section-title">Last 14 Days — Daily Performance</div>
+          <div class="two-col">
+            <div class="chart-card">
+              <div class="chart-card-title">Win Rate %</div>
+              <div class="chart-wrap"><canvas id="winRateChart"></canvas></div>
+            </div>
+            <div class="chart-card">
+              <div class="chart-card-title">Value P&L ($10 stake)</div>
+              <div class="chart-wrap"><canvas id="pnlChart"></canvas></div>
+            </div>
+          </div>
+        </div>`;
+
+      // Render charts after DOM update
+      setTimeout(() => {
+        const chartDefaults = {
+          responsive: true, maintainAspectRatio: false,
+          plugins: { legend: { display: false } },
+          scales: {
+            x: { ticks: { color: '#4a5a7a', font: { size: 10 } }, grid: { color: 'rgba(30,40,64,0.6)' } },
+            y: { ticks: { color: '#4a5a7a', font: { size: 10 } }, grid: { color: 'rgba(30,40,64,0.6)' } },
+          }
+        };
+
+        new Chart(document.getElementById('winRateChart'), {
+          type: 'bar',
+          data: {
+            labels,
+            datasets: [{
+              data: winRates,
+              backgroundColor: winRates.map(v => v >= 50 ? 'rgba(34,197,94,0.6)' : 'rgba(239,68,68,0.4)'),
+              borderRadius: 4,
+            }]
+          },
+          options: { ...chartDefaults, scales: { ...chartDefaults.scales, y: { ...chartDefaults.scales.y, ticks: { ...chartDefaults.scales.y.ticks, callback: v => v + '%' } } } }
+        });
+
+        new Chart(document.getElementById('pnlChart'), {
+          type: 'bar',
+          data: {
+            labels,
+            datasets: [{
+              data: roiRates,
+              backgroundColor: roiRates.map(v => v >= 0 ? 'rgba(59,130,246,0.6)' : 'rgba(239,68,68,0.4)'),
+              borderRadius: 4,
+            }]
+          },
+          options: { ...chartDefaults, scales: { ...chartDefaults.scales, y: { ...chartDefaults.scales.y, ticks: { ...chartDefaults.scales.y.ticks, callback: v => '$' + v } } } }
+        });
+
+        // ROI trend chart
+        if (cals.length > 2) {
+          const calReversed = [...cals].reverse();
+          new Chart(document.getElementById('roiTrendChart'), {
+            type: 'line',
+            data: {
+              labels: calReversed.map(c => fmtDate(c.ran_at)),
+              datasets: [{
+                data: calReversed.map(c => +c.value_roi.toFixed(2)),
+                borderColor: '#3b82f6',
+                backgroundColor: 'rgba(59,130,246,0.08)',
+                fill: true,
+                tension: 0.35,
+                pointBackgroundColor: calReversed.map(c => c.drift_flag ? '#e8a020' : '#3b82f6'),
+                pointRadius: 5,
+                pointHoverRadius: 7,
+              }]
+            },
+            options: {
+              ...chartDefaults,
+              scales: {
+                ...chartDefaults.scales,
+                y: { ...chartDefaults.scales.y, ticks: { ...chartDefaults.scales.y.ticks, callback: v => v + '%' } }
+              }
+            }
+          });
+        }
+      }, 50);
+    }
+
+    // ── ROI trend chart placeholder
+    const roiTrendHtml = cals.length > 2 ? `
+      <div class="section">
+        <div class="section-title">Value ROI Trend &nbsp;<span style="font-size:0.7rem;color:var(--gold-light)">● drift flagged</span> &nbsp;<span style="font-size:0.7rem;color:var(--blue)">● healthy</span></div>
+        <div class="chart-card">
+          <div class="chart-wrap" style="height:200px"><canvas id="roiTrendChart"></canvas></div>
+        </div>
+      </div>` : '';
+
+    // ── Action bar
+    const actionHtml = `
+      <div class="action-bar">
+        <button class="btn primary" id="retrainBtn" onclick="triggerRetrain()">Run Calibration Now</button>
+        <button class="btn" onclick="loadDashboard()">Refresh</button>
+        <span class="btn-status" id="retrainStatus"></span>
+      </div>`;
+
+    document.getElementById('dashContent').innerHTML =
+      driftHtml + actionHtml + latestStatsHtml + roiTrendHtml + perfHtml + windowHtml + thresholdHtml + historyHtml;
+  }
+
+  async function triggerRetrain() {
+    const btn = document.getElementById('retrainBtn');
+    const status = document.getElementById('retrainStatus');
+    btn.disabled = true;
+    status.textContent = 'Triggering calibration…';
+    try {
+      const res = await fetch(`${API}/api/admin/calibrate`, {
+        method: 'POST',
+        headers: { 'x-cron-secret': adminSecret }
+      });
+      const data = await res.json();
+      status.textContent = data.message || 'Calibration started.';
+    } catch (e) {
+      status.textContent = 'Error: ' + e.message;
+    } finally {
+      btn.disabled = false;
+    }
+  }
+
+  // Init
+  if (adminSecret) {
+    loadDashboard();
+  } else {
+    document.getElementById('dashContent').style.display = 'none';
+    document.getElementById('loginGate').style.display = '';
+  }
+</script>
+</body>
+</html>
