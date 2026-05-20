@@ -264,6 +264,40 @@
     .drift-dot.ok   { background: var(--green); }
     .drift-dot.warn { background: var(--gold); }
 
+    /* ── Drift explainer ─────────────────────────────────── */
+    .drift-explainer {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-left: 3px solid var(--gold);
+      border-radius: var(--radius);
+      padding: 16px 20px;
+      margin-top: 12px;
+    }
+    .drift-explainer-title {
+      font-family: 'Barlow Condensed', sans-serif;
+      font-size: 0.85rem; font-weight: 800;
+      letter-spacing: 0.08em; text-transform: uppercase;
+      color: var(--gold-light); margin-bottom: 10px;
+    }
+    .drift-explainer-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 10px; margin-bottom: 12px;
+    }
+    .drift-explainer-item {
+      background: var(--bg-elevated);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      padding: 10px 12px;
+      font-size: 0.75rem; color: var(--text-secondary); line-height: 1.5;
+    }
+    .drift-explainer-item strong { color: var(--text-primary); display: block; margin-bottom: 2px; font-size: 0.78rem; }
+    .drift-explainer-note {
+      font-size: 0.75rem; color: var(--text-dim); line-height: 1.6;
+      border-top: 1px solid var(--border); padding-top: 10px;
+    }
+    .drift-explainer-note em { color: var(--text-secondary); font-style: normal; }
+
     /* ── Loading ─────────────────────────────────────────── */
     .loading {
       text-align: center; padding: 60px 20px;
@@ -408,6 +442,31 @@
             <div class="drift-banner-text">
               <div class="drift-banner-title">Drift Detected</div>
               <div class="drift-banner-sub">${latest.drift_reason || 'Value ROI dropped below 4-week average'} &nbsp;·&nbsp; Last run ${fmtDateTime(latest.ran_at)}</div>
+            </div>
+          </div>
+          <div class="drift-explainer">
+            <div class="drift-explainer-title">What does drift mean?</div>
+            <div class="drift-explainer-grid">
+              <div class="drift-explainer-item">
+                <strong>What it is</strong>
+                The model's Value ROI has slipped below its own 4-week rolling average — meaning it's finding fewer profitable bets than it was recently.
+              </div>
+              <div class="drift-explainer-item">
+                <strong>Common causes</strong>
+                A strong run rolling off the 4-week window, a shift in track conditions, or race compositions the model hasn't seen before.
+              </div>
+              <div class="drift-explainer-item">
+                <strong>What it doesn't mean</strong>
+                The model is broken or losing money. Value ROI is still positive — it's an early warning, not a crisis signal.
+              </div>
+              <div class="drift-explainer-item">
+                <strong>What to watch</strong>
+                If the gap narrows over the next 3–4 days, the 4-week average is adjusting down. If it keeps widening, investigate feature weights or data quality.
+              </div>
+            </div>
+            <div class="drift-explainer-note">
+              The flag triggers automatically each night after calibration. It compares today's Value ROI against the average of the previous 28 days of calibration runs.
+              <em>Win rate and place rate are the most reliable health signals — if those stay above 50% and 70% respectively, the model is still performing well.</em>
             </div>
           </div>`;
       } else {
