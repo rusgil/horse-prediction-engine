@@ -54,6 +54,7 @@ from horse_engine.models.database import (
 )
 from horse_engine.models.enriched import EnrichedRunner
 from horse_engine.pipeline import enrich_and_predict_race, enrich_meeting
+from horse_engine.prediction.engine import _value_rating
 from horse_engine.prediction.features import build_feature_vector
 from horse_engine.prediction.model import HorseModel
 
@@ -460,6 +461,9 @@ async def refresh_edge_odds():
                             pick_row = await session.get(RunnerPredictionRow, pick.id)
                             if pick_row:
                                 pick_row.best_available_odds = new_odds
+                                market_implied = 1.0 / new_odds if new_odds else 0.0
+                                pick_row.overlay = round(pick_row.win_probability - market_implied, 4)
+                                pick_row.value_rating = _value_rating(pick_row.win_probability, new_odds, pick_row.overlay)
                                 updated[pick.race_id] = new_odds
                     await session.commit()
             except Exception as e:
