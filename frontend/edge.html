@@ -1726,12 +1726,21 @@
     const roiSign = roi >= 0 ? '+' : '';
     const wins   = activePicks.filter(p => p.winner).length;
     const losses = activePicks.filter(p => !p.winner).length;
+    const premiumCount = data.picks.filter(p => {
+      const mi = p.sp ? +(100 / p.sp).toFixed(1) : null;
+      const ep = mi ? +(p.model_pct - mi).toFixed(1) : null;
+      return p.model_pct >= 40 && p.sp && p.sp >= 3.5 && ep != null && ep > 0;
+    }).length;
 
     el.innerHTML = `
       <div class="pnl-bar">
         <div class="pnl-cell">
           <div class="pnl-cell-num">${activePicks.length}</div>
           <div class="pnl-cell-label">Picks ($${totalStaked} staked)</div>
+        </div>
+        <div class="pnl-cell">
+          <div class="pnl-cell-num" style="color:var(--purple-bright)">${premiumCount}</div>
+          <div class="pnl-cell-label">💎 Premium</div>
         </div>
         <div class="pnl-cell">
           <div class="pnl-cell-num pnl-positive">${wins}</div>
