@@ -1314,8 +1314,7 @@
     const trackChip = pick.track_condition ? `<span class="pick-footer-chip"><strong>${escHtml(pick.track_condition)}</strong></span><span class="pick-footer-sep">·</span>` : '';
     const distChip  = pick.distance ? `<span class="pick-footer-chip"><strong>${pick.distance}m</strong></span><span class="pick-footer-sep">·</span>` : '';
     const stateChip = pick.state ? `<span class="pick-footer-chip">${escHtml(pick.state)}</span>` : '';
-    const valueChip = (!isPast && pick.value_rating != null)
-      ? `<span class="pick-footer-chip" style="margin-left:auto;color:var(--gold)">${starsFromValue(pick.value_rating)} value</span>` : '';
+    const valueChip = '';
 
     const cardStyle = isPast && result && !result.winner && !result.scratched ? 'opacity:0.75;' : '';
     const pastAttr  = isPast && result ? 'data-past-result="true"' : '';
