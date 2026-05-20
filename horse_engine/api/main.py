@@ -584,6 +584,39 @@ async def get_edge_yesterday(for_date: Optional[str] = Query(None, alias="date")
     }
 
 
+@app.get("/api/track-record")
+async def get_track_record():
+    """Public endpoint — tier win rates derived from live backtest data."""
+    async with get_session() as session:
+        result = await session.execute(
+            select(
+                RunnerPredictionRow.win_probability,
+                RunnerPredictionRow.result,
+            ).where(RunnerPredictionRow.result.isnot(None))
+        )
+        rows = result.all()
+
+    tiers = [
+        {"label": "Hot Pick",         "min": 0.45, "max": 1.0,  "badge": "hot"},
+        {"label": "High Confidence",  "min": 0.35, "max": 0.45, "badge": "high"},
+        {"label": "Strong Pick",      "min": 0.30, "max": 0.35, "badge": "standard"},
+    ]
+    output = []
+    for tier in tiers:
+        picks = [r for r in rows if tier["min"] <= r.win_probability < tier["max"]]
+        wins  = [r for r in picks if r.result == "win"]
+        win_pct = round(len(wins) / len(picks) * 100, 1) if picks else 0
+        output.append({
+            "label":    tier["label"],
+            "badge":    tier["badge"],
+            "win_pct":  win_pct,
+            "races":    len(picks),
+            "conf_min": int(tier["min"] * 100),
+            "conf_max": int(tier["max"] * 100) if tier["max"] < 1.0 else None,
+        })
+    return {"tiers": output, "generated_at": datetime.utcnow().isoformat()}
+
+
 # ── Frontend ─────────────────────────────────────────────────────────────────
 
 @app.get("/", include_in_schema=False)

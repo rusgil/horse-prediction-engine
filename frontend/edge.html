@@ -1107,77 +1107,10 @@
   <div id="panelInsights" style="display:none">
     <div class="tr-section">
       <div class="tr-section-title">Performance by Tier</div>
-      <div class="tr-tier-grid">
-
-        <div class="tr-tier-card hot">
-          <div class="tr-tier-header">
-            <span class="legend-badge hot">🔥 Hot Pick</span>
-            <span class="tr-tier-threshold">≥ 45% model prediction</span>
-          </div>
-          <div class="tr-tier-stats">
-            <div class="tr-tier-stat">
-              <div class="tr-tier-stat-num" style="color:var(--gold-light)">82%</div>
-              <div class="tr-tier-stat-label">Historical win rate</div>
-            </div>
-            <div class="tr-tier-stat">
-              <div class="tr-tier-stat-num">222</div>
-              <div class="tr-tier-stat-label">Races analysed <span class="info-icon" data-tooltip="Number of past races where this confidence level was found and tested against">ℹ</span></div>
-            </div>
-            <div class="tr-tier-stat">
-              <div class="tr-tier-stat-num" style="color:var(--gold-light)">≥45%</div>
-              <div class="tr-tier-stat-label">Confidence rating</div>
-            </div>
-          </div>
-          <div class="tr-tier-note">Highest conviction picks — the model and market strongly agree.</div>
-        </div>
-
-        <div class="tr-tier-card high">
-          <div class="tr-tier-header">
-            <span class="legend-badge high">⚡ High Confidence</span>
-            <span class="tr-tier-threshold">35–44% model prediction</span>
-          </div>
-          <div class="tr-tier-stats">
-            <div class="tr-tier-stat">
-              <div class="tr-tier-stat-num" style="color:#60a5fa">71–76%</div>
-              <div class="tr-tier-stat-label">Historical win rate</div>
-            </div>
-            <div class="tr-tier-stat">
-              <div class="tr-tier-stat-num">809</div>
-              <div class="tr-tier-stat-label">Races analysed <span class="info-icon" data-tooltip="Number of past races where this confidence level was found and tested against">ℹ</span></div>
-            </div>
-            <div class="tr-tier-stat">
-              <div class="tr-tier-stat-num" style="color:#60a5fa">35–44%</div>
-              <div class="tr-tier-stat-label">Confidence rating</div>
-            </div>
-          </div>
-          <div class="tr-tier-note">Strong picks with good value potential — often where the model diverges slightly from market odds.</div>
-        </div>
-
-        <div class="tr-tier-card standard">
-          <div class="tr-tier-header">
-            <span class="legend-badge standard">Strong Pick</span>
-            <span class="tr-tier-threshold">30–34% model prediction</span>
-          </div>
-          <div class="tr-tier-stats">
-            <div class="tr-tier-stat">
-              <div class="tr-tier-stat-num" style="color:var(--green)">66%</div>
-              <div class="tr-tier-stat-label">Historical win rate</div>
-            </div>
-            <div class="tr-tier-stat">
-              <div class="tr-tier-stat-num">1,086</div>
-              <div class="tr-tier-stat-label">Races analysed <span class="info-icon" data-tooltip="Number of past races where this confidence level was found and tested against">ℹ</span></div>
-            </div>
-            <div class="tr-tier-stat">
-              <div class="tr-tier-stat-num" style="color:var(--green)">30–34%</div>
-              <div class="tr-tier-stat-label">Confidence rating</div>
-            </div>
-          </div>
-          <div class="tr-tier-note">Largest sample — the most statistically reliable win rate of the three tiers.</div>
-        </div>
-
+      <div id="trTierGrid" class="tr-tier-grid">
+        <div class="loading"><div class="loading-spinner"></div>Loading track record…</div>
       </div>
     </div>
-
   </div>
 
   <div class="disclaimer">
@@ -1463,6 +1396,8 @@
   let yesterdayLoaded = false;
   let yesterdayData = null;
 
+  let trackRecordLoaded = false;
+
   function switchTab(tab) {
     document.getElementById('tabUpcoming').classList.toggle('active', tab === 'upcoming');
     document.getElementById('tabYesterday').classList.toggle('active', tab === 'yesterday');
@@ -1471,6 +1406,57 @@
     document.getElementById('panelYesterday').style.display = tab === 'yesterday' ? '' : 'none';
     document.getElementById('panelInsights').style.display = tab === 'insights' ? '' : 'none';
     if (tab === 'yesterday' && !yesterdayLoaded) loadYesterday();
+    if (tab === 'insights' && !trackRecordLoaded) loadTrackRecord();
+  }
+
+  const TIER_META = {
+    hot:      { badge: '🔥 Hot Pick',        color: 'var(--gold-light)', threshold: '≥ 45%', note: 'Highest conviction picks — the model and market strongly agree.' },
+    high:     { badge: '⚡ High Confidence', color: '#60a5fa',           threshold: '35–44%', note: 'Strong picks with good value potential — often where the model diverges slightly from market odds.' },
+    standard: { badge: 'Strong Pick',         color: 'var(--green)',      threshold: '30–34%', note: 'Largest sample — the most statistically reliable win rate of the three tiers.' },
+  };
+
+  async function loadTrackRecord() {
+    trackRecordLoaded = true;
+    try {
+      const res = await fetch(`${API}/api/track-record`);
+      if (!res.ok) throw new Error(res.statusText);
+      const data = await res.json();
+      const grid = document.getElementById('trTierGrid');
+      grid.innerHTML = data.tiers.map(tier => {
+        const m = TIER_META[tier.badge] || {};
+        const confLabel = tier.conf_max ? `${tier.conf_min}–${tier.conf_max}%` : `≥${tier.conf_min}%`;
+        const badgeHtml = tier.badge === 'hot'
+          ? `<span class="legend-badge hot">🔥 Hot Pick</span>`
+          : tier.badge === 'high'
+          ? `<span class="legend-badge high">⚡ High Confidence</span>`
+          : `<span class="legend-badge standard">Strong Pick</span>`;
+        return `
+          <div class="tr-tier-card ${tier.badge}">
+            <div class="tr-tier-header">
+              ${badgeHtml}
+              <span class="tr-tier-threshold">${confLabel} confidence rating</span>
+            </div>
+            <div class="tr-tier-stats">
+              <div class="tr-tier-stat">
+                <div class="tr-tier-stat-num" style="color:${m.color}">${tier.win_pct}%</div>
+                <div class="tr-tier-stat-label">Historical win rate</div>
+              </div>
+              <div class="tr-tier-stat">
+                <div class="tr-tier-stat-num">${tier.races.toLocaleString()}</div>
+                <div class="tr-tier-stat-label">Races analysed <span class="info-icon" data-tooltip="Number of past races where this confidence level was found and tested against">ℹ</span></div>
+              </div>
+              <div class="tr-tier-stat">
+                <div class="tr-tier-stat-num" style="color:${m.color}">${confLabel}</div>
+                <div class="tr-tier-stat-label">Confidence rating</div>
+              </div>
+            </div>
+            <div class="tr-tier-note">${m.note}</div>
+          </div>`;
+      }).join('');
+    } catch (e) {
+      document.getElementById('trTierGrid').innerHTML =
+        `<div class="empty-state"><div class="empty-icon">⚠️</div><div class="empty-title">Could not load track record</div><div class="empty-sub">${escHtml(e.message)}</div></div>`;
+    }
   }
 
   function ordinal(n) {
