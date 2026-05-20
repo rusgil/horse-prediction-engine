@@ -1302,7 +1302,7 @@
     }
 
     const edgeHtml = (!isPast && pick.edge_pct != null && displayOdds)
-      ? `<span class="${pick.edge_pct >= 0 ? 'edge-positive' : 'edge-negative'}">${pick.edge_pct >= 0 ? '+' : ''}${pick.edge_pct}% edge</span>
+      ? `<span class="${pick.edge_pct >= 0 ? 'edge-positive' : 'edge-negative'}">${pick.edge_pct >= 0 ? `Model beats market by ${pick.edge_pct}` : `Market prefers by ${Math.abs(pick.edge_pct)}`}</span>
          <span class="edge-label">model ${conf}% vs market ${pick.market_implied_pct}%</span>`
       : '';
 
