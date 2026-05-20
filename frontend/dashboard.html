@@ -630,8 +630,12 @@
       const days = [...perfData.summary].reverse().slice(-14);
       const labels = days.map(d => fmtDate(d.date));
       const winRates = days.map(d => +(d.win_rate * 100).toFixed(1));
-      const raceCounts = days.map(d => d.races || 0);
-      const valueBets = days.map(d => d.value_bets || 0);
+      const raceCounts  = days.map(d => d.races || 0);
+      const valueBets   = days.map(d => d.value_bets || 0);
+      const tierPremium = days.map(d => d.tier_premium || 0);
+      const tierHot     = days.map(d => d.tier_hot || 0);
+      const tierHigh    = days.map(d => d.tier_high || 0);
+      const tierStrong  = days.map(d => d.tier_strong || 0);
       const roiRates = days.map(d => +(d.value_pnl * 10).toFixed(2));
 
       perfHtml = `
@@ -713,7 +717,15 @@
               tooltip: {
                 callbacks: {
                   label: ctx => `P&L: $${ctx.parsed.y} (at $10/race)`,
-                  afterLabel: ctx => `Value bets that day: ${valueBets[ctx.dataIndex]}`,
+                  afterLabel: ctx => {
+                    const i = ctx.dataIndex;
+                    const lines = [`Value bets: ${valueBets[i]}`];
+                    if (tierPremium[i]) lines.push(`  💎 Premium: ${tierPremium[i]}`);
+                    if (tierHot[i])     lines.push(`  🔥 Hot Pick: ${tierHot[i]}`);
+                    if (tierHigh[i])    lines.push(`  ⚡ High Confidence: ${tierHigh[i]}`);
+                    if (tierStrong[i])  lines.push(`  Strong Pick: ${tierStrong[i]}`);
+                    return lines;
+                  },
                 }
               }
             },

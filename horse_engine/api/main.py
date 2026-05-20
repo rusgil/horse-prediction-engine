@@ -1769,7 +1769,10 @@ async def performance_summary(days: int = Query(5, ge=1, le=30)):
         actual = result_by_key.get((race_id, pick.horse_name))
         if not actual:
             continue
-        d = by_date.setdefault(race_date, {"races": 0, "wins": 0, "places": 0, "value_pnl": 0.0, "value_bets": 0})
+        d = by_date.setdefault(race_date, {
+            "races": 0, "wins": 0, "places": 0, "value_pnl": 0.0, "value_bets": 0,
+            "tier_premium": 0, "tier_hot": 0, "tier_high": 0, "tier_strong": 0,
+        })
         d["races"] += 1
         if actual.winner:
             d["wins"] += 1
@@ -1777,9 +1780,18 @@ async def performance_summary(days: int = Query(5, ge=1, le=30)):
             d["places"] += 1
         sp = actual.starting_price or 0.0
         overlay = pick.overlay or 0.0
+        model_pct = round((pick.win_probability or 0) * 100, 1)
         if overlay > 0.05 and sp >= 3.0:
             d["value_bets"] += 1
             d["value_pnl"] += (sp - 1) if actual.winner else -1.0
+            if model_pct >= 40 and sp >= 3.5 and overlay > 0:
+                d["tier_premium"] += 1
+            elif model_pct >= 45:
+                d["tier_hot"] += 1
+            elif model_pct >= 35:
+                d["tier_high"] += 1
+            else:
+                d["tier_strong"] += 1
 
     summary = []
     for day_str in sorted(by_date.keys(), reverse=True):
@@ -1793,6 +1805,10 @@ async def performance_summary(days: int = Query(5, ge=1, le=30)):
             "place_rate": round(d["places"] / races, 3) if races else 0,
             "value_bets": d["value_bets"],
             "value_pnl": round(d["value_pnl"], 2),
+            "tier_premium": d["tier_premium"],
+            "tier_hot": d["tier_hot"],
+            "tier_high": d["tier_high"],
+            "tier_strong": d["tier_strong"],
         })
 
     total_races = sum(d["races"] for d in by_date.values())
