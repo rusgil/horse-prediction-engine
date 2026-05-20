@@ -1532,7 +1532,7 @@
     // Win rate pill — same as upcoming but shows actual result inline
     const winRateHtml = `
       <div class="win-rate-row">
-        <span class="win-rate-pill" ${!isWin && !p.scratched ? 'style="background:rgba(239,68,68,0.08);color:#f87171;border-color:rgba(239,68,68,0.2);"' : ''}>${p.calibrated_win_rate}% historical win rate</span>
+        <span class="win-rate-pill">${p.calibrated_win_rate}% historical win rate</span>
         <span class="win-rate-label">at this confidence level</span>
       </div>`;
 
