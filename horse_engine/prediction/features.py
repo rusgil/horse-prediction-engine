@@ -2,51 +2,68 @@
 Build the feature vector for the logistic regression model.
 
 Feature order must remain stable — it defines the weight vector indices.
+
+Odds movement features (indices 25-29) are gated by USE_ODDS_MOVEMENT.
+Set to False to exclude them and compare model performance with/without.
+Only meaningful once odds_snapshots data has been collected for several months.
 """
 from __future__ import annotations
 
 from horse_engine.models.enriched import EnrichedRunner
 
-FEATURE_NAMES = [
+# ── Toggle: include odds movement snapshot features ───────────────────────────
+# Set False to train/predict without snapshot features (A/B comparison).
+# These features are stubs until odds_snapshots has sufficient history.
+USE_ODDS_MOVEMENT_FEATURES = False
+
+FEATURE_NAMES_BASE = [
     "form_score",               # 0
     "win_rate_career",          # 1
     "win_rate_distance",        # 2
     "win_rate_track",           # 3
     "surface_match_score",      # 4
     "barrier_score",            # 5
-    "days_since_last_run_norm", # 6  — normalised: 0=optimal freshness, 1=stale
-    "runs_in_prep_norm",        # 7  — 0=first-up, 1=6+ runs (fully wound up vs needing run)
-    "class_change",             # 8  — -1/0/1
+    "days_since_last_run_norm", # 6
+    "runs_in_prep_norm",        # 7
+    "class_change",             # 8
     "trainer_overall_rate",     # 9
     "trainer_track_rate",       # 10
     "trainer_jockey_combo_rate",# 11
     "jockey_overall_rate",      # 12
     "jockey_track_rate",        # 13
-    "jockey_wins_today_norm",   # 14 — hot hand: 0–1
+    "jockey_wins_today_norm",   # 14
     "pedigree_distance_match",  # 15
-    "pedigree_wet_score_norm",  # 16 — 0–1 (from 0–10)
-    "market_rank_norm",         # 17 — 1/market_rank (fav=1.0, 2nd fav=0.5 etc)
-    "odds_movement_norm",       # 18 — sigmoid of odds_movement
-    "speed_map_advantage",      # 19 — -1 to +1
+    "pedigree_wet_score_norm",  # 16
+    "market_rank_norm",         # 17
+    "odds_movement_norm",       # 18 — single delta (open → current)
+    "speed_map_advantage",      # 19
     "gear_change_score",        # 20
-    "weight_vs_field_norm",     # 21 — -1 to +1
+    "weight_vs_field_norm",     # 21
     "jockey_booking_significance", # 22
     "stable_form",              # 23
     "track_bias_advantage",     # 24
 ]
 
+FEATURE_NAMES_ODDS_MOVEMENT = [
+    "steam_60",                 # 25 — odds change T-60min → T-5min
+    "steam_30",                 # 26 — odds change T-30min → T-5min
+    "drift_flag",               # 27 — 1.0 if opened short, now longer
+    "odds_velocity",            # 28 — avg rate of change per minute (last 60min)
+    "late_money",               # 29 — odds drop in final 15min
+]
+
+FEATURE_NAMES = FEATURE_NAMES_BASE + (FEATURE_NAMES_ODDS_MOVEMENT if USE_ODDS_MOVEMENT_FEATURES else [])
 NUM_FEATURES = len(FEATURE_NAMES)
 
-# Default weights (priors) — these will be overridden after retraining
-DEFAULT_WEIGHTS = [
+DEFAULT_WEIGHTS_BASE = [
     0.8,   # form_score
     0.6,   # win_rate_career
     0.7,   # win_rate_distance
     0.5,   # win_rate_track
     0.4,   # surface_match_score
     0.3,   # barrier_score
-   -0.2,   # days_since_last_run_norm (fresh = good)
-    0.2,   # runs_in_prep_norm (horse that's had a run or two = usually better)
+   -0.2,   # days_since_last_run_norm
+    0.2,   # runs_in_prep_norm
     0.3,   # class_change
     0.5,   # trainer_overall_rate
     0.6,   # trainer_track_rate
@@ -56,15 +73,25 @@ DEFAULT_WEIGHTS = [
     0.3,   # jockey_wins_today_norm
     0.4,   # pedigree_distance_match
     0.3,   # pedigree_wet_score_norm
-    0.9,   # market_rank_norm (market is a strong prior)
+    0.9,   # market_rank_norm
     0.5,   # odds_movement_norm
     0.3,   # speed_map_advantage
     0.2,   # gear_change_score
-   -0.2,   # weight_vs_field_norm (heavier = slight disadvantage)
+   -0.2,   # weight_vs_field_norm
     0.3,   # jockey_booking_significance
     0.4,   # stable_form
     0.3,   # track_bias_advantage
 ]
+
+DEFAULT_WEIGHTS_ODDS_MOVEMENT = [
+    0.4,   # steam_60
+    0.5,   # steam_30
+   -0.3,   # drift_flag (drifting = negative signal)
+    0.3,   # odds_velocity
+    0.6,   # late_money (late steam = strongest signal)
+]
+
+DEFAULT_WEIGHTS = DEFAULT_WEIGHTS_BASE + (DEFAULT_WEIGHTS_ODDS_MOVEMENT if USE_ODDS_MOVEMENT_FEATURES else [])
 
 
 def build_feature_vector(er: EnrichedRunner) -> list[float]:

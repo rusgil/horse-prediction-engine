@@ -70,6 +70,13 @@ class EnrichedRunner(BaseModel):
     is_steamed: bool                # significant money in
     is_drifted: bool                # significant money out
 
+    # ── Odds movement features (populated from odds_snapshots once data exists) ──
+    steam_60: float = 0.0           # odds change T-60min → T-5min (positive = shortened)
+    steam_30: float = 0.0           # odds change T-30min → T-5min
+    drift_flag: float = 0.0         # 1.0 if opened short and now longer, else 0.0
+    odds_velocity: float = 0.0      # average rate of change per minute (last 60 min)
+    late_money: float = 0.0         # odds drop in final 15 min (positive = firming late)
+
     # ── Speed map ──────────────────────────────────────────────────────────
     speed_map_position: str         # "leader" | "on_pace" | "midfield" | "backmarker"
     speed_map_advantage: float      # -1 to +1: benefit of likely run position for this track
