@@ -1700,7 +1700,8 @@
           const barW = Math.max(8, Math.min(32, slotW * 0.62));
 
           const pnls = monthlyData.map(m => m.pnl_at_10 * multiplier);
-          const avg = pnls.reduce((a, b) => a + b, 0) / pnls.length;
+          const completedPnls = pnls.slice(0, -1);
+          const avg = completedPnls.length ? completedPnls.reduce((a, b) => a + b, 0) / completedPnls.length : pnls[0];
           const maxVal = Math.max(...pnls, avg + 1);
           const minVal = Math.min(...pnls, 0);
           const range = maxVal - minVal || 1;
