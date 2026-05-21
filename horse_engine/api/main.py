@@ -481,8 +481,8 @@ async def _fetch_race_times(client, slug: str) -> dict[int, str]:
 
 @app.get("/api/edge")
 async def get_edge_picks():
-    """High-confidence picks for today + next 3 days. Threshold: model win_probability >= 30%."""
-    threshold = 0.30
+    """High-confidence picks for today + next 3 days. Threshold: model win_probability >= 29.5% (rounds to 30%)."""
+    threshold = 0.295
     picks = []
     today = _today_aest()
     client = get_tab_client()
