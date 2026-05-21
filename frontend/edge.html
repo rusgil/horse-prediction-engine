@@ -1099,6 +1099,7 @@
   <div class="hero">
     <div class="hero-eyebrow">AI Analysis · Expert Picks</div>
     <div class="hero-title">The <span>Edge</span></div>
+    <div style="display:inline-flex;align-items:center;gap:6px;margin-top:6px;margin-bottom:2px;font-size:0.7rem;font-weight:600;letter-spacing:0.1em;text-transform:uppercase;color:var(--text-dim);background:var(--bg-elevated);border:1px solid var(--border);border-radius:999px;padding:3px 10px;">Powered by <span style="color:var(--gold)">FunkyIQ™</span></div>
     <div class="hero-sub">Races where the model has highest confidence — compared against market odds so you can see exactly where the value is.</div>
     <div class="hero-meta" id="heroMeta">
       <div class="hero-stat">
@@ -1247,6 +1248,7 @@
             </div>
           </div>
         </div>
+        <div id="pps-tagline" style="display:none;margin-top:14px;font-size:0.88rem;color:var(--text-secondary);line-height:1.65;background:var(--bg-elevated);border:1px solid rgba(168,85,247,0.2);border-radius:var(--radius-sm);padding:12px 14px;"></div>
       </div>
     </div>
     <div class="tr-section">
@@ -1650,6 +1652,13 @@
       pnlEl.textContent = pnl != null ? (pnl >= 0 ? '+$' : '-$') + Math.abs(pnl).toFixed(0) : '—';
       if (pnl != null) pnlEl.style.color = pnl >= 0 ? 'var(--green-bright)' : '#f87171';
       document.getElementById('pps-roi').textContent = d.roi_pct != null ? (d.roi_pct >= 0 ? '+' : '') + d.roi_pct + '%' : '—';
+      if (d.bets && d.pnl_at_10 != null) {
+        const spent = d.bets * 10;
+        const returned = spent + d.pnl_at_10;
+        const tagEl = document.getElementById('pps-tagline');
+        tagEl.style.display = '';
+        tagEl.innerHTML = `That means for the last 30 days, if you spent <strong style="color:var(--text-primary)">$${spent.toLocaleString()}</strong> you would have returned <strong style="color:var(--green-bright)">$${returned.toLocaleString()}</strong>. <span style="color:var(--purple-bright);font-weight:700">Now that's Funky!</span>`;
+      }
     } catch (_) {
       document.getElementById('premium-perf-loading').textContent = 'Stats unavailable';
     }
