@@ -1756,8 +1756,8 @@
             const labelTxt = Math.abs(pnl) < 10 ? '' : (pnl >= 0 ? '+' : '−') + '$' + Math.round(Math.abs(pnl));
             barsSvg += `<rect class="pps-bar" x="${x}" y="${y}" width="${barW}" height="${barH}"
               fill="${color}" stroke="${borderColor}" stroke-width="0.5" rx="3"
-              data-idx="${i}" style="cursor:pointer"/>
-              ${labelTxt ? `<text x="${cx}" y="${labelY}" text-anchor="middle" font-size="10" fill="${labelColor}" font-family="Barlow Condensed,sans-serif" font-weight="700" style="pointer-events:none">${labelTxt}</text>` : ''}`;
+              data-idx="${i}" style="cursor:pointer"/>`;
+            if (labelTxt) barsSvg += `<text class="pps-bar-label" x="${cx}" y="${labelY}" text-anchor="middle" font-size="10" fill="${labelColor}" font-family="Barlow Condensed,sans-serif" font-weight="700" style="pointer-events:none" data-idx="${i}">${labelTxt}</text>`;
           });
 
           // month labels
@@ -1782,11 +1782,15 @@
               data-idx="${i}" style="cursor:pointer"/>`;
           }).join('');
 
+          // Separate bar rects (clipped) from value labels (unclipped)
+          const barRects = barsSvg.replace(/<text class="pps-bar-label"[^>]*>.*?<\/text>/gs, '');
+          const barLabels = [...barsSvg.matchAll(/<text class="pps-bar-label"[^>]*>.*?<\/text>/gs)].map(m => m[0]).join('');
+
           wrap.innerHTML = `<svg width="${W}" height="${H}" style="display:block;overflow:visible" id="pps-svg">
             <defs><clipPath id="pps-clip"><rect x="${padL}" y="${padT}" width="${chartW}" height="${chartH}"/></clipPath></defs>
             ${gridSvg}${zeroSvg}
-            <g clip-path="url(#pps-clip)">${barsSvg}${trendSvg}</g>
-            ${avgSvg}${dotsSvg}${labelsSvg}
+            <g clip-path="url(#pps-clip)">${barRects}${trendSvg}</g>
+            ${avgSvg}${barLabels}${dotsSvg}${labelsSvg}
           </svg>`;
 
           // legend
