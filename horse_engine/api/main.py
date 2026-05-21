@@ -867,13 +867,30 @@ async def get_meeting(race_date: str, venue_code: str):
             top_picks[p.race_id] = p.horse_name
             top_win_probs[p.race_id] = p.win_probability
 
-        # Winners per race from historical results
+        # Winners and placers per race from historical results
         hr_result = await session.execute(
             select(HistoricalResultRow)
             .where(HistoricalResultRow.race_id.in_(race_ids))
             .where(HistoricalResultRow.winner == True)
         )
         winners = {r.race_id: r.horse_name for r in hr_result.scalars().all()}
+
+        hr_placed = await session.execute(
+            select(HistoricalResultRow)
+            .where(HistoricalResultRow.race_id.in_(race_ids))
+            .where(HistoricalResultRow.placed == True)
+        )
+        placers = {}
+        for r in hr_placed.scalars().all():
+            placers.setdefault(r.race_id, set()).add(r.horse_name)
+
+        # Top place probability per race
+        tp_place_result = await session.execute(
+            select(RunnerPredictionRow)
+            .where(RunnerPredictionRow.race_id.in_(race_ids))
+            .where(RunnerPredictionRow.model_rank == 1)
+        )
+        top_place_probs = {p.race_id: p.place_probability for p in tp_place_result.scalars().all()}
 
     enriched = bool(enriched_rows)
 
@@ -884,6 +901,13 @@ async def get_meeting(race_date: str, venue_code: str):
             return None
         return pick == winner
 
+    def _model_placed(race_id: str):
+        pick = top_picks.get(race_id)
+        race_placers = placers.get(race_id)
+        if not pick or not race_placers:
+            return None
+        return pick in race_placers
+
     races_out = []
     for r in race_list:
         rid = r["race_id"]
@@ -891,7 +915,9 @@ async def get_meeting(race_date: str, venue_code: str):
             **r,
             "enriched_at": enriched_rows.get(rid).isoformat() if enriched_rows.get(rid) else None,
             "model_correct": _model_correct(rid),
+            "model_placed": _model_placed(rid),
             "top_win_probability": top_win_probs.get(rid),
+            "top_place_probability": top_place_probs.get(rid),
         })
 
     return {

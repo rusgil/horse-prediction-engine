@@ -318,6 +318,11 @@
       background: rgba(245,200,66,0.15); border-radius: 3px;
       padding: 0 3px; margin-left: 2px;
     }
+    .race-pill-place {
+      font-size: 0.65rem; font-weight: 800; color: #60a5fa;
+      background: rgba(59,130,246,0.15); border-radius: 3px;
+      padding: 0 3px; margin-left: 1px;
+    }
 
     /* ── Info bar (meeting context) ──────────────────────────── */
     .info-bar {
@@ -907,8 +912,9 @@
       let accHtml = '';
       if (perf) {
         const pct = Math.round(perf.win_rate * 100);
+        const placePct = Math.round((perf.place_rate || 0) * 100);
         const cls = pct >= 50 ? 'good' : pct >= 38 ? 'ok' : 'bad';
-        accHtml = `<span class="date-pill-acc ${cls}">${pct}% (${perf.wins}/${perf.races})</span>`;
+        accHtml = `<span class="date-pill-acc ${cls}">${pct}%</span><span class="date-pill-acc" style="color:#60a5fa;background:rgba(59,130,246,0.12);border-color:rgba(59,130,246,0.25)">${placePct}%</span>`;
       }
       el.innerHTML = `<span class="date-pill-day">${formatDayLabel(iso)}</span><span class="date-pill-date">${formatShortDate(iso)}</span>${accHtml}`;
       el.addEventListener('click', () => selectDate(iso));
@@ -1185,13 +1191,20 @@
         const pct = r.top_win_probability ? Math.round(r.top_win_probability * 100) : 0;
         return Math.max(max, pct);
       }, 0);
-      S.meetingStats[key] = { wins: settled.filter(r => r.model_correct).length, total: settled.length, enriched: enriched.length, maxConf };
+      const settledWithPlace = races.filter(r => r.model_placed !== null && r.model_placed !== undefined);
+      S.meetingStats[key] = {
+        wins: settled.filter(r => r.model_correct).length,
+        placed: settledWithPlace.filter(r => r.model_placed).length,
+        total: settled.length,
+        enriched: enriched.length, maxConf
+      };
 
       const statEl = document.getElementById(`pill-stat-${key}`);
       if (statEl) {
         if (settled.length) {
           const wins = settled.filter(r => r.model_correct === true).length;
-          statEl.textContent = `${wins}/${settled.length} wins`;
+          const placed = settledWithPlace.filter(r => r.model_placed === true).length;
+          statEl.innerHTML = `<span style="color:#10b981">${wins}/${settled.length} wins</span>${placed > wins ? ` <span style="color:#60a5fa;font-size:0.72rem">· ${placed} placed</span>` : ''}`;
         } else if (enriched.length) {
           statEl.textContent = `${enriched.length} races`;
           statEl.style.opacity = '0.45';
@@ -1260,8 +1273,10 @@
       else if (r.model_correct === false)  dotHtml = '<span class="result-dot wrong"></span>';
       else if (enriched)                   dotHtml = '<span class="enriched-dot"></span>';
       const topPct = r.top_win_probability != null ? Math.round(r.top_win_probability * 100) : null;
+      const placePct = r.top_place_probability != null ? Math.round(r.top_place_probability * 100) : null;
       const pctHtml = topPct >= 25 ? ` <span class="race-pill-pct">${topPct}%</span>` : '';
-      el.innerHTML = `R${r.race_number}${pctHtml}${dotHtml ? ' ' + dotHtml : ''}`;
+      const placeHtml = placePct >= 25 ? ` <span class="race-pill-place">${placePct}%</span>` : '';
+      el.innerHTML = `R${r.race_number}${pctHtml}${placeHtml}${dotHtml ? ' ' + dotHtml : ''}`;
       el.addEventListener('click', () => selectRace(r));
       container.appendChild(el);
     });
