@@ -1220,6 +1220,33 @@
         <div class="tr-premium-desc">
           A Premium Pick is a race where the model gives the horse a meaningful chance of winning, and the market hasn't fully priced that in — leaving odds generous enough to generate real returns when correct. At $3.00 minimum, a $10 bet returns $30. At $5.00 it returns $50. Every Premium Pick passed all three tests: the model gave it ≥30% chance, the market offered $3.00 or better, and the model's win probability was at least 5% higher than what the odds implied.
         </div>
+        <div id="premium-perf-loading" style="padding:10px 0 4px;font-size:0.8rem;color:var(--text-dim)">Loading performance…</div>
+        <div id="premium-perf-stats" style="display:none">
+          <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-top:12px">
+            <div style="text-align:center">
+              <div id="pps-winpct" style="font-family:'Barlow Condensed',sans-serif;font-size:1.8rem;font-weight:900;color:var(--purple-bright)">—</div>
+              <div style="font-size:0.68rem;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.1em;margin-top:2px">Win rate</div>
+            </div>
+            <div style="text-align:center">
+              <div id="pps-bets" style="font-family:'Barlow Condensed',sans-serif;font-size:1.8rem;font-weight:900;color:var(--text-primary)">—</div>
+              <div style="font-size:0.68rem;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.1em;margin-top:2px">Bets (30 days)</div>
+            </div>
+            <div style="text-align:center">
+              <div id="pps-avgsp" style="font-family:'Barlow Condensed',sans-serif;font-size:1.8rem;font-weight:900;color:var(--gold-light)">—</div>
+              <div style="font-size:0.68rem;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.1em;margin-top:2px">Avg SP</div>
+            </div>
+          </div>
+          <div style="display:flex;align-items:center;justify-content:space-between;background:var(--bg-base);border:1px solid var(--border);border-radius:var(--radius-sm);padding:12px 14px;margin-top:12px">
+            <div>
+              <div style="font-size:0.65rem;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.1em;margin-bottom:3px">$10/bet · rolling month</div>
+              <div id="pps-pnl" style="font-family:'Barlow Condensed',sans-serif;font-size:1.6rem;font-weight:900">—</div>
+            </div>
+            <div style="text-align:right">
+              <div style="font-size:0.65rem;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.1em;margin-bottom:3px">ROI</div>
+              <div id="pps-roi" style="font-family:'Barlow Condensed',sans-serif;font-size:1.4rem;font-weight:900;color:var(--purple-bright)">—</div>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
     <div class="tr-section">
@@ -1608,8 +1635,29 @@
     standard: { badge: 'Strong Pick',         color: 'var(--green)',      threshold: '30–34%', note: 'Largest sample — the most statistically reliable win rate of the three tiers.' },
   };
 
+  async function loadPremiumPerf() {
+    try {
+      const res = await fetch(`${API}/api/performance/premium/public`);
+      if (!res.ok) throw new Error();
+      const d = await res.json();
+      document.getElementById('premium-perf-loading').style.display = 'none';
+      document.getElementById('premium-perf-stats').style.display = '';
+      document.getElementById('pps-winpct').textContent = d.win_pct != null ? d.win_pct + '%' : '—';
+      document.getElementById('pps-bets').textContent = d.bets ?? '—';
+      document.getElementById('pps-avgsp').textContent = d.avg_sp != null ? '$' + d.avg_sp.toFixed(2) : '—';
+      const pnl = d.pnl_at_10;
+      const pnlEl = document.getElementById('pps-pnl');
+      pnlEl.textContent = pnl != null ? (pnl >= 0 ? '+$' : '-$') + Math.abs(pnl).toFixed(0) : '—';
+      if (pnl != null) pnlEl.style.color = pnl >= 0 ? 'var(--green-bright)' : '#f87171';
+      document.getElementById('pps-roi').textContent = d.roi_pct != null ? (d.roi_pct >= 0 ? '+' : '') + d.roi_pct + '%' : '—';
+    } catch (_) {
+      document.getElementById('premium-perf-loading').textContent = 'Stats unavailable';
+    }
+  }
+
   async function loadTrackRecord() {
     trackRecordLoaded = true;
+    loadPremiumPerf();
     try {
       const res = await fetch(`${API}/api/track-record`);
       if (!res.ok) throw new Error(res.statusText);
