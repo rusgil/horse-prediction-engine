@@ -1159,9 +1159,15 @@
       el.className = 'pill' + (S.selectedMeeting?.venue_code === m.venue_code ? ' active' : '');
       const statKey = m.venue_code;
       const cached = S.meetingStats[statKey];
-      const statHtml = cached
-        ? `<span class="pill-stat" id="pill-stat-${statKey}">${cached.wins}/${cached.total} wins</span>`
-        : `<span class="pill-stat" id="pill-stat-${statKey}"></span>`;
+      let statHtml;
+      if (cached && cached.total > 0) {
+        const placedSpan = cached.placed > cached.wins ? ` <span style="color:#60a5fa;font-size:0.72rem">· ${cached.placed} placed</span>` : '';
+        statHtml = `<span class="pill-stat" id="pill-stat-${statKey}"><span style="color:#10b981">${cached.wins}/${cached.total} wins</span>${placedSpan}</span>`;
+      } else if (cached && cached.enriched > 0) {
+        statHtml = `<span class="pill-stat" id="pill-stat-${statKey}" style="opacity:0.45">${cached.enriched} races</span>`;
+      } else {
+        statHtml = `<span class="pill-stat" id="pill-stat-${statKey}"></span>`;
+      }
       const confColor = (cached && cached.maxConf >= 40) ? 'var(--green)' : 'var(--gold)';
       const confHtml = (cached && cached.maxConf >= 25)
         ? `<span class="pill-stat" id="pill-conf-${statKey}" style="color:${confColor}">${cached.maxConf}% best pick</span>`
