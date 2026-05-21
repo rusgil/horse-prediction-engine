@@ -701,9 +701,12 @@
       padding: 2px 8px; border-radius: 999px;
       margin-left: 4px;
     }
-    .result-badge.won  { background: rgba(16,185,129,0.18); color: #10b981; border: 1px solid #10b981; }
-    .result-badge.placed { background: rgba(234,179,8,0.15); color: var(--gold); border: 1px solid var(--gold-mid); }
-    .result-badge.unplaced { background: var(--bg-elevated); color: var(--text-dim); border: 1px solid var(--border); }
+    .result-badge.won        { background: rgba(234,179,8,0.15); color: var(--gold); border: 1px solid var(--gold-mid); }
+    .result-badge.pick-won   { background: rgba(16,185,129,0.18); color: #10b981; border: 1px solid #10b981; }
+    .result-badge.pick-placed{ background: rgba(234,179,8,0.15); color: var(--gold); border: 1px solid var(--gold-mid); }
+    .result-badge.placed     { background: rgba(234,179,8,0.15); color: var(--gold); border: 1px solid var(--gold-mid); }
+    .result-badge.unplaced   { background: var(--bg-elevated); color: var(--text-dim); border: 1px solid var(--border); }
+    .result-badge.pick-miss  { background: rgba(239,68,68,0.1); color: #f87171; border: 1px solid rgba(239,68,68,0.25); }
     .model-verdict {
       font-size: 0.8rem; font-weight: 600;
       padding: 6px 14px; border-radius: 8px;
@@ -1050,8 +1053,17 @@
       const resEl = document.getElementById(`lo-res-${r.tab_number}`);
       if (resEl && live.actual_position) {
         const pos = live.actual_position;
-        const cls = pos === 1 ? 'won' : pos <= 3 ? 'placed' : 'unplaced';
-        const label = pos === 1 ? '1st ✓' : pos === 2 ? '2nd' : pos === 3 ? '3rd' : `${pos}th`;
+        const posLabel = pos === 1 ? '1st' : pos === 2 ? '2nd' : pos === 3 ? '3rd' : `${pos}th`;
+        let cls, label;
+        if (live.is_top_pick) {
+          // Model pick: green if won, gold if placed, red if missed
+          cls = pos === 1 ? 'pick-won' : pos <= 3 ? 'pick-placed' : 'pick-miss';
+          label = pos === 1 ? `✓ Model pick — ${posLabel}` : `Model pick — ${posLabel}`;
+        } else {
+          // Other runners: winner shown in gold, placed in gold, rest dim
+          cls = pos === 1 ? 'won' : pos <= 3 ? 'placed' : 'unplaced';
+          label = pos === 1 ? `${posLabel} Winner` : posLabel;
+        }
         resEl.textContent = label;
         resEl.className = `result-badge ${cls}`;
         resEl.style.display = '';

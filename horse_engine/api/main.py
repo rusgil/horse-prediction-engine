@@ -1015,6 +1015,7 @@ async def live_odds(race_id: str):
             "overlay": overlay,
             "value": overlay > 0.05 and display_odds and display_odds >= 3.0,
             "actual_position": actual_position,
+            "is_top_pick": horse == top_model_pick,
         })
 
     runners_odds.sort(key=lambda x: x["model_win_prob"], reverse=True)
