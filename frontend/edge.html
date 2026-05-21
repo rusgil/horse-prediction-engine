@@ -2070,7 +2070,7 @@
 
     // Badge — same slot as upcoming confidence badge
     let badge;
-    const isPlaced = p.placed && !isWin;
+    const isPlaced = (p.placed || (p.position && p.position <= 3)) && !isWin;
     const posLabel = p.position === 2 ? '2nd' : p.position === 3 ? '3rd' : p.position ? `${p.position}th` : '';
     if (p.scratched) {
       badge = `<span class="pick-badge-standard" style="background:var(--bg-elevated);color:var(--text-dim);border-color:var(--border);">Scratched</span>`;
@@ -2211,7 +2211,7 @@
     const pnlSign = pnl >= 0 ? '+' : '';
     const roiSign = roi >= 0 ? '+' : '';
     const wins   = activePicks.filter(p => p.winner).length;
-    const placed = activePicks.filter(p => p.placed && !p.winner).length;
+    const placed = activePicks.filter(p => (p.placed || (p.position && p.position <= 3)) && !p.winner).length;
     const losses = activePicks.filter(p => !p.winner && !p.placed).length;
     const placeRate = activePicks.length ? +((wins + placed) / activePicks.length * 100).toFixed(1) : 0;
     const premiumCount = data.picks.filter(p => {
