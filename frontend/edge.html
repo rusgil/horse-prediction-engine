@@ -531,6 +531,15 @@
       letter-spacing: 0.12em; color: var(--text-dim);
       text-transform: uppercase; margin-bottom: 1px;
     }
+    .odds-sparkline {
+      display: flex; flex-direction: column; align-items: center; gap: 2px;
+      margin-top: 4px;
+    }
+    .odds-sparkline svg { display: block; }
+    .sparkline-label {
+      font-size: 0.6rem; font-weight: 700; letter-spacing: 0.08em;
+      text-transform: uppercase; white-space: nowrap;
+    }
     .payout-box {
       background: var(--green-dim);
       border: 1px solid rgba(34,197,94,0.25);
@@ -1257,6 +1266,62 @@
     return '★'.repeat(n) + '☆'.repeat(5 - n);
   }
 
+  // ── Odds sparkline ────────────────────────────────────────────────────────
+  const sparklineCache = {};  // race_id+horse → snapshot array
+
+  function buildSparklineSvg(snapshots) {
+    if (!snapshots || snapshots.length < 2) return '';
+    const odds = snapshots.map(s => s.win_odds).filter(Boolean);
+    if (odds.length < 2) return '';
+
+    const W = 90, H = 28, PAD = 3;
+    const minO = Math.min(...odds);
+    const maxO = Math.max(...odds);
+    const range = maxO - minO || 0.01;
+
+    const xs = odds.map((_, i) => PAD + (i / (odds.length - 1)) * (W - 2 * PAD));
+    const ys = odds.map(o => PAD + ((maxO - o) / range) * (H - 2 * PAD));
+    const points = xs.map((x, i) => `${x.toFixed(1)},${ys[i].toFixed(1)}`).join(' ');
+
+    const first = odds[0], last = odds[odds.length - 1];
+    const diff = last - first;
+    const color = diff < -0.1 ? '#22c55e' : diff > 0.1 ? '#ef4444' : '#8a9bc4';
+    const label = diff < -0.1 ? '▼ steaming' : diff > 0.1 ? '▲ drifting' : '— stable';
+
+    return `<div class="odds-sparkline" title="Odds trend: opened $${first.toFixed(1)} → now $${last.toFixed(1)}">
+      <svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">
+        <polyline points="${points}" fill="none" stroke="${color}" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+        <circle cx="${xs[xs.length-1].toFixed(1)}" cy="${ys[ys.length-1].toFixed(1)}" r="2.5" fill="${color}"/>
+      </svg>
+      <span class="sparkline-label" style="color:${color}">${label}</span>
+    </div>`;
+  }
+
+  async function fetchSparklines(picks) {
+    const upcoming = picks.filter(p => {
+      const jump = p.scheduled_time ? new Date(p.scheduled_time).getTime() : null;
+      return !jump || jump > Date.now();
+    });
+    await Promise.all(upcoming.map(async p => {
+      const key = `${p.race_id}||${p.horse_name}`;
+      try {
+        const r = await fetch(`${API}/api/races/${encodeURIComponent(p.race_id)}/odds-trend?horse=${encodeURIComponent(p.horse_name)}`);
+        if (!r.ok) return;
+        const d = await r.json();
+        sparklineCache[key] = d.snapshots || [];
+      } catch (_) {}
+    }));
+    // Inject sparklines into already-rendered cards
+    upcoming.forEach(p => {
+      const key = `${p.race_id}||${p.horse_name}`;
+      const snaps = sparklineCache[key];
+      if (!snaps || snaps.length < 2) return;
+      const cardId = `card-${p.race_id.replace(/[^a-z0-9]/gi,'-')}-${p.horse_name.replace(/[^a-z0-9]/gi,'-')}`;
+      const slot = document.getElementById(`spark-${cardId}`);
+      if (slot) slot.innerHTML = buildSparklineSvg(snaps);
+    });
+  }
+
   function isPremiumPick(pick) {
     return pick.model_pct >= 30
       && pick.best_available_odds != null && pick.best_available_odds >= 3.0
@@ -1303,6 +1368,7 @@
 
     const timeStr = fmtTime(pick.scheduled_time);
     const countdownId = `cd-${escHtml(pick.race_id).replace(/[^a-z0-9]/gi, '-')}`;
+    const cardId = `card-${pick.race_id.replace(/[^a-z0-9]/gi,'-')}-${pick.horse_name.replace(/[^a-z0-9]/gi,'-')}`;
 
     // Use SP for completed races, tote odds for upcoming
     const displayOdds = (result && result.sp) ? result.sp : pick.best_available_odds;
@@ -1395,6 +1461,7 @@
           </div>
           <div class="pick-right">
             ${oddsHtml}
+            <div id="spark-${cardId}">${buildSparklineSvg(sparklineCache[`${pick.race_id}||${pick.horse_name}`])}</div>
             ${payoutHtml}
           </div>
         </div>
@@ -1783,6 +1850,7 @@
 
       renderContent(picksData, stake, resultsMap);
       refreshOdds();
+      fetchSparklines(picksData.picks);
     } catch (e) {
       document.getElementById('content').innerHTML = `
         <div class="empty-state">

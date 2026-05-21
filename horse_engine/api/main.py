@@ -143,8 +143,8 @@ async def _scheduled_odds_snapshot():
                             if tote:
                                 win = float(tote)
                                 source = "tote"
-                            elif flucs.get("high"):
-                                win = float(flucs["high"])
+                            elif flucs.get("low"):
+                                win = float(flucs["low"])
                                 source = "flucs"
                             elif flucs.get("open"):
                                 win = float(flucs["open"])
@@ -1026,6 +1026,32 @@ async def live_odds(race_id: str):
         "winner": winner_name,
         "model_correct": model_correct,
         "runners": runners_odds,
+    }
+
+
+@app.get("/api/races/{race_id}/odds-trend")
+async def odds_trend(race_id: str, horse: str = Query(...)):
+    """Return the 15-min odds snapshot history for a horse in a race."""
+    async with get_session() as session:
+        result = await session.execute(
+            select(OddsSnapshotRow)
+            .where(OddsSnapshotRow.race_id == race_id)
+            .where(OddsSnapshotRow.horse_name == horse)
+            .order_by(OddsSnapshotRow.snapshotted_at.asc())
+        )
+        rows = result.scalars().all()
+    return {
+        "race_id": race_id,
+        "horse_name": horse,
+        "snapshots": [
+            {
+                "time": r.snapshotted_at.isoformat(),
+                "win_odds": r.win_odds,
+                "minutes_to_jump": r.minutes_to_jump,
+                "source": r.source,
+            }
+            for r in rows
+        ],
     }
 
 
