@@ -1249,24 +1249,17 @@
           </div>
         </div>
         <div id="pps-tagline" style="display:none;margin-top:14px;font-size:0.88rem;color:var(--text-secondary);line-height:1.65;background:var(--bg-elevated);border:1px solid rgba(168,85,247,0.2);border-radius:var(--radius-sm);padding:12px 14px;"></div>
-        <div id="pps-monthly-wrap" style="display:none;margin-top:16px">
-          <div style="font-size:0.68rem;font-weight:700;letter-spacing:0.12em;text-transform:uppercase;color:var(--text-dim);margin-bottom:10px">Monthly breakdown · $10/bet</div>
-          <div style="overflow-x:auto">
-            <table id="pps-monthly-table" style="width:100%;border-collapse:collapse;font-size:0.82rem">
-              <thead>
-                <tr>
-                  <th style="text-align:left;padding:6px 10px;border-bottom:1px solid var(--border);color:var(--text-dim);font-size:0.68rem;font-weight:700;letter-spacing:0.1em;text-transform:uppercase">Month</th>
-                  <th style="text-align:center;padding:6px 10px;border-bottom:1px solid var(--border);color:var(--text-dim);font-size:0.68rem;font-weight:700;letter-spacing:0.1em;text-transform:uppercase">Races</th>
-                  <th style="text-align:center;padding:6px 10px;border-bottom:1px solid var(--border);color:var(--text-dim);font-size:0.68rem;font-weight:700;letter-spacing:0.1em;text-transform:uppercase">Win %</th>
-                  <th style="text-align:right;padding:6px 10px;border-bottom:1px solid var(--border);color:var(--text-dim);font-size:0.68rem;font-weight:700;letter-spacing:0.1em;text-transform:uppercase">Spent</th>
-                  <th style="text-align:right;padding:6px 10px;border-bottom:1px solid var(--border);color:var(--text-dim);font-size:0.68rem;font-weight:700;letter-spacing:0.1em;text-transform:uppercase">Returned</th>
-                  <th style="text-align:right;padding:6px 10px;border-bottom:1px solid var(--border);color:var(--text-dim);font-size:0.68rem;font-weight:700;letter-spacing:0.1em;text-transform:uppercase">ROI</th>
-                  <th style="text-align:center;padding:6px 10px;border-bottom:1px solid var(--border);color:var(--text-dim);font-size:0.68rem;font-weight:700;letter-spacing:0.1em;text-transform:uppercase">Trend</th>
-                </tr>
-              </thead>
-              <tbody id="pps-monthly-body"></tbody>
-            </table>
+        <div id="pps-monthly-wrap" style="display:none;margin-top:20px">
+          <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:14px">
+            <div style="font-size:0.68rem;font-weight:700;letter-spacing:0.12em;text-transform:uppercase;color:var(--text-dim)">Monthly P&amp;L · <span id="pps-stake-label" style="color:var(--purple-bright)">$10</span>/race</div>
+            <div style="font-size:0.75rem;color:var(--text-dim)" id="pps-stake-summary"></div>
           </div>
+          <div style="margin-bottom:12px">
+            <input type="range" class="stake-slider" id="pps-stake-slider" min="10" max="1000" step="10" value="10" style="background:linear-gradient(to right,rgba(168,85,247,0.6) 0%,rgba(168,85,247,0.6) 1%,var(--bg-elevated) 1%)" />
+            <div class="stake-slider-labels"><span>$10</span><span>$250</span><span>$500</span><span>$750</span><span>$1,000</span></div>
+          </div>
+          <div id="pps-chart-wrap" style="position:relative;width:100%;overflow:hidden"></div>
+          <div id="pps-tooltip" style="display:none;position:absolute;background:var(--bg-elevated);border:1px solid rgba(168,85,247,0.3);border-radius:var(--radius-sm);padding:8px 12px;font-size:0.78rem;pointer-events:none;z-index:10;min-width:130px"></div>
         </div>
       </div>
     </div>
@@ -1671,44 +1664,132 @@
       pnlEl.textContent = pnl != null ? (pnl >= 0 ? '+$' : '-$') + Math.abs(pnl).toFixed(0) : '—';
       if (pnl != null) pnlEl.style.color = pnl >= 0 ? 'var(--green-bright)' : '#f87171';
       document.getElementById('pps-roi').textContent = d.roi_pct != null ? (d.roi_pct >= 0 ? '+' : '') + d.roi_pct + '%' : '—';
-      if (d.bets && d.pnl_at_10 != null) {
-        const spent = d.bets * 10;
-        const returned = spent + d.pnl_at_10;
+      function updateTagline(stake) {
+        if (!d.bets || d.pnl_at_10 == null) return;
+        const multiplier = stake / 10;
+        const spent = d.bets * stake;
+        const pnl = d.pnl_at_10 * multiplier;
+        const returned = spent + pnl;
         const tagEl = document.getElementById('pps-tagline');
         tagEl.style.display = '';
-        tagEl.innerHTML = `For the last 30 days, FunkyIQ would have returned <strong style="color:var(--green-bright)">$${returned.toLocaleString()}</strong>, if someone bet <strong style="color:var(--text-primary)">$${spent.toLocaleString()}</strong> ($10 per race for the ${d.bets} races over the last 30 days). <span style="color:var(--purple-bright);font-weight:700">Now that's Funky!</span>`;
+        tagEl.innerHTML = `For the last 30 days, FunkyIQ would have returned <strong style="color:var(--green-bright)">$${Math.round(returned).toLocaleString()}</strong>, if someone bet <strong style="color:var(--text-primary)">$${spent.toLocaleString()}</strong> ($${stake.toLocaleString()} per race for the ${d.bets} races over the last 30 days). <span style="color:var(--purple-bright);font-weight:700">Now that's Funky!</span>`;
       }
-      // Monthly table
+      updateTagline(10);
+      // Monthly bar chart
       fetch(`${API}/api/performance/premium/monthly`).then(r => r.ok ? r.json() : null).then(md => {
         if (!md || !md.months.length) return;
-        const months = md.months;
+        const monthlyData = md.months;
         document.getElementById('pps-monthly-wrap').style.display = '';
-        const tbody = document.getElementById('pps-monthly-body');
+
         const monthLabel = iso => {
-          const [y, m] = iso.split('-');
-          return new Date(+y, +m - 1, 1).toLocaleDateString('en-AU', { month: 'short', year: 'numeric' });
+          const [y, mo] = iso.split('-');
+          return new Date(+y, +mo - 1, 1).toLocaleDateString('en-AU', { month: 'short', year: '2-digit' });
         };
-        tbody.innerHTML = months.map((m, i) => {
-          const prev = months[i - 1];
-          const isUp = prev && m.roi_pct != null && prev.roi_pct != null && m.roi_pct > prev.roi_pct;
-          const isDown = prev && m.roi_pct != null && prev.roi_pct != null && m.roi_pct < prev.roi_pct;
-          const trendHtml = !prev ? '<span style="color:var(--text-dim)">—</span>'
-            : isUp ? '<span style="color:var(--green-bright);font-size:1rem">▲</span>'
-            : isDown ? '<span style="color:#f87171;font-size:1rem">▼</span>'
-            : '<span style="color:var(--text-dim)">→</span>';
-          const roiColor = m.roi_pct == null ? 'var(--text-dim)' : m.roi_pct >= 0 ? 'var(--green-bright)' : '#f87171';
-          const retColor = m.returned >= m.spent ? 'var(--green-bright)' : '#f87171';
-          const isCurrent = i === months.length - 1;
-          return `<tr style="${isCurrent ? 'background:rgba(168,85,247,0.05)' : ''}">
-            <td style="padding:9px 10px;border-bottom:1px solid var(--border);color:var(--text-primary);font-weight:${isCurrent ? '700' : '400'}">${monthLabel(m.month)}${isCurrent ? ' <span style="font-size:0.62rem;color:var(--purple-bright);font-weight:700;letter-spacing:0.08em">MTD</span>' : ''}</td>
-            <td style="padding:9px 10px;border-bottom:1px solid var(--border);text-align:center;color:var(--text-secondary)">${m.bets}</td>
-            <td style="padding:9px 10px;border-bottom:1px solid var(--border);text-align:center;color:var(--text-secondary)">${m.win_pct != null ? m.win_pct + '%' : '—'}</td>
-            <td style="padding:9px 10px;border-bottom:1px solid var(--border);text-align:right;color:var(--text-secondary)">$${m.spent}</td>
-            <td style="padding:9px 10px;border-bottom:1px solid var(--border);text-align:right;font-weight:600;color:${retColor}">$${m.returned}</td>
-            <td style="padding:9px 10px;border-bottom:1px solid var(--border);text-align:right;font-family:'Barlow Condensed',sans-serif;font-size:1rem;font-weight:700;color:${roiColor}">${m.roi_pct != null ? (m.roi_pct >= 0 ? '+' : '') + m.roi_pct + '%' : '—'}</td>
-            <td style="padding:9px 10px;border-bottom:1px solid var(--border);text-align:center">${trendHtml}</td>
-          </tr>`;
-        }).join('');
+
+        function renderChart(stake) {
+          const multiplier = stake / 10;
+          const wrap = document.getElementById('pps-chart-wrap');
+          const W = wrap.clientWidth || 320;
+          const H = 180;
+          const padL = 48, padR = 8, padT = 16, padB = 32;
+          const chartW = W - padL - padR;
+          const chartH = H - padT - padB;
+          const n = monthlyData.length;
+          const barGap = 4;
+          const barW = Math.max(6, Math.floor((chartW - barGap * (n - 1)) / n));
+
+          const pnls = monthlyData.map(m => m.pnl_at_10 * multiplier);
+          const maxVal = Math.max(...pnls, 1);
+          const minVal = Math.min(...pnls, 0);
+          const range = maxVal - minVal || 1;
+          const zeroY = padT + chartH * (maxVal / range);
+
+          // gridlines
+          const gridVals = [];
+          const step = Math.ceil(range / 4 / 50) * 50 || 10;
+          for (let v = Math.ceil(minVal / step) * step; v <= maxVal; v += step) gridVals.push(v);
+
+          let gridSvg = gridVals.map(v => {
+            const y = padT + chartH * ((maxVal - v) / range);
+            const label = v >= 0 ? `+$${v}` : `-$${Math.abs(v)}`;
+            return `<line x1="${padL}" x2="${W - padR}" y1="${y}" y2="${y}" stroke="rgba(255,255,255,0.05)" stroke-width="1"/>
+                    <text x="${padL - 4}" y="${y + 4}" text-anchor="end" font-size="9" fill="rgba(138,155,196,0.7)" font-family="Barlow Condensed,sans-serif">${label}</text>`;
+          }).join('');
+
+          // zero line
+          const zeroSvg = `<line x1="${padL}" x2="${W - padR}" y1="${zeroY}" y2="${zeroY}" stroke="rgba(255,255,255,0.15)" stroke-width="1" stroke-dasharray="3,3"/>`;
+
+          // bars
+          let barsSvg = '';
+          let labelsSvg = '';
+          monthlyData.forEach((m, i) => {
+            const pnl = m.pnl_at_10 * multiplier;
+            const isCurrent = i === monthlyData.length - 1;
+            const color = pnl >= 0
+              ? (isCurrent ? '#a855f7' : 'rgba(34,197,94,0.75)')
+              : 'rgba(239,68,68,0.65)';
+            const barH = Math.abs(pnl) / range * chartH || 2;
+            const x = padL + i * (barW + barGap);
+            const y = pnl >= 0 ? zeroY - barH : zeroY;
+            barsSvg += `<rect class="pps-bar" x="${x}" y="${y}" width="${barW}" height="${barH}" fill="${color}" rx="2" data-idx="${i}" style="cursor:pointer"/>`;
+            const lx = x + barW / 2;
+            labelsSvg += `<text x="${lx}" y="${H - 4}" text-anchor="middle" font-size="8" fill="rgba(138,155,196,0.6)" font-family="Barlow Condensed,sans-serif">${monthLabel(m.month)}</text>`;
+          });
+
+          wrap.innerHTML = `<svg width="${W}" height="${H}" style="display:block;overflow:visible">
+            ${gridSvg}${zeroSvg}${barsSvg}${labelsSvg}
+          </svg>`;
+
+          // Tooltip
+          wrap.querySelectorAll('.pps-bar').forEach(bar => {
+            bar.addEventListener('mousemove', e => {
+              const idx = +bar.dataset.idx;
+              const m = monthlyData[idx];
+              const pnl = m.pnl_at_10 * multiplier;
+              const spent = m.bets * stake;
+              const returned = spent + pnl;
+              const tip = document.getElementById('pps-tooltip');
+              const isCurrent = idx === monthlyData.length - 1;
+              tip.style.display = '';
+              tip.innerHTML = `<div style="font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:0.9rem;color:var(--text-primary);margin-bottom:4px">${monthLabel(m.month)}${isCurrent ? ' <span style="color:var(--purple-bright);font-size:0.65rem">MTD</span>' : ''}</div>
+                <div style="color:var(--text-dim);font-size:0.75rem">${m.bets} races · ${m.win_pct ?? '—'}% wins</div>
+                <div style="margin-top:4px;font-size:0.78rem">Spent: <strong style="color:var(--text-primary)">$${spent.toLocaleString()}</strong></div>
+                <div style="font-size:0.78rem">Returned: <strong style="color:${returned >= spent ? 'var(--green-bright)' : '#f87171'}">$${Math.round(returned).toLocaleString()}</strong></div>
+                <div style="font-size:0.78rem">P&L: <strong style="color:${pnl >= 0 ? 'var(--green-bright)' : '#f87171'}">${pnl >= 0 ? '+' : ''}$${Math.round(pnl).toLocaleString()}</strong></div>`;
+              const rect = wrap.getBoundingClientRect();
+              const tx = e.clientX - rect.left + 10;
+              const ty = e.clientY - rect.top - 10;
+              tip.style.left = Math.min(tx, W - 150) + 'px';
+              tip.style.top = ty + 'px';
+              tip.style.position = 'absolute';
+            });
+            bar.addEventListener('mouseleave', () => { document.getElementById('pps-tooltip').style.display = 'none'; });
+          });
+
+          // Summary line
+          const totalPnl = pnls.reduce((a, b) => a + b, 0);
+          const totalSpent = monthlyData.reduce((a, m) => a + m.bets * stake, 0);
+          document.getElementById('pps-stake-summary').textContent =
+            `Total: $${totalSpent.toLocaleString()} → $${Math.round(totalSpent + totalPnl).toLocaleString()} (${totalPnl >= 0 ? '+' : ''}$${Math.round(totalPnl).toLocaleString()})`;
+        }
+
+        const slider = document.getElementById('pps-stake-slider');
+        const stakeLabel = document.getElementById('pps-stake-label');
+
+        function onStakeChange() {
+          const stake = +slider.value;
+          stakeLabel.textContent = '$' + stake.toLocaleString();
+          const pct = ((stake - 10) / (1000 - 10) * 100).toFixed(1);
+          slider.style.background = `linear-gradient(to right,rgba(168,85,247,0.6) ${pct}%,var(--bg-elevated) ${pct}%)`;
+          renderChart(stake);
+        }
+
+        slider.addEventListener('input', () => {
+          onStakeChange();
+          updateTagline(+slider.value);
+        });
+        renderChart(10);
+        window.addEventListener('resize', () => renderChart(+slider.value));
       }).catch(() => {});
     } catch (_) {
       document.getElementById('premium-perf-loading').textContent = 'Stats unavailable';
