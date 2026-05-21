@@ -1859,6 +1859,75 @@ async def performance_summary(days: int = Query(5, ge=1, le=30)):
     }
 
 
+@app.get("/api/performance/premium")
+async def premium_performance(days: int = Query(30, ge=1, le=365), x_cron_secret: Optional[str] = Header(None)):
+    """
+    P&L analysis for Premium picks: model_pct >= 30%, SP >= $3.00, overlay > 5%.
+    Requires admin auth.
+    """
+    _require_cron_secret(x_cron_secret)
+    cutoff = (date.today() - timedelta(days=days)).isoformat()
+
+    async with get_session() as session:
+        hr_result = await session.execute(
+            select(HistoricalResultRow).where(HistoricalResultRow.race_id >= cutoff)
+        )
+        hr_rows = hr_result.scalars().all()
+
+        if not hr_rows:
+            return {"days": days, "picks": [], "summary": {"bets": 0, "wins": 0, "win_pct": None, "pnl": 0.0, "roi_pct": None, "avg_sp": None}}
+
+        race_ids = list({r.race_id for r in hr_rows})
+        pred_result = await session.execute(
+            select(RunnerPredictionRow)
+            .where(RunnerPredictionRow.race_id.in_(race_ids))
+            .where(RunnerPredictionRow.model_rank == 1)
+        )
+        top_picks = {p.race_id: p for p in pred_result.scalars().all()}
+
+    result_by_key = {(r.race_id, r.horse_name): r for r in hr_rows}
+
+    picks = []
+    for race_id, pick in top_picks.items():
+        actual = result_by_key.get((race_id, pick.horse_name))
+        if not actual:
+            continue
+        sp = actual.starting_price or 0.0
+        overlay = pick.overlay or 0.0
+        model_pct = round((pick.win_probability or 0) * 100, 1)
+        if model_pct >= 30 and sp >= 3.0 and overlay > 0.05:
+            pnl = (sp - 1.0) if actual.winner else -1.0
+            picks.append({
+                "date": race_id[:10],
+                "race_id": race_id,
+                "horse_name": pick.horse_name,
+                "model_pct": model_pct,
+                "sp": sp,
+                "overlay_pct": round(overlay * 100, 1),
+                "winner": actual.winner,
+                "pnl": round(pnl, 2),
+            })
+
+    picks.sort(key=lambda x: x["date"])
+    bets = len(picks)
+    wins = sum(1 for p in picks if p["winner"])
+    total_pnl = sum(p["pnl"] for p in picks)
+    sp_list = [p["sp"] for p in picks]
+
+    return {
+        "days": days,
+        "summary": {
+            "bets": bets,
+            "wins": wins,
+            "win_pct": round(wins / bets * 100, 1) if bets else None,
+            "pnl_at_10": round(total_pnl * 10, 2),
+            "roi_pct": round(total_pnl / bets * 100, 1) if bets else None,
+            "avg_sp": round(sum(sp_list) / len(sp_list), 2) if sp_list else None,
+        },
+        "picks": picks,
+    }
+
+
 # ── Calibration ───────────────────────────────────────────────────────────────
 
 _CANDIDATE_WINDOWS = [30, 60, 90, 180, 270]
