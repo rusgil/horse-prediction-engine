@@ -25,7 +25,7 @@ import random
 import re
 import secrets
 from contextlib import asynccontextmanager
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 from typing import Any, Optional
 
@@ -209,6 +209,63 @@ async def _scheduled_enrich():
         log.exception("[scheduler] Enrichment failed: %s", e)
 
 
+async def _scheduled_pre_race_enrich():
+    """
+    Re-enrich any race starting within the next 2 hours.
+    Runs every 15 min during racing hours to pick up scratchings,
+    track condition changes, and model updates close to jump time.
+    """
+    now_utc = datetime.utcnow().replace(tzinfo=timezone.utc)
+    horizon = now_utc + timedelta(hours=2)
+    today = _today_aest().isoformat()
+    log.info("[pre-race] Scanning for races within 2 hours")
+    try:
+        client = get_tab_client()
+        async with get_session() as session:
+            model = await _load_model(session)
+        meetings = await client.get_meetings(today)
+        enriched_count = 0
+        for m in meetings:
+            slug = m.get("slug", "")
+            date_sfx = f"-{today.replace('-', '')}"
+            venue_code = slug[:-len(date_sfx)] if slug.endswith(date_sfx) else slug.split("-")[0] if slug else m.get("name", "").lower().replace(" ", "-")
+            venue_name = m.get("venue", venue_code)
+            state = m.get("state", "")
+            try:
+                raw_events = await client.get_meeting_races(slug)
+                for raw_event in raw_events:
+                    start_raw = raw_event.get("startTime")
+                    if not start_raw:
+                        continue
+                    try:
+                        jump = datetime.fromisoformat(start_raw.replace("Z", "+00:00"))
+                    except ValueError:
+                        continue
+                    if not (now_utc <= jump <= horizon):
+                        continue
+                    race_num = raw_event.get("eventNumber")
+                    race_id = f"{today}_{venue_code}_R{race_num}"
+                    full_event = await client.get_race(slug, race_num)
+                    if not full_event:
+                        continue
+                    race = await client.parse_race(full_event, today, venue_name, state)
+                    predictions, _ = await enrich_and_predict_race(race, model)
+                    async with get_session() as session:
+                        await save_race_predictions(
+                            session,
+                            race_id,
+                            [_prediction_to_db_dict(p, race_id) for p in predictions],
+                        )
+                    log.info("[pre-race] Re-enriched %s (jump %s)", race_id, start_raw)
+                    enriched_count += 1
+            except Exception as e:
+                log.warning("[pre-race] Failed for %s: %s", slug, e)
+        if enriched_count:
+            log.info("[pre-race] Re-enriched %d races", enriched_count)
+    except Exception as e:
+        log.exception("[pre-race] Pre-race enrich failed: %s", e)
+
+
 async def _seed_results_for_date(race_date: str) -> int:
     """Fetch settled results for race_date and store as training data. Returns count seeded."""
     client = get_tab_client()
@@ -300,8 +357,12 @@ async def lifespan(app: FastAPI):
         _scheduled_odds_snapshot,
         CronTrigger(hour="9-18", minute="0,15,30,45", timezone="Australia/Sydney")
     )
+    scheduler.add_job(
+        _scheduled_pre_race_enrich,
+        CronTrigger(hour="8-20", minute="0,15,30,45", timezone="Australia/Sydney")
+    )
     scheduler.start()
-    log.info("[scheduler] Cron jobs scheduled: 6am/10am/1pm enrich, 3pm/5pm/11pm seed results, 2am daily calibration, every 15min odds snapshots 9am-6pm")
+    log.info("[scheduler] Cron jobs scheduled: 6am/10am/1pm enrich, 3pm/5pm/11pm seed results, 2am calibration, every 15min odds snapshots 9am-6pm, every 15min pre-race re-enrich 8am-8pm")
 
     # Enrich today on startup so deploys don't leave races un-loaded
     asyncio.create_task(_scheduled_enrich())
