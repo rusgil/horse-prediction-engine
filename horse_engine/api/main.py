@@ -1985,8 +1985,8 @@ async def premium_performance_public():
 
 @app.get("/api/performance/premium/monthly")
 async def premium_performance_monthly():
-    """Public monthly breakdown of Premium pick P&L (no auth required)."""
-    cutoff = (date.today() - timedelta(days=365)).isoformat()
+    """Public monthly breakdown of Premium pick P&L for last 6 months (no auth required)."""
+    cutoff = (date.today() - timedelta(days=183)).isoformat()
 
     async with get_session() as session:
         hr_result = await session.execute(
