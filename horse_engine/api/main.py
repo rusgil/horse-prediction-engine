@@ -567,7 +567,7 @@ async def refresh_edge_odds():
     now = datetime.utcnow()
     if _odds_refresh_last and (now - _odds_refresh_last).total_seconds() < _ODDS_REFRESH_COOLDOWN:
         return {"updated": {}, "count": 0, "cached": True}
-    threshold = 0.30
+    threshold = 0.295
     today = _today_aest()
     client = get_tab_client()
     updated: dict[str, float] = {}  # race_id → new odds
@@ -642,7 +642,7 @@ async def get_edge_yesterday(for_date: Optional[str] = Query(None, alias="date")
     """Qualifying picks with actual results and SP odds from punters.
     Accepts ?date=YYYY-MM-DD (defaults to yesterday)."""
     target_date = for_date or (_today_aest() - timedelta(days=1)).isoformat()
-    threshold = 0.30
+    threshold = 0.295
     prefix = f"{target_date}_"
     stake = 10
 
