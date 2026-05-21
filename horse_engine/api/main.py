@@ -1018,10 +1018,12 @@ async def live_odds(race_id: str):
     total_implied = sum(1 / o for o in valid_odds) if valid_odds else 0
     scale = 1.0 / total_implied if total_implied > 0 else 1.0
 
-    # Find winner for model-correct flag
+    # Find winner and placers for model flags
     winner_name = next((h for h, _, pos in all_tote if pos == 1), None)
+    placed_names = {h for h, _, pos in all_tote if pos and pos <= 3}
     top_model_pick = stored[0].horse_name if stored else None
     model_correct = (winner_name == top_model_pick) if winner_name else None
+    model_placed = (top_model_pick in placed_names) if (placed_names and top_model_pick) else None
 
     for horse, current_odds, actual_position in all_tote:
         model_prob = model_probs.get(horse, 0.0)
@@ -1054,6 +1056,7 @@ async def live_odds(race_id: str):
         "settled": winner_name is not None,
         "winner": winner_name,
         "model_correct": model_correct,
+        "model_placed": model_placed,
         "runners": runners_odds,
     }
 

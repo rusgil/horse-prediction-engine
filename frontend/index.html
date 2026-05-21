@@ -312,6 +312,7 @@
       width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0;
     }
     .race-pill .result-dot.correct { background: #10b981; box-shadow: 0 0 5px #10b981; }
+    .race-pill .result-dot.placed  { background: #f59e0b; box-shadow: 0 0 5px #f59e0b; }
     .race-pill .result-dot.wrong   { background: #f87171; box-shadow: 0 0 5px #f87171; }
     .race-pill-pct {
       font-size: 0.65rem; font-weight: 800; color: var(--gold);
@@ -719,6 +720,7 @@
       text-align: center;
     }
     .model-verdict.correct { background: rgba(16,185,129,0.12); color: #10b981; border: 1px solid rgba(16,185,129,0.3); }
+    .model-verdict.placed  { background: rgba(245,158,11,0.1);  color: #f59e0b; border: 1px solid rgba(245,158,11,0.25); }
     .model-verdict.wrong   { background: rgba(248,113,113,0.1); color: #f87171; border: 1px solid rgba(248,113,113,0.25); }
 
     /* ── Live odds bar ───────────────────────────────────────── */
@@ -866,6 +868,7 @@
     liveOddsTimer: null,
     perfByDate: {},   // date → {win_rate, place_rate, wins, races, value_pnl, value_bets}
     meetingStats: {}, // venue_code → {wins, total} for win% pills
+    statsLoadGen: 0,  // incremented on date change to cancel stale _loadMeetingWinRate callbacks
   };
 
   function todayISO() {
@@ -1023,6 +1026,7 @@
     const fetchedAt = typeof data === 'string' ? data : data?.fetched_at;
     const settled = data?.settled;
     const modelCorrect = data?.model_correct;
+    const modelPlaced = data?.model_placed;
 
     const bar = document.getElementById('live-odds-bar');
     if (bar) {
@@ -1036,8 +1040,16 @@
     // Model verdict banner for settled races
     const verdictEl = document.getElementById('model-verdict');
     if (verdictEl && settled && modelCorrect !== null) {
-      verdictEl.textContent = modelCorrect ? '✓ Model correct — top pick won' : '✗ Top pick didn\'t win';
-      verdictEl.className = 'model-verdict ' + (modelCorrect ? 'correct' : 'wrong');
+      if (modelCorrect) {
+        verdictEl.textContent = '✓ Top pick won';
+        verdictEl.className = 'model-verdict correct';
+      } else if (modelPlaced === true) {
+        verdictEl.textContent = '~ Top pick placed (not 1st)';
+        verdictEl.className = 'model-verdict placed';
+      } else {
+        verdictEl.textContent = '✗ Top pick didn\'t place';
+        verdictEl.className = 'model-verdict wrong';
+      }
       verdictEl.style.display = '';
     }
 
@@ -1125,6 +1137,7 @@
 
     try {
       S.meetingStats = {};
+      S.statsLoadGen++;
       const data = await fetchMeetings(iso);
       S.meetings = data.meetings || [];
 
@@ -1188,8 +1201,10 @@
   async function _loadMeetingWinRate(m) {
     const key = m.venue_code;
     if (S.meetingStats[key]) return; // already cached
+    const gen = S.statsLoadGen;
     try {
       const data = await fetchMeeting(S.date, key);
+      if (S.statsLoadGen !== gen) return; // date changed while in flight
       const races = data.races || [];
       const enriched = races.filter(r => r.enriched_at);
       const settled = races.filter(r => r.model_correct !== null && r.model_correct !== undefined);
@@ -1275,9 +1290,10 @@
       const el = document.createElement('div');
       el.className = 'race-pill' + (S.selectedRaceId === raceId ? ' active' : '');
       let dotHtml = '';
-      if (r.model_correct === true)       dotHtml = '<span class="result-dot correct"></span>';
-      else if (r.model_correct === false)  dotHtml = '<span class="result-dot wrong"></span>';
-      else if (enriched)                   dotHtml = '<span class="enriched-dot"></span>';
+      if (r.model_correct === true)                                  dotHtml = '<span class="result-dot correct"></span>';
+      else if (r.model_correct === false && r.model_placed === true) dotHtml = '<span class="result-dot placed"></span>';
+      else if (r.model_correct === false)                            dotHtml = '<span class="result-dot wrong"></span>';
+      else if (enriched)                                             dotHtml = '<span class="enriched-dot"></span>';
       const topPct = r.top_win_probability != null ? Math.round(r.top_win_probability * 100) : null;
       const placePct = r.top_place_probability != null ? Math.round(r.top_place_probability * 100) : null;
       const pctHtml = topPct >= 25 ? ` <span class="race-pill-pct">${topPct}%</span>` : '';
