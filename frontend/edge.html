@@ -1797,8 +1797,6 @@
     try {
       const res = await fetch(`${API}/api/edge/refresh-odds`, { method: 'POST' });
       if (!res.ok) return;
-      const data = await res.json();
-      if (data.count === 0) return;
       const res2 = await fetch(`${API}/api/edge`);
       if (!res2.ok) return;
       picksData = await res2.json();
@@ -1829,6 +1827,7 @@
   }
 
   setInterval(tickCountdowns, 1000);
+  setInterval(refreshOdds, 120_000);
 
   document.getElementById('stakeInput').addEventListener('input', function() {
     const stake = parseFloat(this.value) || 10;
