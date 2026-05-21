@@ -1585,6 +1585,7 @@
 
   const API = 'https://web-production-dec62.up.railway.app';
   let picksData = null;
+  let resultsMap = {};
   let yesterdayLoaded = false;
   let yesterdayData = null;
 
@@ -1843,7 +1844,6 @@
       // If any picks have already jumped, fetch today's results to show outcomes
       const now = Date.now();
       const hasPast = picksData.picks.some(p => p.scheduled_time && new Date(p.scheduled_time).getTime() < now);
-      let resultsMap = {};
       if (hasPast) {
         try {
           const today = new Date().toISOString().slice(0, 10);
@@ -1876,7 +1876,7 @@
       if (!res2.ok) return;
       picksData = await res2.json();
       const stake = parseFloat(document.getElementById('stakeInput').value) || 10;
-      renderContent(picksData, stake);
+      renderContent(picksData, stake, resultsMap);
     } catch (e) { /* silent — odds refresh is best-effort */ }
   }
 
