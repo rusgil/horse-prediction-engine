@@ -1865,7 +1865,7 @@ async def premium_performance(days: int = Query(30, ge=1, le=365), x_cron_secret
     P&L analysis for Premium picks: model_pct >= 30%, SP >= $3.00, overlay > 5%.
     Requires admin auth.
     """
-    _require_cron_secret(x_cron_secret)
+    _check_admin(x_cron_secret)
     cutoff = (date.today() - timedelta(days=days)).isoformat()
 
     async with get_session() as session:
