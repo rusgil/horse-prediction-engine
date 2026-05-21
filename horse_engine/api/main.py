@@ -2051,6 +2051,68 @@ async def premium_performance_monthly():
     return {"months": months_out}
 
 
+@app.get("/api/performance/premium/daily")
+async def premium_performance_daily():
+    """Public daily breakdown of Premium pick P&L for last 5 days (no auth required)."""
+    cutoff = (date.today() - timedelta(days=4)).isoformat()
+
+    async with get_session() as session:
+        hr_result = await session.execute(
+            select(HistoricalResultRow).where(HistoricalResultRow.race_id >= cutoff)
+        )
+        hr_rows = hr_result.scalars().all()
+        if not hr_rows:
+            return {"days": []}
+
+        race_ids = list({r.race_id for r in hr_rows})
+        pred_result = await session.execute(
+            select(RunnerPredictionRow)
+            .where(RunnerPredictionRow.race_id.in_(race_ids))
+            .where(RunnerPredictionRow.model_rank == 1)
+        )
+        top_picks = {p.race_id: p for p in pred_result.scalars().all()}
+
+    result_by_key = {(r.race_id, r.horse_name): r for r in hr_rows}
+    daily: dict[str, dict] = {}
+
+    for race_id, pick in top_picks.items():
+        actual = result_by_key.get((race_id, pick.horse_name))
+        if not actual:
+            continue
+        sp = actual.starting_price or 0.0
+        overlay = pick.overlay or 0.0
+        model_pct = (pick.win_probability or 0) * 100
+        if model_pct >= 30 and sp >= 3.0 and overlay > 0.05:
+            day = race_id[:10]
+            if day not in daily:
+                daily[day] = {"bets": 0, "wins": 0, "pnl": 0.0}
+            daily[day]["bets"] += 1
+            if actual.winner:
+                daily[day]["wins"] += 1
+                daily[day]["pnl"] += sp - 1.0
+            else:
+                daily[day]["pnl"] -= 1.0
+
+    # Ensure all 5 days are present even if no picks
+    days_out = []
+    for i in range(4, -1, -1):
+        day = (date.today() - timedelta(days=i)).isoformat()
+        d = daily.get(day, {"bets": 0, "wins": 0, "pnl": 0.0})
+        bets, wins, pnl = d["bets"], d["wins"], d["pnl"]
+        days_out.append({
+            "date": day,
+            "bets": bets,
+            "wins": wins,
+            "win_pct": round(wins / bets * 100, 1) if bets else None,
+            "spent": bets * 10,
+            "returned": round(bets * 10 + pnl * 10, 2),
+            "pnl_at_10": round(pnl * 10, 2),
+            "roi_pct": round(pnl / bets * 100, 1) if bets else None,
+        })
+
+    return {"days": days_out}
+
+
 # ── Calibration ───────────────────────────────────────────────────────────────
 
 _CANDIDATE_WINDOWS = [30, 60, 90, 180, 270]

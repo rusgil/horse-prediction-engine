@@ -1262,6 +1262,14 @@
           <div id="pps-tooltip" style="display:none;position:absolute;background:var(--bg-elevated);border:1px solid rgba(168,85,247,0.3);border-radius:var(--radius-sm);padding:8px 12px;font-size:0.78rem;pointer-events:none;z-index:10;min-width:150px"></div>
           <div id="pps-chart-legend" style="display:flex;flex-wrap:wrap;gap:10px 16px;margin-top:10px;font-size:0.72rem;color:var(--text-dim)"></div>
         </div>
+        <div id="pps-daily-wrap" style="display:none;margin-top:20px;padding-top:16px;border-top:1px solid var(--border)">
+          <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:14px">
+            <div style="font-size:0.68rem;font-weight:700;letter-spacing:0.12em;text-transform:uppercase;color:var(--text-dim)">Last 5 Days · <span id="pps-daily-stake-label" style="color:var(--purple-bright)">$10</span>/race</div>
+            <div style="font-size:0.75rem;color:var(--text-dim)" id="pps-daily-summary"></div>
+          </div>
+          <div id="pps-daily-chart-wrap" style="position:relative;width:100%;overflow:visible"></div>
+          <div id="pps-daily-tooltip" style="display:none;position:absolute;background:var(--bg-elevated);border:1px solid rgba(168,85,247,0.3);border-radius:var(--radius-sm);padding:8px 12px;font-size:0.78rem;pointer-events:none;z-index:10;min-width:150px"></div>
+        </div>
       </div>
     </div>
     <div class="tr-section">
@@ -1858,6 +1866,140 @@
         });
         renderChart(10);
         window.addEventListener('resize', () => renderChart(+slider.value));
+
+        // 5-day daily chart (shares same slider)
+        fetch(`${API}/api/performance/premium/daily`).then(r => r.ok ? r.json() : null).then(dd => {
+          if (!dd || !dd.days.length) return;
+          const dailyData = dd.days;
+          document.getElementById('pps-daily-wrap').style.display = '';
+
+          const dayLabel = iso => {
+            const d = new Date(iso + 'T00:00:00');
+            return d.toLocaleDateString('en-AU', { weekday: 'short', day: 'numeric', month: 'short' });
+          };
+
+          function renderDailyChart(stake) {
+            const multiplier = stake / 10;
+            const wrap = document.getElementById('pps-daily-chart-wrap');
+            const W = wrap.clientWidth || 320;
+            const H = 200;
+            const padL = 56, padR = 14, padT = 20, padB = 38;
+            const chartW = W - padL - padR;
+            const chartH = H - padT - padB;
+            const n = dailyData.length;
+            const slotW = chartW / n;
+            const barW = Math.max(8, Math.min(40, slotW * 0.55));
+
+            const pnls = dailyData.map(d => d.pnl_at_10 * multiplier);
+            const completedPnls = pnls.slice(0, -1).filter((_, i) => dailyData[i].bets > 0);
+            const avg = completedPnls.length ? completedPnls.reduce((a, b) => a + b, 0) / completedPnls.length : 0;
+            const maxVal = Math.max(...pnls, avg + 1, 1);
+            const minVal = Math.min(...pnls, 0);
+            const range = maxVal - minVal || 1;
+            const yScale = v => padT + chartH * ((maxVal - v) / range);
+            const zeroY = yScale(0);
+            const barCx = i => padL + slotW * i + slotW / 2;
+
+            const rawStep = range / 3;
+            const mag = Math.pow(10, Math.floor(Math.log10(rawStep || 1)));
+            const step = Math.ceil(rawStep / mag) * mag || 10;
+            const gridVals = [];
+            for (let v = Math.ceil(minVal / step) * step; v <= maxVal + step * 0.1; v += step) gridVals.push(+v.toFixed(2));
+
+            const fmt = v => {
+              const abs = Math.abs(Math.round(v));
+              const s = abs >= 1000 ? `$${(abs/1000).toFixed(1)}k` : `$${abs}`;
+              return (v >= 0 ? '+' : '−') + s;
+            };
+
+            let gridSvg = gridVals.map(v => {
+              const y = yScale(v);
+              return `<line x1="${padL}" x2="${W-padR}" y1="${y}" y2="${y}" stroke="rgba(255,255,255,0.04)" stroke-width="1"/>
+                      <text x="${padL-5}" y="${y+3.5}" text-anchor="end" font-size="10.5" fill="#4a5a7a" font-family="Barlow Condensed,sans-serif" font-weight="600">${fmt(v)}</text>`;
+            }).join('');
+
+            const zeroSvg = `<line x1="${padL}" x2="${W-padR}" y1="${zeroY}" y2="${zeroY}" stroke="rgba(255,255,255,0.18)" stroke-width="1"/>`;
+
+            const avgY = yScale(avg);
+            const avgSvg = completedPnls.length
+              ? `<line x1="${padL}" x2="${W-padR}" y1="${avgY}" y2="${avgY}" stroke="rgba(232,160,32,0.55)" stroke-width="1.5" stroke-dasharray="4,3"/>
+                 <text x="${W-padR+3}" y="${avgY+3.5}" font-size="9.5" fill="rgba(232,160,32,0.7)" font-family="Barlow Condensed,sans-serif" font-weight="700">AVG</text>`
+              : '';
+
+            let barsSvg = '';
+            dailyData.forEach((d, i) => {
+              const pnl = pnls[i];
+              const isToday = i === n - 1;
+              const noData = d.bets === 0;
+              const color = noData ? 'rgba(255,255,255,0.06)' : pnl >= 0 ? (isToday ? 'rgba(168,85,247,0.85)' : 'rgba(34,197,94,0.7)') : 'rgba(239,68,68,0.6)';
+              const borderColor = noData ? 'rgba(255,255,255,0.1)' : pnl >= 0 ? (isToday ? '#a855f7' : '#22c55e') : '#ef4444';
+              const barH = noData ? 4 : Math.max(2, Math.abs(pnl) / range * chartH);
+              const cx = barCx(i);
+              const x = cx - barW / 2;
+              const y = noData ? zeroY - 2 : pnl >= 0 ? zeroY - barH : zeroY;
+              const labelY = pnl >= 0 ? y - 3 : y + barH + 10;
+              const labelColor = pnl >= 0 ? (isToday ? '#c084fc' : '#4ade80') : '#f87171';
+              const labelTxt = noData || Math.abs(pnl) < 1 ? '' : (pnl >= 0 ? '+' : '−') + '$' + Math.round(Math.abs(pnl));
+              barsSvg += `<rect class="pps-dbar" x="${x}" y="${y}" width="${barW}" height="${barH}" fill="${color}" stroke="${borderColor}" stroke-width="0.5" rx="3" data-idx="${i}" style="cursor:${noData ? 'default' : 'pointer'}"/>`;
+              if (labelTxt) barsSvg += `<text class="pps-dbar-label" x="${cx}" y="${labelY}" text-anchor="middle" font-size="10" fill="${labelColor}" font-family="Barlow Condensed,sans-serif" font-weight="700" style="pointer-events:none" data-idx="${i}">${labelTxt}</text>`;
+            });
+
+            let labelsSvg = dailyData.map((d, i) => {
+              const cx = barCx(i);
+              const isToday = i === n - 1;
+              return `<text x="${cx}" y="${H-4}" text-anchor="middle" font-size="10" fill="${isToday ? '#c084fc' : '#6a7a9a'}" font-family="Barlow Condensed,sans-serif" font-weight="${isToday ? '700' : '600'}">${dayLabel(d.date)}</text>`;
+            }).join('');
+
+            const barRects = barsSvg.replace(/<text class="pps-dbar-label"[^>]*>.*?<\/text>/gs, '');
+            const barLabels = [...barsSvg.matchAll(/<text class="pps-dbar-label"[^>]*>.*?<\/text>/gs)].map(m => m[0]).join('');
+
+            wrap.innerHTML = `<svg width="${W}" height="${H}" style="display:block;overflow:visible">
+              <defs><clipPath id="pps-dclip"><rect x="${padL}" y="${padT}" width="${chartW}" height="${chartH}"/></clipPath></defs>
+              ${gridSvg}${zeroSvg}
+              <g clip-path="url(#pps-dclip)">${barRects}</g>
+              ${avgSvg}${barLabels}${labelsSvg}
+            </svg>`;
+
+            wrap.querySelectorAll('.pps-dbar').forEach(el => {
+              const idx = +el.dataset.idx;
+              if (dailyData[idx].bets === 0) return;
+              el.addEventListener('mousemove', e => {
+                const d = dailyData[idx];
+                const pnl = pnls[idx];
+                const spent = d.bets * stake;
+                const returned = spent + pnl;
+                const isToday = idx === n - 1;
+                const tip = document.getElementById('pps-daily-tooltip');
+                tip.style.display = '';
+                tip.innerHTML =
+                  `<div style="font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:0.95rem;color:var(--text-primary);margin-bottom:5px">${dayLabel(d.date)}${isToday ? '&nbsp;<span style="color:var(--purple-bright);font-size:0.62rem">TODAY</span>' : ''}</div>` +
+                  `<table style="width:100%;border-collapse:collapse;font-size:0.76rem;line-height:1.8">` +
+                  `<tr><td style="color:var(--text-dim)">Races</td><td style="text-align:right;color:var(--text-primary);font-weight:600">${d.bets}</td></tr>` +
+                  `<tr><td style="color:var(--text-dim)">Win rate</td><td style="text-align:right;color:var(--text-primary);font-weight:600">${d.win_pct ?? '—'}%</td></tr>` +
+                  `<tr><td style="color:var(--text-dim)">Spent</td><td style="text-align:right;color:var(--text-secondary)">$${spent.toLocaleString()}</td></tr>` +
+                  `<tr><td style="color:var(--text-dim)">Returned</td><td style="text-align:right;font-weight:600;color:${returned >= spent ? 'var(--green-bright)' : '#f87171'}">$${Math.round(returned).toLocaleString()}</td></tr>` +
+                  `<tr><td style="color:var(--text-dim)">P&amp;L</td><td style="text-align:right;font-weight:700;color:${pnl >= 0 ? 'var(--green-bright)' : '#f87171'}">${pnl >= 0 ? '+' : '−'}$${Math.round(Math.abs(pnl)).toLocaleString()}</td></tr>` +
+                  `<tr><td style="color:var(--text-dim)">ROI</td><td style="text-align:right;font-weight:700;color:${(d.roi_pct ?? 0) >= 0 ? 'var(--green-bright)' : '#f87171'}">${d.roi_pct != null ? (d.roi_pct >= 0 ? '+' : '') + d.roi_pct + '%' : '—'}</td></tr>` +
+                  `</table>`;
+                const rect = wrap.getBoundingClientRect();
+                tip.style.left = Math.min(e.clientX - rect.left + 12, W - 155) + 'px';
+                tip.style.top = Math.max(4, e.clientY - rect.top - 10) + 'px';
+                tip.style.position = 'absolute';
+              });
+              el.addEventListener('mouseleave', () => { document.getElementById('pps-daily-tooltip').style.display = 'none'; });
+            });
+
+            const totalPnl = pnls.reduce((a, b) => a + b, 0);
+            const totalSpent = dailyData.reduce((a, d) => a + d.bets * stake, 0);
+            document.getElementById('pps-daily-summary').textContent =
+              totalSpent ? `$${totalSpent.toLocaleString()} spent → $${Math.round(totalSpent + totalPnl).toLocaleString()} returned (${totalPnl >= 0 ? '+' : ''}$${Math.round(totalPnl).toLocaleString()})` : 'No Premium picks in this period';
+            document.getElementById('pps-daily-stake-label').textContent = '$' + stake.toLocaleString();
+          }
+
+          renderDailyChart(10);
+          slider.addEventListener('input', () => renderDailyChart(+slider.value));
+          window.addEventListener('resize', () => renderDailyChart(+slider.value));
+        }).catch(() => {});
       }).catch(() => {});
     } catch (_) {
       document.getElementById('premium-perf-loading').textContent = 'Stats unavailable';
