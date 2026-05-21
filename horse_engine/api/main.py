@@ -975,7 +975,12 @@ async def live_odds(race_id: str):
         horse = (sel.get("competitor") or {}).get("name", "")
         tote_win = sel.get("topToteWin")
         sp = sel.get("startingPrice")
-        current_odds = float(tote_win) if tote_win else (float(sp) if sp else None)
+        flucs = sel.get("flucs") or {}
+        fluc_low = flucs.get("low")
+        current_odds = (float(tote_win) if tote_win
+                        else float(fluc_low) if fluc_low
+                        else float(sp) if sp
+                        else None)
         result_pos = sel.get("selectionResult")
         actual_position = int(result_pos) if result_pos and int(result_pos) > 0 else None
         all_tote.append((horse, current_odds, actual_position))
@@ -998,7 +1003,7 @@ async def live_odds(race_id: str):
             overlay = round(model_prob - orf_implied, 4)
             display_odds = current_odds
         else:
-            # Tote pools not open yet — fall back to stored enrichment odds/overlay
+            # No live tote or flucs data — last resort fallback to stored enrichment values
             overlay = stored_overlay.get(horse, 0.0)
             display_odds = stored_odds.get(horse)
             orf_implied = round(1.0 / display_odds, 4) if display_odds and display_odds > 1.0 else 0.0

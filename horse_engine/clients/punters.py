@@ -438,8 +438,8 @@ class PuntersClient:
         best_odds = None
         if tote_win:
             best_odds = float(tote_win)
-        elif flucs.get("high"):
-            best_odds = float(flucs["high"])
+        elif flucs.get("low"):
+            best_odds = float(flucs["low"])  # current market approx — horse has traded this low
         elif flucs.get("open"):
             best_odds = float(flucs["open"])
         elif sp:
