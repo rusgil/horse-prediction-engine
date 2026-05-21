@@ -952,6 +952,8 @@ async def live_odds(race_id: str):
         raise HTTPException(404, f"No predictions for {race_id} — enrich first")
 
     model_probs = {r.horse_name: r.win_probability or 0.0 for r in stored}
+    stored_odds = {r.horse_name: r.best_available_odds for r in stored}
+    stored_overlay = {r.horse_name: r.overlay or 0.0 for r in stored}
 
     # Fetch current odds from punters
     try:
@@ -993,16 +995,20 @@ async def live_odds(race_id: str):
         if current_odds and current_odds > 1.0:
             raw_implied = 1.0 / current_odds
             orf_implied = round(raw_implied * scale, 4)
+            overlay = round(model_prob - orf_implied, 4)
+            display_odds = current_odds
         else:
-            orf_implied = 0.0
-        overlay = round(model_prob - orf_implied, 4) if orf_implied else 0.0
+            # Tote pools not open yet — fall back to stored enrichment odds/overlay
+            overlay = stored_overlay.get(horse, 0.0)
+            display_odds = stored_odds.get(horse)
+            orf_implied = round(1.0 / display_odds, 4) if display_odds and display_odds > 1.0 else 0.0
         runners_odds.append({
             "horse_name": horse,
-            "current_tote_win": current_odds,
+            "current_tote_win": display_odds,
             "implied_prob": orf_implied,
             "model_win_prob": round(model_prob, 4),
             "overlay": overlay,
-            "value": overlay > 0.05 and current_odds and current_odds >= 3.0,
+            "value": overlay > 0.05 and display_odds and display_odds >= 3.0,
             "actual_position": actual_position,
         })
 
