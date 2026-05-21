@@ -1249,6 +1249,25 @@
           </div>
         </div>
         <div id="pps-tagline" style="display:none;margin-top:14px;font-size:0.88rem;color:var(--text-secondary);line-height:1.65;background:var(--bg-elevated);border:1px solid rgba(168,85,247,0.2);border-radius:var(--radius-sm);padding:12px 14px;"></div>
+        <div id="pps-monthly-wrap" style="display:none;margin-top:16px">
+          <div style="font-size:0.68rem;font-weight:700;letter-spacing:0.12em;text-transform:uppercase;color:var(--text-dim);margin-bottom:10px">Monthly breakdown · $10/bet</div>
+          <div style="overflow-x:auto">
+            <table id="pps-monthly-table" style="width:100%;border-collapse:collapse;font-size:0.82rem">
+              <thead>
+                <tr>
+                  <th style="text-align:left;padding:6px 10px;border-bottom:1px solid var(--border);color:var(--text-dim);font-size:0.68rem;font-weight:700;letter-spacing:0.1em;text-transform:uppercase">Month</th>
+                  <th style="text-align:center;padding:6px 10px;border-bottom:1px solid var(--border);color:var(--text-dim);font-size:0.68rem;font-weight:700;letter-spacing:0.1em;text-transform:uppercase">Races</th>
+                  <th style="text-align:center;padding:6px 10px;border-bottom:1px solid var(--border);color:var(--text-dim);font-size:0.68rem;font-weight:700;letter-spacing:0.1em;text-transform:uppercase">Win %</th>
+                  <th style="text-align:right;padding:6px 10px;border-bottom:1px solid var(--border);color:var(--text-dim);font-size:0.68rem;font-weight:700;letter-spacing:0.1em;text-transform:uppercase">Spent</th>
+                  <th style="text-align:right;padding:6px 10px;border-bottom:1px solid var(--border);color:var(--text-dim);font-size:0.68rem;font-weight:700;letter-spacing:0.1em;text-transform:uppercase">Returned</th>
+                  <th style="text-align:right;padding:6px 10px;border-bottom:1px solid var(--border);color:var(--text-dim);font-size:0.68rem;font-weight:700;letter-spacing:0.1em;text-transform:uppercase">ROI</th>
+                  <th style="text-align:center;padding:6px 10px;border-bottom:1px solid var(--border);color:var(--text-dim);font-size:0.68rem;font-weight:700;letter-spacing:0.1em;text-transform:uppercase">Trend</th>
+                </tr>
+              </thead>
+              <tbody id="pps-monthly-body"></tbody>
+            </table>
+          </div>
+        </div>
       </div>
     </div>
     <div class="tr-section">
@@ -1659,6 +1678,38 @@
         tagEl.style.display = '';
         tagEl.innerHTML = `For the last 30 days, FunkyIQ would have returned <strong style="color:var(--green-bright)">$${returned.toLocaleString()}</strong>, if someone bet <strong style="color:var(--text-primary)">$${spent.toLocaleString()}</strong> ($10 per race for the ${d.bets} races over the last 30 days). <span style="color:var(--purple-bright);font-weight:700">Now that's Funky!</span>`;
       }
+      // Monthly table
+      fetch(`${API}/api/performance/premium/monthly`).then(r => r.ok ? r.json() : null).then(md => {
+        if (!md || !md.months.length) return;
+        const months = md.months;
+        document.getElementById('pps-monthly-wrap').style.display = '';
+        const tbody = document.getElementById('pps-monthly-body');
+        const monthLabel = iso => {
+          const [y, m] = iso.split('-');
+          return new Date(+y, +m - 1, 1).toLocaleDateString('en-AU', { month: 'short', year: 'numeric' });
+        };
+        tbody.innerHTML = months.map((m, i) => {
+          const prev = months[i - 1];
+          const isUp = prev && m.roi_pct != null && prev.roi_pct != null && m.roi_pct > prev.roi_pct;
+          const isDown = prev && m.roi_pct != null && prev.roi_pct != null && m.roi_pct < prev.roi_pct;
+          const trendHtml = !prev ? '<span style="color:var(--text-dim)">—</span>'
+            : isUp ? '<span style="color:var(--green-bright);font-size:1rem">▲</span>'
+            : isDown ? '<span style="color:#f87171;font-size:1rem">▼</span>'
+            : '<span style="color:var(--text-dim)">→</span>';
+          const roiColor = m.roi_pct == null ? 'var(--text-dim)' : m.roi_pct >= 0 ? 'var(--green-bright)' : '#f87171';
+          const retColor = m.returned >= m.spent ? 'var(--green-bright)' : '#f87171';
+          const isCurrent = i === months.length - 1;
+          return `<tr style="${isCurrent ? 'background:rgba(168,85,247,0.05)' : ''}">
+            <td style="padding:9px 10px;border-bottom:1px solid var(--border);color:var(--text-primary);font-weight:${isCurrent ? '700' : '400'}">${monthLabel(m.month)}${isCurrent ? ' <span style="font-size:0.62rem;color:var(--purple-bright);font-weight:700;letter-spacing:0.08em">MTD</span>' : ''}</td>
+            <td style="padding:9px 10px;border-bottom:1px solid var(--border);text-align:center;color:var(--text-secondary)">${m.bets}</td>
+            <td style="padding:9px 10px;border-bottom:1px solid var(--border);text-align:center;color:var(--text-secondary)">${m.win_pct != null ? m.win_pct + '%' : '—'}</td>
+            <td style="padding:9px 10px;border-bottom:1px solid var(--border);text-align:right;color:var(--text-secondary)">$${m.spent}</td>
+            <td style="padding:9px 10px;border-bottom:1px solid var(--border);text-align:right;font-weight:600;color:${retColor}">$${m.returned}</td>
+            <td style="padding:9px 10px;border-bottom:1px solid var(--border);text-align:right;font-family:'Barlow Condensed',sans-serif;font-size:1rem;font-weight:700;color:${roiColor}">${m.roi_pct != null ? (m.roi_pct >= 0 ? '+' : '') + m.roi_pct + '%' : '—'}</td>
+            <td style="padding:9px 10px;border-bottom:1px solid var(--border);text-align:center">${trendHtml}</td>
+          </tr>`;
+        }).join('');
+      }).catch(() => {});
     } catch (_) {
       document.getElementById('premium-perf-loading').textContent = 'Stats unavailable';
     }

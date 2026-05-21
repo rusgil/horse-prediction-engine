@@ -1983,6 +1983,68 @@ async def premium_performance_public():
     }
 
 
+@app.get("/api/performance/premium/monthly")
+async def premium_performance_monthly():
+    """Public monthly breakdown of Premium pick P&L (no auth required)."""
+    cutoff = (date.today() - timedelta(days=365)).isoformat()
+
+    async with get_session() as session:
+        hr_result = await session.execute(
+            select(HistoricalResultRow).where(HistoricalResultRow.race_id >= cutoff)
+        )
+        hr_rows = hr_result.scalars().all()
+        if not hr_rows:
+            return {"months": []}
+
+        race_ids = list({r.race_id for r in hr_rows})
+        pred_result = await session.execute(
+            select(RunnerPredictionRow)
+            .where(RunnerPredictionRow.race_id.in_(race_ids))
+            .where(RunnerPredictionRow.model_rank == 1)
+        )
+        top_picks = {p.race_id: p for p in pred_result.scalars().all()}
+
+    result_by_key = {(r.race_id, r.horse_name): r for r in hr_rows}
+    monthly: dict[str, dict] = {}
+
+    for race_id, pick in top_picks.items():
+        actual = result_by_key.get((race_id, pick.horse_name))
+        if not actual:
+            continue
+        sp = actual.starting_price or 0.0
+        overlay = pick.overlay or 0.0
+        model_pct = (pick.win_probability or 0) * 100
+        if model_pct >= 30 and sp >= 3.0 and overlay > 0.05:
+            month = race_id[:7]  # YYYY-MM
+            if month not in monthly:
+                monthly[month] = {"bets": 0, "wins": 0, "pnl": 0.0}
+            monthly[month]["bets"] += 1
+            if actual.winner:
+                monthly[month]["wins"] += 1
+                monthly[month]["pnl"] += sp - 1.0
+            else:
+                monthly[month]["pnl"] -= 1.0
+
+    months_out = []
+    for month in sorted(monthly.keys()):
+        m = monthly[month]
+        bets, wins, pnl = m["bets"], m["wins"], m["pnl"]
+        spent = bets * 10
+        returned = round(spent + pnl * 10, 2)
+        months_out.append({
+            "month": month,
+            "bets": bets,
+            "wins": wins,
+            "win_pct": round(wins / bets * 100, 1) if bets else None,
+            "spent": spent,
+            "returned": returned,
+            "pnl_at_10": round(pnl * 10, 2),
+            "roi_pct": round(pnl / bets * 100, 1) if bets else None,
+        })
+
+    return {"months": months_out}
+
+
 # ── Calibration ───────────────────────────────────────────────────────────────
 
 _CANDIDATE_WINDOWS = [30, 60, 90, 180, 270]
