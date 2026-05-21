@@ -598,6 +598,12 @@
     }
     .pick-footer-chip strong { color: var(--text-secondary); font-weight: 600; }
     .pick-footer-sep { color: var(--border); font-size: 0.7rem; }
+    .pick-verdict {
+      font-size: 0.72rem; font-weight: 700; letter-spacing: 0.06em;
+      padding: 2px 10px; border-radius: 999px; text-transform: uppercase;
+    }
+    .pick-verdict.correct { background: rgba(34,197,94,0.15); color: var(--green-bright); border: 1px solid rgba(34,197,94,0.3); }
+    .pick-verdict.wrong   { background: rgba(239,68,68,0.1);  color: #f87171;             border: 1px solid rgba(239,68,68,0.25); }
 
     /* ── Loading / Empty ─────────────────────────────────── */
     .loading {
@@ -1467,6 +1473,7 @@
         </div>
         <div class="pick-footer">
           ${trackChip}${distChip}${stateChip}${valueChip}
+          ${isPast && result && !result.scratched ? `<span class="pick-verdict ${result.winner ? 'correct' : 'wrong'}">${result.winner ? '✓ Correct' : `✗ Wrong — ${result.position ? (result.position === 2 ? '2nd' : result.position === 3 ? '3rd' : result.position + 'th') : 'unplaced'}`}</span>` : ''}
         </div>
       </div>`;
   }
