@@ -2485,7 +2485,7 @@ async def calibration_history(
 
 # ── Cron ──────────────────────────────────────────────────────────────────────
 
-async def _enrich_date(race_date: str, client, model) -> list[dict]:
+async def _enrich_date(race_date: str, client, model, force: bool = False) -> list[dict]:
     """Enrich all meetings for a single date. Returns summary list."""
     meetings = await client.get_meetings(race_date)
     summary = []
@@ -2500,15 +2500,16 @@ async def _enrich_date(race_date: str, client, model) -> list[dict]:
             for raw_event in raw_events:
                 race_num = raw_event.get("eventNumber")
                 race_id = f"{race_date}_{venue_code}_R{race_num}"
-                # Skip if already enriched
-                async with get_session() as session:
-                    already = await session.execute(
-                        select(RunnerPredictionRow)
-                        .where(RunnerPredictionRow.race_id == race_id)
-                        .limit(1)
-                    )
-                    if already.scalars().first():
-                        continue
+                # Skip if already enriched (unless forced)
+                if not force:
+                    async with get_session() as session:
+                        already = await session.execute(
+                            select(RunnerPredictionRow)
+                            .where(RunnerPredictionRow.race_id == race_id)
+                            .limit(1)
+                        )
+                        if already.scalars().first():
+                            continue
                 full_event = await client.get_race(slug, race_num)
                 if not full_event:
                     continue
@@ -2546,6 +2547,21 @@ async def cron_enrich(
         results[race_date] = await _enrich_date(race_date, client, model)
 
     return {"dates": results}
+
+
+@app.post("/api/admin/reenrich")
+async def admin_reenrich(
+    x_cron_secret: Optional[str] = Header(None),
+):
+    """Force re-enrich all of today's races, overwriting existing predictions."""
+    _check_admin(x_cron_secret)
+    today = _today_aest().isoformat()
+    client = get_tab_client()
+    async with get_session() as session:
+        model = await _load_model(session)
+    results = await _enrich_date(today, client, model, force=True)
+    total = sum(1 for m in results if m.get("status") == "ok")
+    return {"date": today, "meetings": total, "detail": results}
 
 
 # ── Serialisation helpers ─────────────────────────────────────────────────────

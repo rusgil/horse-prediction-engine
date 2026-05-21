@@ -332,6 +332,9 @@
     .btn.primary:hover { opacity: 0.85; }
     .btn:disabled { opacity: 0.4; cursor: not-allowed; }
     .btn-status { font-size: 0.72rem; color: var(--text-dim); align-self: center; }
+    .action-explainers { display: flex; flex-direction: column; gap: 10px; margin-bottom: 28px; }
+    .action-explain { background: var(--bg-elevated); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 12px 16px; font-size: 0.8rem; line-height: 1.6; color: var(--text-secondary); }
+    .action-explain strong:first-child { display: block; color: var(--text-primary); font-size: 0.82rem; margin-bottom: 4px; }
   </style>
 </head>
 <body>
@@ -775,13 +778,47 @@
     // ── Action bar
     const actionHtml = `
       <div class="action-bar">
+        <button class="btn" onclick="loadDashboard()">Refresh Dashboard</button>
+        <button class="btn" id="reenrichBtn" onclick="triggerReenrich()">Re-enrich Today</button>
         <button class="btn primary" id="retrainBtn" onclick="triggerRetrain()">Run Calibration Now</button>
-        <button class="btn" onclick="loadDashboard()">Refresh</button>
         <span class="btn-status" id="retrainStatus"></span>
+      </div>
+      <div class="action-explainers">
+        <div class="action-explain">
+          <strong>Refresh Dashboard</strong>
+          <span>Reloads this page's stats from the database. No external API calls — zero cost, instant.</span>
+        </div>
+        <div class="action-explain">
+          <strong>Re-enrich Today</strong>
+          <span>Force re-runs the model on every race today, overwriting stored predictions. Calls the <strong>Punters API once per race</strong> to fetch the latest race card (scratchings, track condition, jockey changes), then re-runs the ML model. On a typical race day (~40 races across 5–6 meetings) this makes ~40–50 API calls to punters.com.au. Use after a model or form-scoring change, or when you know scratchings have occurred and want fresh picks immediately rather than waiting for the automated pre-race job. <em>Note: the pre-race job already does this automatically every 15 min for races within 2 hours of jump — only use this button to force a full-day refresh outside that window.</em></span>
+        </div>
+        <div class="action-explain">
+          <strong>Run Calibration Now</strong>
+          <span>Retrains the model weights using all stored historical results. <strong>No external API calls</strong> — reads only from the local database. Takes 10–30 seconds. Normally runs automatically at 2am AEST nightly. Use this after seeding a batch of new results if you want the model to update immediately rather than waiting overnight. Avoid running multiple times in quick succession — each run overwrites the previous weights.</span>
+        </div>
       </div>`;
 
     document.getElementById('dashContent').innerHTML =
       driftHtml + actionHtml + latestStatsHtml + roiTrendHtml + perfHtml + windowHtml + thresholdHtml + historyHtml;
+  }
+
+  async function triggerReenrich() {
+    const btn = document.getElementById('reenrichBtn');
+    const status = document.getElementById('retrainStatus');
+    btn.disabled = true;
+    status.textContent = 'Re-enriching today\'s races…';
+    try {
+      const res = await fetch(`${API}/api/admin/reenrich`, {
+        method: 'POST',
+        headers: { 'x-cron-secret': adminSecret }
+      });
+      const data = await res.json();
+      status.textContent = `Re-enriched ${data.meetings ?? '?'} meetings for ${data.date}.`;
+    } catch (e) {
+      status.textContent = 'Error: ' + e.message;
+    } finally {
+      btn.disabled = false;
+    }
   }
 
   async function triggerRetrain() {
