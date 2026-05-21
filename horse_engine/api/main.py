@@ -543,7 +543,7 @@ async def refresh_edge_odds():
                         sp = sel.get("startingPrice")
                         flucs = sel.get("flucs") or {}
                         best = (float(tote) if tote else
-                                float(flucs["high"]) if flucs.get("high") else
+                                float(flucs["low"]) if flucs.get("low") else
                                 float(flucs["open"]) if flucs.get("open") else
                                 float(sp) if sp else 0.0)
                         if best:
