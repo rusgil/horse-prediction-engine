@@ -2054,7 +2054,8 @@ async def premium_performance_monthly():
 @app.get("/api/performance/premium/daily")
 async def premium_performance_daily():
     """Public daily breakdown of Premium pick P&L for last 5 days (no auth required)."""
-    cutoff = (date.today() - timedelta(days=4)).isoformat()
+    today = _today_aest()
+    cutoff = (today - timedelta(days=4)).isoformat()
 
     async with get_session() as session:
         hr_result = await session.execute(
@@ -2096,7 +2097,7 @@ async def premium_performance_daily():
     # Ensure all 5 days are present even if no picks
     days_out = []
     for i in range(4, -1, -1):
-        day = (date.today() - timedelta(days=i)).isoformat()
+        day = (today - timedelta(days=i)).isoformat()
         d = daily.get(day, {"bets": 0, "wins": 0, "pnl": 0.0})
         bets, wins, pnl = d["bets"], d["wins"], d["pnl"]
         days_out.append({
