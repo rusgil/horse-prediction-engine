@@ -1258,8 +1258,9 @@
             <input type="range" class="stake-slider" id="pps-stake-slider" min="10" max="1000" step="10" value="10" style="background:linear-gradient(to right,rgba(168,85,247,0.6) 0%,rgba(168,85,247,0.6) 1%,var(--bg-elevated) 1%)" />
             <div class="stake-slider-labels"><span>$10</span><span>$250</span><span>$500</span><span>$750</span><span>$1,000</span></div>
           </div>
-          <div id="pps-chart-wrap" style="position:relative;width:100%;overflow:hidden"></div>
-          <div id="pps-tooltip" style="display:none;position:absolute;background:var(--bg-elevated);border:1px solid rgba(168,85,247,0.3);border-radius:var(--radius-sm);padding:8px 12px;font-size:0.78rem;pointer-events:none;z-index:10;min-width:130px"></div>
+          <div id="pps-chart-wrap" style="position:relative;width:100%;overflow:visible"></div>
+          <div id="pps-tooltip" style="display:none;position:absolute;background:var(--bg-elevated);border:1px solid rgba(168,85,247,0.3);border-radius:var(--radius-sm);padding:8px 12px;font-size:0.78rem;pointer-events:none;z-index:10;min-width:150px"></div>
+          <div id="pps-chart-legend" style="display:flex;flex-wrap:wrap;gap:10px 16px;margin-top:10px;font-size:0.72rem;color:var(--text-dim)"></div>
         </div>
       </div>
     </div>
@@ -1690,87 +1691,149 @@
           const multiplier = stake / 10;
           const wrap = document.getElementById('pps-chart-wrap');
           const W = wrap.clientWidth || 320;
-          const H = 180;
-          const padL = 48, padR = 8, padT = 16, padB = 32;
+          const H = 220;
+          const padL = 52, padR = 12, padT = 20, padB = 36;
           const chartW = W - padL - padR;
           const chartH = H - padT - padB;
           const n = monthlyData.length;
-          const barGap = 4;
-          const barW = Math.max(6, Math.floor((chartW - barGap * (n - 1)) / n));
+          const slotW = chartW / n;
+          const barW = Math.max(4, Math.min(16, slotW * 0.45));
 
           const pnls = monthlyData.map(m => m.pnl_at_10 * multiplier);
-          const maxVal = Math.max(...pnls, 1);
+          const avg = pnls.reduce((a, b) => a + b, 0) / pnls.length;
+          const maxVal = Math.max(...pnls, avg + 1);
           const minVal = Math.min(...pnls, 0);
           const range = maxVal - minVal || 1;
-          const zeroY = padT + chartH * (maxVal / range);
+          const yScale = v => padT + chartH * ((maxVal - v) / range);
+          const zeroY = yScale(0);
+          const barCx = i => padL + slotW * i + slotW / 2;
 
-          // gridlines
+          // nice grid steps
+          const rawStep = range / 4;
+          const mag = Math.pow(10, Math.floor(Math.log10(rawStep)));
+          const step = Math.ceil(rawStep / mag) * mag || 10;
           const gridVals = [];
-          const step = Math.ceil(range / 4 / 50) * 50 || 10;
-          for (let v = Math.ceil(minVal / step) * step; v <= maxVal; v += step) gridVals.push(v);
+          for (let v = Math.ceil(minVal / step) * step; v <= maxVal + step * 0.1; v += step) gridVals.push(+v.toFixed(2));
+
+          const fmt = v => {
+            const abs = Math.abs(Math.round(v));
+            const s = abs >= 1000 ? `$${(abs/1000).toFixed(1)}k` : `$${abs}`;
+            return (v >= 0 ? '+' : '−') + s;
+          };
 
           let gridSvg = gridVals.map(v => {
-            const y = padT + chartH * ((maxVal - v) / range);
-            const label = v >= 0 ? `+$${v}` : `-$${Math.abs(v)}`;
-            return `<line x1="${padL}" x2="${W - padR}" y1="${y}" y2="${y}" stroke="rgba(255,255,255,0.05)" stroke-width="1"/>
-                    <text x="${padL - 4}" y="${y + 4}" text-anchor="end" font-size="9" fill="rgba(138,155,196,0.7)" font-family="Barlow Condensed,sans-serif">${label}</text>`;
+            const y = yScale(v);
+            return `<line x1="${padL}" x2="${W - padR}" y1="${y}" y2="${y}" stroke="rgba(255,255,255,0.04)" stroke-width="1"/>
+                    <text x="${padL - 5}" y="${y + 3.5}" text-anchor="end" font-size="9" fill="#4a5a7a" font-family="Barlow Condensed,sans-serif" font-weight="600">${fmt(v)}</text>`;
           }).join('');
 
           // zero line
-          const zeroSvg = `<line x1="${padL}" x2="${W - padR}" y1="${zeroY}" y2="${zeroY}" stroke="rgba(255,255,255,0.15)" stroke-width="1" stroke-dasharray="3,3"/>`;
+          const zeroSvg = `<line x1="${padL}" x2="${W - padR}" y1="${zeroY}" y2="${zeroY}" stroke="rgba(255,255,255,0.18)" stroke-width="1"/>`;
+
+          // average line
+          const avgY = yScale(avg);
+          const avgSvg = `<line x1="${padL}" x2="${W - padR}" y1="${avgY}" y2="${avgY}" stroke="rgba(232,160,32,0.55)" stroke-width="1.5" stroke-dasharray="4,3"/>
+            <text x="${W - padR + 3}" y="${avgY + 3.5}" font-size="8" fill="rgba(232,160,32,0.7)" font-family="Barlow Condensed,sans-serif" font-weight="700">AVG</text>`;
 
           // bars
           let barsSvg = '';
-          let labelsSvg = '';
           monthlyData.forEach((m, i) => {
-            const pnl = m.pnl_at_10 * multiplier;
-            const isCurrent = i === monthlyData.length - 1;
+            const pnl = pnls[i];
+            const isCurrent = i === n - 1;
             const color = pnl >= 0
-              ? (isCurrent ? '#a855f7' : 'rgba(34,197,94,0.75)')
-              : 'rgba(239,68,68,0.65)';
-            const barH = Math.abs(pnl) / range * chartH || 2;
-            const x = padL + i * (barW + barGap);
+              ? (isCurrent ? 'rgba(168,85,247,0.85)' : 'rgba(34,197,94,0.7)')
+              : 'rgba(239,68,68,0.6)';
+            const borderColor = pnl >= 0
+              ? (isCurrent ? '#a855f7' : '#22c55e')
+              : '#ef4444';
+            const barH = Math.max(2, Math.abs(pnl) / range * chartH);
+            const cx = barCx(i);
+            const x = cx - barW / 2;
             const y = pnl >= 0 ? zeroY - barH : zeroY;
-            barsSvg += `<rect class="pps-bar" x="${x}" y="${y}" width="${barW}" height="${barH}" fill="${color}" rx="2" data-idx="${i}" style="cursor:pointer"/>`;
-            const lx = x + barW / 2;
-            labelsSvg += `<text x="${lx}" y="${H - 4}" text-anchor="middle" font-size="8" fill="rgba(138,155,196,0.6)" font-family="Barlow Condensed,sans-serif">${monthLabel(m.month)}</text>`;
+            // value label above/below bar for non-zero
+            const labelY = pnl >= 0 ? y - 3 : y + barH + 10;
+            const labelColor = pnl >= 0 ? (isCurrent ? '#c084fc' : '#4ade80') : '#f87171';
+            const labelTxt = Math.abs(pnl) < 10 ? '' : (pnl >= 0 ? '+' : '−') + '$' + Math.round(Math.abs(pnl));
+            barsSvg += `<rect class="pps-bar" x="${x}" y="${y}" width="${barW}" height="${barH}"
+              fill="${color}" stroke="${borderColor}" stroke-width="0.5" rx="2"
+              data-idx="${i}" style="cursor:pointer"/>
+              ${labelTxt ? `<text x="${cx}" y="${labelY}" text-anchor="middle" font-size="8" fill="${labelColor}" font-family="Barlow Condensed,sans-serif" font-weight="700" style="pointer-events:none">${labelTxt}</text>` : ''}`;
           });
 
-          wrap.innerHTML = `<svg width="${W}" height="${H}" style="display:block;overflow:visible">
-            ${gridSvg}${zeroSvg}${barsSvg}${labelsSvg}
+          // month labels
+          let labelsSvg = monthlyData.map((m, i) => {
+            const cx = barCx(i);
+            const isCurrent = i === n - 1;
+            return `<text x="${cx}" y="${H - 4}" text-anchor="middle" font-size="8.5"
+              fill="${isCurrent ? '#c084fc' : '#4a5a7a'}" font-family="Barlow Condensed,sans-serif"
+              font-weight="${isCurrent ? '700' : '600'}">${monthLabel(m.month)}</text>`;
+          }).join('');
+
+          // trend line (connecting monthly P&L midpoints)
+          const trendPoints = monthlyData.map((_, i) => `${barCx(i)},${yScale(pnls[i])}`).join(' ');
+          const trendSvg = `<polyline points="${trendPoints}" fill="none" stroke="rgba(168,85,247,0.55)" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round" stroke-dasharray="3,2"/>`;
+
+          // dots on trend line
+          const dotsSvg = monthlyData.map((_, i) => {
+            const isCurrent = i === n - 1;
+            const cx = barCx(i), cy = yScale(pnls[i]);
+            return `<circle class="pps-dot" cx="${cx}" cy="${cy}" r="${isCurrent ? 4 : 2.5}"
+              fill="${isCurrent ? '#a855f7' : 'rgba(168,85,247,0.7)'}" stroke="var(--bg-card)" stroke-width="1.2"
+              data-idx="${i}" style="cursor:pointer"/>`;
+          }).join('');
+
+          wrap.innerHTML = `<svg width="${W}" height="${H}" style="display:block;overflow:visible" id="pps-svg">
+            <defs><clipPath id="pps-clip"><rect x="${padL}" y="${padT}" width="${chartW}" height="${chartH}"/></clipPath></defs>
+            ${gridSvg}${zeroSvg}
+            <g clip-path="url(#pps-clip)">${barsSvg}${trendSvg}</g>
+            ${avgSvg}${dotsSvg}${labelsSvg}
           </svg>`;
 
-          // Tooltip
-          wrap.querySelectorAll('.pps-bar').forEach(bar => {
-            bar.addEventListener('mousemove', e => {
-              const idx = +bar.dataset.idx;
-              const m = monthlyData[idx];
-              const pnl = m.pnl_at_10 * multiplier;
-              const spent = m.bets * stake;
-              const returned = spent + pnl;
-              const tip = document.getElementById('pps-tooltip');
-              const isCurrent = idx === monthlyData.length - 1;
-              tip.style.display = '';
-              tip.innerHTML = `<div style="font-family:'Barlow Condensed',sans-serif;font-weight:700;font-size:0.9rem;color:var(--text-primary);margin-bottom:4px">${monthLabel(m.month)}${isCurrent ? ' <span style="color:var(--purple-bright);font-size:0.65rem">MTD</span>' : ''}</div>
-                <div style="color:var(--text-dim);font-size:0.75rem">${m.bets} races · ${m.win_pct ?? '—'}% wins</div>
-                <div style="margin-top:4px;font-size:0.78rem">Spent: <strong style="color:var(--text-primary)">$${spent.toLocaleString()}</strong></div>
-                <div style="font-size:0.78rem">Returned: <strong style="color:${returned >= spent ? 'var(--green-bright)' : '#f87171'}">$${Math.round(returned).toLocaleString()}</strong></div>
-                <div style="font-size:0.78rem">P&L: <strong style="color:${pnl >= 0 ? 'var(--green-bright)' : '#f87171'}">${pnl >= 0 ? '+' : ''}$${Math.round(pnl).toLocaleString()}</strong></div>`;
-              const rect = wrap.getBoundingClientRect();
-              const tx = e.clientX - rect.left + 10;
-              const ty = e.clientY - rect.top - 10;
-              tip.style.left = Math.min(tx, W - 150) + 'px';
-              tip.style.top = ty + 'px';
-              tip.style.position = 'absolute';
-            });
-            bar.addEventListener('mouseleave', () => { document.getElementById('pps-tooltip').style.display = 'none'; });
+          // legend
+          document.getElementById('pps-chart-legend').innerHTML =
+            `<span style="display:inline-flex;align-items:center;gap:4px"><span style="width:10px;height:10px;border-radius:2px;background:rgba(34,197,94,0.7);display:inline-block"></span>Profit</span>` +
+            `<span style="display:inline-flex;align-items:center;gap:4px"><span style="width:10px;height:10px;border-radius:2px;background:rgba(239,68,68,0.6);display:inline-block"></span>Loss</span>` +
+            `<span style="display:inline-flex;align-items:center;gap:4px"><span style="width:10px;height:10px;border-radius:2px;background:rgba(168,85,247,0.85);display:inline-block"></span>Current month</span>` +
+            `<span style="display:inline-flex;align-items:center;gap:4px"><svg width="16" height="4"><line x1="0" y1="2" x2="16" y2="2" stroke="rgba(168,85,247,0.55)" stroke-width="1.5" stroke-dasharray="3,2"/></svg>Trend</span>` +
+            `<span style="display:inline-flex;align-items:center;gap:4px"><svg width="16" height="4"><line x1="0" y1="2" x2="16" y2="2" stroke="rgba(232,160,32,0.55)" stroke-width="1.5" stroke-dasharray="4,3"/></svg>Average</span>`;
+
+          // Tooltip on bars and dots
+          const showTip = (idx, ex, ey) => {
+            const m = monthlyData[idx];
+            const pnl = pnls[idx];
+            const spent = m.bets * stake;
+            const returned = spent + pnl;
+            const isCurrent = idx === n - 1;
+            const roiColor = m.roi_pct >= 0 ? 'var(--green-bright)' : '#f87171';
+            const tip = document.getElementById('pps-tooltip');
+            tip.style.display = '';
+            tip.innerHTML =
+              `<div style="font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:0.95rem;color:var(--text-primary);margin-bottom:5px">${monthLabel(m.month)}${isCurrent ? '&nbsp;<span style="color:var(--purple-bright);font-size:0.62rem;font-weight:700">MTD</span>' : ''}</div>` +
+              `<table style="width:100%;border-collapse:collapse;font-size:0.76rem;line-height:1.8">` +
+              `<tr><td style="color:var(--text-dim)">Races</td><td style="text-align:right;color:var(--text-primary);font-weight:600">${m.bets}</td></tr>` +
+              `<tr><td style="color:var(--text-dim)">Win rate</td><td style="text-align:right;color:var(--text-primary);font-weight:600">${m.win_pct ?? '—'}%</td></tr>` +
+              `<tr><td style="color:var(--text-dim)">Spent</td><td style="text-align:right;color:var(--text-secondary)">$${spent.toLocaleString()}</td></tr>` +
+              `<tr><td style="color:var(--text-dim)">Returned</td><td style="text-align:right;font-weight:600;color:${returned >= spent ? 'var(--green-bright)' : '#f87171'}">$${Math.round(returned).toLocaleString()}</td></tr>` +
+              `<tr><td style="color:var(--text-dim)">P&amp;L</td><td style="text-align:right;font-weight:700;color:${pnl >= 0 ? 'var(--green-bright)' : '#f87171'}">${pnl >= 0 ? '+' : '−'}$${Math.round(Math.abs(pnl)).toLocaleString()}</td></tr>` +
+              `<tr><td style="color:var(--text-dim)">ROI</td><td style="text-align:right;font-weight:700;color:${roiColor}">${m.roi_pct != null ? (m.roi_pct >= 0 ? '+' : '') + m.roi_pct + '%' : '—'}</td></tr>` +
+              `</table>`;
+            const rect = wrap.getBoundingClientRect();
+            const tx = ex - rect.left + 12;
+            const ty = ey - rect.top - 10;
+            tip.style.left = Math.min(tx, W - 155) + 'px';
+            tip.style.top = Math.max(4, ty) + 'px';
+            tip.style.position = 'absolute';
+          };
+          wrap.querySelectorAll('.pps-bar,.pps-dot').forEach(el => {
+            el.addEventListener('mousemove', e => showTip(+el.dataset.idx, e.clientX, e.clientY));
+            el.addEventListener('mouseleave', () => { document.getElementById('pps-tooltip').style.display = 'none'; });
           });
 
-          // Summary line
+          // Summary
           const totalPnl = pnls.reduce((a, b) => a + b, 0);
           const totalSpent = monthlyData.reduce((a, m) => a + m.bets * stake, 0);
           document.getElementById('pps-stake-summary').textContent =
-            `Total: $${totalSpent.toLocaleString()} → $${Math.round(totalSpent + totalPnl).toLocaleString()} (${totalPnl >= 0 ? '+' : ''}$${Math.round(totalPnl).toLocaleString()})`;
+            `${n} months · $${totalSpent.toLocaleString()} spent → $${Math.round(totalSpent + totalPnl).toLocaleString()} returned (${totalPnl >= 0 ? '+' : ''}$${Math.round(totalPnl).toLocaleString()})`;
         }
 
         const slider = document.getElementById('pps-stake-slider');
