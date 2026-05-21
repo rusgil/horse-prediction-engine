@@ -702,6 +702,7 @@ async def get_edge_yesterday(for_date: Optional[str] = Query(None, alias="date")
         payout = round(sp * stake, 2) if winner and sp else 0
         profit = round(payout - stake, 2) if winner and sp else -stake
 
+        placed = bool(position and position <= 3 and not scratched)
         output.append({
             "race_id": p.race_id,
             "venue": venue_code,
@@ -715,6 +716,7 @@ async def get_edge_yesterday(for_date: Optional[str] = Query(None, alias="date")
             "calibrated_win_rate": next((r2 for t, r2 in _CALIBRATED_WIN_RATES if model_pct >= t), 66),
             "sp": sp,
             "winner": winner,
+            "placed": placed,
             "position": position,
             "scratched": scratched,
             "payout": payout,
@@ -722,19 +724,23 @@ async def get_edge_yesterday(for_date: Optional[str] = Query(None, alias="date")
             "stake": stake,
         })
 
-    wins = [o for o in output if o["winner"]]
-    total_staked = len(output) * stake
-    total_returns = sum(o["payout"] for o in output)
+    active = [o for o in output if not o["scratched"]]
+    wins = [o for o in active if o["winner"]]
+    placed_picks = [o for o in active if o["placed"] and not o["winner"]]
+    total_staked = len(active) * stake
+    total_returns = sum(o["payout"] for o in active)
     pnl = round(total_returns - total_staked, 2)
 
     return {
         "date": target_date,
         "picks": output,
         "summary": {
-            "total": len(output),
+            "total": len(active),
             "wins": len(wins),
-            "losses": len(output) - len(wins),
-            "win_rate": round(len(wins) / len(output) * 100, 1) if output else 0,
+            "placed": len(placed_picks),
+            "losses": len(active) - len(wins) - len(placed_picks),
+            "win_rate": round(len(wins) / len(active) * 100, 1) if active else 0,
+            "place_rate": round((len(wins) + len(placed_picks)) / len(active) * 100, 1) if active else 0,
             "pnl": pnl,
             "total_staked": total_staked,
             "total_returns": round(total_returns, 2),

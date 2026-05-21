@@ -1523,7 +1523,14 @@
         </div>
         <div class="pick-footer">
           ${trackChip}${distChip}${stateChip}${valueChip}
-          ${isPast && result && !result.scratched ? `<span class="pick-verdict ${result.winner ? 'correct' : 'wrong'}">${result.winner ? '✓ Correct' : `✗ Wrong — ${result.position ? (result.position === 2 ? '2nd' : result.position === 3 ? '3rd' : result.position + 'th') : 'unplaced'}`}</span>` : ''}
+          ${isPast && result && !result.scratched ? (() => {
+            const pos = result.position;
+            const posLbl = pos === 2 ? '2nd' : pos === 3 ? '3rd' : pos ? `${pos}th` : 'unplaced';
+            const placed = pos && pos <= 3 && !result.winner;
+            if (result.winner) return `<span class="pick-verdict correct">✓ Won</span>`;
+            if (placed) return `<span class="pick-verdict" style="background:rgba(245,158,11,0.10);color:#f59e0b;border-color:rgba(245,158,11,0.25);">~ Placed ${posLbl}</span>`;
+            return `<span class="pick-verdict wrong">✗ ${posLbl}</span>`;
+          })() : ''}
         </div>
       </div>`;
   }
@@ -2063,12 +2070,16 @@
 
     // Badge — same slot as upcoming confidence badge
     let badge;
+    const isPlaced = p.placed && !isWin;
+    const posLabel = p.position === 2 ? '2nd' : p.position === 3 ? '3rd' : p.position ? `${p.position}th` : '';
     if (p.scratched) {
       badge = `<span class="pick-badge-standard" style="background:var(--bg-elevated);color:var(--text-dim);border-color:var(--border);">Scratched</span>`;
     } else if (isWin) {
       badge = `<span class="pick-badge-standard" style="background:var(--green-dim);color:var(--green);border-color:rgba(34,197,94,0.25);">✓ Won</span>`;
+    } else if (isPlaced) {
+      badge = `<span class="pick-badge-standard" style="background:rgba(245,158,11,0.10);color:#f59e0b;border-color:rgba(245,158,11,0.25);">~ Placed ${posLabel}</span>`;
     } else {
-      badge = `<span class="pick-badge-standard" style="background:rgba(239,68,68,0.10);color:#f87171;border-color:rgba(239,68,68,0.25);">✗ Lost</span>`;
+      badge = `<span class="pick-badge-standard" style="background:rgba(239,68,68,0.10);color:#f87171;border-color:rgba(239,68,68,0.25);">✗ Unplaced${posLabel ? ` (${posLabel})` : ''}</span>`;
     }
 
     // Chips
@@ -2118,7 +2129,7 @@
     } else {
       tierBadgeHtml = `<span class="pick-badge-standard">Strong Pick</span>`;
     }
-    const yesterdayIsPremium = p.model_pct >= 30 && p.sp && p.sp >= 3.0 && edgePct != null && edgePct > 5;
+    const yesterdayIsPremium = p.model_pct >= 29.5 && p.sp && p.sp >= 3.0 && edgePct != null && edgePct > 5;
     const yesterdayPremiumBadge = yesterdayIsPremium ? `<span class="pick-badge-premium">💎 Premium</span>` : '';
     const winRateHtml = `
       <div class="win-rate-row">
@@ -2200,11 +2211,13 @@
     const pnlSign = pnl >= 0 ? '+' : '';
     const roiSign = roi >= 0 ? '+' : '';
     const wins   = activePicks.filter(p => p.winner).length;
-    const losses = activePicks.filter(p => !p.winner).length;
+    const placed = activePicks.filter(p => p.placed && !p.winner).length;
+    const losses = activePicks.filter(p => !p.winner && !p.placed).length;
+    const placeRate = activePicks.length ? +((wins + placed) / activePicks.length * 100).toFixed(1) : 0;
     const premiumCount = data.picks.filter(p => {
       const mi = p.sp ? +(100 / p.sp).toFixed(1) : null;
       const ep = mi ? +(p.model_pct - mi).toFixed(1) : null;
-      return p.model_pct >= 30 && p.sp && p.sp >= 3.0 && ep != null && ep > 5;
+      return p.model_pct >= 29.5 && p.sp && p.sp >= 3.0 && ep != null && ep > 5;
     }).length;
 
     el.innerHTML = `
@@ -2222,8 +2235,12 @@
           <div class="pnl-cell-label">Wins (${winRate}%)</div>
         </div>
         <div class="pnl-cell">
+          <div class="pnl-cell-num" style="color:#f59e0b">${placed}</div>
+          <div class="pnl-cell-label">Placed (${placeRate}% top-3)</div>
+        </div>
+        <div class="pnl-cell">
           <div class="pnl-cell-num pnl-negative">${losses}</div>
-          <div class="pnl-cell-label">Losses</div>
+          <div class="pnl-cell-label">Unplaced</div>
         </div>
         <div class="pnl-cell">
           <div class="pnl-cell-num ${pnlCls}">${pnlSign}$${pnl.toFixed(2)}</div>
