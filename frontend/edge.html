@@ -1657,7 +1657,7 @@
         const returned = spent + d.pnl_at_10;
         const tagEl = document.getElementById('pps-tagline');
         tagEl.style.display = '';
-        tagEl.innerHTML = `That means for the last 30 days, if you spent <strong style="color:var(--text-primary)">$${spent.toLocaleString()}</strong> you would have returned <strong style="color:var(--green-bright)">$${returned.toLocaleString()}</strong>. <span style="color:var(--purple-bright);font-weight:700">Now that's Funky!</span>`;
+        tagEl.innerHTML = `FunkyIQ would return <strong style="color:var(--green-bright)">$${returned.toLocaleString()}</strong> over the last 30 days, if someone bet <strong style="color:var(--text-primary)">$${spent.toLocaleString()}</strong> ($10 per race for the ${d.bets} races). <span style="color:var(--purple-bright);font-weight:700">Now that's Funky!</span>`;
       }
     } catch (_) {
       document.getElementById('premium-perf-loading').textContent = 'Stats unavailable';
