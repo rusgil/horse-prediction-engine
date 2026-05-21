@@ -1930,6 +1930,59 @@ async def premium_performance(days: int = Query(30, ge=1, le=365), x_cron_secret
     }
 
 
+@app.get("/api/performance/premium/public")
+async def premium_performance_public():
+    """Public summary of rolling 30-day Premium pick performance (no auth required)."""
+    days = 30
+    cutoff = (date.today() - timedelta(days=days)).isoformat()
+
+    async with get_session() as session:
+        hr_result = await session.execute(
+            select(HistoricalResultRow).where(HistoricalResultRow.race_id >= cutoff)
+        )
+        hr_rows = hr_result.scalars().all()
+        if not hr_rows:
+            return {"days": days, "bets": 0, "wins": 0, "win_pct": None, "pnl_at_10": 0.0, "roi_pct": None, "avg_sp": None}
+
+        race_ids = list({r.race_id for r in hr_rows})
+        pred_result = await session.execute(
+            select(RunnerPredictionRow)
+            .where(RunnerPredictionRow.race_id.in_(race_ids))
+            .where(RunnerPredictionRow.model_rank == 1)
+        )
+        top_picks = {p.race_id: p for p in pred_result.scalars().all()}
+
+    result_by_key = {(r.race_id, r.horse_name): r for r in hr_rows}
+    bets = wins = 0
+    total_pnl = 0.0
+    sp_list = []
+    for race_id, pick in top_picks.items():
+        actual = result_by_key.get((race_id, pick.horse_name))
+        if not actual:
+            continue
+        sp = actual.starting_price or 0.0
+        overlay = pick.overlay or 0.0
+        model_pct = (pick.win_probability or 0) * 100
+        if model_pct >= 30 and sp >= 3.0 and overlay > 0.05:
+            bets += 1
+            if actual.winner:
+                wins += 1
+                total_pnl += sp - 1.0
+            else:
+                total_pnl -= 1.0
+            sp_list.append(sp)
+
+    return {
+        "days": days,
+        "bets": bets,
+        "wins": wins,
+        "win_pct": round(wins / bets * 100, 1) if bets else None,
+        "pnl_at_10": round(total_pnl * 10, 2),
+        "roi_pct": round(total_pnl / bets * 100, 1) if bets else None,
+        "avg_sp": round(sum(sp_list) / len(sp_list), 2) if sp_list else None,
+    }
+
+
 # ── Calibration ───────────────────────────────────────────────────────────────
 
 _CANDIDATE_WINDOWS = [30, 60, 90, 180, 270]

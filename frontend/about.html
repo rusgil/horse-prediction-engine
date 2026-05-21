@@ -349,6 +349,26 @@
     </div>
   </div>
 
+  <!-- Premium rolling performance -->
+  <div class="section" id="premium-perf-section">
+    <div class="section-title" style="color:var(--purple-bright)">💎 Premium — Rolling 30 Days</div>
+    <div id="premium-perf-loading" style="color:var(--text-dim);font-size:0.85rem;padding:8px 0;">Loading…</div>
+    <div id="premium-perf-content" style="display:none">
+      <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:16px" id="premium-stat-grid"></div>
+      <div id="premium-pnl-bar" style="background:var(--bg-elevated);border:1px solid var(--border);border-radius:var(--radius);padding:14px 16px;display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:10px;">
+        <div>
+          <div style="font-size:0.65rem;font-weight:700;letter-spacing:0.14em;text-transform:uppercase;color:var(--text-dim);margin-bottom:4px">$10/bet · 30 days</div>
+          <div id="premium-pnl-value" style="font-family:'Barlow Condensed',sans-serif;font-size:2rem;font-weight:900"></div>
+        </div>
+        <div style="text-align:right">
+          <div style="font-size:0.65rem;font-weight:700;letter-spacing:0.14em;text-transform:uppercase;color:var(--text-dim);margin-bottom:4px">ROI</div>
+          <div id="premium-roi-value" style="font-family:'Barlow Condensed',sans-serif;font-size:1.6rem;font-weight:900;color:var(--purple-bright)"></div>
+        </div>
+      </div>
+      <p class="note" style="margin-top:12px">Rolling 30-day window. Updates daily. Based on starting price, $1 unit stake. Past performance does not guarantee future results.</p>
+    </div>
+  </div>
+
   <!-- The Numbers -->
   <div class="section">
     <div class="section-title">Historical Win Rates</div>
@@ -364,9 +384,9 @@
       <tbody>
         <tr>
           <td><span class="tier-badge tier-premium">💎 Premium</span></td>
-          <td><span class="win-rate premium">—</span></td>
-          <td><span class="sample-size">Live tracking</span></td>
-          <td><span style="color:var(--text-primary);font-weight:600">$3.00+</span></td>
+          <td><span class="win-rate premium" id="premium-winrate-cell">—</span></td>
+          <td><span class="sample-size" id="premium-races-cell">Live tracking</span></td>
+          <td><span style="color:var(--text-primary);font-weight:600" id="premium-sp-cell">$3.00+</span></td>
         </tr>
         <tr>
           <td><span class="tier-badge tier-hot">🔥 Hot Pick</span></td>
@@ -430,5 +450,51 @@
   </div>
 
 </div>
+
+<script>
+  const API = 'https://web-production-dec62.up.railway.app';
+
+  function statBox(label, value, color) {
+    return `<div style="background:var(--bg-elevated);border:1px solid var(--border);border-radius:var(--radius);padding:14px 16px;">
+      <div style="font-size:0.62rem;font-weight:700;letter-spacing:0.14em;text-transform:uppercase;color:var(--text-dim);margin-bottom:6px">${label}</div>
+      <div style="font-family:'Barlow Condensed',sans-serif;font-size:1.6rem;font-weight:900;color:${color}">${value}</div>
+    </div>`;
+  }
+
+  async function loadPremiumPerf() {
+    try {
+      const res = await fetch(`${API}/api/performance/premium/public`);
+      if (!res.ok) throw new Error('fetch failed');
+      const d = await res.json();
+      document.getElementById('premium-perf-loading').style.display = 'none';
+      document.getElementById('premium-perf-content').style.display = '';
+
+      const grid = document.getElementById('premium-stat-grid');
+      grid.innerHTML =
+        statBox('Win Rate', d.win_pct != null ? d.win_pct + '%' : '—', 'var(--purple-bright)') +
+        statBox('Bets', d.bets + ' races', 'var(--text-primary)') +
+        statBox('Avg SP', d.avg_sp != null ? '$' + d.avg_sp.toFixed(2) : '—', 'var(--gold-light)');
+
+      const pnl = d.pnl_at_10;
+      const pnlEl = document.getElementById('premium-pnl-value');
+      pnlEl.textContent = (pnl >= 0 ? '+$' : '-$') + Math.abs(pnl).toFixed(0);
+      pnlEl.style.color = pnl >= 0 ? 'var(--green-bright)' : '#f87171';
+
+      document.getElementById('premium-roi-value').textContent =
+        d.roi_pct != null ? (d.roi_pct >= 0 ? '+' : '') + d.roi_pct + '%' : '—';
+
+      // Also populate the historical table row
+      if (d.win_pct != null) {
+        document.getElementById('premium-winrate-cell').textContent = d.win_pct + '%';
+        document.getElementById('premium-races-cell').textContent = d.bets + ' races';
+        document.getElementById('premium-sp-cell').textContent = d.avg_sp != null ? '$' + d.avg_sp.toFixed(2) : '$3.00+';
+      }
+    } catch (e) {
+      document.getElementById('premium-perf-loading').textContent = 'Stats unavailable';
+    }
+  }
+
+  loadPremiumPerf();
+</script>
 </body>
 </html>
