@@ -605,6 +605,34 @@
     .pick-verdict.correct { background: rgba(34,197,94,0.15); color: var(--green-bright); border: 1px solid rgba(34,197,94,0.3); }
     .pick-verdict.wrong   { background: rgba(239,68,68,0.1);  color: #f87171;             border: 1px solid rgba(239,68,68,0.25); }
 
+    /* ── Venue Weather Grid ──────────────────────────────── */
+    .meetings-weather-section {
+      margin: 0 0 20px;
+    }
+    .meetings-weather-label {
+      font-size: 0.6rem; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase;
+      color: var(--text-dim); margin-bottom: 8px;
+    }
+    .meetings-weather-grid {
+      display: flex; flex-wrap: wrap; gap: 8px;
+    }
+    .venue-wx-card {
+      background: var(--bg-elevated); border: 1px solid var(--border);
+      border-radius: var(--radius-sm); padding: 8px 12px;
+      display: flex; flex-direction: column; gap: 2px; min-width: 120px;
+    }
+    .venue-wx-name {
+      font-size: 0.78rem; font-weight: 700; color: var(--text-primary);
+    }
+    .venue-wx-state {
+      font-size: 0.62rem; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.08em;
+    }
+    .venue-wx-weather {
+      font-size: 0.72rem; color: var(--text-secondary); margin-top: 4px;
+      display: flex; align-items: center; gap: 4px;
+    }
+    .venue-wx-rain { color: #60a5fa; }
+
     /* ── Loading / Empty ─────────────────────────────────── */
     .loading {
       text-align: center; padding: 60px 20px;
@@ -1167,6 +1195,10 @@
         <div class="stake-slider-labels"><span>$5</span><span>$100</span><span>$250</span><span>$500</span></div>
       </div>
     </div>
+    <div id="meetingsWeatherSection" class="meetings-weather-section" style="display:none">
+      <div class="meetings-weather-label">Today's Race Meetings</div>
+      <div class="meetings-weather-grid" id="meetingsWeatherGrid"></div>
+    </div>
     <div id="content">
       <div class="loading">
         <div class="loading-spinner"></div>
@@ -1480,6 +1512,14 @@
     const trackChip = pick.track_condition ? `<span class="pick-footer-chip"><strong>${escHtml(pick.track_condition)}</strong></span><span class="pick-footer-sep">·</span>` : '';
     const distChip  = pick.distance ? `<span class="pick-footer-chip"><strong>${pick.distance}m</strong></span><span class="pick-footer-sep">·</span>` : '';
     const stateChip = pick.state ? `<span class="pick-footer-chip">${escHtml(pick.state)}</span>` : '';
+    const _wx = weatherByCode[pick.venue];
+    const weatherChip = _wx ? (() => {
+      const parts = [_wx.icon];
+      if (_wx.temp_max !== null) parts.push(_wx.temp_max + '°C');
+      if (_wx.wind_kmh) parts.push('💨' + _wx.wind_kmh + 'km/h');
+      if (_wx.rain_mm > 0) parts.push('💧' + _wx.rain_mm + 'mm');
+      return `<span class="pick-footer-sep">·</span><span class="pick-footer-chip">${parts.join(' ')}</span>`;
+    })() : '';
     const valueChip = '';
 
     const cardStyle = isPast && result && !result.winner && !result.scratched ? 'opacity:0.75;' : '';
@@ -1528,7 +1568,7 @@
           </div>
         </div>
         <div class="pick-footer">
-          ${trackChip}${distChip}${stateChip}${valueChip}
+          ${trackChip}${distChip}${stateChip}${weatherChip}${valueChip}
           ${isPast && result && !result.scratched ? (() => {
             const pos = result.position;
             const posLbl = pos === 2 ? '2nd' : pos === 3 ? '3rd' : pos ? `${pos}th` : 'unplaced';
@@ -1550,6 +1590,26 @@
           })() : ''}
         </div>
       </div>`;
+  }
+
+  function renderMeetingsWeather(meetings) {
+    const grid = document.getElementById('meetingsWeatherGrid');
+    const section = document.getElementById('meetingsWeatherSection');
+    if (!grid || !section || !meetings.length) return;
+    grid.innerHTML = meetings.map(m => {
+      const w = m.weather;
+      const name = escHtml(m.venue || m.venue_code || '');
+      const state = escHtml(m.state || '');
+      if (!w) return `<div class="venue-wx-card"><div class="venue-wx-name">${name}</div><div class="venue-wx-state">${state}</div></div>`;
+      const rainHtml = w.rain_mm > 0 ? `<span class="venue-wx-rain">· 💧${w.rain_mm}mm</span>` : '';
+      const windHtml = w.wind_kmh ? `· 💨${w.wind_kmh}km/h` : '';
+      return `<div class="venue-wx-card">
+        <div class="venue-wx-name">${name}</div>
+        <div class="venue-wx-state">${state}</div>
+        <div class="venue-wx-weather">${w.icon} ${w.temp_max !== null ? w.temp_max + '°C' : ''} ${windHtml} ${rainHtml}</div>
+      </div>`;
+    }).join('');
+    section.style.display = '';
   }
 
   function renderContent(data, stake, results) {
@@ -1662,6 +1722,7 @@
   let resultsMap = {};
   let yesterdayLoaded = false;
   let yesterdayData = null;
+  let weatherByCode = {};
 
   let trackRecordLoaded = false;
 
@@ -2285,9 +2346,40 @@
 
   async function load() {
     try {
-      const res = await fetch(`${API}/api/edge`);
+      const todayStr = new Date().toLocaleDateString('en-CA', { timeZone: 'Australia/Sydney' });
+      const tomorrowDate = new Date(); tomorrowDate.setDate(tomorrowDate.getDate() + 1);
+      const tomorrowStr = tomorrowDate.toLocaleDateString('en-CA', { timeZone: 'Australia/Sydney' });
+
+      // Fetch picks and today's meetings (with weather) in parallel
+      const [res, meetingsRes] = await Promise.all([
+        fetch(`${API}/api/edge`),
+        fetch(`${API}/api/meetings/${todayStr}`),
+      ]);
       if (!res.ok) throw new Error(res.statusText);
       picksData = await res.json();
+
+      // Populate weather map from today's meetings
+      if (meetingsRes.ok) {
+        const md = await meetingsRes.json();
+        renderMeetingsWeather(md.meetings);
+        for (const m of md.meetings) {
+          if (m.weather) weatherByCode[m.venue_code] = m.weather;
+        }
+      }
+
+      // Also fetch tomorrow's meetings if there are picks for that date
+      if (picksData.picks.some(p => p.date === tomorrowStr)) {
+        try {
+          const tmRes = await fetch(`${API}/api/meetings/${tomorrowStr}`);
+          if (tmRes.ok) {
+            const tmData = await tmRes.json();
+            for (const m of tmData.meetings) {
+              if (m.weather && !weatherByCode[m.venue_code]) weatherByCode[m.venue_code] = m.weather;
+            }
+          }
+        } catch (e) { /* best-effort */ }
+      }
+
       const stake = parseFloat(document.getElementById('stakeInput').value) || 10;
 
       // If any picks have already jumped, fetch today's results to show outcomes
@@ -2295,8 +2387,7 @@
       const hasPast = picksData.picks.some(p => p.scheduled_time && new Date(p.scheduled_time).getTime() < now);
       if (hasPast) {
         try {
-          const today = new Date().toISOString().slice(0, 10);
-          const rr = await fetch(`${API}/api/edge/yesterday?date=${today}`);
+          const rr = await fetch(`${API}/api/edge/yesterday?date=${todayStr}`);
           if (rr.ok) {
             const rd = await rr.json();
             for (const r of rd.picks) resultsMap[r.race_id] = r;

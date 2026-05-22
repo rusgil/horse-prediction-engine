@@ -843,24 +843,32 @@ async def list_meetings(race_date: str = _today()):
         log.exception("list_meetings failed for %s", race_date)
         raise HTTPException(502, "Failed to fetch meetings from data provider")
 
+    from horse_engine.clients.weather import get_weather_for_venue
+
     date_suffix = f"-{race_date.replace('-', '')}"
-    return {
-        "date": race_date,
-        "meetings": [
-            {
-                "venue": m.get("venue"),
-                "venue_code": (
-                    m["slug"][: -len(date_suffix)]
-                    if (slug := m.get("slug", "")) and slug.endswith(date_suffix)
-                    else slug.split("-")[0] if slug else m.get("name", "").lower().replace(" ", "-")
-                ),
-                "state": m.get("state"),
-                "rail_position": m.get("rail_position"),
-                "slug": m.get("slug"),
-            }
-            for m in meetings
-        ],
-    }
+    items = [
+        {
+            "venue": m.get("venue"),
+            "venue_code": (
+                m["slug"][: -len(date_suffix)]
+                if (slug := m.get("slug", "")) and slug.endswith(date_suffix)
+                else slug.split("-")[0] if slug else m.get("name", "").lower().replace(" ", "-")
+            ),
+            "state": m.get("state"),
+            "rail_position": m.get("rail_position"),
+            "slug": m.get("slug"),
+        }
+        for m in meetings
+    ]
+
+    weathers = await asyncio.gather(
+        *[get_weather_for_venue(it["venue"] or "", it["state"] or "", race_date) for it in items],
+        return_exceptions=True,
+    )
+    for it, w in zip(items, weathers):
+        it["weather"] = w if isinstance(w, dict) else None
+
+    return {"date": race_date, "meetings": items}
 
 
 @app.get("/api/meetings/{race_date}/{venue_code}")

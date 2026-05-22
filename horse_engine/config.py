@@ -6,7 +6,7 @@ class Settings(BaseSettings):
 
     anthropic_api_key: str = ""
     cron_secret: str = ""
-    database_url: str = "sqlite+aiosqlite:///./horse_predictions.db"
+    database_url: str = "sqlite+aiosqlite:///./horse_predictions.db"  # overridden by DATABASE_URL env var on Railway
 
     narrative_model: str = "claude-haiku-4-5-20251001"
 

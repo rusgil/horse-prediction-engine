@@ -11,7 +11,20 @@ from sqlalchemy.orm import DeclarativeBase
 from horse_engine.config import settings
 
 
-engine = create_async_engine(settings.async_database_url, echo=False)
+def _make_engine():
+    url = settings.async_database_url
+    if url.startswith("postgresql"):
+        return create_async_engine(
+            url,
+            echo=False,
+            pool_pre_ping=True,
+            pool_size=5,
+            max_overflow=10,
+            pool_recycle=1800,
+        )
+    return create_async_engine(url, echo=False)
+
+engine = _make_engine()
 SessionLocal = async_sessionmaker(engine, expire_on_commit=False)
 
 
@@ -145,6 +158,16 @@ class OddsSnapshotRow(Base):
     win_odds = Column(Float, nullable=True)
     place_odds = Column(Float, nullable=True)
     source = Column(String, default="flucs")           # "tote" or "flucs"
+
+
+class VenueCoordinateRow(Base):
+    __tablename__ = "venue_coordinates"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    venue_key = Column(String, unique=True, index=True)  # "VenueName|STATE"
+    latitude = Column(Float)
+    longitude = Column(Float)
+    updated_at = Column(DateTime, default=datetime.utcnow)
 
 
 async def init_db() -> None:
