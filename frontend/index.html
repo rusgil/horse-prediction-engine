@@ -238,6 +238,10 @@
       font-size: 0.65rem; color: var(--gold);
       font-weight: 700; margin-top: 2px; min-height: 0.8em;
     }
+    .pill-wx {
+      font-size: 0.68rem; color: var(--text-secondary);
+      margin-top: 2px;
+    }
 
     /* Date pills */
     .date-pill {
@@ -1185,9 +1189,19 @@
       const confHtml = (cached && cached.maxConf >= 25)
         ? `<span class="pill-stat" id="pill-conf-${statKey}" style="color:${confColor}">${cached.maxConf}% best pick</span>`
         : `<span class="pill-stat" id="pill-conf-${statKey}" style="display:none"></span>`;
+      const w = m.weather;
+      let wxHtml = '';
+      if (w) {
+        const parts = [w.icon];
+        if (w.temp_max !== null) parts.push(w.temp_max + '°C');
+        if (w.wind_kmh) parts.push('💨' + w.wind_kmh + 'km/h');
+        if (w.rain_mm > 0) parts.push('🌧️ ' + w.rain_mm + 'mm rain');
+        wxHtml = `<span class="pill-wx">${parts.join(' ')}</span>`;
+      }
       el.innerHTML = `
         <span class="pill-name">${escHtml(m.venue)}</span>
         <span class="pill-sub">${escHtml(m.state)}${m.rail_position && typeof m.rail_position === 'string' ? ' · ' + escHtml(m.rail_position.substring(0,20)) : ''}</span>
+        ${wxHtml}
         ${statHtml}
         ${confHtml}
       `;
