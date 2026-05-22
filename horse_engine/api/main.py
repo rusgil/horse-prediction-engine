@@ -709,6 +709,8 @@ async def get_edge_yesterday(for_date: Optional[str] = Query(None, alias="date")
                     winner_name = name
                     break
 
+        place_pct = round(p.place_probability * 100, 1) if p.place_probability else None
+
         output.append({
             "race_id": p.race_id,
             "venue": venue_code,
@@ -719,6 +721,7 @@ async def get_edge_yesterday(for_date: Optional[str] = Query(None, alias="date")
             "barrier": p.barrier,
             "weight": p.weight,
             "model_pct": model_pct,
+            "place_probability": place_pct,
             "calibrated_win_rate": next((r2 for t, r2 in _CALIBRATED_WIN_RATES if model_pct >= t), 66),
             "sp": sp,
             "winner": winner,

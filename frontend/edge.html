@@ -2185,13 +2185,18 @@
           <div class="pick-left">
             <div class="pick-horse-name" ${!isWin && !p.scratched ? 'style="color:var(--text-secondary)"' : ''}>${escHtml(p.horse_name)}</div>
             <div class="pick-details">${barrierChip}${jockeyChip}${trainerChip}${weightChip}</div>
-            <div class="conf-row">
-              <div class="conf-bar-track">
-                <div class="conf-bar-fill" style="width:${barW}%;background:${barColor}"></div>
+            <div class="dual-stat-row" style="margin-bottom:8px">
+              <div class="dual-stat">
+                <span class="dual-stat-num" style="color:${pctColor}">${p.model_pct}%</span>
+                <span class="dual-stat-label">win prediction</span>
               </div>
-              <span class="conf-pct" style="color:${pctColor}">${p.model_pct}%</span>
+              ${p.place_probability != null ? `
+              <div class="dual-stat-sep"></div>
+              <div class="dual-stat">
+                <span class="dual-stat-num" style="color:#60a5fa">${p.place_probability}%</span>
+                <span class="dual-stat-label">place prediction</span>
+              </div>` : ''}
             </div>
-            <div class="conf-label" style="margin-bottom:8px">win prediction</div>
             ${winRateHtml}
             ${edgeHtml}
           </div>
