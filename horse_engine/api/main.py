@@ -58,6 +58,7 @@ from horse_engine.pipeline import enrich_and_predict_race, enrich_meeting
 from horse_engine.prediction.engine import _value_rating
 from horse_engine.prediction.features import build_feature_vector
 from horse_engine.prediction.model import HorseModel
+from horse_engine.prediction.venue_calibration import compute_venue_multipliers
 
 log = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
@@ -1211,7 +1212,8 @@ async def enrich_race(race_id: str, force: bool = Query(False)):
         state = venue_obj.get("state", "")
 
         race = await client.parse_race(raw_event, race_date, venue_name, state)
-        predictions, _ = await enrich_and_predict_race(race, model)
+        venue_cal = await _load_venue_calibration()
+        predictions, _ = await enrich_and_predict_race(race, model, venue_calibration=venue_cal)
 
         async with get_session() as session:
             await save_race_predictions(
@@ -2557,8 +2559,45 @@ async def calibration_history(
 
 # ── Cron ──────────────────────────────────────────────────────────────────────
 
+async def _load_venue_calibration() -> dict[str, float]:
+    """Compute venue win-rate multipliers from last 60 days of historical results."""
+    cutoff = (date.today() - timedelta(days=60)).isoformat()
+    async with get_session() as session:
+        hr_result = await session.execute(
+            select(HistoricalResultRow).where(HistoricalResultRow.race_id >= cutoff)
+        )
+        hr_rows = hr_result.scalars().all()
+        if not hr_rows:
+            return {}
+        race_ids = list({r.race_id for r in hr_rows})
+        pred_result = await session.execute(
+            select(RunnerPredictionRow)
+            .where(RunnerPredictionRow.race_id.in_(race_ids))
+            .where(RunnerPredictionRow.model_rank == 1)
+        )
+        top_picks = {p.race_id: p for p in pred_result.scalars().all()}
+
+    result_by_key = {(r.race_id, r.horse_name): r for r in hr_rows}
+    venue_stats: dict[str, dict] = {}
+    for race_id, pick in top_picks.items():
+        _, venue, _ = _parse_race_id(race_id)
+        result = result_by_key.get((race_id, pick.horse_name))
+        if not result:
+            continue
+        if venue not in venue_stats:
+            venue_stats[venue] = {"races": 0, "wins": 0}
+        venue_stats[venue]["races"] += 1
+        if result.winner:
+            venue_stats[venue]["wins"] += 1
+
+    multipliers = compute_venue_multipliers(venue_stats)
+    log.info("[venue_calibration] %d venues calibrated", len(multipliers))
+    return multipliers
+
+
 async def _enrich_date(race_date: str, client, model, force: bool = False) -> list[dict]:
     """Enrich all meetings for a single date. Returns summary list."""
+    venue_cal = await _load_venue_calibration()
     meetings = await client.get_meetings(race_date)
     summary = []
     for m in meetings:
@@ -2586,7 +2625,7 @@ async def _enrich_date(race_date: str, client, model, force: bool = False) -> li
                 if not full_event:
                     continue
                 race = await client.parse_race(full_event, race_date, venue_name, state)
-                predictions, _ = await enrich_and_predict_race(race, model)
+                predictions, _ = await enrich_and_predict_race(race, model, venue_calibration=venue_cal)
                 async with get_session() as session:
                     await save_race_predictions(
                         session,

@@ -19,6 +19,7 @@ async def enrich_and_predict_race(
     race: Race,
     model: HorseModel,
     generate_narratives: bool = True,
+    venue_calibration: dict[str, float] | None = None,
 ) -> tuple[list[RunnerPrediction], dict]:
     """
     Run the full pipeline:
@@ -36,7 +37,7 @@ async def enrich_and_predict_race(
         race.track_condition, len(race.runners),
     )
 
-    predictions = predict_race(race, model)
+    predictions = predict_race(race, model, venue_calibration=venue_calibration)
 
     if generate_narratives:
         try:

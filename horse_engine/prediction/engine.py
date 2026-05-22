@@ -228,7 +228,7 @@ def enrich_runner(
     )
 
 
-def predict_race(race: Race, model: HorseModel) -> list[RunnerPrediction]:
+def predict_race(race: Race, model: HorseModel, venue_calibration: dict[str, float] | None = None) -> list[RunnerPrediction]:
     """Full prediction pipeline for one race. Returns ranked RunnerPredictions."""
     if not race.runners:
         return []
@@ -256,8 +256,10 @@ def predict_race(race: Race, model: HorseModel) -> list[RunnerPrediction]:
         except Exception as e:
             log.warning("Enrich failed for %s: %s", runner.horse_name, e)
 
+    from horse_engine.prediction.venue_calibration import apply_venue_calibration
     feature_vectors = [build_feature_vector(er) for er in enriched_runners]
     win_probs, place_probs = model.predict_field(feature_vectors)
+    win_probs = apply_venue_calibration(list(win_probs), race.venue, venue_calibration or {})
 
     predictions: list[RunnerPrediction] = []
     for i, (runner, er) in enumerate(zip(race.runners[:len(enriched_runners)], enriched_runners)):
