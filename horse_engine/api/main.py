@@ -700,6 +700,15 @@ async def get_edge_yesterday(for_date: Optional[str] = Query(None, alias="date")
         profit = round(payout - stake, 2) if winner and sp else -stake
 
         placed = bool(position and position <= 3 and not scratched)
+
+        # Find the actual race winner when our pick didn't win
+        winner_name = None
+        if not winner and not scratched:
+            for (v, rn, name), res in all_results.items():
+                if v == venue_code and rn == race_num and res.get("winner"):
+                    winner_name = name
+                    break
+
         output.append({
             "race_id": p.race_id,
             "venue": venue_code,
@@ -715,6 +724,7 @@ async def get_edge_yesterday(for_date: Optional[str] = Query(None, alias="date")
             "winner": winner,
             "placed": placed,
             "position": position,
+            "winner_name": winner_name,
             "scratched": scratched,
             "payout": payout,
             "profit": profit,

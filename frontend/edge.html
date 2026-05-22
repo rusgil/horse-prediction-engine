@@ -1533,9 +1533,20 @@
             const pos = result.position;
             const posLbl = pos === 2 ? '2nd' : pos === 3 ? '3rd' : pos ? `${pos}th` : 'unplaced';
             const placed = pos && pos <= 3 && !result.winner;
+            const winnerChip = (!result.winner && result.winner_name)
+              ? `<span class="pick-footer-chip" style="color:var(--text-dim)">Winner: <strong style="color:var(--text-secondary)">${escHtml(result.winner_name)}</strong></span>`
+              : '';
             if (result.winner) return `<span class="pick-verdict correct">✓ Won</span>`;
-            if (placed) return `<span class="pick-verdict" style="background:rgba(245,158,11,0.10);color:#f59e0b;border-color:rgba(245,158,11,0.25);">~ Placed ${posLbl}</span>`;
-            return `<span class="pick-verdict wrong">✗ ${posLbl}</span>`;
+            if (placed) return `<span class="pick-verdict" style="background:rgba(245,158,11,0.10);color:#f59e0b;border-color:rgba(245,158,11,0.25);">~ Placed ${posLbl}</span>${winnerChip}`;
+            return `<span class="pick-verdict wrong">✗ ${posLbl}</span>${winnerChip}`;
+          })() : ''}
+          ${!isPast ? (() => {
+            let level, color;
+            if (conf >= 45)      { level = '🔥 Hot Pick — high win confidence'; color = '#f97316'; }
+            else if (conf >= 35) { level = '⚡ High Confidence'; color = '#60a5fa'; }
+            else                 { level = '📈 Value Pick'; color = 'var(--text-secondary)'; }
+            if (isPremium) level += ' · 💎 Premium value';
+            return `<span class="pick-footer-chip" style="color:${color}">${level}</span>`;
           })() : ''}
         </div>
       </div>`;
