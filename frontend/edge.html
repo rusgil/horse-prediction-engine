@@ -2083,16 +2083,19 @@
 
   function renderYesterdayCard(p, stake) {
     const isWin = p.winner;
+    const isPlaced = (p.placed || (p.position && p.position <= 3)) && !isWin;
+    const isLoss = !isWin && !isPlaced && !p.scratched;
     const barW = Math.min(100, (p.model_pct / 70) * 100);
+    const barColor = isWin ? 'var(--green)' : isPlaced ? '#f59e0b' : 'var(--text-dim)';
+    const pctColor = isWin ? 'var(--green)' : isPlaced ? '#f59e0b' : 'var(--text-dim)';
 
     // Badge — same slot as upcoming confidence badge
     let badge;
-    const isPlaced = (p.placed || (p.position && p.position <= 3)) && !isWin;
     const posLabel = p.position === 2 ? '2nd' : p.position === 3 ? '3rd' : p.position ? `${p.position}th` : '';
     if (p.scratched) {
       badge = `<span class="pick-badge-standard" style="background:var(--bg-elevated);color:var(--text-dim);border-color:var(--border);">Scratched</span>`;
     } else if (isWin) {
-      badge = `<span class="pick-badge-standard" style="background:var(--green-dim);color:var(--green);border-color:rgba(34,197,94,0.25);">✓ Won</span>`;
+      badge = `<span class="pick-badge-standard" style="background:var(--green-dim);color:var(--green);border-color:rgba(34,197,94,0.25);">✓ Won${posLabel ? ` (${posLabel})` : ''}</span>`;
     } else if (isPlaced) {
       badge = `<span class="pick-badge-standard" style="background:rgba(245,158,11,0.10);color:#f59e0b;border-color:rgba(245,158,11,0.25);">~ Placed ${posLabel}</span>`;
     } else {
@@ -2122,6 +2125,14 @@
           <div class="payout-profit-label">$${stake} profit</div>
           <div class="payout-profit">+$${profit.toFixed(2)}</div>
           <div class="payout-return">Return: <span class="return-amt">$${gross.toFixed(2)}</span></div>
+          <div class="payout-stake">Stake: $${stake}</div>
+        </div>`;
+    } else if (isPlaced) {
+      payoutHtml = `
+        <div class="payout-box" style="background:rgba(245,158,11,0.08);border-color:rgba(245,158,11,0.2);">
+          <div class="payout-profit-label" style="color:var(--text-dim)">$${stake} loss (placed)</div>
+          <div class="payout-profit" style="color:#f59e0b;">-$${(+stake).toFixed(2)}</div>
+          ${p.position ? `<div class="payout-return" style="color:#f59e0b">Finished ${ordinal(p.position)}</div>` : ''}
           <div class="payout-stake">Stake: $${stake}</div>
         </div>`;
     } else {
@@ -2161,7 +2172,7 @@
       : '';
 
     return `
-      <div class="pick-card ${isWin ? 'hot' : ''}" style="${!isWin && !p.scratched ? 'border-color:rgba(239,68,68,0.2);' : ''}${p.scratched ? 'opacity:0.55;' : ''}">
+      <div class="pick-card ${isWin ? 'hot' : ''}" style="${isPlaced ? 'border-color:rgba(245,158,11,0.25);' : isLoss ? 'border-color:rgba(239,68,68,0.2);' : ''}${p.scratched ? 'opacity:0.55;' : ''}">
         <div class="pick-card-top-bar">
           ${badge}
           <div class="pick-race-ref">
@@ -2176,11 +2187,11 @@
             <div class="pick-details">${barrierChip}${jockeyChip}${trainerChip}${weightChip}</div>
             <div class="conf-row">
               <div class="conf-bar-track">
-                <div class="conf-bar-fill" style="width:${barW}%;${!isWin ? 'background:var(--text-dim);' : ''}"></div>
+                <div class="conf-bar-fill" style="width:${barW}%;background:${barColor}"></div>
               </div>
-              <span class="conf-pct" ${!isWin ? 'style="color:var(--text-dim)"' : ''}>${p.model_pct}%</span>
+              <span class="conf-pct" style="color:${pctColor}">${p.model_pct}%</span>
             </div>
-            <div class="conf-label" style="margin-bottom:8px">FunkyIQ Rating</div>
+            <div class="conf-label" style="margin-bottom:8px">win prediction</div>
             ${winRateHtml}
             ${edgeHtml}
           </div>
