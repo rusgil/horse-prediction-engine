@@ -1327,13 +1327,15 @@ async def retrain_model(
     if not training_data:
         raise HTTPException(400, f"No matched training examples (have {len(hr_rows)} results, {len(pred_rows)} predictions — check race_id/horse_name alignment)")
 
-    model = HorseModel()
-    stats = model.train(training_data)
+    async def _do_retrain():
+        m = HorseModel()
+        s = m.train(training_data)
+        async with get_session() as sess:
+            await save_model_weights(sess, s["weights"])
+        log.info("[retrain] complete — %d examples, accuracy=%.3f", len(training_data), s.get("accuracy", 0))
 
-    async with get_session() as session:
-        await save_model_weights(session, stats["weights"])
-
-    return {"status": "retrained", "training_days": days or "all", "training_examples": len(training_data), **stats}
+    asyncio.create_task(_do_retrain())
+    return {"status": "retrain_started", "training_days": days or "all", "training_examples": len(training_data)}
 
 
 # ── Admin: seed results ───────────────────────────────────────────────────────
