@@ -1971,6 +1971,55 @@ async def performance_summary(days: int = Query(5, ge=1, le=30)):
     }
 
 
+@app.get("/api/performance/by-venue")
+async def performance_by_venue(days: int = Query(30, ge=1, le=90)):
+    """Per-venue top-pick win rate for the last N days."""
+    cutoff = (date.today() - timedelta(days=days)).isoformat()
+    async with get_session() as session:
+        hr_result = await session.execute(
+            select(HistoricalResultRow).where(HistoricalResultRow.race_id >= cutoff)
+        )
+        hr_rows = hr_result.scalars().all()
+        if not hr_rows:
+            return {"days": days, "venues": []}
+        race_ids = list({r.race_id for r in hr_rows})
+        pred_result = await session.execute(
+            select(RunnerPredictionRow)
+            .where(RunnerPredictionRow.race_id.in_(race_ids))
+            .where(RunnerPredictionRow.model_rank == 1)
+        )
+        top_picks = {p.race_id: p for p in pred_result.scalars().all()}
+
+    result_by_key = {(r.race_id, r.horse_name): r for r in hr_rows}
+    by_venue: dict[str, dict] = {}
+    for race_id, pick in top_picks.items():
+        _, venue, _ = _parse_race_id(race_id)
+        result = result_by_key.get((race_id, pick.horse_name))
+        if not result:
+            continue
+        if venue not in by_venue:
+            by_venue[venue] = {"races": 0, "wins": 0, "placed": 0}
+        by_venue[venue]["races"] += 1
+        if result.winner:
+            by_venue[venue]["wins"] += 1
+        if result.position and result.position <= 3:
+            by_venue[venue]["placed"] += 1
+
+    venues = sorted([
+        {
+            "venue": v,
+            "races": d["races"],
+            "wins": d["wins"],
+            "placed": d["placed"],
+            "win_rate": round(d["wins"] / d["races"] * 100, 1),
+            "place_rate": round(d["placed"] / d["races"] * 100, 1),
+        }
+        for v, d in by_venue.items() if d["races"] >= 2
+    ], key=lambda x: x["win_rate"], reverse=True)
+
+    return {"days": days, "venues": venues}
+
+
 @app.get("/api/performance/premium")
 async def premium_performance(days: int = Query(30, ge=1, le=365), x_cron_secret: Optional[str] = Header(None)):
     """
