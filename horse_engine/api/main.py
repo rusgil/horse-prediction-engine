@@ -544,6 +544,7 @@ async def get_edge_picks():
                 "hot_pick": hot,
                 "overlay": runner_row.overlay,
                 "value_rating": runner_row.value_rating,
+                "place_probability": round(runner_row.place_probability * 100, 1) if runner_row.place_probability else None,
             })
 
     return {

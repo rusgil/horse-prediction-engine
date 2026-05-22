@@ -1505,8 +1505,14 @@
             <div class="dual-stat-row">
               <div class="dual-stat">
                 <span class="dual-stat-num">${conf}%</span>
-                <span class="dual-stat-label">how likely this horse wins today</span>
+                <span class="dual-stat-label">win prediction</span>
               </div>
+              ${pick.place_probability != null ? `
+              <div class="dual-stat-sep"></div>
+              <div class="dual-stat">
+                <span class="dual-stat-num" style="color:#60a5fa">${pick.place_probability}%</span>
+                <span class="dual-stat-label">place prediction</span>
+              </div>` : ''}
               <div class="dual-stat-sep"></div>
               <div class="dual-stat">
                 <span class="dual-stat-num ${pick.hot_pick ? 'hot' : ''}">${pick.calibrated_win_rate}%</span>
