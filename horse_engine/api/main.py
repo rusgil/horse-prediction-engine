@@ -810,6 +810,11 @@ async def edge_page():
 
 # ── Health ────────────────────────────────────────────────────────────────────
 
+@app.get("/api/check")
+async def check():
+    return {"ok": True}
+
+
 @app.get("/api/health")
 async def health():
     return {"status": "ok", "time": datetime.utcnow().isoformat()}

@@ -41,7 +41,14 @@ _HEADERS_GQL = {
         "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
         "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
     ),
-    "Accept": "application/json",
+    "Accept": "application/json, */*",
+    "Accept-Language": "en-AU,en;q=0.9",
+    "sec-ch-ua": '"Chromium";v="124", "Google Chrome";v="124", "Not-A.Brand";v="99"',
+    "sec-ch-ua-mobile": "?0",
+    "sec-ch-ua-platform": '"macOS"',
+    "sec-fetch-dest": "empty",
+    "sec-fetch-mode": "cors",
+    "sec-fetch-site": "same-site",
 }
 
 _HEADERS_HTML = {
@@ -175,18 +182,34 @@ class PuntersClient:
 
     # ── Internal helpers ────────────────────────────────────────────────
 
-    @retry(stop=stop_after_attempt(2), wait=wait_exponential(multiplier=1, min=2, max=5))
+    async def _ensure_gql_cookies(self) -> None:
+        """Establish a browser-like session cookie before hitting GraphQL."""
+        if not self._cookie_jar:
+            async with httpx.AsyncClient(headers=_HEADERS_HTML, timeout=20.0) as client:
+                try:
+                    r = await client.get(_PUNTERS_HOME, follow_redirects=True)
+                    self._cookie_jar = dict(r.cookies)
+                except Exception as e:
+                    log.debug("Cookie priming failed: %s", e)
+
+    @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=3, max=10))
     async def _gql(self, query: str) -> dict:
-        async with httpx.AsyncClient(headers=_HEADERS_GQL, timeout=15.0) as client:
+        await self._ensure_gql_cookies()
+        async with httpx.AsyncClient(
+            headers=_HEADERS_GQL, cookies=self._cookie_jar, timeout=20.0
+        ) as client:
             resp = await client.post(_GRAPHQL, json={"query": query})
+            if resp.status_code == 403:
+                # Cookie may have expired — reset and let tenacity retry
+                self._cookie_jar = {}
+                resp.raise_for_status()
             resp.raise_for_status()
             return resp.json()
 
     async def _ensure_cookies(self, client: httpx.AsyncClient) -> None:
         """Hit homepage to establish session cookies (required for NUXT data)."""
         if not self._cookie_jar:
-            r = await client.get(_PUNTERS_HOME, follow_redirects=True)
-            self._cookie_jar = dict(r.cookies)
+            await self._ensure_gql_cookies()
 
     @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=8))
     async def _get_html(self, url: str) -> str:
