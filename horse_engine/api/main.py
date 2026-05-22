@@ -33,7 +33,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from fastapi import Depends, FastAPI, Header, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import func, select
 
@@ -796,13 +796,15 @@ async def get_track_record():
 
 # ── Frontend ─────────────────────────────────────────────────────────────────
 
+_NO_CACHE = {"Cache-Control": "no-store, no-cache, must-revalidate", "Pragma": "no-cache"}
+
 @app.get("/", include_in_schema=False)
 async def frontend():
-    return FileResponse("frontend/index.html")
+    return FileResponse("frontend/index.html", headers=_NO_CACHE)
 
 @app.get("/edge", include_in_schema=False)
 async def edge_page():
-    return FileResponse("frontend/edge.html")
+    return FileResponse("frontend/edge.html", headers=_NO_CACHE)
 
 
 # ── Health ────────────────────────────────────────────────────────────────────
