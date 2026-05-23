@@ -1514,8 +1514,8 @@
     const weatherChip = _wx ? (() => {
       const parts = [_wx.icon];
       if (_wx.temp_max !== null) parts.push(_wx.temp_max + '°C');
-      if (_wx.wind_kmh) parts.push('💨' + _wx.wind_kmh + 'km/h');
-      if (_wx.rain_mm > 0) parts.push('💧' + _wx.rain_mm + 'mm');
+      if (_wx.wind_kmh) parts.push('💨 ' + _wx.wind_kmh + 'km/h');
+      if (_wx.rain_mm > 0) parts.push('💧 ' + _wx.rain_mm + 'mm');
       return `<span class="pick-footer-sep">·</span><span class="pick-footer-chip">${parts.join(' ')}</span>`;
     })() : '';
     const valueChip = '';
