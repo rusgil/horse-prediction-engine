@@ -1600,7 +1600,7 @@
       const state = escHtml(m.state || '');
       if (!w) return `<div class="venue-wx-card"><div class="venue-wx-name">${name}</div><div class="venue-wx-state">${state}</div></div>`;
       const rainHtml = w.rain_mm > 0 ? `<span class="venue-wx-rain">· 💧${w.rain_mm}mm</span>` : '';
-      const windHtml = w.wind_kmh ? `· 💨${w.wind_kmh}km/h` : '';
+      const windHtml = w.wind_kmh ? `· 💨 ${w.wind_kmh}km/h` : '';
       return `<div class="venue-wx-card">
         <div class="venue-wx-name">${name}</div>
         <div class="venue-wx-state">${state}</div>
