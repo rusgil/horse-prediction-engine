@@ -216,7 +216,7 @@ async def _scheduled_pre_race_enrich():
     Runs every 15 min during racing hours. Waits a random 0-5 min delay
     before hitting Punters to avoid predictable request patterns.
     """
-    delay = random.uniform(0, 300)
+    delay = random.uniform(0, 600)
     log.info("[pre-race] Waiting %.0fs before Punters requests", delay)
     await asyncio.sleep(delay)
     now_utc = datetime.utcnow().replace(tzinfo=timezone.utc)
