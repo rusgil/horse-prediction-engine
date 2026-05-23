@@ -2674,15 +2674,19 @@ async def cron_enrich(
 async def admin_reenrich(
     x_cron_secret: Optional[str] = Header(None),
 ):
-    """Force re-enrich all of today's races, overwriting existing predictions."""
+    """Force re-enrich all of today's races (fire-and-forget)."""
     _check_admin(x_cron_secret)
     today = _today_aest().isoformat()
-    client = get_tab_client()
-    async with get_session() as session:
-        model = await _load_model(session)
-    results = await _enrich_date(today, client, model, force=True)
-    total = sum(1 for m in results if m.get("status") == "ok")
-    return {"date": today, "meetings": total, "detail": results}
+
+    async def _do_reenrich():
+        client = get_tab_client()
+        async with get_session() as session:
+            model = await _load_model(session)
+        await _enrich_date(today, client, model, force=True)
+        log.info("[reenrich] Completed re-enrich for %s", today)
+
+    asyncio.create_task(_do_reenrich())
+    return {"status": "reenrich_started", "date": today}
 
 
 # ── Serialisation helpers ─────────────────────────────────────────────────────
