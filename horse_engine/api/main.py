@@ -1935,6 +1935,116 @@ async def backtest_analysis(x_cron_secret: Optional[str] = Header(None)):
     }
 
 
+@app.get("/api/admin/trifecta-analysis")
+async def trifecta_analysis(x_cron_secret: Optional[str] = Header(None)):
+    """
+    Assess the model's ability to pick trifectas.
+    Uses both retroactive backtest data and live prediction data.
+    """
+    _check_admin(x_cron_secret)
+
+    from collections import defaultdict
+
+    async with get_session() as session:
+        # --- Backtest rows (have model_rank + actual_position) ---
+        bt_result = await session.execute(
+            select(BacktestResultRow)
+            .where(BacktestResultRow.actual_position.isnot(None))
+            .where(BacktestResultRow.model_rank <= 3)
+        )
+        bt_rows = bt_result.scalars().all()
+
+        # --- Live: runner_predictions (ranks 1-3) + historical_results ---
+        hr_result = await session.execute(select(HistoricalResultRow))
+        hr_map = {(r.race_id, r.horse_name): r for r in hr_result.scalars().all()}
+
+        live_result = await session.execute(
+            select(RunnerPredictionRow).where(RunnerPredictionRow.model_rank <= 3)
+        )
+        live_rows = live_result.scalars().all()
+
+    # Build per-race maps: {race_id: {model_rank: actual_position}}
+    def _analyse(race_map: dict[str, dict[int, int]]) -> dict:
+        races_with_full_top3 = 0
+        exacta_hits = 0       # rank1→pos1, rank2→pos2
+        exacta_box_hits = 0   # {rank1, rank2} positions == {1, 2}
+        trifecta_hits = 0     # rank1→1, rank2→2, rank3→3
+        trifecta_box_hits = 0 # positions of rank1+2+3 == {1, 2, 3}
+        rank1_wins = 0
+        rank1_places = 0      # pos <= 3
+        races_with_top1 = 0
+
+        for race_id, ranks in race_map.items():
+            pos1 = ranks.get(1)
+            pos2 = ranks.get(2)
+            pos3 = ranks.get(3)
+
+            if pos1 is not None:
+                races_with_top1 += 1
+                if pos1 == 1:
+                    rank1_wins += 1
+                if pos1 <= 3:
+                    rank1_places += 1
+
+            if pos1 is not None and pos2 is not None:
+                if {pos1, pos2} == {1, 2}:
+                    exacta_box_hits += 1
+                if pos1 == 1 and pos2 == 2:
+                    exacta_hits += 1
+
+            if pos1 is not None and pos2 is not None and pos3 is not None:
+                races_with_full_top3 += 1
+                if {pos1, pos2, pos3} == {1, 2, 3}:
+                    trifecta_box_hits += 1
+                if pos1 == 1 and pos2 == 2 and pos3 == 3:
+                    trifecta_hits += 1
+
+        def pct(n, d):
+            return round(n / d * 100, 1) if d else None
+
+        return {
+            "races_with_top1_result": races_with_top1,
+            "races_with_full_top3_result": races_with_full_top3,
+            "rank1_win_rate_pct": pct(rank1_wins, races_with_top1),
+            "rank1_place_rate_pct": pct(rank1_places, races_with_top1),
+            "exacta_straight_hits": exacta_hits,
+            "exacta_straight_hit_rate_pct": pct(exacta_hits, races_with_full_top3),
+            "exacta_boxed_hits": exacta_box_hits,
+            "exacta_boxed_hit_rate_pct": pct(exacta_box_hits, races_with_full_top3),
+            "trifecta_straight_hits": trifecta_hits,
+            "trifecta_straight_hit_rate_pct": pct(trifecta_hits, races_with_full_top3),
+            "trifecta_boxed_hits": trifecta_box_hits,
+            "trifecta_boxed_hit_rate_pct": pct(trifecta_box_hits, races_with_full_top3),
+        }
+
+    # Build backtest race map
+    bt_race_map: dict[str, dict[int, int]] = defaultdict(dict)
+    for r in bt_rows:
+        if r.actual_position and r.model_rank:
+            bt_race_map[r.race_id][r.model_rank] = r.actual_position
+
+    # Build live race map
+    live_race_map: dict[str, dict[int, int]] = defaultdict(dict)
+    for r in live_rows:
+        hr = hr_map.get((r.race_id, r.horse_name))
+        if hr and hr.position and r.model_rank:
+            live_race_map[r.race_id][r.model_rank] = hr.position
+
+    # Combined
+    combined_map: dict[str, dict[int, int]] = defaultdict(dict)
+    for race_id, ranks in bt_race_map.items():
+        combined_map[race_id].update(ranks)
+    for race_id, ranks in live_race_map.items():
+        combined_map[race_id].update(ranks)
+
+    return {
+        "note": "Positions sourced from historical_results (live) and backtest_results (retroactive).",
+        "backtest": _analyse(bt_race_map),
+        "live": _analyse(live_race_map),
+        "combined": _analyse(combined_map),
+    }
+
+
 @app.get("/api/performance")
 async def performance_summary(days: int = Query(5, ge=1, le=30)):
     """
