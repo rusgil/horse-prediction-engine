@@ -4,7 +4,7 @@ from __future__ import annotations
 import json
 from datetime import datetime
 
-from sqlalchemy import Column, Float, Integer, String, Text, Boolean, DateTime, select
+from sqlalchemy import Column, Float, Integer, String, Text, Boolean, DateTime, select, text
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
 from sqlalchemy.orm import DeclarativeBase
 
@@ -174,6 +174,10 @@ class VenueCoordinateRow(Base):
 async def init_db() -> None:
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        # Idempotent column migrations for existing tables
+        await conn.execute(text(
+            "ALTER TABLE runner_predictions ADD COLUMN IF NOT EXISTS cancelled BOOLEAN DEFAULT FALSE"
+        ))
 
 
 async def save_race_predictions(session: AsyncSession, race_id: str, predictions: list[dict]) -> None:
