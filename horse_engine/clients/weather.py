@@ -44,19 +44,28 @@ _WMO: dict[int, tuple[str, str]] = {
 }
 
 
+_STATE_FULL = {
+    "NSW": "New South Wales", "VIC": "Victoria", "QLD": "Queensland",
+    "SA": "South Australia", "WA": "Western Australia", "TAS": "Tasmania",
+    "NT": "Northern Territory", "ACT": "Australian Capital Territory",
+}
+
+
 async def _geocode(venue: str, state: str) -> tuple[float, float] | None:
-    query = f"{venue} {state} Australia"
-    try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            r = await client.get(_GEO_URL, params={
-                "name": query, "count": 1, "language": "en", "format": "json",
-            })
-            r.raise_for_status()
-            results = r.json().get("results", [])
-            if results:
-                return results[0]["latitude"], results[0]["longitude"]
-    except Exception as e:
-        log.warning("Geocoding failed for %s %s: %s", venue, state, e)
+    state_full = _STATE_FULL.get(state.upper(), state)
+    for query in [venue, f"{venue} {state_full}"]:
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                r = await client.get(_GEO_URL, params={
+                    "name": query, "count": 10, "language": "en", "format": "json",
+                })
+                r.raise_for_status()
+                results = r.json().get("results", [])
+                au = [x for x in results if x.get("country_code") == "AU"]
+                if au:
+                    return au[0]["latitude"], au[0]["longitude"]
+        except Exception as e:
+            log.warning("Geocoding failed for %s: %s", query, e)
     return None
 
 

@@ -1569,14 +1569,14 @@
           ${trackChip}${distChip}${stateChip}${weatherChip}${valueChip}
           ${isPast && result && !result.scratched ? (() => {
             const pos = result.position;
-            const posLbl = pos === 2 ? '2nd' : pos === 3 ? '3rd' : pos ? `${pos}th` : 'unplaced';
-            const placed = pos && pos <= 3 && !result.winner;
+            const posLbl = pos === 2 ? '2nd' : pos === 3 ? '3rd' : pos ? `${pos}th` : '';
+            const placed = (result.placed || (pos && pos <= 3)) && !result.winner;
             const winnerChip = (!result.winner && result.winner_name)
               ? `<span class="pick-footer-chip" style="color:var(--text-dim)">Winner: <strong style="color:var(--text-secondary)">${escHtml(result.winner_name)}</strong></span>`
               : '';
             if (result.winner) return `<span class="pick-verdict correct">✓ Won</span>`;
-            if (placed) return `<span class="pick-verdict" style="background:rgba(245,158,11,0.10);color:#f59e0b;border-color:rgba(245,158,11,0.25);">~ Placed ${posLbl}</span>${winnerChip}`;
-            return `<span class="pick-verdict wrong">✗ ${posLbl}</span>${winnerChip}`;
+            if (placed) return `<span class="pick-verdict" style="background:rgba(245,158,11,0.10);color:#f59e0b;border-color:rgba(245,158,11,0.25);">~ Placed${posLbl ? ' ' + posLbl : ''}</span>${winnerChip}`;
+            return `<span class="pick-verdict wrong">✗ Did not place${posLbl ? ' (' + posLbl + ')' : ''}</span>${winnerChip}`;
           })() : ''}
           ${!isPast ? (() => {
             let level, color;
