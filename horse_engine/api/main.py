@@ -213,9 +213,12 @@ async def _scheduled_enrich():
 async def _scheduled_pre_race_enrich():
     """
     Re-enrich any race starting within the next 2 hours.
-    Runs every 15 min during racing hours to pick up scratchings,
-    track condition changes, and model updates close to jump time.
+    Runs every 15 min during racing hours. Waits a random 0-5 min delay
+    before hitting Punters to avoid predictable request patterns.
     """
+    delay = random.uniform(0, 300)
+    log.info("[pre-race] Waiting %.0fs before Punters requests", delay)
+    await asyncio.sleep(delay)
     now_utc = datetime.utcnow().replace(tzinfo=timezone.utc)
     horizon = now_utc + timedelta(hours=2)
     today = _today_aest().isoformat()
