@@ -213,25 +213,57 @@ async def _scheduled_enrich():
 async def _scheduled_pre_race_enrich():
     """
     Re-enrich any race starting within the next 2 hours.
-    Runs every 15 min during racing hours. Waits a random 0-5 min delay
+    Runs every 15 min during racing hours. Waits a random 0-10 min delay
     before hitting Punters to avoid predictable request patterns.
+    Also detects meetings removed from Punters and marks those races cancelled.
     """
+    from sqlalchemy import update as sa_update
     delay = random.uniform(0, 600)
     log.info("[pre-race] Waiting %.0fs before Punters requests", delay)
     await asyncio.sleep(delay)
     now_utc = datetime.utcnow().replace(tzinfo=timezone.utc)
     horizon = now_utc + timedelta(hours=2)
     today = _today_aest().isoformat()
+    date_sfx = f"-{today.replace('-', '')}"
     log.info("[pre-race] Scanning for races within 2 hours")
     try:
         client = get_tab_client()
         async with get_session() as session:
             model = await _load_model(session)
         meetings = await client.get_meetings(today)
+
+        # Build set of active venue codes from Punters
+        active_venue_codes: set[str] = set()
+        for m in meetings:
+            slug = m.get("slug", "")
+            vc = slug[:-len(date_sfx)] if slug.endswith(date_sfx) else slug.split("-")[0] if slug else ""
+            if vc:
+                active_venue_codes.add(vc)
+
+        # Detect venues in our DB that Punters has dropped — mark their races cancelled
+        async with get_session() as session:
+            db_rows = (await session.execute(
+                select(RunnerPredictionRow.race_id)
+                .where(RunnerPredictionRow.race_id.like(f"{today}_%"))
+                .where(RunnerPredictionRow.model_rank == 1)
+                .distinct()
+            )).scalars().all()
+
+        for race_id in db_rows:
+            _, venue_code, _ = _parse_race_id(race_id)
+            if venue_code not in active_venue_codes:
+                async with get_session() as session:
+                    await session.execute(
+                        sa_update(RunnerPredictionRow)
+                        .where(RunnerPredictionRow.race_id == race_id)
+                        .values(cancelled=True)
+                    )
+                    await session.commit()
+                log.info("[pre-race] Marked %s CANCELLED (venue dropped from Punters)", race_id)
+
         enriched_count = 0
         for m in meetings:
             slug = m.get("slug", "")
-            date_sfx = f"-{today.replace('-', '')}"
             venue_code = slug[:-len(date_sfx)] if slug.endswith(date_sfx) else slug.split("-")[0] if slug else m.get("name", "").lower().replace(" ", "-")
             venue_name = m.get("venue", venue_code)
             state = m.get("state", "")
@@ -545,6 +577,7 @@ async def get_edge_picks():
                 "overlay": runner_row.overlay,
                 "value_rating": runner_row.value_rating,
                 "place_probability": round(runner_row.place_probability * 100, 1) if runner_row.place_probability else None,
+                "cancelled": bool(runner_row.cancelled),
             })
 
     return {

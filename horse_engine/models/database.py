@@ -76,6 +76,7 @@ class RunnerPredictionRow(Base):
     key_flags = Column(Text)             # JSON list of flag strings
     enriched_json = Column(Text)         # full EnrichedRunner JSON
     enriched_at = Column(DateTime, default=datetime.utcnow)
+    cancelled = Column(Boolean, default=False, nullable=True)
 
 
 class ModelWeightRow(Base):

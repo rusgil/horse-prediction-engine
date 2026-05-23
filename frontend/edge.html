@@ -1436,7 +1436,9 @@
 
     // Result badge — shown for past races alongside tier badge
     let resultBadge = '';
-    if (isPast && result) {
+    if (pick.cancelled) {
+      resultBadge = `<span class="pick-badge-standard" style="background:var(--bg-elevated);color:var(--text-dim);border-color:var(--border);">🚫 Cancelled</span>`;
+    } else if (isPast && result) {
       if (result.scratched) {
         resultBadge = `<span class="pick-badge-standard" style="background:var(--bg-elevated);color:var(--text-dim);border-color:var(--border);">Scratched</span>`;
       } else if (result.winner) {
@@ -1518,7 +1520,7 @@
     })() : '';
     const valueChip = '';
 
-    const cardStyle = isPast && result && !result.winner && !result.scratched ? 'opacity:0.75;' : '';
+    const cardStyle = pick.cancelled ? 'opacity:0.45;filter:grayscale(0.6);' : (isPast && result && !result.winner && !result.scratched ? 'opacity:0.75;' : '');
     const pastAttr  = isPast && result ? 'data-past-result="true"' : '';
 
     return `
