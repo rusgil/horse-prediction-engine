@@ -2709,17 +2709,18 @@
       return '';
     })();
 
+    const timeStr = fmtTime(pick.scheduled_time);
     return `
       <div class="exotic-card ${tierClass}">
         <div class="exotic-card-header ${tierClass}">
           <span class="exotic-tier-badge ${tierClass}">${tierLabel}</span>
-          <div class="exotic-race-ref">
-            <span class="venue">${escHtml(pick.venue)}</span>
+          <div class="pick-race-ref" style="margin-left:0">
+            <span class="venue-name">${escHtml(pick.venue)}</span>
             <span class="sep">·</span>
             <span>R${pick.race_number}</span>
-            ${pick.race_name ? `<span class="sep">·</span><span class="rname">${escHtml(pick.race_name)}</span>` : ''}
           </div>
-          <span class="exotic-countdown" id="${countdownId}" data-jump="${pick.scheduled_time || ''}">—</span>
+          ${timeStr ? `<span class="pick-time">${escHtml(timeStr)}</span>` : ''}
+          ${pick.scheduled_time ? `<span class="pick-countdown" id="${countdownId}" data-jump="${escHtml(pick.scheduled_time)}"></span>` : ''}
         </div>
         <div class="exotic-runners">${runnersHtml}</div>
         <div class="exotic-card-footer">
@@ -2801,8 +2802,8 @@
     }
     el.innerHTML = html;
 
-    // Wire up live countdown timers
-    document.querySelectorAll('#panelTrifectas .exotic-countdown').forEach(startExoticCountdown);
+    // Trigger initial tick so countdowns show immediately
+    tickCountdowns();
   }
 
   async function loadYesterday() {
