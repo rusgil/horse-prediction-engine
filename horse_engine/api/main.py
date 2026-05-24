@@ -901,23 +901,28 @@ async def get_edge_yesterday(for_date: Optional[str] = Query(None, alias="date")
 
 def _trifecta_tier(combined_prob: float, field_size: int) -> tuple[str, float]:
     """
-    Return (tier, multiplier) where multiplier = how many times better than a
-    random boxed trifecta selection in this field size.
-    Random boxed trifecta probability = 6 / (N * (N-1) * (N-2)).
-    Tiers: hot ≥ 12×, high ≥ 6×, strong ≥ 3×, below = don't show.
+    Return (tier, multiplier).
+    Requires minimum 7 runners — below that the pick is trivially easy and
+    not meaningful as a trifecta bet.  For 7+ runner fields, tier on absolute
+    combined place probability (product of 3 individual place probs):
+      Hot ≥ 20%, High Confidence ≥ 12%, Strong ≥ 6%.
+    Multiplier = how many times better than random, for reference.
     """
+    if field_size < 7:
+        return "below", 0.0
     n = max(field_size, 3)
     random_prob = 6.0 / (n * (n - 1) * (n - 2))
-    multiplier = combined_prob / random_prob if random_prob > 0 else 0
-    if multiplier >= 12:
+    multiplier = round(combined_prob / random_prob, 1) if random_prob > 0 else 0.0
+    pct = combined_prob * 100
+    if pct >= 20:
         tier = "hot"
-    elif multiplier >= 6:
+    elif pct >= 12:
         tier = "high"
-    elif multiplier >= 3:
+    elif pct >= 6:
         tier = "strong"
     else:
         tier = "below"
-    return tier, round(multiplier, 1)
+    return tier, multiplier
 
 
 @app.get("/api/edge/trifectas")
@@ -2497,10 +2502,10 @@ async def backtest_trifecta(x_cron_secret: Optional[str] = Header(None)):
         race_map.setdefault(row.race_id, []).append(row)
 
     tiers = {
-        "hot":    {"label": "Hot (≥12× random)",           "tri": {"races": 0, "hits": 0}, "ff": {"races": 0, "hits": 0}},
-        "high":   {"label": "High Confidence (6–12× random)","tri": {"races": 0, "hits": 0}, "ff": {"races": 0, "hits": 0}},
-        "strong": {"label": "Strong (3–6× random)",         "tri": {"races": 0, "hits": 0}, "ff": {"races": 0, "hits": 0}},
-        "below":  {"label": "Below threshold (<3× random)", "tri": {"races": 0, "hits": 0}, "ff": {"races": 0, "hits": 0}},
+        "hot":    {"label": "🔥 Hot (≥20% combined, 7+ runners)",            "tri": {"races": 0, "hits": 0}, "ff": {"races": 0, "hits": 0}},
+        "high":   {"label": "⚡ High Confidence (12–20% combined, 7+ runners)", "tri": {"races": 0, "hits": 0}, "ff": {"races": 0, "hits": 0}},
+        "strong": {"label": "📈 Strong (6–12% combined, 7+ runners)",           "tri": {"races": 0, "hits": 0}, "ff": {"races": 0, "hits": 0}},
+        "below":  {"label": "Below threshold / small field",                    "tri": {"races": 0, "hits": 0}, "ff": {"races": 0, "hits": 0}},
     }
     totals = {"tri": {"races": 0, "hits": 0}, "ff": {"races": 0, "hits": 0}}
     field_size_dist: dict[int, int] = {}
