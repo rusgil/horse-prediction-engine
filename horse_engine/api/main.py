@@ -948,6 +948,14 @@ async def get_edge_trifectas():
                 select(RacePredictionRow).where(RacePredictionRow.race_id.in_(race_ids))
             )
             race_lookup = {r.race_id: r for r in race_result.scalars().all()}
+            # Count actual non-cancelled runners per race for field size
+            count_result = await session.execute(
+                select(RunnerPredictionRow.race_id, func.count(RunnerPredictionRow.id))
+                .where(RunnerPredictionRow.race_id.in_(race_ids))
+                .where(RunnerPredictionRow.cancelled.is_(False) | RunnerPredictionRow.cancelled.is_(None))
+                .group_by(RunnerPredictionRow.race_id)
+            )
+            field_size_lookup = {row[0]: row[1] for row in count_result.all()}
 
         # Group by race, sort by place_model_rank
         race_map: dict[str, list] = {}
@@ -968,7 +976,8 @@ async def get_edge_trifectas():
             combined_pct = round(combined * 100, 1)
 
             race = race_lookup.get(race_id)
-            field_size = race.field_size if race and race.field_size else len(runners)
+            field_size = (field_size_lookup.get(race_id)
+                          or (race.field_size if race and race.field_size else 10))
             tier, multiplier = _trifecta_tier(combined, field_size)
             if tier == "below":
                 continue
@@ -2503,7 +2512,7 @@ async def backtest_trifecta(x_cron_secret: Optional[str] = Header(None)):
             continue
 
         valid.sort(key=lambda x: x[1], reverse=True)
-        field_size = len(valid)
+        field_size = len(rows)   # all runners in race, not just those with valid features
         field_size_dist[field_size] = field_size_dist.get(field_size, 0) + 1
 
         top3 = valid[:3]
