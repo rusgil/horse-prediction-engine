@@ -2209,7 +2209,8 @@ async def backtest_exotic(x_cron_secret: Optional[str] = Header(None)):
             continue
 
         m = ExoticModel()
-        stats = m.train_exotic(race_groups_train)
+        loop = asyncio.get_event_loop()
+        stats = await loop.run_in_executor(None, m.train_exotic, race_groups_train)
         holdout_stats = _box_hit_rate_by_tier(m, holdout_groups)
 
         result = {
