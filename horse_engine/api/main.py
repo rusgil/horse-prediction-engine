@@ -2390,6 +2390,80 @@ async def backtest_exotic_history(
     return {"history": history, "drift": drift, "drift_reason": "Below recent avg" if drift else None}
 
 
+@app.get("/api/admin/exotic-daily-performance")
+async def exotic_daily_performance(
+    days: int = Query(14, ge=1, le=90),
+    x_cron_secret: Optional[str] = Header(None),
+):
+    _check_admin(x_cron_secret)
+    cutoff = (date.today() - timedelta(days=days)).isoformat()
+
+    async with get_session() as session:
+        # All historical results in the window with a position
+        hr_result = await session.execute(
+            select(HistoricalResultRow)
+            .where(HistoricalResultRow.race_id >= cutoff)
+            .where(HistoricalResultRow.position.isnot(None))
+        )
+        all_hr = hr_result.scalars().all()
+
+        # All exotic predictions in the window
+        pred_result = await session.execute(
+            select(RunnerPredictionRow)
+            .where(RunnerPredictionRow.race_id >= cutoff)
+            .where(
+                (RunnerPredictionRow.exotic_model_rank >= 1) |
+                (RunnerPredictionRow.place_model_rank >= 1)
+            )
+        )
+        all_pred = pred_result.scalars().all()
+
+    # Build: race_id → predicted top 3 horse names
+    pred_top3: dict[str, list[str]] = {}
+    for p in all_pred:
+        rank = p.exotic_model_rank if p.exotic_model_rank else p.place_model_rank
+        if rank and rank <= 3:
+            pred_top3.setdefault(p.race_id, []).append((rank, p.horse_name))
+    predicted: dict[str, set[str]] = {
+        rid: {name for _, name in sorted(runners)[:3]}
+        for rid, runners in pred_top3.items()
+    }
+
+    # Build: race_id → actual top 3 horse names
+    actual_top3: dict[str, set[str]] = {}
+    for r in all_hr:
+        if r.position and 1 <= r.position <= 3:
+            actual_top3.setdefault(r.race_id, set()).add(r.horse_name)
+
+    # Group by date
+    from collections import defaultdict
+    by_date: dict[str, dict] = defaultdict(lambda: {"eligible": 0, "hits": 0})
+    for race_id in predicted:
+        if race_id not in actual_top3:
+            continue
+        actual = actual_top3[race_id]
+        pred = predicted[race_id]
+        if len(actual) < 3 or len(pred) < 3:
+            continue
+        race_date_str = race_id[:10]  # "YYYY-MM-DD"
+        by_date[race_date_str]["eligible"] += 1
+        if actual == pred:
+            by_date[race_date_str]["hits"] += 1
+
+    summary = []
+    for d in sorted(by_date.keys()):
+        row = by_date[d]
+        hit_rate = round(row["hits"] / row["eligible"] * 100, 1) if row["eligible"] else 0
+        summary.append({
+            "date": d,
+            "eligible_races": row["eligible"],
+            "box_hits": row["hits"],
+            "hit_rate_pct": hit_rate,
+        })
+
+    return {"summary": summary, "days": days}
+
+
 # ── Admin: seed results ───────────────────────────────────────────────────────
 
 @app.post("/api/admin/results/{race_date}")
