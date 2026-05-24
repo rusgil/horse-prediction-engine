@@ -168,14 +168,14 @@ class PlaceModel(HorseModel):
 
 class ExoticModel(HorseModel):
     """
-    Logistic regression trained specifically for trifecta/first-four box coverage.
+    Logistic regression trained for exotic bet coverage (trifecta, first four, quinella, exacta).
 
     Differs from PlaceModel in two ways:
       1. Default weights tuned for exotic betting (consistency over peak-speed signals)
-      2. Training uses a trifecta-aware grouped loss: standard BCE per runner PLUS
-         an extra gradient push when the model's top-3 box misses the actual top-3.
-         This forces the model to learn to cover the box, not just place runners individually.
-    Only trains on field_size >= 7 races (trifecta-eligible fields).
+      2. Training uses a race-grouped exotic loss: standard BCE per runner PLUS separate
+         box alignment gradients for trifecta (top 3) and first four (top 4). Both push
+         missed finishers up and wrongly-included runners down.
+    Only trains on field_size >= 7 races.
     """
 
     def __init__(self, weights: list[float] | None = None, bias: float = 0.0):
@@ -194,18 +194,22 @@ class ExoticModel(HorseModel):
 
     def train_exotic(
         self,
-        race_groups: list[list[tuple[list[float], int]]],
+        race_groups: list[list[tuple]],
         learning_rate: float = 0.01,
         epochs: int = 500,
         l2: float = 0.001,
-        exotic_lambda: float = 0.4,
+        tri_lambda: float = 0.4,
+        ff_lambda: float = 0.3,
     ) -> dict:
         """
-        Race-grouped trifecta-aware training.
+        Race-grouped exotic training covering trifecta (top 3) and first four (top 4).
 
-        race_groups: list of races; each race is a list of (feature_vector, label)
-                     where label=1 if horse finished in top 3.
-        exotic_lambda: weight of the trifecta box gradient vs standard BCE.
+        race_groups: list of races; each race is a list of tuples:
+            (feature_vector, label, position)
+            - label = 1 if horse finished in top 3 (for BCE)
+            - position = finishing position int, or None if unavailable
+        tri_lambda: gradient weight for trifecta box alignment.
+        ff_lambda:  gradient weight for first-four box alignment.
         """
         if not race_groups:
             return {"error": "no training data"}
@@ -213,9 +217,25 @@ class ExoticModel(HorseModel):
         n_total = sum(len(race) for race in race_groups)
         n_races = len(race_groups)
         log.info(
-            "[exotic] Training on %d races / %d runners, %d epochs, lambda=%.2f",
-            n_races, n_total, epochs, exotic_lambda,
+            "[exotic] Training on %d races / %d runners, %d epochs, tri_lambda=%.2f ff_lambda=%.2f",
+            n_races, n_total, epochs, tri_lambda, ff_lambda,
         )
+
+        def _box_grad(probs, fvs, actual_set, predicted_set, lam, grad_w, grad_b):
+            if actual_set and predicted_set != actual_set:
+                missed = actual_set - predicted_set
+                wrong  = predicted_set - actual_set
+                for i in missed:
+                    extra = -lam * (1.0 - probs[i])
+                    for k in range(NUM_FEATURES):
+                        grad_w[k] += extra * fvs[i][k]
+                    grad_b += extra
+                for i in wrong:
+                    extra = lam * probs[i]
+                    for k in range(NUM_FEATURES):
+                        grad_w[k] += extra * fvs[i][k]
+                    grad_b += extra
+            return grad_b
 
         for epoch in range(epochs):
             total_loss = 0.0
@@ -223,12 +243,13 @@ class ExoticModel(HorseModel):
             grad_b = 0.0
 
             for race in race_groups:
-                fvs = [fv for fv, _ in race]
-                labels = [lbl for _, lbl in race]
+                fvs    = [t[0] for t in race]
+                labels = [t[1] for t in race]
+                positions = [t[2] if len(t) > 2 else None for t in race]
                 scores = [self.raw_score(fv) for fv in fvs]
-                probs = [sigmoid(s) for s in scores]
+                probs  = [sigmoid(s) for s in scores]
 
-                # Standard BCE gradient per runner
+                # Standard BCE gradient per runner (uses top-3 label)
                 for j in range(len(race)):
                     err = probs[j] - labels[j]
                     total_loss += -(
@@ -239,28 +260,28 @@ class ExoticModel(HorseModel):
                         grad_w[k] += err * fvs[j][k]
                     grad_b += err
 
-                # Trifecta box alignment gradient (only for fields >= 7)
-                if len(race) >= 7:
-                    predicted_top3 = set(
-                        sorted(range(len(race)), key=lambda i: probs[i], reverse=True)[:3]
-                    )
+                if len(race) < 7:
+                    continue
+
+                ranked = sorted(range(len(race)), key=lambda i: probs[i], reverse=True)
+
+                # Trifecta (top-3) box alignment gradient
+                has_positions = any(p is not None for p in positions)
+                if has_positions:
+                    actual_top3 = {i for i, p in enumerate(positions) if p is not None and p in (1, 2, 3)}
+                else:
                     actual_top3 = {i for i, lbl in enumerate(labels) if lbl == 1}
 
-                    if len(actual_top3) == 3 and predicted_top3 != actual_top3:
-                        missed = actual_top3 - predicted_top3   # should be in box but aren't
-                        wrong  = predicted_top3 - actual_top3   # predicted but shouldn't be
+                if len(actual_top3) == 3:
+                    predicted_top3 = set(ranked[:3])
+                    grad_b = _box_grad(probs, fvs, actual_top3, predicted_top3, tri_lambda, grad_w, grad_b)
 
-                        for i in missed:
-                            extra = -exotic_lambda * (1.0 - probs[i])
-                            for k in range(NUM_FEATURES):
-                                grad_w[k] += extra * fvs[i][k]
-                            grad_b += extra
-
-                        for i in wrong:
-                            extra = exotic_lambda * probs[i]
-                            for k in range(NUM_FEATURES):
-                                grad_w[k] += extra * fvs[i][k]
-                            grad_b += extra
+                # First-four box alignment gradient
+                if has_positions:
+                    actual_top4 = {i for i, p in enumerate(positions) if p is not None and p in (1, 2, 3, 4)}
+                    if len(actual_top4) == 4 and len(race) >= 8:
+                        predicted_top4 = set(ranked[:4])
+                        grad_b = _box_grad(probs, fvs, actual_top4, predicted_top4, ff_lambda, grad_w, grad_b)
 
             for j in range(NUM_FEATURES):
                 self.weights[j] -= learning_rate * (grad_w[j] / n_total + l2 * self.weights[j])
@@ -269,27 +290,48 @@ class ExoticModel(HorseModel):
             if epoch % 100 == 0:
                 log.debug("[exotic] Epoch %d loss=%.4f", epoch, total_loss / n_total)
 
-        # Measure trifecta box hit rate on training data
-        box_hits = 0
+        # Measure box hit rates on training data
+        tri_hits = ff_hits = tri_eligible = ff_eligible = 0
         for race in race_groups:
             if len(race) < 7:
                 continue
-            fvs = [fv for fv, _ in race]
-            labels = [lbl for _, lbl in race]
-            scores = [self.raw_score(fv) for fv in fvs]
-            predicted_top3 = set(sorted(range(len(race)), key=lambda i: scores[i], reverse=True)[:3])
-            actual_top3 = {i for i, lbl in enumerate(labels) if lbl == 1}
-            if len(actual_top3) == 3 and predicted_top3 == actual_top3:
-                box_hits += 1
+            fvs       = [t[0] for t in race]
+            labels    = [t[1] for t in race]
+            positions = [t[2] if len(t) > 2 else None for t in race]
+            scores    = [self.raw_score(fv) for fv in fvs]
+            ranked    = sorted(range(len(race)), key=lambda i: scores[i], reverse=True)
 
-        eligible = sum(1 for race in race_groups if len(race) >= 7)
-        box_rate = box_hits / eligible if eligible else 0.0
-        log.info("[exotic] Training complete. Box hit rate: %.1f%% (%d/%d)", box_rate * 100, box_hits, eligible)
+            has_pos = any(p is not None for p in positions)
+            actual_top3 = (
+                {i for i, p in enumerate(positions) if p is not None and p in (1, 2, 3)}
+                if has_pos else {i for i, lbl in enumerate(labels) if lbl == 1}
+            )
+            if len(actual_top3) == 3:
+                tri_eligible += 1
+                if set(ranked[:3]) == actual_top3:
+                    tri_hits += 1
+
+            if has_pos and len(race) >= 8:
+                actual_top4 = {i for i, p in enumerate(positions) if p is not None and p in (1, 2, 3, 4)}
+                if len(actual_top4) == 4:
+                    ff_eligible += 1
+                    if set(ranked[:4]) == actual_top4:
+                        ff_hits += 1
+
+        tri_rate = tri_hits / tri_eligible if tri_eligible else 0.0
+        ff_rate  = ff_hits  / ff_eligible  if ff_eligible  else 0.0
+        log.info(
+            "[exotic] Training complete. Tri box: %.1f%% (%d/%d)  FF box: %.1f%% (%d/%d)",
+            tri_rate * 100, tri_hits, tri_eligible,
+            ff_rate  * 100, ff_hits,  ff_eligible,
+        )
 
         return {
             "races": n_races,
             "runners": n_total,
             "epochs": epochs,
-            "box_hit_rate": round(box_rate, 4),
+            "box_hit_rate": round(tri_rate, 4),       # kept for backward compat
+            "tri_box_hit_rate": round(tri_rate, 4),
+            "ff_box_hit_rate": round(ff_rate, 4),
             "weights": dict(zip(FEATURE_NAMES, [round(w, 6) for w in self.weights])),
         }

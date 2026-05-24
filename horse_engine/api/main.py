@@ -403,13 +403,13 @@ async def _scheduled_exotic_retrain():
             try:
                 er = EnrichedRunner(**json.loads(pred.enriched_json))
                 fv = build_feature_vector(er)
-                race_data.setdefault(row.race_id, []).append((fv, 1 if row.placed else 0))
+                race_data.setdefault(row.race_id, []).append((fv, 1 if row.placed else 0, row.position))
             except Exception:
                 continue
 
         race_groups = [
             runners for runners in race_data.values()
-            if len(runners) >= 7 and sum(1 for _, lbl in runners if lbl == 1) == 3
+            if len(runners) >= 7 and sum(1 for _, lbl, _ in runners if lbl == 1) == 3
         ]
 
         if not race_groups:
@@ -2006,7 +2006,7 @@ async def retrain_exotic_model(
         top3_count = sum(1 for _, lbl, _ in runners if lbl == 1)
         if top3_count != 3:
             continue
-        race_groups.append([(fv, lbl) for fv, lbl, _ in runners])
+        race_groups.append([(fv, lbl, pos) for fv, lbl, pos in runners])
 
     if not race_groups:
         raise HTTPException(400, "No eligible trifecta races found for exotic training")
@@ -2183,7 +2183,7 @@ async def backtest_exotic(x_cron_secret: Optional[str] = Header(None)):
                 er = EnrichedRunner(**json.loads(pred.enriched_json))
                 fv = build_feature_vector(er)
                 label = 1 if row.placed else 0
-                race_train_data.setdefault(row.race_id, []).append((fv, label))
+                race_train_data.setdefault(row.race_id, []).append((fv, label, row.position))
             except Exception:
                 continue
 
@@ -2191,7 +2191,7 @@ async def backtest_exotic(x_cron_secret: Optional[str] = Header(None)):
         for race_id, runners in race_train_data.items():
             if len(runners) < 7:
                 continue
-            top3_count = sum(1 for _, lbl in runners if lbl == 1)
+            top3_count = sum(1 for _, lbl, _ in runners if lbl == 1)
             if top3_count != 3:
                 continue
             race_groups_train.append(runners)
