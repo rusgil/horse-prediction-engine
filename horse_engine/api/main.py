@@ -1150,6 +1150,22 @@ async def get_edge_trifectas():
         for row in exotic_rows:
             race_map.setdefault(row.race_id, []).append(row)
 
+        # Fetch live race times for any race missing scheduled_time in DB
+        live_race_times: dict[str, str] = {}
+        if any(not r.scheduled_time for r in exotic_rows):
+            try:
+                tri_client = get_tab_client()
+                unique_venues = {_parse_race_id(rid)[1] for rid in race_map}
+                slug_map = {v: _meeting_slug(v, target_date) for v in unique_venues}
+                time_results = await asyncio.gather(*[
+                    _fetch_race_times(tri_client, slug) for slug in slug_map.values()
+                ])
+                for venue, times in zip(slug_map.keys(), time_results):
+                    for rn, st in times.items():
+                        live_race_times[f"{target_date}_{venue}_R{rn}"] = st
+            except Exception:
+                pass
+
         for race_id, runners in race_map.items():
             runners.sort(key=rank_key)
             if len(runners) < 3:
@@ -1203,7 +1219,7 @@ async def get_edge_trifectas():
                 "race_name": race.race_name if race else None,
                 "distance": race.distance if race else None,
                 "track_condition": race.track_condition if race else None,
-                "scheduled_time": runners[0].scheduled_time if runners else None,
+                "scheduled_time": (runners[0].scheduled_time if runners else None) or live_race_times.get(race_id),
                 "combined_pct": combined_pct,
                 "multiplier": multiplier,
                 "field_size": field_size,
