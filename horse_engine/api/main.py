@@ -899,6 +899,27 @@ async def get_edge_yesterday(for_date: Optional[str] = Query(None, alias="date")
     }
 
 
+def _trifecta_tier(combined_prob: float, field_size: int) -> tuple[str, float]:
+    """
+    Return (tier, multiplier) where multiplier = how many times better than a
+    random boxed trifecta selection in this field size.
+    Random boxed trifecta probability = 6 / (N * (N-1) * (N-2)).
+    Tiers: hot ≥ 12×, high ≥ 6×, strong ≥ 3×, below = don't show.
+    """
+    n = max(field_size, 3)
+    random_prob = 6.0 / (n * (n - 1) * (n - 2))
+    multiplier = combined_prob / random_prob if random_prob > 0 else 0
+    if multiplier >= 12:
+        tier = "hot"
+    elif multiplier >= 6:
+        tier = "high"
+    elif multiplier >= 3:
+        tier = "strong"
+    else:
+        tier = "below"
+    return tier, round(multiplier, 1)
+
+
 @app.get("/api/edge/trifectas")
 async def get_edge_trifectas():
     """Standalone trifecta picks ranked by combined place probability, tiered like win picks."""
@@ -945,7 +966,11 @@ async def get_edge_trifectas():
 
             combined = probs[0] * probs[1] * probs[2]
             combined_pct = round(combined * 100, 1)
-            if combined_pct < 9.0:
+
+            race = race_lookup.get(race_id)
+            field_size = race.field_size if race and race.field_size else len(runners)
+            tier, multiplier = _trifecta_tier(combined, field_size)
+            if tier == "below":
                 continue
 
             ff = runners[:4] if len(runners) >= 4 else None
@@ -954,20 +979,11 @@ async def get_edge_trifectas():
                 ff_probs[0] * ff_probs[1] * ff_probs[2] * ff_probs[3] * 100, 1
             ) if len(ff_probs) == 4 and all(ff_probs) else None
 
-            # Tier thresholds (combined place probability)
-            if combined_pct >= 20:
-                tier = "hot"
-            elif combined_pct >= 14:
-                tier = "high"
-            else:
-                tier = "strong"
-
-            # Premium: high confidence + model beats market on at least one leg
-            premium = combined_pct >= 14 and any(
+            # Premium: hot or high confidence + model beats market on at least one leg
+            premium = tier in ("hot", "high") and any(
                 r.overlay and r.overlay > 0.03 for r in legs
             )
 
-            race = race_lookup.get(race_id)
             _, venue_code, race_num = _parse_race_id(race_id)
 
             picks.append({
@@ -981,6 +997,8 @@ async def get_edge_trifectas():
                 "track_condition": race.track_condition if race else None,
                 "scheduled_time": race.scheduled_time if race else None,
                 "combined_pct": combined_pct,
+                "multiplier": multiplier,
+                "field_size": field_size,
                 "tier": tier,
                 "premium": premium,
                 "legs": [
@@ -2470,10 +2488,10 @@ async def backtest_trifecta(x_cron_secret: Optional[str] = Header(None)):
         race_map.setdefault(row.race_id, []).append(row)
 
     tiers = {
-        "hot":    {"label": "Hot (≥20%)",           "tri": {"races": 0, "hits": 0}, "ff": {"races": 0, "hits": 0}},
-        "high":   {"label": "High Confidence (≥14%)","tri": {"races": 0, "hits": 0}, "ff": {"races": 0, "hits": 0}},
-        "strong": {"label": "Strong (≥9%)",          "tri": {"races": 0, "hits": 0}, "ff": {"races": 0, "hits": 0}},
-        "below":  {"label": "Below threshold (<9%)", "tri": {"races": 0, "hits": 0}, "ff": {"races": 0, "hits": 0}},
+        "hot":    {"label": "Hot (≥12× random)",           "tri": {"races": 0, "hits": 0}, "ff": {"races": 0, "hits": 0}},
+        "high":   {"label": "High Confidence (6–12× random)","tri": {"races": 0, "hits": 0}, "ff": {"races": 0, "hits": 0}},
+        "strong": {"label": "Strong (3–6× random)",         "tri": {"races": 0, "hits": 0}, "ff": {"races": 0, "hits": 0}},
+        "below":  {"label": "Below threshold (<3× random)", "tri": {"races": 0, "hits": 0}, "ff": {"races": 0, "hits": 0}},
     }
     totals = {"tri": {"races": 0, "hits": 0}, "ff": {"races": 0, "hits": 0}}
     field_size_dist: dict[int, int] = {}
@@ -2491,16 +2509,9 @@ async def backtest_trifecta(x_cron_secret: Optional[str] = Header(None)):
         top3 = valid[:3]
         top3_positions = {r.position for r, _ in top3}
         top3_probs = [s for _, s in top3]
-        tri_combined = top3_probs[0] * top3_probs[1] * top3_probs[2] * 100
+        tri_combined = top3_probs[0] * top3_probs[1] * top3_probs[2]
 
-        if tri_combined >= 20:
-            tier_key = "hot"
-        elif tri_combined >= 14:
-            tier_key = "high"
-        elif tri_combined >= 9:
-            tier_key = "strong"
-        else:
-            tier_key = "below"
+        tier_key, _ = _trifecta_tier(tri_combined, field_size)
 
         tri_hit = top3_positions == {1, 2, 3}
         tiers[tier_key]["tri"]["races"] += 1
