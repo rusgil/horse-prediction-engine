@@ -2384,19 +2384,38 @@
         </div>
         ${p.trifecta ? (() => {
           const tri = p.trifecta;
-          const triNums = tri.legs.map(l => `${l.tab_number || '?'}${l.place_pct != null ? ' <span style="color:var(--text-dim);font-size:0.65rem">('+l.place_pct+'%)</span>' : ''}`).join(' <span style="color:var(--border)">·</span> ');
+          const posLabel = pos => pos === 1 ? '1st' : pos === 2 ? '2nd' : pos === 3 ? '3rd' : pos === 4 ? '4th' : pos ? pos+'th' : '—';
+          const legHtml = l => {
+            const pos = l.position;
+            const inTop3 = pos && pos <= 3 && !l.scratched;
+            const col = l.scratched ? 'var(--text-dim)' : inTop3 ? 'var(--green-bright)' : (pos ? '#f87171' : 'var(--text-secondary)');
+            return `<span style="color:${col};font-weight:700">${l.tab_number || '?'}</span>`
+              + (l.place_pct != null ? `<span style="color:var(--text-dim);font-size:0.65rem"> (${l.place_pct}%)</span>` : '')
+              + (pos != null ? `<span style="color:${col};font-size:0.7rem"> ${posLabel(pos)}</span>` : '');
+          };
+          const triNums = tri.legs.map(legHtml).join(' <span style="color:var(--border)">·</span> ');
           const triNames = tri.legs.map(l => escHtml(l.horse_name)).join(' · ');
           const triPct = tri.combined_pct != null ? `<span class="tri-combined">~${tri.combined_pct}%</span>` : '';
+          const verdict = tri.hit != null
+            ? (tri.hit
+                ? `<span style="font-weight:800;color:var(--green-bright);font-size:0.78rem">✓ HIT</span>`
+                : `<span style="font-weight:700;color:#f87171;font-size:0.72rem">✗ Missed</span>`)
+            : '';
           const ffPart = tri.first_four ? (() => {
-            const ffNums = tri.first_four.map(l => `${l.tab_number || '?'}${l.place_pct != null ? ' <span style="color:var(--text-dim);font-size:0.65rem">('+l.place_pct+'%)</span>' : ''}`).join(' <span style="color:var(--border)">·</span> ');
+            const ffNums = tri.first_four.map(legHtml).join(' <span style="color:var(--border)">·</span> ');
             const ffNames = tri.first_four.map(l => escHtml(l.horse_name)).join(' · ');
             const ffPct = tri.first_four_combined_pct != null ? `<span class="tri-combined">~${tri.first_four_combined_pct}%</span>` : '';
-            return `<span class="tri-ff-label">First 4</span><span class="tri-ff-legs">${ffNums}</span>${ffPct}<span class="tri-ff-names">${ffNames}</span>`;
+            const ffVerdict = tri.first_four_hit != null
+              ? (tri.first_four_hit
+                  ? `<span style="font-weight:800;color:var(--green-bright);font-size:0.78rem">✓ HIT</span>`
+                  : `<span style="font-weight:700;color:#f87171;font-size:0.72rem">✗ Missed</span>`)
+              : '';
+            return `<span class="tri-ff-label">First 4</span><span class="tri-ff-legs">${ffNums}</span>${ffPct}${ffVerdict}<span class="tri-ff-names">${ffNames}</span>`;
           })() : '';
           return `<div class="trifecta-strip">
             <span class="tri-label">🎯 Trifecta</span>
             <span class="tri-legs">${triNums}</span>
-            ${triPct}
+            ${triPct}${verdict}
             <span class="tri-names">${triNames}</span>
             ${ffPart}
           </div>`;

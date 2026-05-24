@@ -843,11 +843,26 @@ async def get_edge_yesterday(for_date: Optional[str] = Query(None, alias="date")
         yst_tri_combined = round(yst_tri_probs[0] * yst_tri_probs[1] * yst_tri_probs[2] / 10000, 1) if len(yst_tri_probs) == 3 else None
         yst_ff_probs = [l["place_pct"] for l in yst_ff_legs if l["place_pct"] is not None]
         yst_ff_combined = round(yst_ff_probs[0] * yst_ff_probs[1] * yst_ff_probs[2] * yst_ff_probs[3] / 1000000, 1) if len(yst_ff_probs) == 4 else None
+        # Check actual finishing positions for each trifecta leg
+        def _leg_result(leg):
+            res = all_results.get((venue_code, race_num, leg["horse_name"]), {})
+            return {**leg, "position": res.get("position"), "scratched": res.get("scratched", False)}
+
+        yst_tri_legs_result = [_leg_result(l) for l in yst_tri_legs]
+        tri_positions = {l["position"] for l in yst_tri_legs_result if l["position"] and not l["scratched"]}
+        tri_hit = tri_positions == {1, 2, 3}
+
+        yst_ff_legs_result = [_leg_result(l) for l in yst_ff_legs] if len(yst_ff_legs) >= 4 else None
+        ff_positions = {l["position"] for l in yst_ff_legs_result if l["position"] and not l["scratched"]} if yst_ff_legs_result else set()
+        ff_hit = ff_positions == {1, 2, 3, 4}
+
         yst_trifecta = {
-            "legs": yst_tri_legs,
+            "legs": yst_tri_legs_result,
             "combined_pct": yst_tri_combined,
-            "first_four": yst_ff_legs if len(yst_ff_legs) >= 4 else None,
+            "hit": tri_hit,
+            "first_four": yst_ff_legs_result if yst_ff_legs_result else None,
             "first_four_combined_pct": yst_ff_combined,
+            "first_four_hit": ff_hit,
         } if len(yst_tri_legs) >= 3 else None
 
         output.append({
