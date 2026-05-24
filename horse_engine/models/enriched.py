@@ -95,3 +95,9 @@ class EnrichedRunner(BaseModel):
     stable_form: float              # trainer's last-7-days win rate (stable in form?)
     jockey_booking_significance: float  # 0–1: was a top jockey booked late?
     track_bias_advantage: float     # -1 to +1: does today's rail pos suit this runner style?
+
+    # ── Punters direct stats (new features) ───────────────────────────────
+    win_rate_track_distance: float = 0.0  # win % at this exact track+distance combo
+    win_rate_condition: float = 0.0       # win % in today's going (good/soft/heavy/firm)
+    first_up_win_rate: float = 0.0        # win % when first-up from spell
+    second_up_win_rate: float = 0.0       # win % when second-up

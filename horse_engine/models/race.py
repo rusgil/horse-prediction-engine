@@ -84,6 +84,20 @@ class Runner(BaseModel):
     career_wins: int
     career_places: int
 
+    # Direct stats from Punters API — replaces form-start derived rates
+    track_starts: int = 0
+    track_wins: int = 0
+    distance_starts: int = 0
+    distance_wins: int = 0
+    track_distance_starts: int = 0
+    track_distance_wins: int = 0
+    condition_starts: int = 0      # at today's going (good/soft/heavy/firm)
+    condition_wins: int = 0
+    first_up_starts: int = 0
+    first_up_wins: int = 0
+    second_up_starts: int = 0
+    second_up_wins: int = 0
+
     last_10_starts: list[FormStart] = []
     trainer_stats: Optional[TrainerStats] = None
     jockey_stats: Optional[JockeyStats] = None

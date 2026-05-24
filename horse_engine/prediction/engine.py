@@ -69,10 +69,6 @@ def enrich_runner(
 
     # ── Form ─────────────────────────────────────────────────────────────
     fs = form_enricher.weighted_form_score(starts)
-    wr_career = form_enricher.career_win_rate(runner)
-    wr_distance = form_enricher.win_rate_at_distance(starts, race.distance)
-    wr_track = form_enricher.win_rate_at_track(starts, race.venue)
-    wr_class = form_enricher.win_rate_at_class(starts, race.race_class)
     avg_beaten = form_enricher.avg_beaten_margin_last5(starts)
     best_finish = form_enricher.best_finish_at_distance(starts, race.distance)
     days_last = form_enricher.days_since_last_run(starts)
@@ -80,9 +76,58 @@ def enrich_runner(
     class_chg = form_enricher.class_change_flag(starts, race.race_class)
     spell_w = form_enricher.spell_weeks(starts)
 
+    # Career win rate — prefer Punters direct stats (accurate), fall back to form starts
+    if runner.career_starts > 0:
+        wr_career = runner.career_wins / runner.career_starts
+    else:
+        wr_career = form_enricher.career_win_rate(runner)
+
+    # Distance win rate — prefer Punters distance stats
+    if runner.distance_starts > 0:
+        wr_distance = runner.distance_wins / runner.distance_starts
+    else:
+        wr_distance = form_enricher.win_rate_at_distance(starts, race.distance)
+
+    # Track win rate — prefer track+distance > track > form-based
+    if runner.track_distance_starts >= 2:
+        wr_track = runner.track_distance_wins / runner.track_distance_starts
+    elif runner.track_starts > 0:
+        wr_track = runner.track_wins / runner.track_starts
+    else:
+        wr_track = form_enricher.win_rate_at_track(starts, race.venue)
+
+    wr_class = form_enricher.win_rate_at_class(starts, race.race_class)
+
+    # Track+distance combined (new feature)
+    wr_track_distance = (
+        runner.track_distance_wins / runner.track_distance_starts
+        if runner.track_distance_starts > 0 else 0.0
+    )
+
+    # Condition win rate — actual results in today's going
+    if runner.condition_starts > 0:
+        wr_condition = runner.condition_wins / runner.condition_starts
+    else:
+        wr_condition = 0.0
+
+    # First-up / second-up win rates
+    wr_first_up = (
+        runner.first_up_wins / runner.first_up_starts
+        if runner.first_up_starts > 0 else 0.0
+    )
+    wr_second_up = (
+        runner.second_up_wins / runner.second_up_starts
+        if runner.second_up_starts > 0 else 0.0
+    )
+
+    # Surface match — prefer Punters condition stats, fall back to form-based
+    if runner.condition_starts > 0:
+        surface_match = wr_condition
+    else:
+        surface_match = form_enricher.surface_match_score(starts, race.track_condition)
+
     wet_record = form_enricher.wet_track_record(starts)
     dry_record = form_enricher.dry_track_record(starts)
-    surface_match = form_enricher.surface_match_score(starts, race.track_condition)
 
     # ── Barrier / surface ─────────────────────────────────────────────────
     bs = compute_barrier_score(
@@ -225,6 +270,10 @@ def enrich_runner(
         stable_form=max(0.0, min(1.0, stable_form_score)),
         jockey_booking_significance=max(0.0, min(1.0, jockey_booking_sig)),
         track_bias_advantage=tb_adv,
+        win_rate_track_distance=wr_track_distance,
+        win_rate_condition=wr_condition,
+        first_up_win_rate=wr_first_up,
+        second_up_win_rate=wr_second_up,
     )
 
 

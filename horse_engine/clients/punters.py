@@ -107,6 +107,12 @@ _MEETING_FULL_QUERY = """
           age
           colour
           sex
+          stats {
+            wins seconds thirds totalRuns
+            firm good soft heavy
+            distance track trackDistance
+            firstUp secondUp
+          }
           forms {
             finishPosition
             isDistance
@@ -173,6 +179,23 @@ _TRAINER_STATS_QUERY = """
 
 def _today() -> str:
     return date.today().isoformat()
+
+
+def _parse_stat(s: str) -> tuple[int, int, int, int]:
+    """Parse Punters stat string '3:1-0-1' → (starts, wins, seconds, thirds)."""
+    if not s or ":" not in s:
+        return 0, 0, 0, 0
+    try:
+        starts_str, wst = s.split(":", 1)
+        parts = wst.split("-")
+        return (
+            int(starts_str),
+            int(parts[0]) if parts else 0,
+            int(parts[1]) if len(parts) > 1 else 0,
+            int(parts[2]) if len(parts) > 2 else 0,
+        )
+    except Exception:
+        return 0, 0, 0, 0
 
 
 class PuntersClient:
@@ -406,10 +429,10 @@ class PuntersClient:
             prize_money=0,
             scheduled_time=raw_event.get("startTime", ""),
             race_type="R",
-            runners=self._parse_runners(selections, jockey_stats, trainer_stats),
+            runners=self._parse_runners(selections, jockey_stats, trainer_stats, track_condition),
         )
 
-    def _parse_runners(self, selections: list[dict], jockey_stats: dict, trainer_stats: dict) -> list[Runner]:
+    def _parse_runners(self, selections: list[dict], jockey_stats: dict, trainer_stats: dict, track_condition: str = "Good 4") -> list[Runner]:
         runners = []
         for sel in selections:
             if (sel.get("status") or "").upper() == "SCRATCHED":
@@ -417,14 +440,14 @@ class PuntersClient:
             if sel.get("selectionResult") == -1:
                 continue
             try:
-                runner = self._parse_runner(sel, jockey_stats, trainer_stats)
+                runner = self._parse_runner(sel, jockey_stats, trainer_stats, track_condition)
                 if runner:
                     runners.append(runner)
             except Exception as e:
                 log.debug("Runner parse error: %s", e)
         return runners
 
-    def _parse_runner(self, sel: dict, jockey_stats: dict, trainer_stats: dict) -> Runner | None:
+    def _parse_runner(self, sel: dict, jockey_stats: dict, trainer_stats: dict, track_condition: str = "Good 4") -> Runner | None:
         comp = sel.get("competitor") or {}
         jock = sel.get("jockey") or {}
         trnr = sel.get("trainer") or {}
@@ -432,6 +455,28 @@ class PuntersClient:
         horse_name = comp.get("name", "Unknown")
         if not horse_name or horse_name == "Unknown":
             return None
+
+        # Parse Punters competitor.stats
+        raw_stats = comp.get("stats") or {}
+        career_starts = int(raw_stats.get("totalRuns") or 0)
+        career_wins = int(raw_stats.get("wins") or 0)
+        career_places = (
+            career_wins
+            + int(raw_stats.get("seconds") or 0)
+            + int(raw_stats.get("thirds") or 0)
+        )
+
+        tr_starts, tr_wins, _, _ = _parse_stat(raw_stats.get("track") or "")
+        di_starts, di_wins, _, _ = _parse_stat(raw_stats.get("distance") or "")
+        td_starts, td_wins, _, _ = _parse_stat(raw_stats.get("trackDistance") or "")
+        fu_starts, fu_wins, _, _ = _parse_stat(raw_stats.get("firstUp") or "")
+        su_starts, su_wins, _, _ = _parse_stat(raw_stats.get("secondUp") or "")
+
+        # Select condition stats matching today's going
+        from horse_engine.pedigree.sire_profiles import parse_condition_category
+        cond_cat = parse_condition_category(track_condition)  # "good"|"soft"|"heavy"|"firm"|"synthetic"
+        cond_stat_key = cond_cat if cond_cat in ("firm", "good", "soft", "heavy") else "good"
+        co_starts, co_wins, _, _ = _parse_stat(raw_stats.get(cond_stat_key) or "")
 
         sire = comp.get("sire") or ""
         dam = comp.get("dam") or ""
@@ -520,9 +565,21 @@ class PuntersClient:
             jockey=jock.get("name") or "",
             trainer=trnr.get("name") or "",
             country=comp.get("country") or "AUS",
-            career_starts=0,
-            career_wins=0,
-            career_places=0,
+            career_starts=career_starts,
+            career_wins=career_wins,
+            career_places=career_places,
+            track_starts=tr_starts,
+            track_wins=tr_wins,
+            distance_starts=di_starts,
+            distance_wins=di_wins,
+            track_distance_starts=td_starts,
+            track_distance_wins=td_wins,
+            condition_starts=co_starts,
+            condition_wins=co_wins,
+            first_up_starts=fu_starts,
+            first_up_wins=fu_wins,
+            second_up_starts=su_starts,
+            second_up_wins=su_wins,
             last_10_starts=last_10_starts,
             pedigree=pedigree,
             tote_win_odds=float(tote_win) if tote_win else None,

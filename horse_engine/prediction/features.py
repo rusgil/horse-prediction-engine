@@ -42,6 +42,9 @@ FEATURE_NAMES_BASE = [
     "jockey_booking_significance", # 22
     "stable_form",              # 23
     "track_bias_advantage",     # 24
+    "win_rate_track_distance",  # 25 — win % at this exact track+distance (Punters stats)
+    "condition_win_rate",       # 26 — win % in today's going (good/soft/heavy/firm)
+    "first_up_win_rate",        # 27 — win % when first-up (only relevant if resuming)
 ]
 
 FEATURE_NAMES_ODDS_MOVEMENT = [
@@ -81,6 +84,9 @@ DEFAULT_WEIGHTS_BASE = [
     0.3,   # jockey_booking_significance
     0.4,   # stable_form
     0.3,   # track_bias_advantage
+    0.8,   # win_rate_track_distance — strongest per-horse signal
+    0.5,   # condition_win_rate
+    0.4,   # first_up_win_rate
 ]
 
 DEFAULT_WEIGHTS_ODDS_MOVEMENT = [
@@ -154,4 +160,7 @@ def build_feature_vector(er: EnrichedRunner) -> list[float]:
         er.jockey_booking_significance,
         er.stable_form,
         er.track_bias_advantage,
+        er.win_rate_track_distance,
+        er.win_rate_condition,
+        er.first_up_win_rate if er.is_resuming else 0.0,
     ]
