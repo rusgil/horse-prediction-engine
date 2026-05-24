@@ -480,6 +480,21 @@
     document.getElementById('tabExotic').classList.toggle('active', tab === 'exotic');
     document.getElementById('panelWin').style.display = tab === 'win' ? '' : 'none';
     document.getElementById('panelExotic').style.display = tab === 'exotic' ? '' : 'none';
+    if (tab === 'exotic') _restoreExoticBacktest();
+  }
+
+  function _restoreExoticBacktest() {
+    try {
+      const saved = localStorage.getItem('exotic_backtest_last');
+      if (!saved) return;
+      const data = JSON.parse(saved);
+      const results = document.getElementById('exoticResults');
+      const status  = document.getElementById('exoticStatus');
+      if (results && data) {
+        results.innerHTML = renderExoticResults(data);
+        if (status) status.textContent = `Last run: best window ${data.best_window}d, box hit rate ${data.best_holdout_box_hit_rate}%`;
+      }
+    } catch (e) { /* ignore parse errors */ }
   }
 
   async function loadDashboard() {
@@ -927,6 +942,7 @@
 
       status.textContent = `Done — best window: ${data.best_window}d, box hit rate: ${data.best_holdout_box_hit_rate}%`;
       results.innerHTML = renderExoticResults(data);
+      try { localStorage.setItem('exotic_backtest_last', JSON.stringify(data)); } catch (e) {}
     } catch (e) {
       status.textContent = 'Error: ' + e.message;
       results.innerHTML = '';
