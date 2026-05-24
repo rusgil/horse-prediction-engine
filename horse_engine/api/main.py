@@ -2051,22 +2051,42 @@ async def retrain_exotic_model(
     }
 
 
+_exotic_backtest_state: dict = {"running": False, "progress": "", "error": None}
+
+
+@app.get("/api/admin/backtest-exotic/status")
+async def backtest_exotic_status(x_cron_secret: Optional[str] = Header(None)):
+    _check_admin(x_cron_secret)
+    return _exotic_backtest_state
+
+
+@app.post("/api/admin/backtest-exotic/run")
+async def backtest_exotic_run(background_tasks: BackgroundTasks, x_cron_secret: Optional[str] = Header(None)):
+    _check_admin(x_cron_secret)
+    if _exotic_backtest_state["running"]:
+        return {"status": "already_running", "progress": _exotic_backtest_state["progress"]}
+    background_tasks.add_task(_run_exotic_backtest_bg)
+    return {"status": "started"}
+
+
+async def _run_exotic_backtest_bg():
+    global _exotic_backtest_state
+    _exotic_backtest_state = {"running": True, "progress": "Loading training data…", "error": None}
+    try:
+        await _do_exotic_backtest()
+    except Exception as e:
+        log.exception("[backtest-exotic] Failed: %s", e)
+        _exotic_backtest_state = {"running": False, "progress": "error", "error": str(e)}
+
+
 @app.get("/api/admin/backtest-exotic")
 async def backtest_exotic(x_cron_secret: Optional[str] = Header(None)):
-    """
-    Window sweep + feature ablation for the exotic (trifecta box) model.
-
-    For each training window in [30, 60, 90, 180, 270]:
-      - Train a fresh ExoticModel on races outside the 14-day holdout
-      - Score holdout races, compute trifecta box hit rate by tier (Hot/High/Strong)
-
-    Then, using the best window model:
-      - Zero out each feature in turn and re-score holdout
-      - Report delta hit rate so we can identify valuable vs noisy features
-
-    Returns: per-window results, best window, feature ablation table.
-    """
     _check_admin(x_cron_secret)
+    return await _do_exotic_backtest()
+
+
+async def _do_exotic_backtest():
+    global _exotic_backtest_state
     import math
 
     holdout_days = 14
@@ -2188,7 +2208,10 @@ async def backtest_exotic(x_cron_secret: Optional[str] = Header(None)):
     best_hit_rate = -1.0
     best_model_weights: dict | None = None
 
+    _exotic_backtest_state["progress"] = f"Training {len(_CANDIDATE_WINDOWS)} windows…"
+
     for window in _CANDIDATE_WINDOWS:
+        _exotic_backtest_state["progress"] = f"Training {window}d window…"
         train_cutoff = (today - timedelta(days=window)).isoformat()
 
         race_train_data: dict[str, list[tuple[list[float], int]]] = {}
@@ -2251,12 +2274,14 @@ async def backtest_exotic(x_cron_secret: Optional[str] = Header(None)):
             best_model_weights = {"weights": list(m.weights), "bias": m.bias}
 
     if best_model_weights is None:
+        _exotic_backtest_state = {"running": False, "progress": "done", "error": "No valid training windows found"}
         return {
             "error": "No valid training windows found",
             "holdout_races": len(holdout_groups),
             "window_results": window_results,
         }
 
+    _exotic_backtest_state["progress"] = "Running feature ablation…"
     # Feature ablation using best window model
     from horse_engine.prediction.features import FEATURE_NAMES, NUM_FEATURES
 
@@ -2313,6 +2338,7 @@ async def backtest_exotic(x_cron_secret: Optional[str] = Header(None)):
         ))
         await session.commit()
 
+    _exotic_backtest_state = {"running": False, "progress": "done", "error": None}
     return result
 
 
