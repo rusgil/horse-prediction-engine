@@ -638,6 +638,65 @@ async def get_edge_picks():
                 "trifecta": trifecta,
             })
 
+    # For picks whose race has already jumped, fetch results and annotate trifecta legs
+    now_utc = datetime.utcnow().replace(tzinfo=timezone.utc)
+    finished_picks = [
+        p for p in picks
+        if p["scheduled_time"] and datetime.fromisoformat(p["scheduled_time"].replace("Z", "+00:00")) < now_utc
+    ]
+    if finished_picks:
+        finished_venues: dict[str, str] = {}  # venue_code → date
+        for p in finished_picks:
+            finished_venues[p["venue"]] = p["date"]
+
+        async def _fetch_today_results(venue: str, date: str) -> dict:
+            slug = _meeting_slug(venue, date)
+            try:
+                events = await asyncio.wait_for(client.get_meeting_races(slug), timeout=30)
+                out = {}
+                for event in events:
+                    rn = event.get("eventNumber")
+                    for sel in event.get("selections") or []:
+                        name = (sel.get("competitor") or {}).get("name")
+                        if name:
+                            pos = sel.get("selectionResult")
+                            out[(venue, rn, name)] = {
+                                "position": int(pos) if isinstance(pos, (int, float)) and pos > 0 else None,
+                                "scratched": sel.get("status") == "SCRATCHED",
+                            }
+                return out
+            except Exception:
+                return {}
+
+        result_batches = await asyncio.gather(*[
+            _fetch_today_results(v, d) for v, d in finished_venues.items()
+        ])
+        today_results: dict = {}
+        for rb in result_batches:
+            today_results.update(rb)
+
+        for p in finished_picks:
+            tri = p.get("trifecta")
+            if not tri:
+                continue
+            venue_code, race_num = p["venue"], p["race_number"]
+
+            def _annotate_legs(legs):
+                out = []
+                for l in legs:
+                    res = today_results.get((venue_code, race_num, l["horse_name"]), {})
+                    out.append({**l, "position": res.get("position"), "scratched": res.get("scratched", False)})
+                return out
+
+            tri["legs"] = _annotate_legs(tri["legs"])
+            tri_positions = {l["position"] for l in tri["legs"] if l["position"] and not l["scratched"]}
+            tri["hit"] = tri_positions == {1, 2, 3}
+
+            if tri.get("first_four"):
+                tri["first_four"] = _annotate_legs(tri["first_four"])
+                ff_positions = {l["position"] for l in tri["first_four"] if l["position"] and not l["scratched"]}
+                tri["first_four_hit"] = ff_positions == {1, 2, 3, 4}
+
     return {
         "generated_at": datetime.utcnow().isoformat(),
         "threshold_pct": int(threshold * 100),
