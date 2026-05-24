@@ -488,16 +488,18 @@
   async function loadExoticBacktest() {
     exoticBacktestLoaded = true;
     try {
-      const res = await fetch(`${API}/api/admin/backtest-exotic/last`, {
-        headers: { 'x-cron-secret': adminSecret }
-      });
-      if (!res.ok) return;
-      const { data, ran_at } = await res.json();
+      const [lastRes, histRes] = await Promise.all([
+        fetch(`${API}/api/admin/backtest-exotic/last`, { headers: { 'x-cron-secret': adminSecret } }),
+        fetch(`${API}/api/admin/backtest-exotic/history?limit=14`, { headers: { 'x-cron-secret': adminSecret } }),
+      ]);
+      if (!lastRes.ok) return;
+      const { data, ran_at } = await lastRes.json();
       if (!data) return;
+      const histData = histRes.ok ? await histRes.json() : { history: [], drift: false };
       const results = document.getElementById('exoticResults');
       const status  = document.getElementById('exoticStatus');
-      if (results) results.innerHTML = renderExoticResults(data);
-      if (status && ran_at) status.textContent = `Last run: ${new Date(ran_at).toLocaleString()} — best window ${data.best_window}d, box hit rate ${data.best_holdout_box_hit_rate}%`;
+      if (results) results.innerHTML = renderExoticResults(data, ran_at, histData);
+      if (status) status.textContent = '';
     } catch (e) { /* silently skip if unavailable */ }
   }
 
@@ -961,13 +963,15 @@
       });
 
       // Load results from DB
-      const lastRes = await fetch(`${API}/api/admin/backtest-exotic/last`, {
-        headers: { 'x-cron-secret': adminSecret }
-      });
-      const { data, ran_at } = await lastRes.json();
+      const [lastRes2, histRes2] = await Promise.all([
+        fetch(`${API}/api/admin/backtest-exotic/last`, { headers: { 'x-cron-secret': adminSecret } }),
+        fetch(`${API}/api/admin/backtest-exotic/history?limit=14`, { headers: { 'x-cron-secret': adminSecret } }),
+      ]);
+      const { data, ran_at } = await lastRes2.json();
       if (!data) throw new Error('No results saved');
+      const histData = histRes2.ok ? await histRes2.json() : { history: [], drift: false };
       status.textContent = `Done — best window: ${data.best_window}d, box hit rate: ${data.best_holdout_box_hit_rate}%`;
-      results.innerHTML = renderExoticResults(data);
+      results.innerHTML = renderExoticResults(data, ran_at, histData);
     } catch (e) {
       status.textContent = 'Error: ' + e.message;
       results.innerHTML = '';
@@ -976,26 +980,43 @@
     }
   }
 
-  function renderExoticResults(d) {
+  function renderExoticResults(d, ran_at, hist) {
+    hist = hist || { history: [], drift: false };
+
+    // Latest calibration header
+    const ranDate = ran_at ? new Date(ran_at).toLocaleString('en-AU', { day:'numeric', month:'short', hour:'2-digit', minute:'2-digit', hour12:true }) : '—';
+    const drift = hist.drift;
+    const driftHtml = drift
+      ? `<span class="drift-badge" style="background:rgba(239,68,68,0.12);color:#f87171;border:1px solid rgba(239,68,68,0.3);padding:3px 10px;border-radius:6px;font-size:0.72rem;font-weight:700">DRIFT</span>`
+      : `<span class="drift-badge" style="background:rgba(34,197,94,0.1);color:var(--green-bright);border:1px solid rgba(34,197,94,0.25);padding:3px 10px;border-radius:6px;font-size:0.72rem;font-weight:700">OK</span>`;
+
     // Summary stats
     const statsHtml = `
       <div class="section">
-        <div class="section-title">Backtest Summary — ${d.holdout_days}-day holdout, ${d.holdout_races} eligible races</div>
+        <div class="section-title" style="display:flex;align-items:center;gap:10px">
+          Latest Backtest — ${ranDate}
+          ${driftHtml}
+        </div>
         <div class="stat-grid">
+          <div class="stat-card">
+            <div class="stat-card-num" style="color:var(--teal)">${d.best_holdout_box_hit_rate}%</div>
+            <div class="stat-card-label">Tri Box Hit Rate</div>
+            <div class="stat-card-sub">Holdout set</div>
+          </div>
           <div class="stat-card">
             <div class="stat-card-num" style="color:var(--teal)">${d.best_window}d</div>
             <div class="stat-card-label">Best Window</div>
             <div class="stat-card-sub">Training days</div>
           </div>
           <div class="stat-card">
-            <div class="stat-card-num" style="color:var(--green-bright)">${d.best_holdout_box_hit_rate}%</div>
-            <div class="stat-card-label">Box Hit Rate</div>
-            <div class="stat-card-sub">Best window holdout</div>
+            <div class="stat-card-num">${d.holdout_races.toLocaleString()}</div>
+            <div class="stat-card-label">Races Tested</div>
+            <div class="stat-card-sub">Holdout sample</div>
           </div>
           <div class="stat-card">
-            <div class="stat-card-num">${d.holdout_races.toLocaleString()}</div>
-            <div class="stat-card-label">Holdout Races</div>
-            <div class="stat-card-sub">Field ≥ 7 runners</div>
+            <div class="stat-card-num" style="color:${drift ? '#f87171' : 'var(--green-bright)'}">${drift ? 'DRIFT' : 'OK'}</div>
+            <div class="stat-card-label">Drift Status</div>
+            <div class="stat-card-sub">${drift ? hist.drift_reason || 'Below recent avg' : 'Stable'}</div>
           </div>
         </div>
       </div>`;
@@ -1093,7 +1114,32 @@
         </div>`;
     }
 
-    return statsHtml + tierHtml + windowHtml + ablationHtml;
+    // History table
+    let histHtml = '';
+    if (hist.history?.length > 1) {
+      const rows = hist.history.map((h, i) => {
+        const date = new Date(h.ran_at).toLocaleDateString('en-AU', { day:'numeric', month:'short' });
+        const isLatest = i === 0;
+        return `<tr class="${isLatest ? 'best' : ''}">
+          <td>${date}</td>
+          <td>${h.best_holdout_box_hit_rate}%</td>
+          <td>${h.best_window}d</td>
+          <td>${h.holdout_races?.toLocaleString() ?? '—'}</td>
+        </tr>`;
+      }).join('');
+      histHtml = `
+        <div class="section">
+          <div class="section-title">Backtest History (Last ${hist.history.length} Runs)</div>
+          <div class="chart-card">
+            <table class="window-table">
+              <thead><tr><th>Date</th><th>Box Hit Rate</th><th>Window</th><th>Races</th></tr></thead>
+              <tbody>${rows}</tbody>
+            </table>
+          </div>
+        </div>`;
+    }
+
+    return statsHtml + tierHtml + windowHtml + ablationHtml + histHtml;
   }
 
   /* ═══════════════════════════════════════════════════════

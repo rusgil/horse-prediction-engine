@@ -2357,6 +2357,39 @@ async def backtest_exotic_last(x_cron_secret: Optional[str] = Header(None)):
     return {"data": json.loads(row.results_json), "ran_at": row.ran_at.isoformat()}
 
 
+@app.get("/api/admin/backtest-exotic/history")
+async def backtest_exotic_history(
+    limit: int = Query(14, ge=1, le=50),
+    x_cron_secret: Optional[str] = Header(None),
+):
+    _check_admin(x_cron_secret)
+    from horse_engine.models.database import ExoticBacktestRow
+    async with get_session() as session:
+        result = await session.execute(
+            select(ExoticBacktestRow).order_by(ExoticBacktestRow.ran_at.desc()).limit(limit)
+        )
+        rows = result.scalars().all()
+    if not rows:
+        return {"history": [], "drift": False}
+
+    history = [
+        {
+            "ran_at": r.ran_at.isoformat(),
+            "best_window": r.best_window,
+            "best_holdout_box_hit_rate": r.best_holdout_box_hit_rate,
+            "holdout_races": r.holdout_races,
+        }
+        for r in rows
+    ]
+
+    # Drift: current hit rate vs average of prior 3 runs
+    current = history[0]["best_holdout_box_hit_rate"]
+    prior = [h["best_holdout_box_hit_rate"] for h in history[1:4] if h["best_holdout_box_hit_rate"]]
+    drift = bool(prior and current < (sum(prior) / len(prior)) - 1.5)
+
+    return {"history": history, "drift": drift, "drift_reason": "Below recent avg" if drift else None}
+
+
 # ── Admin: seed results ───────────────────────────────────────────────────────
 
 @app.post("/api/admin/results/{race_date}")
