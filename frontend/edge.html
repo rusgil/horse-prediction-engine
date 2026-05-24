@@ -599,6 +599,56 @@
     .pick-footer-chip strong { color: var(--text-secondary); font-weight: 600; }
     .pick-footer-sep { color: var(--border); font-size: 0.7rem; }
 
+    /* Trifecta card legs table */
+    .tri-card-legs {
+      display: flex; flex-direction: column; gap: 6px;
+      margin: 10px 0;
+    }
+    .tri-card-leg {
+      display: flex; align-items: center; gap: 10px;
+      padding: 8px 12px;
+      background: var(--bg-deep);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+    }
+    .tri-card-leg.leg-1 { border-color: rgba(139,92,246,0.3); }
+    .tri-card-leg-tab {
+      min-width: 28px; height: 28px;
+      display: flex; align-items: center; justify-content: center;
+      background: var(--bg-elevated); border-radius: 6px;
+      font-size: 0.8rem; font-weight: 700; color: var(--text-secondary);
+      border: 1px solid var(--border);
+    }
+    .tri-card-leg-name {
+      flex: 1; font-size: 0.88rem; font-weight: 700; color: var(--text-primary);
+      min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .tri-card-leg-detail {
+      font-size: 0.7rem; color: var(--text-dim); margin-top: 1px;
+    }
+    .tri-card-leg-pct {
+      font-size: 0.82rem; font-weight: 700; color: #a78bfa; white-space: nowrap;
+    }
+    .tri-card-leg-odds {
+      font-size: 0.78rem; color: var(--text-secondary); white-space: nowrap; text-align: right; min-width: 44px;
+    }
+    .tri-combined-row {
+      display: flex; align-items: center; gap: 12px;
+      margin-top: 4px;
+    }
+    .tri-combined-stat {
+      display: flex; flex-direction: column; align-items: center;
+    }
+    .tri-combined-num {
+      font-size: 1.5rem; font-weight: 800; color: #a78bfa; line-height: 1;
+    }
+    .tri-combined-label {
+      font-size: 0.65rem; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.05em;
+    }
+    .tri-ff-row {
+      display: flex; flex-direction: column; gap: 6px; margin-top: 6px;
+    }
+
     /* Trifecta strip */
     .trifecta-strip {
       display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap;
@@ -1186,6 +1236,7 @@
 
   <div class="tabs">
     <button class="tab-btn active" id="tabUpcoming" onclick="switchTab('upcoming')">Upcoming</button>
+    <button class="tab-btn" id="tabTrifectas" onclick="switchTab('trifectas')">Trifectas &amp; Fours</button>
     <button class="tab-btn" id="tabYesterday" onclick="switchTab('yesterday')">Yesterday's Results</button>
     <button class="tab-btn" id="tabInsights" onclick="switchTab('insights')">Track Record</button>
   </div>
@@ -1230,6 +1281,15 @@
       <div class="loading">
         <div class="loading-spinner"></div>
         Loading picks…
+      </div>
+    </div>
+  </div>
+
+  <div id="panelTrifectas" style="display:none">
+    <div id="trifectasContent">
+      <div class="loading">
+        <div class="loading-spinner"></div>
+        Loading trifecta picks…
       </div>
     </div>
   </div>
@@ -1774,13 +1834,18 @@
 
   let trackRecordLoaded = false;
 
+  let trifectasLoaded = false;
+
   function switchTab(tab) {
     document.getElementById('tabUpcoming').classList.toggle('active', tab === 'upcoming');
+    document.getElementById('tabTrifectas').classList.toggle('active', tab === 'trifectas');
     document.getElementById('tabYesterday').classList.toggle('active', tab === 'yesterday');
     document.getElementById('tabInsights').classList.toggle('active', tab === 'insights');
     document.getElementById('panelUpcoming').style.display = tab === 'upcoming' ? '' : 'none';
+    document.getElementById('panelTrifectas').style.display = tab === 'trifectas' ? '' : 'none';
     document.getElementById('panelYesterday').style.display = tab === 'yesterday' ? '' : 'none';
     document.getElementById('panelInsights').style.display = tab === 'insights' ? '' : 'none';
+    if (tab === 'trifectas' && !trifectasLoaded) loadTrifectas();
     if (tab === 'yesterday' && !yesterdayLoaded) loadYesterday();
     if (tab === 'insights' && !trackRecordLoaded) loadTrackRecord();
   }
@@ -2337,6 +2402,161 @@
           </div>`;
         })() : ''}
       </div>`;
+  }
+
+  function renderTrifectaCard(pick) {
+    const isHot      = pick.tier === 'hot';
+    const isHigh     = pick.tier === 'high';
+    const isPremium  = pick.premium;
+
+    // Badge — matches win pick badge style
+    let badgeHtml = '';
+    if (isPremium)  badgeHtml += `<span class="pick-badge-premium">💎 Premium</span>`;
+    if (isHot)       badgeHtml += `<span class="pick-badge-hot">🔥 Hot Pick</span>`;
+    else if (isHigh) badgeHtml += `<span class="pick-badge-hot" style="background:rgba(59,130,246,0.12);color:#60a5fa;border-color:rgba(59,130,246,0.28);">⚡ High Confidence</span>`;
+    else             badgeHtml += `<span class="pick-badge-standard">Strong Pick</span>`;
+
+    const jump = pick.scheduled_time ? new Date(pick.scheduled_time) : null;
+    const now = new Date();
+    let timeStr = '';
+    if (jump) {
+      const diff = Math.round((jump - now) / 60000);
+      if (diff < 0)       timeStr = 'Jumped';
+      else if (diff < 60) timeStr = `${diff}m`;
+      else                timeStr = jump.toLocaleTimeString('en-AU', {hour:'2-digit', minute:'2-digit', timeZone:'Australia/Sydney'});
+    }
+    const countdownId = `tc-${pick.race_id.replace(/[^a-z0-9]/gi,'_')}`;
+
+    // Tier footer label
+    let tierLevel, tierColor;
+    if (isHot)       { tierLevel = '🔥 Hot Trifecta — very high combined confidence'; tierColor = '#f97316'; }
+    else if (isHigh) { tierLevel = '⚡ High Confidence Trifecta'; tierColor = '#60a5fa'; }
+    else             { tierLevel = '📈 Value Trifecta'; tierColor = 'var(--text-secondary)'; }
+    if (isPremium) tierLevel += ' · 💎 Premium value';
+
+    const trackChip = pick.track_condition ? `<span class="pick-footer-chip"><strong>${escHtml(pick.track_condition)}</strong></span><span class="pick-footer-sep">·</span>` : '';
+    const distChip  = pick.distance ? `<span class="pick-footer-chip"><strong>${pick.distance}m</strong></span><span class="pick-footer-sep">·</span>` : '';
+    const stateChip = pick.state ? `<span class="pick-footer-chip">${escHtml(pick.state)}</span>` : '';
+    const _wx = weatherByCode[pick.venue];
+    const weatherChip = _wx ? (() => {
+      const parts = [_wx.icon];
+      if (_wx.temp_max !== null) parts.push(_wx.temp_max + '°C');
+      if (_wx.wind_kmh) parts.push('💨 ' + _wx.wind_kmh + 'km/h');
+      if (_wx.rain_mm > 0) parts.push('💧 ' + _wx.rain_mm + 'mm');
+      return `<span class="pick-footer-sep">·</span><span class="pick-footer-chip">${parts.join(' ')}</span>`;
+    })() : '';
+
+    // Render legs
+    const legsHtml = pick.legs.map((l, i) => `
+      <div class="tri-card-leg ${i === 0 ? 'leg-1' : ''}">
+        <div>
+          <div class="tri-card-leg-tab">${l.tab_number || '?'}</div>
+        </div>
+        <div style="flex:1;min-width:0">
+          <div class="tri-card-leg-name">${escHtml(l.horse_name)}</div>
+          <div class="tri-card-leg-detail">${l.jockey ? 'J: ' + escHtml(l.jockey) : ''}${l.barrier ? ' · B' + l.barrier : ''}${l.weight ? ' · ' + l.weight + 'kg' : ''}</div>
+        </div>
+        <div style="text-align:right">
+          <div class="tri-card-leg-pct">${l.place_pct != null ? l.place_pct + '%' : '—'}</div>
+          <div class="tri-card-leg-odds">${l.best_available_odds ? '$' + l.best_available_odds.toFixed(2) : '—'}</div>
+        </div>
+      </div>`).join('');
+
+    const ffHtml = pick.first_four ? `
+      <div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--border)">
+        <div style="font-size:0.7rem;font-weight:700;color:#c084fc;letter-spacing:0.05em;margin-bottom:6px;text-transform:uppercase">First Four</div>
+        ${pick.first_four.map((l, i) => `
+          <div class="tri-card-leg ${i === 0 ? 'leg-1' : ''}" style="padding:6px 10px">
+            <div class="tri-card-leg-tab">${l.tab_number || '?'}</div>
+            <div style="flex:1;min-width:0" class="tri-card-leg-name">${escHtml(l.horse_name)}</div>
+            <div style="text-align:right">
+              <div class="tri-card-leg-pct" style="font-size:0.75rem">${l.place_pct != null ? l.place_pct + '%' : '—'}</div>
+              <div class="tri-card-leg-odds">${l.best_available_odds ? '$' + l.best_available_odds.toFixed(2) : '—'}</div>
+            </div>
+          </div>`).join('')}
+        ${pick.first_four_combined_pct != null ? `<div style="margin-top:6px;font-size:0.72rem;color:var(--text-dim)">Combined: <span style="color:#c084fc;font-weight:700">~${pick.first_four_combined_pct}%</span></div>` : ''}
+      </div>` : '';
+
+    return `
+      <div class="pick-card ${isHot ? 'hot' : ''} ${isPremium ? 'premium' : ''}">
+        <div class="pick-card-top-bar">
+          ${badgeHtml}
+          <div class="pick-race-ref">
+            <span class="venue-name">${escHtml(pick.venue)}</span>
+            <span class="sep">·</span>
+            <span>R${pick.race_number}</span>
+            ${pick.race_name ? `<span class="sep">·</span><span style="color:var(--text-secondary)">${escHtml(pick.race_name)}</span>` : ''}
+          </div>
+          ${timeStr ? `<span class="pick-time">${escHtml(timeStr)}</span>` : ''}
+          ${pick.scheduled_time ? `<span class="pick-countdown" id="${countdownId}" data-jump="${escHtml(pick.scheduled_time)}"></span>` : ''}
+        </div>
+        <div class="pick-body">
+          <div class="pick-left" style="flex:1">
+            <div class="tri-card-legs">${legsHtml}</div>
+            ${ffHtml}
+          </div>
+          <div class="pick-right" style="min-width:90px;align-items:center;justify-content:center">
+            <div class="tri-combined-stat">
+              <div class="tri-combined-num">${pick.combined_pct}%</div>
+              <div class="tri-combined-label">trifecta confidence</div>
+            </div>
+          </div>
+        </div>
+        <div class="pick-footer">
+          ${trackChip}${distChip}${stateChip}${weatherChip}
+          <span class="pick-footer-chip" style="color:${tierColor}">${tierLevel}</span>
+        </div>
+      </div>`;
+  }
+
+  async function loadTrifectas() {
+    trifectasLoaded = true;
+    try {
+      const res = await fetch(`${API}/api/edge/trifectas`);
+      if (!res.ok) throw new Error(res.statusText);
+      const data = await res.json();
+      renderTrifectasContent(data);
+    } catch (e) {
+      document.getElementById('trifectasContent').innerHTML = `
+        <div class="empty-state"><div class="empty-icon">⚠️</div><div class="empty-title">Could not load trifectas</div><div class="empty-sub">${escHtml(e.message)}</div></div>`;
+    }
+  }
+
+  function renderTrifectasContent(data) {
+    const el = document.getElementById('trifectasContent');
+    if (!data.picks.length) {
+      el.innerHTML = `<div class="empty-state"><div class="empty-icon">🎯</div><div class="empty-title">No trifecta picks yet</div><div class="empty-sub">Races haven't been enriched yet today, or no races meet the confidence threshold.</div></div>`;
+      return;
+    }
+
+    // Group by date
+    const byDate = {};
+    for (const p of data.picks) byDate[p.date] = (byDate[p.date] || []).concat(p);
+
+    const todayStr    = new Date().toLocaleDateString('en-CA', {timeZone:'Australia/Sydney'});
+    const tomorrowStr = new Date(Date.now() + 86400000).toLocaleDateString('en-CA', {timeZone:'Australia/Sydney'});
+
+    let html = '';
+    for (const [date, picks] of Object.entries(byDate).sort()) {
+      const label = date === todayStr ? 'Today' : date === tomorrowStr ? 'Tomorrow' : fmtDate(date).split(',')[0];
+      html += `<div class="date-group"><div class="date-label">${label} — ${picks.length} trifecta${picks.length !== 1 ? 's' : ''}</div><div class="picks-grid">`;
+      for (const p of picks) html += renderTrifectaCard(p);
+      html += `</div></div>`;
+    }
+    el.innerHTML = html;
+
+    // Wire up countdowns
+    document.querySelectorAll('#panelTrifectas .pick-countdown').forEach(el => {
+      const jump = new Date(el.dataset.jump);
+      function tick() {
+        const diff = Math.round((jump - new Date()) / 1000);
+        if (diff <= 0) { el.textContent = 'Jumped'; return; }
+        const m = Math.floor(diff / 60), s = diff % 60;
+        el.textContent = m > 0 ? `${m}m ${s}s` : `${s}s`;
+        setTimeout(tick, 1000);
+      }
+      tick();
+    });
   }
 
   async function loadYesterday() {

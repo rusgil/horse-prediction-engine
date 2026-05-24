@@ -899,6 +899,121 @@ async def get_edge_yesterday(for_date: Optional[str] = Query(None, alias="date")
     }
 
 
+@app.get("/api/edge/trifectas")
+async def get_edge_trifectas():
+    """Standalone trifecta picks ranked by combined place probability, tiered like win picks."""
+    today = _today_aest()
+    picks = []
+
+    for i in range(4):
+        target_date = (today + timedelta(days=i)).isoformat()
+        prefix = f"{target_date}_"
+
+        async with get_session() as session:
+            place_result = await session.execute(
+                select(RunnerPredictionRow)
+                .where(RunnerPredictionRow.race_id.like(f"{prefix}%"))
+                .where(RunnerPredictionRow.place_model_rank >= 1)
+                .where(RunnerPredictionRow.place_model_rank <= 4)
+                .where(RunnerPredictionRow.cancelled.is_(False) | RunnerPredictionRow.cancelled.is_(None))
+            )
+            place_rows = place_result.scalars().all()
+
+            if not place_rows:
+                continue
+
+            race_ids = list({r.race_id for r in place_rows})
+            race_result = await session.execute(
+                select(RacePredictionRow).where(RacePredictionRow.race_id.in_(race_ids))
+            )
+            race_lookup = {r.race_id: r for r in race_result.scalars().all()}
+
+        # Group by race, sort by place_model_rank
+        race_map: dict[str, list] = {}
+        for row in place_rows:
+            race_map.setdefault(row.race_id, []).append(row)
+
+        for race_id, runners in race_map.items():
+            runners.sort(key=lambda r: r.place_model_rank or 99)
+            if len(runners) < 3:
+                continue
+
+            legs = runners[:3]
+            probs = [r.place_probability for r in legs if r.place_probability]
+            if len(probs) < 3:
+                continue
+
+            combined = probs[0] * probs[1] * probs[2]
+            combined_pct = round(combined * 100, 1)
+            if combined_pct < 9.0:
+                continue
+
+            ff = runners[:4] if len(runners) >= 4 else None
+            ff_probs = [r.place_probability for r in ff] if ff else []
+            ff_combined_pct = round(
+                ff_probs[0] * ff_probs[1] * ff_probs[2] * ff_probs[3] * 100, 1
+            ) if len(ff_probs) == 4 and all(ff_probs) else None
+
+            # Tier thresholds (combined place probability)
+            if combined_pct >= 20:
+                tier = "hot"
+            elif combined_pct >= 14:
+                tier = "high"
+            else:
+                tier = "strong"
+
+            # Premium: high confidence + model beats market on at least one leg
+            premium = combined_pct >= 14 and any(
+                r.overlay and r.overlay > 0.03 for r in legs
+            )
+
+            race = race_lookup.get(race_id)
+            _, venue_code, race_num = _parse_race_id(race_id)
+
+            picks.append({
+                "date": target_date,
+                "race_id": race_id,
+                "venue": venue_code,
+                "state": race.state if race else None,
+                "race_number": race_num,
+                "race_name": race.race_name if race else None,
+                "distance": race.distance if race else None,
+                "track_condition": race.track_condition if race else None,
+                "scheduled_time": race.scheduled_time if race else None,
+                "combined_pct": combined_pct,
+                "tier": tier,
+                "premium": premium,
+                "legs": [
+                    {
+                        "tab_number": r.tab_number,
+                        "horse_name": r.horse_name,
+                        "barrier": r.barrier,
+                        "jockey": r.jockey,
+                        "trainer": r.trainer,
+                        "weight": r.weight,
+                        "place_pct": round(r.place_probability * 100, 1) if r.place_probability else None,
+                        "win_pct": round(r.win_probability * 100, 1) if r.win_probability else None,
+                        "best_available_odds": r.best_available_odds or 0,
+                        "overlay": r.overlay,
+                    }
+                    for r in legs
+                ],
+                "first_four": [
+                    {
+                        "tab_number": r.tab_number,
+                        "horse_name": r.horse_name,
+                        "place_pct": round(r.place_probability * 100, 1) if r.place_probability else None,
+                        "best_available_odds": r.best_available_odds or 0,
+                    }
+                    for r in ff
+                ] if ff else None,
+                "first_four_combined_pct": ff_combined_pct,
+            })
+
+    picks.sort(key=lambda p: p["combined_pct"], reverse=True)
+    return {"generated_at": datetime.utcnow().isoformat(), "picks": picks}
+
+
 @app.get("/api/track-record")
 async def get_track_record():
     """Public endpoint — tier win rates derived from live + backtest data."""
