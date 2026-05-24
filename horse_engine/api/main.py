@@ -417,12 +417,13 @@ async def _scheduled_exotic_retrain():
             return
 
         m = ExoticModel()
-        stats = m.train_exotic(race_groups)
+        loop = asyncio.get_event_loop()
+        stats = await loop.run_in_executor(None, m.train_exotic, race_groups)
         async with get_session() as session:
             await save_exotic_model_weights(session, stats["weights"])
         log.info(
-            "[scheduler] Exotic retrain complete — %d races, box_hit_rate=%.3f",
-            len(race_groups), stats.get("box_hit_rate", 0),
+            "[scheduler] Exotic retrain complete — %d races, tri_box=%.3f ff_box=%.3f",
+            len(race_groups), stats.get("tri_box_hit_rate", 0), stats.get("ff_box_hit_rate", 0),
         )
     except Exception as e:
         log.exception("[scheduler] Exotic retrain failed: %s", e)
@@ -2015,13 +2016,15 @@ async def retrain_exotic_model(
     log.info("[exotic-retrain] %d races, %d runners", len(race_groups), total_runners)
 
     async def _do_retrain():
+        loop = asyncio.get_event_loop()
         m = ExoticModel()
-        s = m.train_exotic(race_groups)
+        # Run CPU-bound training in thread pool so the event loop stays responsive
+        s = await loop.run_in_executor(None, m.train_exotic, race_groups)
         async with get_session() as sess:
             await save_exotic_model_weights(sess, s["weights"])
         log.info(
-            "[exotic-retrain] complete — %d races, box_hit_rate=%.3f",
-            len(race_groups), s.get("box_hit_rate", 0),
+            "[exotic-retrain] complete — %d races, tri_box=%.3f ff_box=%.3f",
+            len(race_groups), s.get("tri_box_hit_rate", 0), s.get("ff_box_hit_rate", 0),
         )
 
     asyncio.create_task(_do_retrain())
