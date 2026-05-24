@@ -2293,7 +2293,7 @@ async def backtest_exotic(x_cron_secret: Optional[str] = Header(None)):
 
     ablation_results.sort(key=lambda x: x["delta"])
 
-    return {
+    result = {
         "holdout_races": len(holdout_groups),
         "holdout_days": holdout_days,
         "best_window": best_window,
@@ -2301,6 +2301,34 @@ async def backtest_exotic(x_cron_secret: Optional[str] = Header(None)):
         "window_results": window_results,
         "feature_ablation": ablation_results,
     }
+
+    from horse_engine.models.database import ExoticBacktestRow
+    async with get_session() as session:
+        session.add(ExoticBacktestRow(
+            best_window=best_window,
+            best_holdout_box_hit_rate=best_hit_rate,
+            holdout_races=len(holdout_groups),
+            holdout_days=holdout_days,
+            results_json=json.dumps(result),
+        ))
+        await session.commit()
+
+    return result
+
+
+@app.get("/api/admin/backtest-exotic/last")
+async def backtest_exotic_last(x_cron_secret: Optional[str] = Header(None)):
+    if x_cron_secret != settings.cron_secret:
+        raise HTTPException(403)
+    from horse_engine.models.database import ExoticBacktestRow
+    async with get_session() as session:
+        result = await session.execute(
+            select(ExoticBacktestRow).order_by(ExoticBacktestRow.ran_at.desc()).limit(1)
+        )
+        row = result.scalars().first()
+    if not row:
+        return {"data": None}
+    return {"data": json.loads(row.results_json), "ran_at": row.ran_at.isoformat()}
 
 
 # ── Admin: seed results ───────────────────────────────────────────────────────

@@ -192,6 +192,18 @@ class VenueCoordinateRow(Base):
     updated_at = Column(DateTime, default=datetime.utcnow)
 
 
+class ExoticBacktestRow(Base):
+    __tablename__ = "exotic_backtest_results"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    ran_at = Column(DateTime, default=datetime.utcnow, index=True)
+    best_window = Column(Integer)
+    best_holdout_box_hit_rate = Column(Float)
+    holdout_races = Column(Integer)
+    holdout_days = Column(Integer)
+    results_json = Column(Text)   # full response JSON
+
+
 async def init_db() -> None:
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
