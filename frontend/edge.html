@@ -598,6 +598,34 @@
     }
     .pick-footer-chip strong { color: var(--text-secondary); font-weight: 600; }
     .pick-footer-sep { color: var(--border); font-size: 0.7rem; }
+
+    /* Trifecta strip */
+    .trifecta-strip {
+      display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap;
+      padding: 7px 16px;
+      background: rgba(139,92,246,0.06);
+      border-top: 1px solid rgba(139,92,246,0.15);
+      font-size: 0.72rem;
+    }
+    .tri-label {
+      font-weight: 700; color: #a78bfa; letter-spacing: 0.04em; white-space: nowrap;
+    }
+    .tri-legs {
+      color: var(--text-secondary); font-weight: 600; white-space: nowrap;
+    }
+    .tri-names {
+      color: var(--text-dim); font-style: italic; min-width: 0;
+    }
+    .tri-ff-label {
+      font-weight: 700; color: #c084fc; letter-spacing: 0.04em; white-space: nowrap; margin-left: 10px;
+    }
+    .tri-ff-legs {
+      color: var(--text-secondary); font-weight: 600; white-space: nowrap;
+    }
+    .tri-ff-names {
+      color: var(--text-dim); font-style: italic; min-width: 0;
+    }
+
     .pick-verdict {
       font-size: 0.72rem; font-weight: 700; letter-spacing: 0.06em;
       padding: 2px 10px; border-radius: 999px; text-transform: uppercase;
@@ -1587,6 +1615,22 @@
             return `<span class="pick-footer-chip" style="color:${color}">${level}</span>`;
           })() : ''}
         </div>
+        ${pick.trifecta ? (() => {
+          const tri = pick.trifecta;
+          const triNums = tri.legs.map(l => l.tab_number || '?').join(' · ');
+          const triNames = tri.legs.map(l => escHtml(l.horse_name)).join(' · ');
+          const ffPart = tri.first_four ? (() => {
+            const ffNums = tri.first_four.map(l => l.tab_number || '?').join(' · ');
+            const ffNames = tri.first_four.map(l => escHtml(l.horse_name)).join(' · ');
+            return `<span class="tri-ff-label">4th</span><span class="tri-ff-legs">${ffNums}</span><span class="tri-ff-names">${ffNames}</span>`;
+          })() : '';
+          return `<div class="trifecta-strip">
+            <span class="tri-label">🎯 Trifecta</span>
+            <span class="tri-legs">${triNums}</span>
+            <span class="tri-names">${triNames}</span>
+            ${ffPart}
+          </div>`;
+        })() : ''}
       </div>`;
   }
 
@@ -2267,6 +2311,22 @@
         <div class="pick-footer">
           <span class="pick-footer-chip" style="color:var(--text-dim)">$${stake} stake</span>
         </div>
+        ${p.trifecta ? (() => {
+          const tri = p.trifecta;
+          const triNums = tri.legs.map(l => l.tab_number || '?').join(' · ');
+          const triNames = tri.legs.map(l => escHtml(l.horse_name)).join(' · ');
+          const ffPart = tri.first_four ? (() => {
+            const ffNums = tri.first_four.map(l => l.tab_number || '?').join(' · ');
+            const ffNames = tri.first_four.map(l => escHtml(l.horse_name)).join(' · ');
+            return `<span class="tri-ff-label">4th</span><span class="tri-ff-legs">${ffNums}</span><span class="tri-ff-names">${ffNames}</span>`;
+          })() : '';
+          return `<div class="trifecta-strip">
+            <span class="tri-label">🎯 Trifecta</span>
+            <span class="tri-legs">${triNums}</span>
+            <span class="tri-names">${triNames}</span>
+            ${ffPart}
+          </div>`;
+        })() : ''}
       </div>`;
   }
 

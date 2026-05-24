@@ -542,8 +542,27 @@ async def get_edge_picks():
             )
             rows = result.scalars().all()
 
-        if not rows:
-            continue
+            if not rows:
+                continue
+
+            # Batch-fetch place model runners for trifecta legs
+            race_ids = [r.race_id for r in rows]
+            place_result = await session.execute(
+                select(RunnerPredictionRow)
+                .where(RunnerPredictionRow.race_id.in_(race_ids))
+                .where(RunnerPredictionRow.place_model_rank >= 1)
+                .where(RunnerPredictionRow.place_model_rank <= 4)
+                .where(RunnerPredictionRow.cancelled.is_(False) | RunnerPredictionRow.cancelled.is_(None))
+            )
+            place_rows_list = place_result.scalars().all()
+
+        # Build place-model lookup: race_id -> sorted list by place_model_rank
+        trifecta_map: dict[str, list] = {}
+        for pr in place_rows_list:
+            if pr.place_model_rank:
+                trifecta_map.setdefault(pr.race_id, []).append(pr)
+        for key in trifecta_map:
+            trifecta_map[key].sort(key=lambda r: r.place_model_rank)
 
         # Fetch scheduled times per unique meeting in parallel
         unique_venues = {_parse_race_id(r.race_id)[1] for r in rows}
@@ -562,6 +581,20 @@ async def get_edge_picks():
             calibrated = next((r for t, r in _CALIBRATED_WIN_RATES if model_pct >= t), 66)
             hot = model_pct >= 45
             _, venue_code, race_num = _parse_race_id(runner_row.race_id)
+
+            # Build trifecta legs: win pick + top 2 place-model picks (excluding win)
+            place_runners = trifecta_map.get(runner_row.race_id, [])
+            place_excl = [pr for pr in place_runners if pr.horse_name != runner_row.horse_name]
+            tri_legs = [{"tab_number": runner_row.tab_number, "horse_name": runner_row.horse_name}] + [
+                {"tab_number": pr.tab_number, "horse_name": pr.horse_name} for pr in place_excl[:2]
+            ]
+            ff_legs = [{"tab_number": runner_row.tab_number, "horse_name": runner_row.horse_name}] + [
+                {"tab_number": pr.tab_number, "horse_name": pr.horse_name} for pr in place_excl[:3]
+            ]
+            trifecta = {
+                "legs": tri_legs,
+                "first_four": ff_legs if len(ff_legs) >= 4 else None,
+            } if len(tri_legs) >= 3 else None
 
             picks.append({
                 "date": target_date,
@@ -588,6 +621,7 @@ async def get_edge_picks():
                 "value_rating": runner_row.value_rating,
                 "place_probability": round(runner_row.place_probability * 100, 1) if runner_row.place_probability else None,
                 "cancelled": bool(runner_row.cancelled),
+                "trifecta": trifecta,
             })
 
     return {
@@ -700,8 +734,25 @@ async def get_edge_yesterday(for_date: Optional[str] = Query(None, alias="date")
         )
         picks = result.scalars().all()
 
-    if not picks:
-        return {"date": target_date, "picks": [], "summary": None}
+        if not picks:
+            return {"date": target_date, "picks": [], "summary": None}
+
+        # Batch-fetch place model runners for trifecta legs
+        yst_race_ids = [p.race_id for p in picks]
+        yst_place_result = await session.execute(
+            select(RunnerPredictionRow)
+            .where(RunnerPredictionRow.race_id.in_(yst_race_ids))
+            .where(RunnerPredictionRow.place_model_rank >= 1)
+            .where(RunnerPredictionRow.place_model_rank <= 4)
+        )
+        yst_place_rows = yst_place_result.scalars().all()
+
+    yst_trifecta_map: dict[str, list] = {}
+    for pr in yst_place_rows:
+        if pr.place_model_rank:
+            yst_trifecta_map.setdefault(pr.race_id, []).append(pr)
+    for key in yst_trifecta_map:
+        yst_trifecta_map[key].sort(key=lambda r: r.place_model_rank)
 
     client = get_tab_client()
     unique_venues = {_parse_race_id(p.race_id)[1] for p in picks}
@@ -758,6 +809,20 @@ async def get_edge_yesterday(for_date: Optional[str] = Query(None, alias="date")
 
         place_pct = round(p.place_probability * 100, 1) if p.place_probability else None
 
+        # Build trifecta legs for yesterday display
+        yst_place_runners = yst_trifecta_map.get(p.race_id, [])
+        yst_place_excl = [pr for pr in yst_place_runners if pr.horse_name != p.horse_name]
+        yst_tri_legs = [{"tab_number": p.tab_number, "horse_name": p.horse_name}] + [
+            {"tab_number": pr.tab_number, "horse_name": pr.horse_name} for pr in yst_place_excl[:2]
+        ]
+        yst_ff_legs = [{"tab_number": p.tab_number, "horse_name": p.horse_name}] + [
+            {"tab_number": pr.tab_number, "horse_name": pr.horse_name} for pr in yst_place_excl[:3]
+        ]
+        yst_trifecta = {
+            "legs": yst_tri_legs,
+            "first_four": yst_ff_legs if len(yst_ff_legs) >= 4 else None,
+        } if len(yst_tri_legs) >= 3 else None
+
         output.append({
             "race_id": p.race_id,
             "venue": venue_code,
@@ -779,6 +844,7 @@ async def get_edge_yesterday(for_date: Optional[str] = Query(None, alias="date")
             "payout": payout,
             "profit": profit,
             "stake": stake,
+            "trifecta": yst_trifecta,
         })
 
     active = [o for o in output if not o["scratched"]]
