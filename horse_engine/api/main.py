@@ -2414,6 +2414,131 @@ async def performance_summary(days: int = Query(5, ge=1, le=30)):
     }
 
 
+@app.get("/api/admin/backtest-trifecta")
+async def backtest_trifecta(x_cron_secret: Optional[str] = Header(None)):
+    """
+    Backtest the place model's ability to box trifectas and first fours.
+    Re-scores all HistoricalResultRow entries through the current place model
+    (using stored feature_vector_json), then checks whether the top 3/4 picks
+    finished in positions 1-3/1-4.  Breaks results down by confidence tier.
+    """
+    _check_admin(x_cron_secret)
+    import math
+
+    async with get_session() as session:
+        place_weights_dict = await load_place_model_weights(session)
+        pm = PlaceModel.from_weights_dict(place_weights_dict) if place_weights_dict else PlaceModel()
+
+        hist_result = await session.execute(
+            select(HistoricalResultRow)
+            .where(HistoricalResultRow.position.isnot(None))
+            .where(HistoricalResultRow.feature_vector_json.isnot(None))
+        )
+        hist_rows = hist_result.scalars().all()
+
+    if not hist_rows:
+        return {"error": "No historical results with feature vectors found. Run /api/retrain first."}
+
+    from horse_engine.prediction.features import NUM_FEATURES
+
+    def _sigmoid(z: float) -> float:
+        return 1.0 / (1.0 + math.exp(-max(-30, min(30, z))))
+
+    def _score(fv_raw: str) -> float | None:
+        try:
+            fv = json.loads(fv_raw)
+            if len(fv) < NUM_FEATURES:
+                fv = fv + [0.0] * (NUM_FEATURES - len(fv))
+            elif len(fv) > NUM_FEATURES:
+                fv = fv[:NUM_FEATURES]
+            z = sum(w * f for w, f in zip(pm.weights, fv)) + pm.bias
+            return _sigmoid(z)
+        except Exception:
+            return None
+
+    # Group by race_id
+    race_map: dict[str, list] = {}
+    for row in hist_rows:
+        race_map.setdefault(row.race_id, []).append(row)
+
+    tiers = {
+        "hot":    {"label": "Hot (≥20%)",           "tri": {"races": 0, "hits": 0}, "ff": {"races": 0, "hits": 0}},
+        "high":   {"label": "High Confidence (≥14%)","tri": {"races": 0, "hits": 0}, "ff": {"races": 0, "hits": 0}},
+        "strong": {"label": "Strong (≥9%)",          "tri": {"races": 0, "hits": 0}, "ff": {"races": 0, "hits": 0}},
+        "below":  {"label": "Below threshold (<9%)", "tri": {"races": 0, "hits": 0}, "ff": {"races": 0, "hits": 0}},
+    }
+    totals = {"tri": {"races": 0, "hits": 0}, "ff": {"races": 0, "hits": 0}}
+    field_size_dist: dict[int, int] = {}
+
+    for race_id, rows in race_map.items():
+        valid = [(r, _score(r.feature_vector_json)) for r in rows if r.position is not None]
+        valid = [(r, s) for r, s in valid if s is not None]
+        if len(valid) < 3:
+            continue
+
+        valid.sort(key=lambda x: x[1], reverse=True)
+        field_size = len(valid)
+        field_size_dist[field_size] = field_size_dist.get(field_size, 0) + 1
+
+        top3 = valid[:3]
+        top3_positions = {r.position for r, _ in top3}
+        top3_probs = [s for _, s in top3]
+        tri_combined = top3_probs[0] * top3_probs[1] * top3_probs[2] * 100
+
+        if tri_combined >= 20:
+            tier_key = "hot"
+        elif tri_combined >= 14:
+            tier_key = "high"
+        elif tri_combined >= 9:
+            tier_key = "strong"
+        else:
+            tier_key = "below"
+
+        tri_hit = top3_positions == {1, 2, 3}
+        tiers[tier_key]["tri"]["races"] += 1
+        if tri_hit:
+            tiers[tier_key]["tri"]["hits"] += 1
+        totals["tri"]["races"] += 1
+        if tri_hit:
+            totals["tri"]["hits"] += 1
+
+        if field_size >= 4:
+            top4 = valid[:4]
+            top4_positions = {r.position for r, _ in top4}
+            ff_hit = top4_positions == {1, 2, 3, 4}
+            tiers[tier_key]["ff"]["races"] += 1
+            if ff_hit:
+                tiers[tier_key]["ff"]["hits"] += 1
+            totals["ff"]["races"] += 1
+            if ff_hit:
+                totals["ff"]["hits"] += 1
+
+    def _rate(d):
+        return round(d["hits"] / d["races"] * 100, 1) if d["races"] else 0
+
+    tier_results = []
+    for key, t in tiers.items():
+        tri_r, ff_r = t["tri"]["races"], t["ff"]["races"]
+        if tri_r == 0:
+            continue
+        tier_results.append({
+            "tier": t["label"],
+            "trifecta": {**t["tri"], "hit_rate_pct": _rate(t["tri"])},
+            "first_four": {**t["ff"], "hit_rate_pct": _rate(t["ff"])},
+        })
+
+    return {
+        "races_analysed": len(race_map),
+        "runners_with_data": len(hist_rows),
+        "overall": {
+            "trifecta": {**totals["tri"], "hit_rate_pct": _rate(totals["tri"])},
+            "first_four": {**totals["ff"], "hit_rate_pct": _rate(totals["ff"])},
+        },
+        "by_tier": tier_results,
+        "field_size_distribution": dict(sorted(field_size_dist.items())),
+    }
+
+
 @app.get("/api/performance/by-venue")
 async def performance_by_venue(days: int = Query(30, ge=1, le=90)):
     """Per-venue top-pick win rate for the last N days."""
