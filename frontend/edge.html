@@ -1376,7 +1376,7 @@
     <button class="tab-btn" id="tabTrifectas" onclick="switchTab('trifectas')">Exotics (beta)</button>
   </div>
 
-  <div class="legend-bar">
+  <div class="legend-bar" id="legendWin">
     <span class="legend-title">FunkyIQ&#8482; Edge Ranking:</span>
     <span class="legend-item">
       <span class="legend-badge premium">💎 Premium</span>
@@ -1396,6 +1396,24 @@
     <span class="legend-item">
       <span class="legend-badge standard">Strong Pick</span>
       <span class="legend-desc"><span class="legend-odds">66% win rate</span> · 1,086 races</span>
+    </span>
+  </div>
+
+  <div class="legend-bar" id="legendExotics" style="display:none">
+    <span class="legend-title">FunkyIQ&#8482; Exotic Ranking:</span>
+    <span class="legend-item">
+      <span class="legend-badge hot">🔥 Hot Exotic</span>
+      <span class="legend-desc">Top 25% by combined place probability</span>
+    </span>
+    <span class="legend-sep">·</span>
+    <span class="legend-item">
+      <span class="legend-badge high">⚡ High Confidence</span>
+      <span class="legend-desc">Next 35% — strong box coverage</span>
+    </span>
+    <span class="legend-sep">·</span>
+    <span class="legend-item">
+      <span class="legend-badge standard">📈 Strong Exotic</span>
+      <span class="legend-desc">Remaining picks — value trifectas &amp; first fours</span>
     </span>
   </div>
 
@@ -2005,6 +2023,8 @@
     document.getElementById('panelTrifectas').style.display = tab === 'trifectas' ? '' : 'none';
     document.getElementById('panelYesterday').style.display = tab === 'yesterday' ? '' : 'none';
     document.getElementById('panelInsights').style.display = tab === 'insights' ? '' : 'none';
+    document.getElementById('legendWin').style.display = tab === 'trifectas' ? 'none' : '';
+    document.getElementById('legendExotics').style.display = tab === 'trifectas' ? '' : 'none';
     if (tab === 'trifectas' && !trifectasLoaded) loadTrifectas();
     if (tab === 'yesterday' && !yesterdayLoaded) loadYesterday();
     if (tab === 'insights' && !trackRecordLoaded) loadTrackRecord();
