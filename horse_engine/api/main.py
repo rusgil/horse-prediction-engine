@@ -2446,11 +2446,19 @@ async def backtest_trifecta(x_cron_secret: Optional[str] = Header(None)):
 
     def _score(fv_raw: str) -> float | None:
         try:
-            fv = json.loads(fv_raw)
-            if len(fv) < NUM_FEATURES:
-                fv = fv + [0.0] * (NUM_FEATURES - len(fv))
-            elif len(fv) > NUM_FEATURES:
-                fv = fv[:NUM_FEATURES]
+            data = json.loads(fv_raw)
+            if isinstance(data, list):
+                fv = data
+                if len(fv) < NUM_FEATURES:
+                    fv = fv + [0.0] * (NUM_FEATURES - len(fv))
+                elif len(fv) > NUM_FEATURES:
+                    fv = fv[:NUM_FEATURES]
+            elif isinstance(data, dict):
+                # Stored as EnrichedRunner JSON — rebuild feature vector
+                er = EnrichedRunner(**{k: v for k, v in data.items() if k in EnrichedRunner.model_fields})
+                fv = build_feature_vector(er)
+            else:
+                return None
             z = sum(w * f for w, f in zip(pm.weights, fv)) + pm.bias
             return _sigmoid(z)
         except Exception:
