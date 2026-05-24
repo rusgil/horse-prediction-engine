@@ -899,30 +899,26 @@ async def get_edge_yesterday(for_date: Optional[str] = Query(None, alias="date")
     }
 
 
-def _trifecta_tier(combined_prob: float, field_size: int) -> tuple[str, float]:
+def _assign_trifecta_tiers(picks: list[dict]) -> None:
     """
-    Return (tier, multiplier).
-    Requires minimum 7 runners — below that the pick is trivially easy and
-    not meaningful as a trifecta bet.  For 7+ runner fields, tier on absolute
-    combined place probability (product of 3 individual place probs):
-      Hot ≥ 20%, High Confidence ≥ 12%, Strong ≥ 6%.
-    Multiplier = how many times better than random, for reference.
+    Assign Hot/High/Strong tiers by percentile rank within the pick list,
+    sorted descending by combined_pct.  Top 25% = Hot, next 35% = High,
+    rest = Strong.  Requires picks already filtered to field_size >= 7.
+    Mutates picks in-place.
     """
-    if field_size < 7:
-        return "below", 0.0
-    n = max(field_size, 3)
-    random_prob = 6.0 / (n * (n - 1) * (n - 2))
-    multiplier = round(combined_prob / random_prob, 1) if random_prob > 0 else 0.0
-    pct = combined_prob * 100
-    if pct >= 20:
-        tier = "hot"
-    elif pct >= 12:
-        tier = "high"
-    elif pct >= 6:
-        tier = "strong"
-    else:
-        tier = "below"
-    return tier, multiplier
+    picks.sort(key=lambda p: p["combined_pct"], reverse=True)
+    n = len(picks)
+    for i, pick in enumerate(picks):
+        rank = i / n if n > 1 else 0
+        if rank < 0.25:
+            pick["tier"] = "hot"
+        elif rank < 0.60:
+            pick["tier"] = "high"
+        else:
+            pick["tier"] = "strong"
+        pick["premium"] = pick["tier"] in ("hot", "high") and any(
+            leg.get("overlay") and leg["overlay"] > 0.03 for leg in pick["legs"]
+        )
 
 
 @app.get("/api/edge/trifectas")
@@ -983,20 +979,19 @@ async def get_edge_trifectas():
             race = race_lookup.get(race_id)
             field_size = (field_size_lookup.get(race_id)
                           or (race.field_size if race and race.field_size else 10))
-            tier, multiplier = _trifecta_tier(combined, field_size)
-            if tier == "below":
+
+            # Skip small fields and very low confidence picks
+            if field_size < 7 or combined_pct < 5.0:
                 continue
+
+            n_fs = max(field_size, 3)
+            multiplier = round(combined / (6.0 / (n_fs * (n_fs - 1) * (n_fs - 2))), 1)
 
             ff = runners[:4] if len(runners) >= 4 else None
             ff_probs = [r.place_probability for r in ff] if ff else []
             ff_combined_pct = round(
                 ff_probs[0] * ff_probs[1] * ff_probs[2] * ff_probs[3] * 100, 1
             ) if len(ff_probs) == 4 and all(ff_probs) else None
-
-            # Premium: hot or high confidence + model beats market on at least one leg
-            premium = tier in ("hot", "high") and any(
-                r.overlay and r.overlay > 0.03 for r in legs
-            )
 
             _, venue_code, race_num = _parse_race_id(race_id)
 
@@ -1013,8 +1008,8 @@ async def get_edge_trifectas():
                 "combined_pct": combined_pct,
                 "multiplier": multiplier,
                 "field_size": field_size,
-                "tier": tier,
-                "premium": premium,
+                "tier": "strong",    # placeholder — overwritten by _assign_trifecta_tiers
+                "premium": False,    # placeholder — overwritten by _assign_trifecta_tiers
                 "legs": [
                     {
                         "tab_number": r.tab_number,
@@ -1042,7 +1037,7 @@ async def get_edge_trifectas():
                 "first_four_combined_pct": ff_combined_pct,
             })
 
-    picks.sort(key=lambda p: p["combined_pct"], reverse=True)
+    _assign_trifecta_tiers(picks)   # sorts + assigns Hot/High/Strong by percentile
     return {"generated_at": datetime.utcnow().isoformat(), "picks": picks}
 
 
@@ -2501,31 +2496,58 @@ async def backtest_trifecta(x_cron_secret: Optional[str] = Header(None)):
     for row in hist_rows:
         race_map.setdefault(row.race_id, []).append(row)
 
-    tiers = {
-        "hot":    {"label": "🔥 Hot (≥20% combined, 7+ runners)",            "tri": {"races": 0, "hits": 0}, "ff": {"races": 0, "hits": 0}},
-        "high":   {"label": "⚡ High Confidence (12–20% combined, 7+ runners)", "tri": {"races": 0, "hits": 0}, "ff": {"races": 0, "hits": 0}},
-        "strong": {"label": "📈 Strong (6–12% combined, 7+ runners)",           "tri": {"races": 0, "hits": 0}, "ff": {"races": 0, "hits": 0}},
-        "below":  {"label": "Below threshold / small field",                    "tri": {"races": 0, "hits": 0}, "ff": {"races": 0, "hits": 0}},
-    }
     totals = {"tri": {"races": 0, "hits": 0}, "ff": {"races": 0, "hits": 0}}
     field_size_dist: dict[int, int] = {}
 
+    # First pass: collect combined probs for all qualifying races (field >= 7)
+    # to compute percentile-based tier thresholds (same logic as endpoint)
+    qualifying: list[tuple[str, float, list, int, list]] = []  # (race_id, combined, valid, field_size, rows)
     for race_id, rows in race_map.items():
         valid = [(r, _score(r.feature_vector_json)) for r in rows if r.position is not None]
         valid = [(r, s) for r, s in valid if s is not None]
         if len(valid) < 3:
             continue
-
+        field_size = len(rows)
+        if field_size < 7:
+            continue
         valid.sort(key=lambda x: x[1], reverse=True)
-        field_size = len(rows)   # all runners in race, not just those with valid features
+        top3_probs = [s for _, s in valid[:3]]
+        tri_combined = top3_probs[0] * top3_probs[1] * top3_probs[2]
+        if tri_combined * 100 < 5.0:
+            continue
+        qualifying.append((race_id, tri_combined, valid, field_size, rows))
+
+    # Derive percentile thresholds: top 25% = hot, top 60% = high, rest = strong
+    qualifying_sorted = sorted(qualifying, key=lambda x: x[1], reverse=True)
+    n_q = len(qualifying_sorted)
+    hot_threshold  = qualifying_sorted[int(n_q * 0.25)][1] if n_q > 4 else 0.0
+    high_threshold = qualifying_sorted[int(n_q * 0.60)][1] if n_q > 4 else 0.0
+
+    tiers = {
+        "hot":    {"label": f"🔥 Hot (top 25%, combined ≥{hot_threshold*100:.1f}%)",   "tri": {"races": 0, "hits": 0}, "ff": {"races": 0, "hits": 0}},
+        "high":   {"label": f"⚡ High Confidence (top 60%, combined ≥{high_threshold*100:.1f}%)", "tri": {"races": 0, "hits": 0}, "ff": {"races": 0, "hits": 0}},
+        "strong": {"label": "📈 Strong (bottom 40%)",                                  "tri": {"races": 0, "hits": 0}, "ff": {"races": 0, "hits": 0}},
+        "below":  {"label": "Below threshold / small field",                           "tri": {"races": 0, "hits": 0}, "ff": {"races": 0, "hits": 0}},
+    }
+
+    # Account for small fields separately
+    for race_id, rows in race_map.items():
+        field_size = len(rows)
+        if field_size < 7:
+            field_size_dist[field_size] = field_size_dist.get(field_size, 0) + 1
+
+    for race_id, tri_combined, valid, field_size, rows in qualifying_sorted:
         field_size_dist[field_size] = field_size_dist.get(field_size, 0) + 1
 
         top3 = valid[:3]
         top3_positions = {r.position for r, _ in top3}
-        top3_probs = [s for _, s in top3]
-        tri_combined = top3_probs[0] * top3_probs[1] * top3_probs[2]
 
-        tier_key, _ = _trifecta_tier(tri_combined, field_size)
+        if tri_combined >= hot_threshold:
+            tier_key = "hot"
+        elif tri_combined >= high_threshold:
+            tier_key = "high"
+        else:
+            tier_key = "strong"
 
         tri_hit = top3_positions == {1, 2, 3}
         tiers[tier_key]["tri"]["races"] += 1
