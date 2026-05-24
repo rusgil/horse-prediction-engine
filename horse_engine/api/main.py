@@ -585,15 +585,29 @@ async def get_edge_picks():
             # Build trifecta legs: win pick + top 2 place-model picks (excluding win)
             place_runners = trifecta_map.get(runner_row.race_id, [])
             place_excl = [pr for pr in place_runners if pr.horse_name != runner_row.horse_name]
-            tri_legs = [{"tab_number": runner_row.tab_number, "horse_name": runner_row.horse_name}] + [
-                {"tab_number": pr.tab_number, "horse_name": pr.horse_name} for pr in place_excl[:2]
-            ]
-            ff_legs = [{"tab_number": runner_row.tab_number, "horse_name": runner_row.horse_name}] + [
-                {"tab_number": pr.tab_number, "horse_name": pr.horse_name} for pr in place_excl[:3]
-            ]
+            def _leg(pr):
+                return {
+                    "tab_number": pr.tab_number,
+                    "horse_name": pr.horse_name,
+                    "place_pct": round(pr.place_probability * 100, 1) if pr.place_probability else None,
+                }
+            win_leg = {
+                "tab_number": runner_row.tab_number,
+                "horse_name": runner_row.horse_name,
+                "place_pct": round(runner_row.place_probability * 100, 1) if runner_row.place_probability else None,
+            }
+            tri_legs = [win_leg] + [_leg(pr) for pr in place_excl[:2]]
+            ff_legs  = [win_leg] + [_leg(pr) for pr in place_excl[:3]]
+            # Approximate combined hit rate: product of individual place probabilities
+            tri_probs = [l["place_pct"] for l in tri_legs if l["place_pct"] is not None]
+            tri_combined = round(tri_probs[0] * tri_probs[1] * tri_probs[2] / 10000, 1) if len(tri_probs) == 3 else None
+            ff_probs = [l["place_pct"] for l in ff_legs if l["place_pct"] is not None]
+            ff_combined = round(ff_probs[0] * ff_probs[1] * ff_probs[2] * ff_probs[3] / 1000000, 1) if len(ff_probs) == 4 else None
             trifecta = {
                 "legs": tri_legs,
+                "combined_pct": tri_combined,
                 "first_four": ff_legs if len(ff_legs) >= 4 else None,
+                "first_four_combined_pct": ff_combined,
             } if len(tri_legs) >= 3 else None
 
             picks.append({
@@ -812,15 +826,28 @@ async def get_edge_yesterday(for_date: Optional[str] = Query(None, alias="date")
         # Build trifecta legs for yesterday display
         yst_place_runners = yst_trifecta_map.get(p.race_id, [])
         yst_place_excl = [pr for pr in yst_place_runners if pr.horse_name != p.horse_name]
-        yst_tri_legs = [{"tab_number": p.tab_number, "horse_name": p.horse_name}] + [
-            {"tab_number": pr.tab_number, "horse_name": pr.horse_name} for pr in yst_place_excl[:2]
-        ]
-        yst_ff_legs = [{"tab_number": p.tab_number, "horse_name": p.horse_name}] + [
-            {"tab_number": pr.tab_number, "horse_name": pr.horse_name} for pr in yst_place_excl[:3]
-        ]
+        def _yst_leg(pr):
+            return {
+                "tab_number": pr.tab_number,
+                "horse_name": pr.horse_name,
+                "place_pct": round(pr.place_probability * 100, 1) if pr.place_probability else None,
+            }
+        yst_win_leg = {
+            "tab_number": p.tab_number,
+            "horse_name": p.horse_name,
+            "place_pct": place_pct,
+        }
+        yst_tri_legs = [yst_win_leg] + [_yst_leg(pr) for pr in yst_place_excl[:2]]
+        yst_ff_legs  = [yst_win_leg] + [_yst_leg(pr) for pr in yst_place_excl[:3]]
+        yst_tri_probs = [l["place_pct"] for l in yst_tri_legs if l["place_pct"] is not None]
+        yst_tri_combined = round(yst_tri_probs[0] * yst_tri_probs[1] * yst_tri_probs[2] / 10000, 1) if len(yst_tri_probs) == 3 else None
+        yst_ff_probs = [l["place_pct"] for l in yst_ff_legs if l["place_pct"] is not None]
+        yst_ff_combined = round(yst_ff_probs[0] * yst_ff_probs[1] * yst_ff_probs[2] * yst_ff_probs[3] / 1000000, 1) if len(yst_ff_probs) == 4 else None
         yst_trifecta = {
             "legs": yst_tri_legs,
+            "combined_pct": yst_tri_combined,
             "first_four": yst_ff_legs if len(yst_ff_legs) >= 4 else None,
+            "first_four_combined_pct": yst_ff_combined,
         } if len(yst_tri_legs) >= 3 else None
 
         output.append({
