@@ -964,6 +964,28 @@
       .tr-explainer-vs { text-align: center; }
     }
 
+    /* ── Sort selector ───────────────────────────────────── */
+    .sort-bar {
+      display: flex; align-items: center; gap: 8px;
+      margin-bottom: 14px;
+      font-size: 0.75rem; color: var(--text-dim);
+    }
+    .sort-btn {
+      background: var(--bg-elevated);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      color: var(--text-secondary);
+      padding: 4px 12px;
+      font-size: 0.75rem;
+      cursor: pointer;
+      transition: background 0.15s, border-color 0.15s, color 0.15s;
+    }
+    .sort-btn.active {
+      background: rgba(59,130,246,0.12);
+      border-color: rgba(59,130,246,0.35);
+      color: #60a5fa;
+    }
+
     /* ── Badge legend ────────────────────────────────────── */
     .legend-bar {
       display: flex; align-items: center; gap: 10px;
@@ -1429,6 +1451,11 @@
         <input type="range" class="stake-slider" id="stakeSlider" min="5" max="500" step="5" value="10" />
         <div class="stake-slider-labels"><span>$5</span><span>$100</span><span>$250</span><span>$500</span></div>
       </div>
+    </div>
+    <div class="sort-bar">
+      <span>Sort:</span>
+      <button class="sort-btn active" id="sortBestPick" onclick="setSortMode('best')">Best Pick</button>
+      <button class="sort-btn" id="sortNextRace" onclick="setSortMode('next')">Next Race</button>
     </div>
     <div id="content">
       <div class="loading">
@@ -1939,6 +1966,13 @@
     const dates = Object.keys(picksByDate).sort();
     dates.forEach((d, i) => {
       const picks = [...picksByDate[d]].sort((a, b) => {
+        if (sortMode === 'next') {
+          if (!a.scheduled_time && !b.scheduled_time) return 0;
+          if (!a.scheduled_time) return 1;
+          if (!b.scheduled_time) return -1;
+          return new Date(a.scheduled_time) - new Date(b.scheduled_time);
+        }
+        // best: premium first, then model confidence descending
         const ap = isPremiumPick(a) ? 1 : 0;
         const bp = isPremiumPick(b) ? 1 : 0;
         if (bp !== ap) return bp - ap;
@@ -2005,6 +2039,17 @@
 
   const API = 'https://web-production-dec62.up.railway.app';
   let picksData = null;
+  let sortMode = 'best';
+
+  function setSortMode(mode) {
+    sortMode = mode;
+    document.getElementById('sortBestPick').classList.toggle('active', mode === 'best');
+    document.getElementById('sortNextRace').classList.toggle('active', mode === 'next');
+    if (picksData) {
+      const stake = parseFloat(document.getElementById('stakeInput').value) || 10;
+      renderContent(picksData, stake, resultsMap);
+    }
+  }
   let resultsMap = {};
   let yesterdayLoaded = false;
   let yesterdayData = null;
