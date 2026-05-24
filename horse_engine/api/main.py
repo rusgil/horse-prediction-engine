@@ -53,13 +53,15 @@ from horse_engine.models.database import (
     save_model_weights,
     load_place_model_weights,
     save_place_model_weights,
+    load_exotic_model_weights,
+    save_exotic_model_weights,
     save_race_predictions,
 )
 from horse_engine.models.enriched import EnrichedRunner
 from horse_engine.pipeline import enrich_and_predict_race, enrich_meeting
 from horse_engine.prediction.engine import _value_rating
 from horse_engine.prediction.features import build_feature_vector
-from horse_engine.prediction.model import HorseModel, PlaceModel
+from horse_engine.prediction.model import HorseModel, PlaceModel, ExoticModel
 from horse_engine.prediction.venue_calibration import compute_venue_multipliers
 
 log = logging.getLogger(__name__)
@@ -478,6 +480,13 @@ async def _load_place_model(session) -> PlaceModel:
     return PlaceModel()
 
 
+async def _load_exotic_model(session) -> ExoticModel:
+    weights = await load_exotic_model_weights(session)
+    if weights:
+        return ExoticModel.from_weights_dict(weights)
+    return ExoticModel()
+
+
 def _today() -> str:
     return _today_aest().isoformat()
 
@@ -556,6 +565,16 @@ async def get_edge_picks():
             )
             place_rows_list = place_result.scalars().all()
 
+            # Batch-fetch exotic model top-3 for alignment check
+            exotic_result = await session.execute(
+                select(RunnerPredictionRow)
+                .where(RunnerPredictionRow.race_id.in_(race_ids))
+                .where(RunnerPredictionRow.exotic_model_rank >= 1)
+                .where(RunnerPredictionRow.exotic_model_rank <= 3)
+                .where(RunnerPredictionRow.cancelled.is_(False) | RunnerPredictionRow.cancelled.is_(None))
+            )
+            exotic_rows_list = exotic_result.scalars().all()
+
         # Build place-model lookup: race_id -> sorted list by place_model_rank
         trifecta_map: dict[str, list] = {}
         for pr in place_rows_list:
@@ -563,6 +582,11 @@ async def get_edge_picks():
                 trifecta_map.setdefault(pr.race_id, []).append(pr)
         for key in trifecta_map:
             trifecta_map[key].sort(key=lambda r: r.place_model_rank)
+
+        # Build exotic top-3 lookup: race_id -> set of horse names
+        exotic_top3_map: dict[str, set] = {}
+        for er in exotic_rows_list:
+            exotic_top3_map.setdefault(er.race_id, set()).add(er.horse_name)
 
         # Fetch scheduled times per unique meeting in parallel
         unique_venues = {_parse_race_id(r.race_id)[1] for r in rows}
@@ -603,11 +627,27 @@ async def get_edge_picks():
             tri_combined = round(tri_probs[0] * tri_probs[1] * tri_probs[2] / 10000, 1) if len(tri_probs) == 3 else None
             ff_probs = [l["place_pct"] for l in ff_legs if l["place_pct"] is not None]
             ff_combined = round(ff_probs[0] * ff_probs[1] * ff_probs[2] * ff_probs[3] / 1000000, 1) if len(ff_probs) == 4 else None
+            # Exotic alignment: compare exotic model's top-3 against win pick
+            exotic_top3 = exotic_top3_map.get(runner_row.race_id, set())
+            if not exotic_top3:
+                exotic_alignment = "no_exotic"
+            elif runner_row.horse_name in exotic_top3:
+                # Check if win horse is exotic leg 1 (rank 1)
+                exotic_leg1 = next(
+                    (er.horse_name for er in exotic_rows_list
+                     if er.race_id == runner_row.race_id and er.exotic_model_rank == 1),
+                    None,
+                )
+                exotic_alignment = "confirmed" if runner_row.horse_name == exotic_leg1 else "partial"
+            else:
+                exotic_alignment = "diverge"
+
             trifecta = {
                 "legs": tri_legs,
                 "combined_pct": tri_combined,
                 "first_four": ff_legs if len(ff_legs) >= 4 else None,
                 "first_four_combined_pct": ff_combined,
+                "exotic_alignment": exotic_alignment,
             } if len(tri_legs) >= 3 else None
 
             picks.append({
@@ -1006,19 +1046,33 @@ async def get_edge_trifectas():
         prefix = f"{target_date}_"
 
         async with get_session() as session:
-            place_result = await session.execute(
+            exotic_result = await session.execute(
                 select(RunnerPredictionRow)
                 .where(RunnerPredictionRow.race_id.like(f"{prefix}%"))
-                .where(RunnerPredictionRow.place_model_rank >= 1)
-                .where(RunnerPredictionRow.place_model_rank <= 4)
+                .where(RunnerPredictionRow.exotic_model_rank >= 1)
+                .where(RunnerPredictionRow.exotic_model_rank <= 4)
                 .where(RunnerPredictionRow.cancelled.is_(False) | RunnerPredictionRow.cancelled.is_(None))
             )
-            place_rows = place_result.scalars().all()
+            exotic_rows = exotic_result.scalars().all()
 
-            if not place_rows:
+            if not exotic_rows:
+                # Fall back to place_model_rank until exotic model is trained
+                exotic_result = await session.execute(
+                    select(RunnerPredictionRow)
+                    .where(RunnerPredictionRow.race_id.like(f"{prefix}%"))
+                    .where(RunnerPredictionRow.place_model_rank >= 1)
+                    .where(RunnerPredictionRow.place_model_rank <= 4)
+                    .where(RunnerPredictionRow.cancelled.is_(False) | RunnerPredictionRow.cancelled.is_(None))
+                )
+                exotic_rows = exotic_result.scalars().all()
+                using_fallback = True
+            else:
+                using_fallback = False
+
+            if not exotic_rows:
                 continue
 
-            race_ids = list({r.race_id for r in place_rows})
+            race_ids = list({r.race_id for r in exotic_rows})
             race_result = await session.execute(
                 select(RacePredictionRow).where(RacePredictionRow.race_id.in_(race_ids))
             )
@@ -1032,13 +1086,22 @@ async def get_edge_trifectas():
             )
             field_size_lookup = {row[0]: row[1] for row in count_result.all()}
 
-        # Group by race, sort by place_model_rank
+            # Also fetch win picks (model_rank=1) per race for alignment check
+            win_result = await session.execute(
+                select(RunnerPredictionRow)
+                .where(RunnerPredictionRow.race_id.in_(race_ids))
+                .where(RunnerPredictionRow.model_rank == 1)
+            )
+            win_lookup = {r.race_id: r.horse_name for r in win_result.scalars().all()}
+
+        # Group by race, sort by exotic_model_rank (or place_model_rank fallback)
+        rank_key = (lambda r: r.place_model_rank or 99) if using_fallback else (lambda r: r.exotic_model_rank or 99)
         race_map: dict[str, list] = {}
-        for row in place_rows:
+        for row in exotic_rows:
             race_map.setdefault(row.race_id, []).append(row)
 
         for race_id, runners in race_map.items():
-            runners.sort(key=lambda r: r.place_model_rank or 99)
+            runners.sort(key=rank_key)
             if len(runners) < 3:
                 continue
 
@@ -1069,6 +1132,18 @@ async def get_edge_trifectas():
 
             _, venue_code, race_num = _parse_race_id(race_id)
 
+            # Alignment: compare exotic top-3 horses vs win model pick
+            win_horse = win_lookup.get(race_id)
+            exotic_horses = {r.horse_name for r in legs}
+            if win_horse is None:
+                alignment = "no_edge_pick"
+            elif win_horse == legs[0].horse_name:
+                alignment = "confirmed"       # win pick is exotic leg 1
+            elif win_horse in exotic_horses:
+                alignment = "partial"         # win pick is in exotic top 3 but not leg 1
+            else:
+                alignment = "diverge"         # win pick not in exotic top 3
+
             picks.append({
                 "date": target_date,
                 "race_id": race_id,
@@ -1082,8 +1157,11 @@ async def get_edge_trifectas():
                 "combined_pct": combined_pct,
                 "multiplier": multiplier,
                 "field_size": field_size,
-                "tier": "strong",    # placeholder — overwritten by _assign_trifecta_tiers
-                "premium": False,    # placeholder — overwritten by _assign_trifecta_tiers
+                "tier": "strong",
+                "premium": False,
+                "exotic_alignment": alignment,
+                "win_horse": win_horse,
+                "using_fallback_model": using_fallback,
                 "legs": [
                     {
                         "tab_number": r.tab_number,
@@ -1825,6 +1903,83 @@ async def retrain_place_model(
         "training_examples": len(training_data),
         "placed_examples": placed_count,
         "placed_rate_pct": round(placed_count / len(training_data) * 100, 1),
+    }
+
+
+@app.post("/api/admin/retrain-exotic")
+async def retrain_exotic_model(
+    days: int = Query(0, ge=0, le=365),
+    x_cron_secret: Optional[str] = Header(None),
+):
+    """
+    Train the exotic model using race-grouped trifecta-aware loss.
+    Only uses field_size >= 7 races (trifecta-eligible fields).
+    Groups runners by race so the trifecta box objective can be applied.
+    """
+    _check_admin(x_cron_secret)
+    async with get_session() as session:
+        hr_query = select(HistoricalResultRow)
+        if days > 0:
+            cutoff = (date.today() - timedelta(days=days)).isoformat()
+            hr_query = hr_query.where(HistoricalResultRow.race_id >= cutoff)
+        hr_result = await session.execute(hr_query)
+        hr_rows = hr_result.scalars().all()
+
+        pred_result = await session.execute(
+            select(RunnerPredictionRow).where(RunnerPredictionRow.enriched_json.isnot(None))
+        )
+        pred_rows = pred_result.scalars().all()
+
+    if len(hr_rows) < 50:
+        raise HTTPException(400, f"Need at least 50 results to train (have {len(hr_rows)})")
+
+    pred_by_key = {(p.race_id, p.horse_name): p for p in pred_rows}
+
+    # Group by race_id for race-level trifecta training
+    race_data: dict[str, list[tuple[list[float], int, int | None]]] = {}
+    for row in hr_rows:
+        pred = pred_by_key.get((row.race_id, row.horse_name))
+        if not pred:
+            continue
+        try:
+            er = EnrichedRunner(**json.loads(pred.enriched_json))
+            fv = build_feature_vector(er)
+            label = 1 if row.placed else 0
+            race_data.setdefault(row.race_id, []).append((fv, label, row.position))
+        except Exception as e:
+            log.debug("Skipping exotic retrain row %s/%s: %s", row.race_id, row.horse_name, e)
+
+    # Filter to field_size >= 7 with complete top-3 data
+    race_groups = []
+    for race_id, runners in race_data.items():
+        if len(runners) < 7:
+            continue
+        top3_count = sum(1 for _, lbl, _ in runners if lbl == 1)
+        if top3_count != 3:
+            continue
+        race_groups.append([(fv, lbl) for fv, lbl, _ in runners])
+
+    if not race_groups:
+        raise HTTPException(400, "No eligible trifecta races found for exotic training")
+
+    total_runners = sum(len(r) for r in race_groups)
+    log.info("[exotic-retrain] %d races, %d runners", len(race_groups), total_runners)
+
+    async def _do_retrain():
+        m = ExoticModel()
+        s = m.train_exotic(race_groups)
+        async with get_session() as sess:
+            await save_exotic_model_weights(sess, s["weights"])
+        log.info(
+            "[exotic-retrain] complete — %d races, box_hit_rate=%.3f",
+            len(race_groups), s.get("box_hit_rate", 0),
+        )
+
+    asyncio.create_task(_do_retrain())
+    return {
+        "status": "exotic_retrain_started",
+        "eligible_races": len(race_groups),
+        "total_runners": total_runners,
     }
 
 
@@ -3350,12 +3505,15 @@ async def _load_venue_calibration() -> dict[str, float]:
     return multipliers
 
 
-async def _enrich_date(race_date: str, client, model, force: bool = False, place_model: PlaceModel | None = None) -> list[dict]:
+async def _enrich_date(race_date: str, client, model, force: bool = False, place_model: PlaceModel | None = None, exotic_model: ExoticModel | None = None) -> list[dict]:
     """Enrich all meetings for a single date. Returns summary list."""
     venue_cal = await _load_venue_calibration()
     if place_model is None:
         async with get_session() as session:
             place_model = await _load_place_model(session)
+    if exotic_model is None:
+        async with get_session() as session:
+            exotic_model = await _load_exotic_model(session)
     meetings = await client.get_meetings(race_date)
     summary = []
     for m in meetings:
@@ -3383,7 +3541,7 @@ async def _enrich_date(race_date: str, client, model, force: bool = False, place
                 if not full_event:
                     continue
                 race = await client.parse_race(full_event, race_date, venue_name, state)
-                predictions, _ = await enrich_and_predict_race(race, model, venue_calibration=venue_cal, place_model=place_model)
+                predictions, _ = await enrich_and_predict_race(race, model, venue_calibration=venue_cal, place_model=place_model, exotic_model=exotic_model)
                 async with get_session() as session:
                     await save_race_predictions(
                         session,
@@ -3452,6 +3610,7 @@ def _prediction_to_db_dict(pred, race_id: str) -> dict:
         "place_probability": round(pred.place_prob, 4),
         "model_rank": pred.model_rank,
         "place_model_rank": pred.place_model_rank if pred.place_model_rank else None,
+        "exotic_model_rank": pred.exotic_model_rank if pred.exotic_model_rank else None,
         "market_rank": pred.enriched.market_rank,
         "overlay": round(pred.overlay, 4),
         "best_available_odds": pred.enriched.best_available_odds,

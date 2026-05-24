@@ -76,6 +76,7 @@ class RunnerPredictionRow(Base):
     key_flags = Column(Text)             # JSON list of flag strings
     enriched_json = Column(Text)         # full EnrichedRunner JSON
     place_model_rank = Column(Integer, nullable=True)   # rank by dedicated place model
+    exotic_model_rank = Column(Integer, nullable=True)  # rank by exotic (trifecta) model
     enriched_at = Column(DateTime, default=datetime.utcnow)
     cancelled = Column(Boolean, default=False, nullable=True)
 
@@ -91,6 +92,15 @@ class ModelWeightRow(Base):
 
 class PlaceModelWeightRow(Base):
     __tablename__ = "place_model_weights"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    feature_name = Column(String, unique=True)
+    weight = Column(Float)
+    updated_at = Column(DateTime, default=datetime.utcnow)
+
+
+class ExoticModelWeightRow(Base):
+    __tablename__ = "exotic_model_weights"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     feature_name = Column(String, unique=True)
@@ -191,6 +201,9 @@ async def init_db() -> None:
         await conn.execute(text(
             "ALTER TABLE runner_predictions ADD COLUMN IF NOT EXISTS place_model_rank INTEGER"
         ))
+        await conn.execute(text(
+            "ALTER TABLE runner_predictions ADD COLUMN IF NOT EXISTS exotic_model_rank INTEGER"
+        ))
 
 
 async def save_race_predictions(session: AsyncSession, race_id: str, predictions: list[dict]) -> None:
@@ -235,4 +248,18 @@ async def save_place_model_weights(session: AsyncSession, weights: dict[str, flo
     await session.execute(delete(PlaceModelWeightRow))
     for name, w in weights.items():
         session.add(PlaceModelWeightRow(feature_name=name, weight=w))
+    await session.commit()
+
+
+async def load_exotic_model_weights(session: AsyncSession) -> dict[str, float]:
+    result = await session.execute(select(ExoticModelWeightRow))
+    rows = result.scalars().all()
+    return {r.feature_name: r.weight for r in rows}
+
+
+async def save_exotic_model_weights(session: AsyncSession, weights: dict[str, float]) -> None:
+    from sqlalchemy import delete
+    await session.execute(delete(ExoticModelWeightRow))
+    for name, w in weights.items():
+        session.add(ExoticModelWeightRow(feature_name=name, weight=w))
     await session.commit()

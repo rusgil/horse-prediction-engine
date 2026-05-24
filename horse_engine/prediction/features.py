@@ -134,6 +134,41 @@ DEFAULT_PLACE_WEIGHTS_BASE = [
 
 DEFAULT_PLACE_WEIGHTS = DEFAULT_PLACE_WEIGHTS_BASE + (DEFAULT_WEIGHTS_ODDS_MOVEMENT if USE_ODDS_MOVEMENT_FEATURES else [])
 
+# Exotic model defaults — tuned for trifecta box coverage
+# Emphasises consistency and runs-in-prep over barrier/win-rate peak signals
+DEFAULT_EXOTIC_WEIGHTS_BASE = [
+    0.75,  # form_score
+    0.25,  # win_rate_career
+    0.65,  # win_rate_distance
+    0.55,  # win_rate_track
+    0.65,  # surface_match_score
+    0.10,  # barrier_score — less important in exotics
+   -0.10,  # days_since_last_run_norm
+    0.30,  # runs_in_prep_norm
+    0.15,  # class_change
+    0.55,  # trainer_overall_rate
+    0.65,  # trainer_track_rate
+    0.30,  # trainer_jockey_combo_rate
+    0.40,  # jockey_overall_rate
+    0.50,  # jockey_track_rate
+    0.20,  # jockey_wins_today_norm
+    0.55,  # pedigree_distance_match
+    0.40,  # pedigree_wet_score_norm
+    0.65,  # market_rank_norm
+    0.35,  # odds_movement_norm
+    0.45,  # speed_map_advantage
+    0.15,  # gear_change_score
+   -0.10,  # weight_vs_field_norm
+    0.20,  # jockey_booking_significance
+    0.55,  # stable_form
+    0.40,  # track_bias_advantage
+    0.75,  # win_rate_track_distance
+    0.70,  # condition_win_rate
+    0.25,  # first_up_win_rate
+]
+
+DEFAULT_EXOTIC_WEIGHTS = DEFAULT_EXOTIC_WEIGHTS_BASE + (DEFAULT_WEIGHTS_ODDS_MOVEMENT if USE_ODDS_MOVEMENT_FEATURES else [])
+
 
 def build_feature_vector(er: EnrichedRunner) -> list[float]:
     import math

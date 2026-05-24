@@ -1696,6 +1696,14 @@
             ? (tri.hit ? `<span style="font-weight:800;color:var(--green-bright);font-size:0.78rem">✓ HIT</span>`
                        : `<span style="font-weight:700;color:#f87171;font-size:0.72rem">✗ Missed</span>`)
             : '';
+          const alignBadge = (() => {
+            const a = tri.exotic_alignment;
+            if (!a || a === 'no_exotic') return '';
+            if (a === 'confirmed') return `<span style="font-size:0.65rem;font-weight:700;color:var(--green-bright);background:var(--green-dim);border:1px solid var(--green-mid);border-radius:4px;padding:1px 5px;margin-left:4px">✓ Exotic aligned</span>`;
+            if (a === 'partial')   return `<span style="font-size:0.65rem;font-weight:700;color:var(--gold);background:var(--gold-dim);border:1px solid var(--gold-mid);border-radius:4px;padding:1px 5px;margin-left:4px">~ Partial exotic</span>`;
+            if (a === 'diverge')   return `<span style="font-size:0.65rem;font-weight:600;color:#f87171;background:var(--red-dim);border:1px solid rgba(239,68,68,0.3);border-radius:4px;padding:1px 5px;margin-left:4px">⚠ Models diverge</span>`;
+            return '';
+          })();
           const ffPart = tri.first_four ? (() => {
             const ffNums = tri.first_four.map(legHtml).join(' <span style="color:var(--border)">·</span> ');
             const ffNames = tri.first_four.map(l => escHtml(l.horse_name)).join(' · ');
@@ -1709,7 +1717,7 @@
           return `<div class="trifecta-strip">
             <span class="tri-label">🎯 Trifecta</span>
             <span class="tri-legs">${triNums}</span>
-            ${triPct}${verdict}
+            ${triPct}${verdict}${alignBadge}
             <span class="tri-names">${triNames}</span>
             ${ffPart}
           </div>`;
@@ -2541,6 +2549,14 @@
         <div class="pick-footer">
           ${trackChip}${distChip}${stateChip}${weatherChip}
           <span class="pick-footer-chip" style="color:${tierColor}">${tierLevel}</span>
+          ${(() => {
+            const a = pick.exotic_alignment;
+            if (!a || a === 'no_edge_pick') return '';
+            if (a === 'confirmed') return `<span class="pick-footer-chip" style="color:var(--green-bright);background:var(--green-dim);border-color:var(--green-mid)">✓ Exotic aligned</span>`;
+            if (a === 'partial')   return `<span class="pick-footer-chip" style="color:var(--gold)">~ Partial exotic</span>`;
+            if (a === 'diverge')   return `<span class="pick-footer-chip" style="color:#f87171">⚠ Models diverge</span>`;
+            return '';
+          })()}
         </div>
       </div>`;
   }

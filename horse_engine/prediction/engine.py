@@ -29,7 +29,7 @@ from horse_engine.pedigree.sire_profiles import (
     parse_condition_category,
 )
 from horse_engine.prediction.features import build_feature_vector
-from horse_engine.prediction.model import HorseModel, PlaceModel
+from horse_engine.prediction.model import HorseModel, PlaceModel, ExoticModel
 
 log = logging.getLogger(__name__)
 
@@ -50,6 +50,7 @@ class RunnerPrediction:
         self.feature_vector = feature_vector
         self.model_rank: int = 0
         self.place_model_rank: int = 0   # rank by dedicated place model
+        self.exotic_model_rank: int = 0  # rank by exotic (trifecta) model
         self.overlay: float = 0.0
         self.value_rating: float = 0.0
         self.key_flags: list[str] = []
@@ -278,7 +279,7 @@ def enrich_runner(
     )
 
 
-def predict_race(race: Race, model: HorseModel, venue_calibration: dict[str, float] | None = None, place_model: PlaceModel | None = None) -> list[RunnerPrediction]:
+def predict_race(race: Race, model: HorseModel, venue_calibration: dict[str, float] | None = None, place_model: PlaceModel | None = None, exotic_model: ExoticModel | None = None) -> list[RunnerPrediction]:
     """Full prediction pipeline for one race. Returns ranked RunnerPredictions."""
     if not race.runners:
         return []
@@ -345,6 +346,17 @@ def predict_race(race: Race, model: HorseModel, venue_calibration: dict[str, flo
         )
         for place_rank, (_, p) in enumerate(place_ranked, 1):
             p.place_model_rank = place_rank
+
+    # Run exotic model if provided — assigns exotic_model_rank independently
+    if exotic_model is not None:
+        exotic_scores, _ = exotic_model.predict_field(feature_vectors)
+        exotic_ranked = sorted(
+            zip(exotic_scores, predictions),
+            key=lambda x: x[0],
+            reverse=True,
+        )
+        for exotic_rank, (_, p) in enumerate(exotic_ranked, 1):
+            p.exotic_model_rank = exotic_rank
 
     return predictions
 
