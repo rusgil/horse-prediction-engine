@@ -77,6 +77,7 @@ class RunnerPredictionRow(Base):
     enriched_json = Column(Text)         # full EnrichedRunner JSON
     place_model_rank = Column(Integer, nullable=True)   # rank by dedicated place model
     exotic_model_rank = Column(Integer, nullable=True)  # rank by exotic (trifecta) model
+    scheduled_time = Column(String, nullable=True)
     enriched_at = Column(DateTime, default=datetime.utcnow)
     cancelled = Column(Boolean, default=False, nullable=True)
 
@@ -203,6 +204,9 @@ async def init_db() -> None:
         ))
         await conn.execute(text(
             "ALTER TABLE runner_predictions ADD COLUMN IF NOT EXISTS exotic_model_rank INTEGER"
+        ))
+        await conn.execute(text(
+            "ALTER TABLE runner_predictions ADD COLUMN IF NOT EXISTS scheduled_time TEXT"
         ))
 
 

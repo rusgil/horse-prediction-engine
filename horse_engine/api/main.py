@@ -295,7 +295,7 @@ async def _scheduled_pre_race_enrich():
                         await save_race_predictions(
                             session,
                             race_id,
-                            [_prediction_to_db_dict(p, race_id) for p in predictions],
+                            [_prediction_to_db_dict(p, race_id, start_raw) for p in predictions],
                         )
                     log.info("[pre-race] Re-enriched %s (jump %s)", race_id, start_raw)
                     enriched_count += 1
@@ -1203,7 +1203,7 @@ async def get_edge_trifectas():
                 "race_name": race.race_name if race else None,
                 "distance": race.distance if race else None,
                 "track_condition": race.track_condition if race else None,
-                "scheduled_time": race.scheduled_time if race else None,
+                "scheduled_time": runners[0].scheduled_time if runners else None,
                 "combined_pct": combined_pct,
                 "multiplier": multiplier,
                 "field_size": field_size,
@@ -1773,7 +1773,7 @@ async def enrich_race(race_id: str, force: bool = Query(False)):
             await save_race_predictions(
                 session,
                 race_id,
-                [_prediction_to_db_dict(p, race_id) for p in predictions],
+                [_prediction_to_db_dict(p, race_id, race.scheduled_time) for p in predictions],
             )
 
         return {
@@ -1824,7 +1824,7 @@ async def enrich_meeting_endpoint(race_date: str, venue_code: str):
                 await save_race_predictions(
                     session,
                     race_id,
-                    [_prediction_to_db_dict(p, race_id) for p in predictions],
+                    [_prediction_to_db_dict(p, race_id, race.scheduled_time) for p in predictions],
                 )
             results.append({"race_id": race_id, "status": "ok", "runners": len(predictions)})
         except Exception as e:
@@ -2358,7 +2358,7 @@ async def _run_backfill(days: int, x_secret: Optional[str], force: bool = False)
                             async with get_session() as session:
                                 await save_race_predictions(
                                     session, race_id,
-                                    [_prediction_to_db_dict(p, race_id) for p in predictions],
+                                    [_prediction_to_db_dict(p, race_id, race.scheduled_time) for p in predictions],
                                 )
                             # Seed actual results
                             for sel in event.get("selections", []):
@@ -3850,7 +3850,7 @@ async def _enrich_date(race_date: str, client, model, force: bool = False, place
                     await save_race_predictions(
                         session,
                         race_id,
-                        [_prediction_to_db_dict(p, race_id) for p in predictions],
+                        [_prediction_to_db_dict(p, race_id, race.scheduled_time) for p in predictions],
                     )
             summary.append({"venue": venue_code, "status": "ok"})
         except Exception as e:
@@ -3901,7 +3901,7 @@ async def admin_reenrich(
 
 # ── Serialisation helpers ─────────────────────────────────────────────────────
 
-def _prediction_to_db_dict(pred, race_id: str) -> dict:
+def _prediction_to_db_dict(pred, race_id: str, scheduled_time: str | None = None) -> dict:
     return {
         "race_id": race_id,
         "horse_name": pred.runner.horse_name,
@@ -3922,6 +3922,7 @@ def _prediction_to_db_dict(pred, race_id: str) -> dict:
         "narrative": pred.narrative,
         "key_flags": json.dumps(pred.key_flags),
         "enriched_json": pred.enriched.model_dump_json(),
+        "scheduled_time": scheduled_time or None,
     }
 
 
