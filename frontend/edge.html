@@ -1462,6 +1462,11 @@
   </div>
 
   <div id="panelTrifectas" style="display:none">
+    <div class="sort-bar">
+      <span>Sort:</span>
+      <button class="sort-btn" id="exoticSortBestPick" onclick="setExoticSortMode('best')">Best Pick</button>
+      <button class="sort-btn active" id="exoticSortNextRace" onclick="setExoticSortMode('next')">Next Race</button>
+    </div>
     <div id="trifectasContent">
       <div class="loading">
         <div class="loading-spinner"></div>
@@ -2036,6 +2041,15 @@
   const API = 'https://web-production-dec62.up.railway.app';
   let picksData = null;
   let sortMode = 'best';
+  let exoticSortMode = 'next';
+  let trifectasData = null;
+
+  function setExoticSortMode(mode) {
+    exoticSortMode = mode;
+    document.getElementById('exoticSortBestPick').classList.toggle('active', mode === 'best');
+    document.getElementById('exoticSortNextRace').classList.toggle('active', mode === 'next');
+    if (trifectasData) renderTrifectasContent(trifectasData);
+  }
 
   function setSortMode(mode) {
     sortMode = mode;
@@ -2747,8 +2761,8 @@
     try {
       const res = await fetch(`${API}/api/edge/trifectas`);
       if (!res.ok) throw new Error(res.statusText);
-      const data = await res.json();
-      renderTrifectasContent(data);
+      trifectasData = await res.json();
+      renderTrifectasContent(trifectasData);
     } catch (e) {
       document.getElementById('trifectasContent').innerHTML = `
         <div class="empty-state"><div class="empty-icon">⚠️</div><div class="empty-title">Could not load exotic picks</div><div class="empty-sub">${escHtml(e.message)}</div></div>`;
@@ -2762,8 +2776,9 @@
       return;
     }
 
-    // Sort picks by scheduled_time ascending (soonest first), null last
     const sorted = [...data.picks].sort((a, b) => {
+      if (exoticSortMode === 'best') return b.combined_pct - a.combined_pct;
+      // next race: soonest first, null last
       if (!a.scheduled_time && !b.scheduled_time) return 0;
       if (!a.scheduled_time) return 1;
       if (!b.scheduled_time) return -1;
