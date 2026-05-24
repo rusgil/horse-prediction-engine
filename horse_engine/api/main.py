@@ -1086,11 +1086,12 @@ async def get_edge_trifectas():
             )
             field_size_lookup = {row[0]: row[1] for row in count_result.all()}
 
-            # Also fetch win picks (model_rank=1) per race for alignment check
+            # Only fetch edge-qualifying win picks (same threshold as /api/edge)
             win_result = await session.execute(
                 select(RunnerPredictionRow)
                 .where(RunnerPredictionRow.race_id.in_(race_ids))
                 .where(RunnerPredictionRow.model_rank == 1)
+                .where(RunnerPredictionRow.win_probability >= 0.295)
             )
             win_lookup = {r.race_id: r.horse_name for r in win_result.scalars().all()}
 
