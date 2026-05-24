@@ -667,7 +667,7 @@
       color: var(--text-dim); font-style: italic; min-width: 0;
     }
     .tri-ff-row {
-      width: 100%; display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap;
+      display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap;
     }
     .tri-ff-label {
       font-weight: 700; color: #c084fc; letter-spacing: 0.04em; white-space: nowrap;
@@ -1190,6 +1190,137 @@
       font-size: 0.7rem; color: var(--text-dim);
       margin-top: 2px;
     }
+
+    /* ── Exotic race card ────────────────────────────────── */
+    .exotic-card {
+      background: var(--bg-card);
+      border: 1px solid rgba(20,184,166,0.2);
+      border-radius: var(--radius);
+      overflow: hidden;
+      display: flex; flex-direction: column;
+    }
+    .exotic-card.hot  { border-color: rgba(249,115,22,0.35); box-shadow: 0 0 0 1px rgba(249,115,22,0.1); }
+    .exotic-card.high { border-color: rgba(59,130,246,0.3); }
+
+    .exotic-card-header {
+      display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+      padding: 10px 14px 8px;
+      background: rgba(20,184,166,0.05);
+      border-bottom: 1px solid rgba(20,184,166,0.12);
+    }
+    .exotic-card-header.hot  { background: rgba(249,115,22,0.07); border-color: rgba(249,115,22,0.18); }
+    .exotic-card-header.high { background: rgba(59,130,246,0.06); border-color: rgba(59,130,246,0.15); }
+
+    .exotic-tier-badge {
+      font-family: 'Barlow Condensed', sans-serif;
+      font-size: 0.72rem; font-weight: 800;
+      letter-spacing: 0.08em; text-transform: uppercase;
+      padding: 2px 8px; border-radius: 999px;
+      white-space: nowrap;
+    }
+    .exotic-tier-badge.hot  { background: rgba(249,115,22,0.15); color: #fb923c; border: 1px solid rgba(249,115,22,0.3); }
+    .exotic-tier-badge.high { background: rgba(59,130,246,0.12); color: #60a5fa; border: 1px solid rgba(59,130,246,0.28); }
+    .exotic-tier-badge.strong { background: rgba(20,184,166,0.1); color: #2dd4bf; border: 1px solid rgba(20,184,166,0.25); }
+
+    .exotic-race-ref {
+      flex: 1; display: flex; align-items: center; gap: 6px; min-width: 0;
+      font-size: 0.85rem; font-weight: 700; color: var(--text-primary);
+    }
+    .exotic-race-ref .venue { color: var(--text-primary); }
+    .exotic-race-ref .rname { color: var(--text-dim); font-size: 0.75rem; font-weight: 400; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .exotic-race-ref .sep { color: var(--border); }
+
+    .exotic-countdown {
+      font-family: 'Barlow Condensed', sans-serif;
+      font-size: 1rem; font-weight: 800;
+      letter-spacing: 0.04em;
+      padding: 3px 10px;
+      border-radius: 6px;
+      background: var(--bg-elevated);
+      border: 1px solid var(--border);
+      white-space: nowrap;
+      min-width: 64px; text-align: center;
+      transition: color 0.3s, border-color 0.3s;
+    }
+    .exotic-countdown.soon   { color: #fb923c; border-color: rgba(249,115,22,0.35); background: rgba(249,115,22,0.08); }
+    .exotic-countdown.urgent { color: #f87171; border-color: rgba(239,68,68,0.4); background: rgba(239,68,68,0.1); animation: pulse-border 1s ease-in-out infinite; }
+    .exotic-countdown.jumped { color: var(--text-dim); font-style: italic; }
+    @keyframes pulse-border { 0%,100% { opacity: 1; } 50% { opacity: 0.6; } }
+
+    .exotic-runners {
+      display: flex; flex-direction: column;
+    }
+    .exotic-runner-row {
+      display: flex; align-items: center; gap: 10px;
+      padding: 9px 14px;
+      border-bottom: 1px solid rgba(30,40,64,0.5);
+      transition: background 0.1s;
+    }
+    .exotic-runner-row:last-child { border-bottom: none; }
+    .exotic-runner-row:hover { background: rgba(255,255,255,0.02); }
+    .exotic-runner-row.rank-1 { background: rgba(20,184,166,0.04); }
+    .exotic-runner-row.rank-2 { }
+    .exotic-runner-row.rank-3 { }
+    .exotic-runner-row.rank-4 { background: rgba(139,92,246,0.03); }
+
+    .exotic-rank {
+      font-family: 'Barlow Condensed', sans-serif;
+      font-size: 1.1rem; font-weight: 900;
+      min-width: 28px; text-align: center;
+      line-height: 1;
+    }
+    .exotic-rank.r1 { color: #2dd4bf; }
+    .exotic-rank.r2 { color: #94a3b8; }
+    .exotic-rank.r3 { color: #a78bfa; }
+    .exotic-rank.r4 { color: #60a5fa; }
+
+    .exotic-tab-badge {
+      min-width: 26px; height: 26px;
+      display: flex; align-items: center; justify-content: center;
+      background: var(--bg-elevated); border: 1px solid var(--border);
+      border-radius: 5px;
+      font-size: 0.75rem; font-weight: 700; color: var(--text-dim);
+    }
+
+    .exotic-runner-info { flex: 1; min-width: 0; }
+    .exotic-runner-name {
+      font-size: 0.88rem; font-weight: 700; color: var(--text-primary);
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .exotic-runner-detail {
+      font-size: 0.68rem; color: var(--text-dim); margin-top: 1px;
+    }
+
+    .exotic-runner-stats { text-align: right; white-space: nowrap; }
+    .exotic-runner-pct {
+      font-size: 0.82rem; font-weight: 700; color: #a78bfa;
+    }
+    .exotic-runner-odds {
+      font-size: 0.75rem; color: var(--text-secondary);
+    }
+
+    .exotic-card-footer {
+      display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+      padding: 8px 14px;
+      background: var(--bg-elevated);
+      border-top: 1px solid var(--border);
+      font-size: 0.7rem;
+    }
+    .exotic-conf {
+      font-weight: 700; color: #a78bfa;
+      background: rgba(139,92,246,0.08);
+      border: 1px solid rgba(139,92,246,0.2);
+      border-radius: 4px; padding: 1px 6px;
+      white-space: nowrap;
+    }
+    .exotic-conf.ff { color: #60a5fa; background: rgba(59,130,246,0.08); border-color: rgba(59,130,246,0.2); }
+    .exotic-sep { color: var(--border); }
+    .exotic-align-badge {
+      font-weight: 700; border-radius: 4px; padding: 1px 6px; white-space: nowrap;
+    }
+    .exotic-align-badge.confirmed { color: var(--green-bright); background: var(--green-dim); border: 1px solid rgba(34,197,94,0.25); }
+    .exotic-align-badge.partial   { color: var(--gold); background: var(--gold-dim); border: 1px solid var(--gold-mid); }
+    .exotic-align-badge.diverge   { color: #f87171; background: rgba(239,68,68,0.1); border: 1px solid rgba(239,68,68,0.25); }
   </style>
 </head>
 <body>
@@ -2451,117 +2582,102 @@
       </div>`;
   }
 
-  function renderTrifectaCard(pick) {
-    const isHot      = pick.tier === 'hot';
-    const isHigh     = pick.tier === 'high';
-    const isPremium  = pick.premium;
+  function renderExoticCard(pick) {
+    const isHot  = pick.tier === 'hot';
+    const isHigh = pick.tier === 'high';
+    const tierClass = isHot ? 'hot' : isHigh ? 'high' : 'strong';
 
-    // Badge — matches win pick badge style
-    let badgeHtml = '';
-    if (isPremium)  badgeHtml += `<span class="pick-badge-premium">💎 Premium</span>`;
-    if (isHot)       badgeHtml += `<span class="pick-badge-hot">🔥 Hot Pick</span>`;
-    else if (isHigh) badgeHtml += `<span class="pick-badge-hot" style="background:rgba(59,130,246,0.12);color:#60a5fa;border-color:rgba(59,130,246,0.28);">⚡ High Confidence</span>`;
-    else             badgeHtml += `<span class="pick-badge-standard">Strong Pick</span>`;
+    const tierLabel = isHot  ? '🔥 Hot Exotic'
+                    : isHigh ? '⚡ High Confidence'
+                    :          '📈 Strong Exotic';
 
-    const jump = pick.scheduled_time ? new Date(pick.scheduled_time) : null;
-    const now = new Date();
-    let timeStr = '';
-    if (jump) {
-      const diff = Math.round((jump - now) / 60000);
-      if (diff < 0)       timeStr = 'Jumped';
-      else if (diff < 60) timeStr = `${diff}m`;
-      else                timeStr = jump.toLocaleTimeString('en-AU', {hour:'2-digit', minute:'2-digit', timeZone:'Australia/Sydney'});
+    const countdownId = `ec-${pick.race_id.replace(/[^a-z0-9]/gi,'_')}`;
+
+    // Build all runners — legs (tri top 3) merged with first_four 4th runner
+    const allRunners = [...(pick.legs || [])];
+    if (pick.first_four && pick.first_four.length === 4) {
+      const leg4 = pick.first_four[3];
+      if (!allRunners.find(r => r.horse_name === leg4.horse_name)) allRunners.push(leg4);
     }
-    const countdownId = `tc-${pick.race_id.replace(/[^a-z0-9]/gi,'_')}`;
 
-    // Tier footer label
-    let tierLevel, tierColor;
-    if (isHot)       { tierLevel = '🔥 Hot Trifecta — very high combined confidence'; tierColor = '#f97316'; }
-    else if (isHigh) { tierLevel = '⚡ High Confidence Trifecta'; tierColor = '#60a5fa'; }
-    else             { tierLevel = '📈 Value Trifecta'; tierColor = 'var(--text-secondary)'; }
-    if (isPremium) tierLevel += ' · 💎 Premium value';
+    const rankSymbols = ['①','②','③','④'];
+    const rankClasses = ['r1','r2','r3','r4'];
 
-    const trackChip = pick.track_condition ? `<span class="pick-footer-chip"><strong>${escHtml(pick.track_condition)}</strong></span><span class="pick-footer-sep">·</span>` : '';
-    const distChip  = pick.distance ? `<span class="pick-footer-chip"><strong>${pick.distance}m</strong></span><span class="pick-footer-sep">·</span>` : '';
-    const stateChip = pick.state ? `<span class="pick-footer-chip">${escHtml(pick.state)}</span>` : '';
-    const _wx = weatherByCode[pick.venue];
-    const weatherChip = _wx ? (() => {
-      const parts = [_wx.icon];
-      if (_wx.temp_max !== null) parts.push(_wx.temp_max + '°C');
-      if (_wx.wind_kmh) parts.push('💨 ' + _wx.wind_kmh + 'km/h');
-      if (_wx.rain_mm > 0) parts.push('💧 ' + _wx.rain_mm + 'mm');
-      return `<span class="pick-footer-sep">·</span><span class="pick-footer-chip">${parts.join(' ')}</span>`;
-    })() : '';
-
-    // Render legs
-    const legsHtml = pick.legs.map((l, i) => `
-      <div class="tri-card-leg ${i === 0 ? 'leg-1' : ''}">
-        <div>
-          <div class="tri-card-leg-tab">${l.tab_number || '?'}</div>
+    const runnersHtml = allRunners.map((l, i) => `
+      <div class="exotic-runner-row rank-${i+1}">
+        <span class="exotic-rank ${rankClasses[i] || ''}">${rankSymbols[i] || (i+1)}</span>
+        <div class="exotic-tab-badge">${l.tab_number || '?'}</div>
+        <div class="exotic-runner-info">
+          <div class="exotic-runner-name">${escHtml(l.horse_name)}</div>
+          <div class="exotic-runner-detail">${[
+            l.jockey ? 'J: ' + escHtml(l.jockey) : '',
+            l.barrier ? 'B' + l.barrier : '',
+            l.weight ? l.weight + 'kg' : ''
+          ].filter(Boolean).join(' · ')}</div>
         </div>
-        <div style="flex:1;min-width:0">
-          <div class="tri-card-leg-name">${escHtml(l.horse_name)}</div>
-          <div class="tri-card-leg-detail">${l.jockey ? 'J: ' + escHtml(l.jockey) : ''}${l.barrier ? ' · B' + l.barrier : ''}${l.weight ? ' · ' + l.weight + 'kg' : ''}</div>
-        </div>
-        <div style="text-align:right">
-          <div class="tri-card-leg-pct">${l.place_pct != null ? l.place_pct + '%' : '—'}</div>
-          <div class="tri-card-leg-odds">${l.best_available_odds ? '$' + l.best_available_odds.toFixed(2) : '—'}</div>
+        <div class="exotic-runner-stats">
+          <div class="exotic-runner-pct">${l.place_pct != null ? l.place_pct + '%' : '—'}</div>
+          <div class="exotic-runner-odds">${l.best_available_odds ? '$' + l.best_available_odds.toFixed(2) : '—'}</div>
         </div>
       </div>`).join('');
 
-    const ffHtml = pick.first_four ? `
-      <div style="margin-top:10px;padding-top:10px;border-top:1px solid var(--border)">
-        <div style="font-size:0.7rem;font-weight:700;color:#c084fc;letter-spacing:0.05em;margin-bottom:6px;text-transform:uppercase">First Four</div>
-        ${pick.first_four.map((l, i) => `
-          <div class="tri-card-leg ${i === 0 ? 'leg-1' : ''}" style="padding:6px 10px">
-            <div class="tri-card-leg-tab">${l.tab_number || '?'}</div>
-            <div style="flex:1;min-width:0" class="tri-card-leg-name">${escHtml(l.horse_name)}</div>
-            <div style="text-align:right">
-              <div class="tri-card-leg-pct" style="font-size:0.75rem">${l.place_pct != null ? l.place_pct + '%' : '—'}</div>
-              <div class="tri-card-leg-odds">${l.best_available_odds ? '$' + l.best_available_odds.toFixed(2) : '—'}</div>
-            </div>
-          </div>`).join('')}
-        ${pick.first_four_combined_pct != null ? `<div style="margin-top:6px;font-size:0.72rem;color:var(--text-dim)">Combined: <span style="color:#c084fc;font-weight:700">~${pick.first_four_combined_pct}%</span></div>` : ''}
-      </div>` : '';
+    const _wx = weatherByCode[pick.venue];
+    const wxStr = _wx ? [_wx.icon, _wx.temp_max != null ? _wx.temp_max+'°C' : '', _wx.rain_mm > 0 ? '💧'+_wx.rain_mm+'mm' : ''].filter(Boolean).join(' ') : '';
+
+    const alignBadge = (() => {
+      const a = pick.exotic_alignment;
+      if (!a || a === 'no_edge_pick') return '';
+      if (a === 'confirmed') return `<span class="exotic-align-badge confirmed">✓ Win aligned</span>`;
+      if (a === 'partial')   return `<span class="exotic-align-badge partial">~ Partial</span>`;
+      if (a === 'diverge')   return `<span class="exotic-align-badge diverge">⚠ Diverge</span>`;
+      return '';
+    })();
 
     return `
-      <div class="pick-card ${isHot ? 'hot' : ''} ${isPremium ? 'premium' : ''}">
-        <div class="pick-card-top-bar">
-          ${badgeHtml}
-          <div class="pick-race-ref">
-            <span class="venue-name">${escHtml(pick.venue)}</span>
+      <div class="exotic-card ${tierClass}">
+        <div class="exotic-card-header ${tierClass}">
+          <span class="exotic-tier-badge ${tierClass}">${tierLabel}</span>
+          <div class="exotic-race-ref">
+            <span class="venue">${escHtml(pick.venue)}</span>
             <span class="sep">·</span>
             <span>R${pick.race_number}</span>
-            ${pick.race_name ? `<span class="sep">·</span><span style="color:var(--text-secondary)">${escHtml(pick.race_name)}</span>` : ''}
+            ${pick.race_name ? `<span class="sep">·</span><span class="rname">${escHtml(pick.race_name)}</span>` : ''}
           </div>
-          ${timeStr ? `<span class="pick-time">${escHtml(timeStr)}</span>` : ''}
-          ${pick.scheduled_time ? `<span class="pick-countdown" id="${countdownId}" data-jump="${escHtml(pick.scheduled_time)}"></span>` : ''}
+          <span class="exotic-countdown" id="${countdownId}" data-jump="${pick.scheduled_time || ''}">—</span>
         </div>
-        <div class="pick-body">
-          <div class="pick-left" style="flex:1">
-            <div class="tri-card-legs">${legsHtml}</div>
-            ${ffHtml}
-          </div>
-          <div class="pick-right" style="min-width:90px;align-items:center;justify-content:center">
-            <div class="tri-combined-stat">
-              <div class="tri-combined-num">${pick.combined_pct}%</div>
-              <div class="tri-combined-label">trifecta confidence</div>
-            </div>
-          </div>
-        </div>
-        <div class="pick-footer">
-          ${trackChip}${distChip}${stateChip}${weatherChip}
-          <span class="pick-footer-chip" style="color:${tierColor}">${tierLevel}</span>
-          ${(() => {
-            const a = pick.exotic_alignment;
-            if (!a || a === 'no_edge_pick') return '';
-            if (a === 'confirmed') return `<span class="pick-footer-chip" style="color:var(--green-bright);background:var(--green-dim);border-color:var(--green-mid)">✓ Exotic aligned</span>`;
-            if (a === 'partial')   return `<span class="pick-footer-chip" style="color:var(--gold)">~ Partial exotic</span>`;
-            if (a === 'diverge')   return `<span class="pick-footer-chip" style="color:#f87171">⚠ Models diverge</span>`;
-            return '';
-          })()}
+        <div class="exotic-runners">${runnersHtml}</div>
+        <div class="exotic-card-footer">
+          <span class="exotic-conf">Tri ~${pick.combined_pct}%</span>
+          ${pick.first_four_combined_pct != null ? `<span class="exotic-conf ff">FF ~${pick.first_four_combined_pct}%</span>` : ''}
+          <span class="exotic-sep">·</span>
+          ${pick.distance ? `<span style="color:var(--text-secondary)">${pick.distance}m</span><span class="exotic-sep">·</span>` : ''}
+          ${pick.track_condition ? `<span style="color:var(--text-secondary)">${escHtml(pick.track_condition)}</span><span class="exotic-sep">·</span>` : ''}
+          ${pick.state ? `<span style="color:var(--text-dim)">${escHtml(pick.state)}</span>` : ''}
+          ${wxStr ? `<span class="exotic-sep">·</span><span style="color:var(--text-dim)">${wxStr}</span>` : ''}
+          ${alignBadge ? `<span class="exotic-sep">·</span>${alignBadge}` : ''}
+          ${pick.field_size ? `<span class="exotic-sep">·</span><span style="color:var(--text-dim)">Field ${pick.field_size}</span>` : ''}
         </div>
       </div>`;
+  }
+
+  function startExoticCountdown(el) {
+    if (!el.dataset.jump) return;
+    const jump = new Date(el.dataset.jump);
+    function tick() {
+      const diff = Math.round((jump - new Date()) / 1000);
+      if (diff <= 0) {
+        el.textContent = 'Jumped';
+        el.className = 'exotic-countdown jumped';
+        return;
+      }
+      const h = Math.floor(diff / 3600);
+      const m = Math.floor((diff % 3600) / 60);
+      const s = diff % 60;
+      el.textContent = h > 0 ? `${h}h ${m}m` : m > 0 ? `${m}m ${s}s` : `${s}s`;
+      el.className = 'exotic-countdown' + (diff < 300 ? ' urgent' : diff < 1800 ? ' soon' : '');
+      setTimeout(tick, 1000);
+    }
+    tick();
   }
 
   async function loadTrifectas() {
@@ -2573,20 +2689,28 @@
       renderTrifectasContent(data);
     } catch (e) {
       document.getElementById('trifectasContent').innerHTML = `
-        <div class="empty-state"><div class="empty-icon">⚠️</div><div class="empty-title">Could not load trifectas</div><div class="empty-sub">${escHtml(e.message)}</div></div>`;
+        <div class="empty-state"><div class="empty-icon">⚠️</div><div class="empty-title">Could not load exotic picks</div><div class="empty-sub">${escHtml(e.message)}</div></div>`;
     }
   }
 
   function renderTrifectasContent(data) {
     const el = document.getElementById('trifectasContent');
-    if (!data.picks.length) {
-      el.innerHTML = `<div class="empty-state"><div class="empty-icon">🎯</div><div class="empty-title">No trifecta picks yet</div><div class="empty-sub">Races haven't been enriched yet today, or no races meet the confidence threshold.</div></div>`;
+    if (!data.picks || !data.picks.length) {
+      el.innerHTML = `<div class="empty-state"><div class="empty-icon">🎯</div><div class="empty-title">No exotic picks yet</div><div class="empty-sub">Races haven't been enriched yet today, or no races meet the confidence threshold.</div></div>`;
       return;
     }
 
+    // Sort picks by scheduled_time ascending (soonest first), null last
+    const sorted = [...data.picks].sort((a, b) => {
+      if (!a.scheduled_time && !b.scheduled_time) return 0;
+      if (!a.scheduled_time) return 1;
+      if (!b.scheduled_time) return -1;
+      return new Date(a.scheduled_time) - new Date(b.scheduled_time);
+    });
+
     // Group by date
     const byDate = {};
-    for (const p of data.picks) byDate[p.date] = (byDate[p.date] || []).concat(p);
+    for (const p of sorted) byDate[p.date] = (byDate[p.date] || []).concat(p);
 
     const todayStr    = new Date().toLocaleDateString('en-CA', {timeZone:'Australia/Sydney'});
     const tomorrowStr = new Date(Date.now() + 86400000).toLocaleDateString('en-CA', {timeZone:'Australia/Sydney'});
@@ -2594,24 +2718,14 @@
     let html = '';
     for (const [date, picks] of Object.entries(byDate).sort()) {
       const label = date === todayStr ? 'Today' : date === tomorrowStr ? 'Tomorrow' : fmtDate(date).split(',')[0];
-      html += `<div class="date-group"><div class="date-label">${label} — ${picks.length} trifecta${picks.length !== 1 ? 's' : ''}</div><div class="picks-grid">`;
-      for (const p of picks) html += renderTrifectaCard(p);
+      html += `<div class="date-group"><div class="date-label">${label} — ${picks.length} exotic pick${picks.length !== 1 ? 's' : ''}</div><div class="picks-grid">`;
+      for (const p of picks) html += renderExoticCard(p);
       html += `</div></div>`;
     }
     el.innerHTML = html;
 
-    // Wire up countdowns
-    document.querySelectorAll('#panelTrifectas .pick-countdown').forEach(el => {
-      const jump = new Date(el.dataset.jump);
-      function tick() {
-        const diff = Math.round((jump - new Date()) / 1000);
-        if (diff <= 0) { el.textContent = 'Jumped'; return; }
-        const m = Math.floor(diff / 60), s = diff % 60;
-        el.textContent = m > 0 ? `${m}m ${s}s` : `${s}s`;
-        setTimeout(tick, 1000);
-      }
-      tick();
-    });
+    // Wire up live countdown timers
+    document.querySelectorAll('#panelTrifectas .exotic-countdown').forEach(startExoticCountdown);
   }
 
   async function loadYesterday() {
