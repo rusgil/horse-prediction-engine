@@ -29,6 +29,8 @@
       --purple:        #a855f7;
       --purple-dim:    rgba(168,85,247,0.12);
       --purple-bright: #c084fc;
+      --teal:          #14b8a6;
+      --teal-dim:      rgba(20,184,166,0.12);
       --text-primary:  #f0f4ff;
       --text-secondary:#8a9bc4;
       --text-dim:      #4a5a7a;
@@ -132,6 +134,27 @@
     }
     .login-btn:hover { opacity: 0.85; }
     .login-error { font-size: 0.75rem; color: #f87171; margin-top: 8px; }
+
+    /* ── Model tabs ──────────────────────────────────────── */
+    .model-tabs {
+      display: flex; gap: 4px;
+      border-bottom: 1px solid var(--border);
+      margin-bottom: 28px;
+    }
+    .model-tab {
+      font-family: 'Barlow Condensed', sans-serif;
+      font-size: 0.85rem; font-weight: 800;
+      letter-spacing: 0.1em; text-transform: uppercase;
+      padding: 10px 20px;
+      border: none; border-bottom: 2px solid transparent;
+      background: none; cursor: pointer;
+      color: var(--text-dim);
+      transition: all 0.15s;
+      margin-bottom: -1px;
+    }
+    .model-tab:hover { color: var(--text-secondary); }
+    .model-tab.active { color: var(--blue); border-bottom-color: var(--blue); }
+    .model-tab.exotic.active { color: var(--teal); border-bottom-color: var(--teal); }
 
     /* ── Section ─────────────────────────────────────────── */
     .section { margin-bottom: 32px; }
@@ -313,7 +336,7 @@
     }
     @keyframes spin { to { transform: rotate(360deg); } }
 
-    /* ── Retrain button ──────────────────────────────────── */
+    /* ── Action bar ──────────────────────────────────────── */
     .action-bar { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 28px; }
     .btn {
       font-family: 'Barlow Condensed', sans-serif;
@@ -330,11 +353,57 @@
     .btn:hover { border-color: var(--blue); color: var(--blue); }
     .btn.primary { background: var(--blue); color: #fff; border-color: var(--blue); }
     .btn.primary:hover { opacity: 0.85; }
+    .btn.teal { background: var(--teal); color: #fff; border-color: var(--teal); }
+    .btn.teal:hover { opacity: 0.85; }
     .btn:disabled { opacity: 0.4; cursor: not-allowed; }
     .btn-status { font-size: 0.72rem; color: var(--text-dim); align-self: center; }
     .action-explainers { display: flex; flex-direction: column; gap: 10px; margin-bottom: 28px; }
     .action-explain { background: var(--bg-elevated); border: 1px solid var(--border); border-radius: var(--radius-sm); padding: 12px 16px; font-size: 0.8rem; line-height: 1.6; color: var(--text-secondary); }
     .action-explain strong:first-child { display: block; color: var(--text-primary); font-size: 0.82rem; margin-bottom: 4px; }
+
+    /* ── Exotic placeholder ──────────────────────────────── */
+    .exotic-placeholder {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 48px 24px;
+      text-align: center;
+    }
+    .exotic-placeholder-icon { font-size: 2.5rem; margin-bottom: 14px; }
+    .exotic-placeholder-title {
+      font-family: 'Barlow Condensed', sans-serif;
+      font-size: 1.1rem; font-weight: 900;
+      letter-spacing: 0.06em; text-transform: uppercase;
+      color: var(--teal); margin-bottom: 8px;
+    }
+    .exotic-placeholder-sub { font-size: 0.8rem; color: var(--text-dim); line-height: 1.6; max-width: 420px; margin: 0 auto 20px; }
+
+    /* ── Ablation verdict badges ─────────────────────────── */
+    .verdict-valuable      { color: var(--green); font-weight: 600; }
+    .verdict-noisy         { color: var(--red); font-weight: 600; }
+    .verdict-neutral       { color: var(--text-dim); }
+    .delta-pos             { color: var(--red); }
+    .delta-neg             { color: var(--green); }
+
+    /* ── Exotic tier cards ───────────────────────────────── */
+    .tier-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+      gap: 10px; margin-top: 16px;
+    }
+    .tier-card {
+      background: var(--bg-elevated);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      padding: 12px 14px;
+      text-align: center;
+    }
+    .tier-card-num {
+      font-family: 'Barlow Condensed', sans-serif;
+      font-size: 1.6rem; font-weight: 900; line-height: 1;
+    }
+    .tier-card-label { font-size: 0.65rem; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.08em; margin-top: 4px; }
+    .tier-card-sub { font-size: 0.68rem; color: var(--text-secondary); margin-top: 3px; }
   </style>
 </head>
 <body>
@@ -376,6 +445,8 @@
   const SECRET_KEY = 'fiq_admin_secret';
 
   let adminSecret = sessionStorage.getItem(SECRET_KEY) || '';
+  let activeTab = 'win';
+  let exoticLoaded = false;
 
   function submitSecret() {
     const val = document.getElementById('secretInput').value.trim();
@@ -403,6 +474,14 @@
 
   function pct(v) { return (v * 100).toFixed(1) + '%'; }
 
+  function switchTab(tab) {
+    activeTab = tab;
+    document.getElementById('tabWin').classList.toggle('active', tab === 'win');
+    document.getElementById('tabExotic').classList.toggle('active', tab === 'exotic');
+    document.getElementById('panelWin').style.display = tab === 'win' ? '' : 'none';
+    document.getElementById('panelExotic').style.display = tab === 'exotic' ? '' : 'none';
+  }
+
   async function loadDashboard() {
     try {
       const [calRes, perfRes, analysisRes] = await Promise.all([
@@ -424,18 +503,38 @@
       const analysisData = analysisRes.ok ? await analysisRes.json() : null;
 
       sessionStorage.setItem(SECRET_KEY, adminSecret);
-      renderDashboard(calData, perfData, analysisData);
+      renderShell(calData, perfData, analysisData);
     } catch (e) {
       document.getElementById('dashContent').innerHTML =
         `<div class="loading"><div style="font-size:1.5rem;margin-bottom:10px">⚠️</div>${e.message}</div>`;
     }
   }
 
-  function renderDashboard(calData, perfData, analysisData) {
+  function renderShell(calData, perfData, analysisData) {
+    const winContent  = buildWinContent(calData, perfData, analysisData);
+    const exoContent  = buildExoticPlaceholder();
+
+    document.getElementById('dashContent').innerHTML = `
+      <div class="model-tabs">
+        <button class="model-tab active" id="tabWin" onclick="switchTab('win')">Win &amp; Placement</button>
+        <button class="model-tab exotic" id="tabExotic" onclick="switchTab('exotic')">Exotics (beta)</button>
+      </div>
+      <div id="panelWin">${winContent}</div>
+      <div id="panelExotic" style="display:none">${exoContent}</div>
+    `;
+
+    mountWinCharts(calData, perfData);
+  }
+
+  /* ═══════════════════════════════════════════════════════
+     WIN & PLACEMENT TAB
+  ══════════════════════════════════════════════════════════ */
+
+  function buildWinContent(calData, perfData, analysisData) {
     const cals   = calData?.calibrations || [];
     const latest = cals[0] || null;
 
-    // ── Drift banner
+    // Drift banner
     let driftHtml = '';
     if (latest) {
       if (latest.drift_flag) {
@@ -483,7 +582,30 @@
       }
     }
 
-    // ── Latest calibration stats
+    // Action bar
+    const actionHtml = `
+      <div class="action-bar">
+        <button class="btn" onclick="loadDashboard()">Refresh Dashboard</button>
+        <button class="btn" id="reenrichBtn" onclick="triggerReenrich('reenrichBtn', 'winStatus')">Re-enrich Today</button>
+        <button class="btn primary" id="retrainBtn" onclick="triggerRetrain()">Run Calibration Now</button>
+        <span class="btn-status" id="winStatus"></span>
+      </div>
+      <div class="action-explainers">
+        <div class="action-explain">
+          <strong>Refresh Dashboard</strong>
+          <span>Reloads this page's stats from the database. No external API calls — zero cost, instant.</span>
+        </div>
+        <div class="action-explain">
+          <strong>Re-enrich Today</strong>
+          <span>Force re-runs the model on every race today, overwriting stored predictions. Makes <strong>one full Punters API call per race</strong> to fetch the latest race card (scratchings, track condition, jockey changes), then re-runs the ML model. On a typical race day (~40 races across 5–6 meetings) this is ~40–50 API calls. Use after a model or form-scoring change when you want all predictions refreshed immediately.<br><br><em>The automated pre-race job runs every 15 min and is more surgical — it makes one lightweight call per meeting just to check start times, then only fetches full race data for races within 2 hours of jump. Use this button when you need to refresh races outside that 2-hour window.</em></span>
+        </div>
+        <div class="action-explain">
+          <strong>Run Calibration Now</strong>
+          <span>Retrains the model weights using all stored historical results. <strong>No external API calls</strong> — reads only from the local database. Takes 10–30 seconds. Normally runs automatically at 2am AEST nightly. Use this after seeding a batch of new results if you want the model to update immediately rather than waiting overnight. Avoid running multiple times in quick succession — each run overwrites the previous weights.</span>
+        </div>
+      </div>`;
+
+    // Latest stats
     const latestStatsHtml = latest ? `
       <div class="section">
         <div class="section-title">Latest Calibration — ${fmtDateTime(latest.ran_at)}</div>
@@ -523,7 +645,46 @@
         </div>
       </div>` : '';
 
-    // ── Window comparison table
+    // ROI trend placeholder
+    const roiTrendHtml = cals.length > 2 ? `
+      <div class="section">
+        <div class="section-title">Value ROI Trend &nbsp;<span style="font-size:0.7rem;color:var(--gold-light)">● drift flagged</span> &nbsp;<span style="font-size:0.7rem;color:var(--blue)">● healthy</span></div>
+        <div class="chart-card">
+          <div class="chart-wrap" style="height:200px"><canvas id="roiTrendChart"></canvas></div>
+        </div>
+      </div>` : '';
+
+    // 14-day performance charts
+    let perfHtml = '';
+    if (perfData?.summary?.length) {
+      perfHtml = `
+        <div class="section">
+          <div class="section-title">Last 14 Days — Daily Performance</div>
+          <div class="two-col">
+            <div class="chart-card">
+              <div class="chart-card-title">Win Rate %</div>
+              <div style="display:flex;gap:12px;margin-bottom:10px;font-size:0.7rem;color:var(--text-dim)">
+                <span><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:rgba(34,197,94,0.6);margin-right:4px;vertical-align:middle"></span>≥ 50% — on target</span>
+                <span><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:rgba(239,68,68,0.4);margin-right:4px;vertical-align:middle"></span>&lt; 50% — below target</span>
+              </div>
+              <div class="chart-wrap"><canvas id="winRateChart"></canvas></div>
+            </div>
+            <div class="chart-card">
+              <div class="chart-card-title">Value Bet P&amp;L — $10 per race</div>
+              <div style="display:flex;gap:12px;margin-bottom:10px;font-size:0.7rem;color:var(--text-dim)">
+                <span><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:rgba(59,130,246,0.6);margin-right:4px;vertical-align:middle"></span>Profitable day</span>
+                <span><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:rgba(239,68,68,0.4);margin-right:4px;vertical-align:middle"></span>Loss day</span>
+              </div>
+              <div class="chart-wrap"><canvas id="pnlChart"></canvas></div>
+              <div style="font-size:0.68rem;color:var(--text-dim);margin-top:10px;line-height:1.5;">
+                Net profit or loss if you placed $10 on every race where the model beats the market (minimum $3.00 odds). Hover a bar to see how many races that covered. Scale for other stakes: $5/race ÷ 2, $20/race × 2.
+              </div>
+            </div>
+          </div>
+        </div>`;
+    }
+
+    // Window table
     let windowHtml = '';
     if (latest?.window_results?.length) {
       const rows = latest.window_results.map(w => {
@@ -542,58 +703,17 @@
           <div class="section-title">Training Window Comparison</div>
           <div class="chart-card">
             <table class="window-table">
-              <thead>
-                <tr>
-                  <th>Window</th>
-                  <th>Training Examples</th>
-                  <th>Train Accuracy</th>
-                  <th>Win Rate</th>
-                  <th>Value ROI</th>
-                  <th>Value Bets</th>
-                </tr>
-              </thead>
+              <thead><tr>
+                <th>Window</th><th>Training Examples</th><th>Train Accuracy</th>
+                <th>Win Rate</th><th>Value ROI</th><th>Value Bets</th>
+              </tr></thead>
               <tbody>${rows}</tbody>
             </table>
           </div>
         </div>`;
     }
 
-    // ── Calibration history table
-    let historyHtml = '';
-    if (cals.length > 1) {
-      const rows = cals.map(c => `
-        <tr>
-          <td>${fmtDate(c.ran_at)}</td>
-          <td>${(c.win_rate * 100).toFixed(1)}%</td>
-          <td>${(c.place_rate * 100).toFixed(1)}%</td>
-          <td>${c.value_roi.toFixed(2)}%</td>
-          <td>${c.value_bets}</td>
-          <td>${c.best_window}d</td>
-          <td><span class="drift-dot ${c.drift_flag ? 'warn' : 'ok'}"></span>${c.drift_flag ? 'Drift' : 'OK'}</td>
-        </tr>`).join('');
-      historyHtml = `
-        <div class="section">
-          <div class="section-title">Calibration History (Last ${cals.length} Runs)</div>
-          <div class="chart-card">
-            <table class="history-table">
-              <thead>
-                <tr>
-                  <th>Date</th>
-                  <th>Win Rate</th>
-                  <th>Place Rate</th>
-                  <th>Value ROI</th>
-                  <th>Value Bets</th>
-                  <th>Window</th>
-                  <th>Drift</th>
-                </tr>
-              </thead>
-              <tbody>${rows}</tbody>
-            </table>
-          </div>
-        </div>`;
-    }
-
-    // ── Threshold performance
+    // Threshold table
     let thresholdHtml = '';
     if (analysisData?.thresholds?.length) {
       const rows = analysisData.thresholds.filter(t => t.threshold_pct >= 25).map(t => `
@@ -611,94 +731,84 @@
           <div class="chart-card">
             <div class="chart-card-title" style="margin-bottom:4px">All-time · ${analysisData.total_unified_rows?.toLocaleString()} predictions &nbsp;·&nbsp; Live from ${analysisData.cutover_date}</div>
             <table class="window-table">
-              <thead>
-                <tr>
-                  <th>Confidence</th>
-                  <th>Total Bets</th>
-                  <th>Win Rate</th>
-                  <th>ROI</th>
-                  <th>Avg SP</th>
-                  <th>Source split</th>
-                </tr>
-              </thead>
+              <thead><tr>
+                <th>Confidence</th><th>Total Bets</th><th>Win Rate</th>
+                <th>ROI</th><th>Avg SP</th><th>Source split</th>
+              </tr></thead>
               <tbody>${rows}</tbody>
             </table>
           </div>
         </div>`;
     }
 
-    // ── 30-day daily P&L
-    let perfHtml = '';
-    if (perfData?.summary?.length) {
-      const days = [...perfData.summary].reverse().slice(-14);
-      const labels = days.map(d => fmtDate(d.date));
-      const winRates = days.map(d => +(d.win_rate * 100).toFixed(1));
-      const raceCounts  = days.map(d => d.races || 0);
-      const valueBets   = days.map(d => d.value_bets || 0);
-      const tierPremium = days.map(d => d.tier_premium || 0);
-      const tierHot     = days.map(d => d.tier_hot || 0);
-      const tierHigh    = days.map(d => d.tier_high || 0);
-      const tierStrong  = days.map(d => d.tier_strong || 0);
-      const roiRates = days.map(d => +(d.value_pnl * 10).toFixed(2));
-
-      perfHtml = `
+    // Calibration history
+    let historyHtml = '';
+    if (cals.length > 1) {
+      const rows = cals.map(c => `
+        <tr>
+          <td>${fmtDate(c.ran_at)}</td>
+          <td>${(c.win_rate * 100).toFixed(1)}%</td>
+          <td>${(c.place_rate * 100).toFixed(1)}%</td>
+          <td>${c.value_roi.toFixed(2)}%</td>
+          <td>${c.value_bets}</td>
+          <td>${c.best_window}d</td>
+          <td><span class="drift-dot ${c.drift_flag ? 'warn' : 'ok'}"></span>${c.drift_flag ? 'Drift' : 'OK'}</td>
+        </tr>`).join('');
+      historyHtml = `
         <div class="section">
-          <div class="section-title">Last 14 Days — Daily Performance</div>
-          <div class="two-col">
-            <div class="chart-card">
-              <div class="chart-card-title">Win Rate %</div>
-              <div style="display:flex;gap:12px;margin-bottom:10px;font-size:0.7rem;color:var(--text-dim)">
-                <span><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:rgba(34,197,94,0.6);margin-right:4px;vertical-align:middle"></span>≥ 50% — on target</span>
-                <span><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:rgba(239,68,68,0.4);margin-right:4px;vertical-align:middle"></span>&lt; 50% — below target</span>
-              </div>
-              <div class="chart-wrap"><canvas id="winRateChart"></canvas></div>
-            </div>
-            <div class="chart-card">
-              <div class="chart-card-title">Value Bet P&L — $10 per race</div>
-              <div style="display:flex;gap:12px;margin-bottom:10px;font-size:0.7rem;color:var(--text-dim)">
-                <span><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:rgba(59,130,246,0.6);margin-right:4px;vertical-align:middle"></span>Profitable day</span>
-                <span><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:rgba(239,68,68,0.4);margin-right:4px;vertical-align:middle"></span>Loss day</span>
-              </div>
-              <div class="chart-wrap"><canvas id="pnlChart"></canvas></div>
-              <div style="font-size:0.68rem;color:var(--text-dim);margin-top:10px;line-height:1.5;">
-                Net profit or loss if you placed $10 on every race where the model beats the market (minimum $3.00 odds). Hover a bar to see how many races that covered. Scale for other stakes: $5/race ÷ 2, $20/race × 2.
-              </div>
-            </div>
+          <div class="section-title">Calibration History (Last ${cals.length} Runs)</div>
+          <div class="chart-card">
+            <table class="history-table">
+              <thead><tr>
+                <th>Date</th><th>Win Rate</th><th>Place Rate</th>
+                <th>Value ROI</th><th>Value Bets</th><th>Window</th><th>Drift</th>
+              </tr></thead>
+              <tbody>${rows}</tbody>
+            </table>
           </div>
         </div>`;
+    }
 
-      // Render charts after DOM update
-      setTimeout(() => {
-        const chartDefaults = {
-          responsive: true, maintainAspectRatio: false,
-          plugins: { legend: { display: false } },
-          scales: {
-            x: { ticks: { color: '#4a5a7a', font: { size: 10 } }, grid: { color: 'rgba(30,40,64,0.6)' } },
-            y: { ticks: { color: '#4a5a7a', font: { size: 10 } }, grid: { color: 'rgba(30,40,64,0.6)' } },
-          }
-        };
+    return driftHtml + actionHtml + latestStatsHtml + roiTrendHtml + perfHtml + windowHtml + thresholdHtml + historyHtml;
+  }
+
+  function mountWinCharts(calData, perfData) {
+    const cals = calData?.calibrations || [];
+
+    const chartDefaults = {
+      responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { display: false } },
+      scales: {
+        x: { ticks: { color: '#4a5a7a', font: { size: 10 } }, grid: { color: 'rgba(30,40,64,0.6)' } },
+        y: { ticks: { color: '#4a5a7a', font: { size: 10 } }, grid: { color: 'rgba(30,40,64,0.6)' } },
+      }
+    };
+
+    setTimeout(() => {
+      if (perfData?.summary?.length) {
+        const days = [...perfData.summary].reverse().slice(-14);
+        const labels      = days.map(d => fmtDate(d.date));
+        const winRates    = days.map(d => +(d.win_rate * 100).toFixed(1));
+        const raceCounts  = days.map(d => d.races || 0);
+        const valueBets   = days.map(d => d.value_bets || 0);
+        const tierPremium = days.map(d => d.tier_premium || 0);
+        const tierHot     = days.map(d => d.tier_hot || 0);
+        const tierHigh    = days.map(d => d.tier_high || 0);
+        const tierStrong  = days.map(d => d.tier_strong || 0);
+        const roiRates    = days.map(d => +(d.value_pnl * 10).toFixed(2));
 
         new Chart(document.getElementById('winRateChart'), {
           type: 'bar',
           data: {
             labels,
-            datasets: [{
-              data: winRates,
-              backgroundColor: winRates.map(v => v >= 50 ? 'rgba(34,197,94,0.6)' : 'rgba(239,68,68,0.4)'),
-              borderRadius: 4,
-            }]
+            datasets: [{ data: winRates, backgroundColor: winRates.map(v => v >= 50 ? 'rgba(34,197,94,0.6)' : 'rgba(239,68,68,0.4)'), borderRadius: 4 }]
           },
           options: {
             ...chartDefaults,
-            plugins: {
-              ...chartDefaults.plugins,
-              tooltip: {
-                callbacks: {
-                  label: ctx => `Win rate: ${ctx.parsed.y}%`,
-                  afterLabel: ctx => `Races that day: ${raceCounts[ctx.dataIndex]}`,
-                }
-              }
-            },
+            plugins: { ...chartDefaults.plugins, tooltip: { callbacks: {
+              label: ctx => `Win rate: ${ctx.parsed.y}%`,
+              afterLabel: ctx => `Races that day: ${raceCounts[ctx.dataIndex]}`,
+            }}},
             scales: { ...chartDefaults.scales, y: { ...chartDefaults.scales.y, ticks: { ...chartDefaults.scales.y.ticks, callback: v => v + '%' } } }
           }
         });
@@ -707,104 +817,251 @@
           type: 'bar',
           data: {
             labels,
+            datasets: [{ data: roiRates, backgroundColor: roiRates.map(v => v >= 0 ? 'rgba(59,130,246,0.6)' : 'rgba(239,68,68,0.4)'), borderRadius: 4 }]
+          },
+          options: {
+            ...chartDefaults,
+            plugins: { ...chartDefaults.plugins, tooltip: { callbacks: {
+              label: ctx => `P&L: $${ctx.parsed.y} (at $10/race)`,
+              afterLabel: ctx => {
+                const i = ctx.dataIndex;
+                const lines = [`Value bets: ${valueBets[i]}`];
+                if (tierPremium[i]) lines.push(`  💎 Premium: ${tierPremium[i]}`);
+                if (tierHot[i])     lines.push(`  🔥 Hot Pick: ${tierHot[i]}`);
+                if (tierHigh[i])    lines.push(`  ⚡ High Confidence: ${tierHigh[i]}`);
+                if (tierStrong[i])  lines.push(`  Strong Pick: ${tierStrong[i]}`);
+                return lines;
+              },
+            }}},
+            scales: { ...chartDefaults.scales, y: { ...chartDefaults.scales.y, ticks: { ...chartDefaults.scales.y.ticks, callback: v => '$' + v } } }
+          }
+        });
+      }
+
+      if (cals.length > 2) {
+        const calReversed = [...cals].reverse();
+        new Chart(document.getElementById('roiTrendChart'), {
+          type: 'line',
+          data: {
+            labels: calReversed.map(c => fmtDate(c.ran_at)),
             datasets: [{
-              data: roiRates,
-              backgroundColor: roiRates.map(v => v >= 0 ? 'rgba(59,130,246,0.6)' : 'rgba(239,68,68,0.4)'),
-              borderRadius: 4,
+              data: calReversed.map(c => +c.value_roi.toFixed(2)),
+              borderColor: '#3b82f6',
+              backgroundColor: 'rgba(59,130,246,0.08)',
+              fill: true, tension: 0.35,
+              pointBackgroundColor: calReversed.map(c => c.drift_flag ? '#e8a020' : '#3b82f6'),
+              pointRadius: 5, pointHoverRadius: 7,
             }]
           },
           options: {
             ...chartDefaults,
-            plugins: {
-              ...chartDefaults.plugins,
-              tooltip: {
-                callbacks: {
-                  label: ctx => `P&L: $${ctx.parsed.y} (at $10/race)`,
-                  afterLabel: ctx => {
-                    const i = ctx.dataIndex;
-                    const lines = [`Value bets: ${valueBets[i]}`];
-                    if (tierPremium[i]) lines.push(`  💎 Premium: ${tierPremium[i]}`);
-                    if (tierHot[i])     lines.push(`  🔥 Hot Pick: ${tierHot[i]}`);
-                    if (tierHigh[i])    lines.push(`  ⚡ High Confidence: ${tierHigh[i]}`);
-                    if (tierStrong[i])  lines.push(`  Strong Pick: ${tierStrong[i]}`);
-                    return lines;
-                  },
-                }
-              }
-            },
-            scales: { ...chartDefaults.scales, y: { ...chartDefaults.scales.y, ticks: { ...chartDefaults.scales.y.ticks, callback: v => '$' + v } } }
+            scales: { ...chartDefaults.scales, y: { ...chartDefaults.scales.y, ticks: { ...chartDefaults.scales.y.ticks, callback: v => v + '%' } } }
           }
         });
+      }
+    }, 50);
+  }
 
-        // ROI trend chart
-        if (cals.length > 2) {
-          const calReversed = [...cals].reverse();
-          new Chart(document.getElementById('roiTrendChart'), {
-            type: 'line',
-            data: {
-              labels: calReversed.map(c => fmtDate(c.ran_at)),
-              datasets: [{
-                data: calReversed.map(c => +c.value_roi.toFixed(2)),
-                borderColor: '#3b82f6',
-                backgroundColor: 'rgba(59,130,246,0.08)',
-                fill: true,
-                tension: 0.35,
-                pointBackgroundColor: calReversed.map(c => c.drift_flag ? '#e8a020' : '#3b82f6'),
-                pointRadius: 5,
-                pointHoverRadius: 7,
-              }]
-            },
-            options: {
-              ...chartDefaults,
-              scales: {
-                ...chartDefaults.scales,
-                y: { ...chartDefaults.scales.y, ticks: { ...chartDefaults.scales.y.ticks, callback: v => v + '%' } }
-              }
-            }
-          });
-        }
-      }, 50);
-    }
+  /* ═══════════════════════════════════════════════════════
+     EXOTICS TAB
+  ══════════════════════════════════════════════════════════ */
 
-    // ── ROI trend chart placeholder
-    const roiTrendHtml = cals.length > 2 ? `
-      <div class="section">
-        <div class="section-title">Value ROI Trend &nbsp;<span style="font-size:0.7rem;color:var(--gold-light)">● drift flagged</span> &nbsp;<span style="font-size:0.7rem;color:var(--blue)">● healthy</span></div>
-        <div class="chart-card">
-          <div class="chart-wrap" style="height:200px"><canvas id="roiTrendChart"></canvas></div>
-        </div>
-      </div>` : '';
-
-    // ── Action bar
-    const actionHtml = `
+  function buildExoticPlaceholder() {
+    return `
       <div class="action-bar">
-        <button class="btn" onclick="loadDashboard()">Refresh Dashboard</button>
-        <button class="btn" id="reenrichBtn" onclick="triggerReenrich()">Re-enrich Today</button>
-        <button class="btn primary" id="retrainBtn" onclick="triggerRetrain()">Run Calibration Now</button>
-        <span class="btn-status" id="retrainStatus"></span>
+        <button class="btn" id="eReenrichBtn" onclick="triggerReenrich('eReenrichBtn', 'exoticStatus')">Re-enrich Today</button>
+        <button class="btn" id="eRetrainBtn" onclick="triggerExoticRetrain()">Retrain Exotic Model</button>
+        <button class="btn teal" id="eBacktestBtn" onclick="runExoticBacktest()">Run Exotic Backtest</button>
+        <span class="btn-status" id="exoticStatus"></span>
       </div>
       <div class="action-explainers">
         <div class="action-explain">
-          <strong>Refresh Dashboard</strong>
-          <span>Reloads this page's stats from the database. No external API calls — zero cost, instant.</span>
-        </div>
-        <div class="action-explain">
           <strong>Re-enrich Today</strong>
-          <span>Force re-runs the model on every race today, overwriting stored predictions. Makes <strong>one full Punters API call per race</strong> to fetch the latest race card (scratchings, track condition, jockey changes), then re-runs the ML model. On a typical race day (~40 races across 5–6 meetings) this is ~40–50 API calls. Use after a model or form-scoring change when you want all predictions refreshed immediately.<br><br><em>The automated pre-race job runs every 15 min and is more surgical — it makes one lightweight call per meeting just to check start times, then only fetches full race data for races within 2 hours of jump. Use this button when you need to refresh races outside that 2-hour window.</em></span>
+          <span>Re-runs all models (win, place, exotic) on today's races, populating <code>exotic_model_rank</code> so the Exotics tab on The Edge reflects the latest trained model.</span>
         </div>
         <div class="action-explain">
-          <strong>Run Calibration Now</strong>
-          <span>Retrains the model weights using all stored historical results. <strong>No external API calls</strong> — reads only from the local database. Takes 10–30 seconds. Normally runs automatically at 2am AEST nightly. Use this after seeding a batch of new results if you want the model to update immediately rather than waiting overnight. Avoid running multiple times in quick succession — each run overwrites the previous weights.</span>
+          <strong>Retrain Exotic Model</strong>
+          <span>Trains the exotic model from scratch using race-grouped trifecta-aware loss on all stored results. Runs as a background task — takes 2–5 minutes for a full dataset. No external API calls.</span>
+        </div>
+        <div class="action-explain">
+          <strong>Run Exotic Backtest</strong>
+          <span>Trains 5 candidate models (30/60/90/180/270-day windows), measures out-of-sample trifecta box hit rate on a 14-day holdout for each window, then runs feature ablation — identifies which inputs are genuinely predictive. Takes ~60–90 seconds.</span>
+        </div>
+      </div>
+      <div id="exoticResults">
+        <div class="exotic-placeholder">
+          <div class="exotic-placeholder-icon">🎯</div>
+          <div class="exotic-placeholder-title">No Backtest Data Yet</div>
+          <div class="exotic-placeholder-sub">Click <strong>Run Exotic Backtest</strong> above to train window candidates and run feature ablation. Results will show the best training window and which features drive trifecta box accuracy.</div>
+        </div>
+      </div>`;
+  }
+
+  async function runExoticBacktest() {
+    const btn    = document.getElementById('eBacktestBtn');
+    const status = document.getElementById('exoticStatus');
+    const results = document.getElementById('exoticResults');
+
+    btn.disabled = true;
+    status.textContent = 'Running backtest — training 5 models, please wait…';
+    results.innerHTML = '<div class="loading"><div class="loading-spinner" style="border-top-color:var(--teal)"></div>Training window candidates…</div>';
+
+    try {
+      const res = await fetch(`${API}/api/admin/backtest-exotic`, {
+        headers: { 'x-cron-secret': adminSecret }
+      });
+
+      if (res.status === 403) {
+        status.textContent = 'Unauthorised — check secret.';
+        results.innerHTML = '';
+        return;
+      }
+
+      const data = await res.json();
+
+      if (data.error) {
+        status.textContent = 'Error: ' + data.error;
+        results.innerHTML = '';
+        return;
+      }
+
+      status.textContent = `Done — best window: ${data.best_window}d, box hit rate: ${data.best_holdout_box_hit_rate}%`;
+      results.innerHTML = renderExoticResults(data);
+    } catch (e) {
+      status.textContent = 'Error: ' + e.message;
+      results.innerHTML = '';
+    } finally {
+      btn.disabled = false;
+    }
+  }
+
+  function renderExoticResults(d) {
+    // Summary stats
+    const statsHtml = `
+      <div class="section">
+        <div class="section-title">Backtest Summary — ${d.holdout_days}-day holdout, ${d.holdout_races} eligible races</div>
+        <div class="stat-grid">
+          <div class="stat-card">
+            <div class="stat-card-num" style="color:var(--teal)">${d.best_window}d</div>
+            <div class="stat-card-label">Best Window</div>
+            <div class="stat-card-sub">Training days</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-card-num" style="color:var(--green-bright)">${d.best_holdout_box_hit_rate}%</div>
+            <div class="stat-card-label">Box Hit Rate</div>
+            <div class="stat-card-sub">Best window holdout</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-card-num">${d.holdout_races.toLocaleString()}</div>
+            <div class="stat-card-label">Holdout Races</div>
+            <div class="stat-card-sub">Field ≥ 7 runners</div>
+          </div>
         </div>
       </div>`;
 
-    document.getElementById('dashContent').innerHTML =
-      driftHtml + actionHtml + latestStatsHtml + roiTrendHtml + perfHtml + windowHtml + thresholdHtml + historyHtml;
+    // Best window tier breakdown
+    const bestRow = d.window_results.find(w => w.window_days === d.best_window);
+    let tierHtml = '';
+    if (bestRow?.by_tier) {
+      const t = bestRow.by_tier;
+      tierHtml = `
+        <div class="section">
+          <div class="section-title">Best Window — Box Hit Rate by Tier</div>
+          <div class="chart-card">
+            <div class="tier-grid">
+              <div class="tier-card">
+                <div class="tier-card-num" style="color:var(--red)">${t.hot?.hit_rate_pct ?? 0}%</div>
+                <div class="tier-card-label">🔥 Hot (top 25%)</div>
+                <div class="tier-card-sub">${t.hot?.hits ?? 0} / ${t.hot?.races ?? 0} races</div>
+              </div>
+              <div class="tier-card">
+                <div class="tier-card-num" style="color:var(--gold-light)">${t.high?.hit_rate_pct ?? 0}%</div>
+                <div class="tier-card-label">⚡ High (top 60%)</div>
+                <div class="tier-card-sub">${t.high?.hits ?? 0} / ${t.high?.races ?? 0} races</div>
+              </div>
+              <div class="tier-card">
+                <div class="tier-card-num" style="color:var(--blue)">${t.strong?.hit_rate_pct ?? 0}%</div>
+                <div class="tier-card-label">📈 Strong (rest)</div>
+                <div class="tier-card-sub">${t.strong?.hits ?? 0} / ${t.strong?.races ?? 0} races</div>
+              </div>
+            </div>
+          </div>
+        </div>`;
+    }
+
+    // Window table
+    let windowHtml = '';
+    if (d.window_results?.length) {
+      const rows = d.window_results.map(w => {
+        if (w.skipped) return `<tr><td>${w.window_days}d</td><td colspan="5" style="color:var(--text-dim);font-style:italic">${w.reason}</td></tr>`;
+        const isBest = w.window_days === d.best_window;
+        return `<tr class="${isBest ? 'best' : ''}">
+          <td>${w.window_days}d${isBest ? '<span class="best-badge">Best</span>' : ''}</td>
+          <td>${w.training_races?.toLocaleString() ?? '—'}</td>
+          <td>${w.training_box_hit_rate ?? '—'}%</td>
+          <td>${w.holdout_races ?? '—'}</td>
+          <td>${w.holdout_box_hit_rate ?? '—'}%</td>
+          <td>${w.by_tier?.hot?.hit_rate_pct ?? '—'}% / ${w.by_tier?.high?.hit_rate_pct ?? '—'}% / ${w.by_tier?.strong?.hit_rate_pct ?? '—'}%</td>
+        </tr>`;
+      }).join('');
+      windowHtml = `
+        <div class="section">
+          <div class="section-title">Training Window Comparison</div>
+          <div class="chart-card">
+            <table class="window-table">
+              <thead><tr>
+                <th>Window</th><th>Training Races</th><th>Train Box Hit %</th>
+                <th>Holdout Races</th><th>Holdout Box Hit %</th><th>Hot / High / Strong</th>
+              </tr></thead>
+              <tbody>${rows}</tbody>
+            </table>
+          </div>
+        </div>`;
+    }
+
+    // Feature ablation table
+    let ablationHtml = '';
+    if (d.feature_ablation?.length) {
+      const rows = d.feature_ablation.map(f => {
+        const deltaClass = f.delta < 0 ? 'delta-neg' : f.delta > 0 ? 'delta-pos' : '';
+        const verdictClass = f.verdict === 'valuable' ? 'verdict-valuable' : f.verdict === 'noisy/harmful' ? 'verdict-noisy' : 'verdict-neutral';
+        const deltaStr = f.delta > 0 ? `+${f.delta}%` : `${f.delta}%`;
+        return `<tr>
+          <td>${f.feature}</td>
+          <td style="text-align:right">${f.weight.toFixed(3)}</td>
+          <td style="text-align:right">${f.ablated_hit_rate}%</td>
+          <td style="text-align:right" class="${deltaClass}">${deltaStr}</td>
+          <td class="${verdictClass}">${f.verdict}</td>
+        </tr>`;
+      }).join('');
+      ablationHtml = `
+        <div class="section">
+          <div class="section-title">Feature Ablation — ${d.best_window}d model, baseline box hit rate: ${d.best_holdout_box_hit_rate}%</div>
+          <div class="chart-card">
+            <div style="font-size:0.72rem;color:var(--text-dim);margin-bottom:14px;line-height:1.6">
+              Each feature is zeroed out in turn. A negative delta means removing it hurt accuracy — the feature is <span class="verdict-valuable">valuable</span>. A positive delta means removing it helped — the feature is <span class="verdict-noisy">noisy/harmful</span>. Sorted by most valuable first.
+            </div>
+            <table class="window-table">
+              <thead><tr>
+                <th>Feature</th><th style="text-align:right">Weight</th>
+                <th style="text-align:right">Ablated Hit %</th><th style="text-align:right">Delta</th><th>Verdict</th>
+              </tr></thead>
+              <tbody>${rows}</tbody>
+            </table>
+          </div>
+        </div>`;
+    }
+
+    return statsHtml + tierHtml + windowHtml + ablationHtml;
   }
 
-  async function triggerReenrich() {
-    const btn = document.getElementById('reenrichBtn');
-    const status = document.getElementById('retrainStatus');
+  /* ═══════════════════════════════════════════════════════
+     SHARED ACTIONS
+  ══════════════════════════════════════════════════════════ */
+
+  async function triggerReenrich(btnId, statusId) {
+    const btn    = document.getElementById(btnId);
+    const status = document.getElementById(statusId);
     btn.disabled = true;
     status.textContent = 'Re-enriching today\'s races…';
     try {
@@ -822,8 +1079,8 @@
   }
 
   async function triggerRetrain() {
-    const btn = document.getElementById('retrainBtn');
-    const status = document.getElementById('retrainStatus');
+    const btn    = document.getElementById('retrainBtn');
+    const status = document.getElementById('winStatus');
     btn.disabled = true;
     status.textContent = 'Triggering calibration…';
     try {
@@ -833,6 +1090,29 @@
       });
       const data = await res.json();
       status.textContent = data.message || 'Calibration started.';
+    } catch (e) {
+      status.textContent = 'Error: ' + e.message;
+    } finally {
+      btn.disabled = false;
+    }
+  }
+
+  async function triggerExoticRetrain() {
+    const btn    = document.getElementById('eRetrainBtn');
+    const status = document.getElementById('exoticStatus');
+    btn.disabled = true;
+    status.textContent = 'Starting exotic model retrain (background)…';
+    try {
+      const res = await fetch(`${API}/api/admin/retrain-exotic`, {
+        method: 'POST',
+        headers: { 'x-cron-secret': adminSecret }
+      });
+      const data = await res.json();
+      if (data.status === 'exotic_retrain_started') {
+        status.textContent = `Retrain started — ${data.eligible_races} races, ${data.total_runners} runners. Takes 2–5 min.`;
+      } else {
+        status.textContent = data.detail || data.error || 'Started.';
+      }
     } catch (e) {
       status.textContent = 'Error: ' + e.message;
     } finally {

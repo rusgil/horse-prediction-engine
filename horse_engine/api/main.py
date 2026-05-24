@@ -1984,6 +1984,257 @@ async def retrain_exotic_model(
     }
 
 
+@app.get("/api/admin/backtest-exotic")
+async def backtest_exotic(x_cron_secret: Optional[str] = Header(None)):
+    """
+    Window sweep + feature ablation for the exotic (trifecta box) model.
+
+    For each training window in [30, 60, 90, 180, 270]:
+      - Train a fresh ExoticModel on races outside the 14-day holdout
+      - Score holdout races, compute trifecta box hit rate by tier (Hot/High/Strong)
+
+    Then, using the best window model:
+      - Zero out each feature in turn and re-score holdout
+      - Report delta hit rate so we can identify valuable vs noisy features
+
+    Returns: per-window results, best window, feature ablation table.
+    """
+    _check_admin(x_cron_secret)
+    import math
+
+    holdout_days = 14
+    today = date.today()
+    holdout_cutoff = (today - timedelta(days=holdout_days)).isoformat()
+
+    async with get_session() as session:
+        hr_result = await session.execute(select(HistoricalResultRow))
+        all_hr = hr_result.scalars().all()
+        pred_result = await session.execute(
+            select(RunnerPredictionRow).where(RunnerPredictionRow.enriched_json.isnot(None))
+        )
+        all_pred = pred_result.scalars().all()
+
+    pred_by_key = {(p.race_id, p.horse_name): p for p in all_pred}
+
+    def _sigmoid(z: float) -> float:
+        return 1.0 / (1.0 + math.exp(-max(-30, min(30, z))))
+
+    def _score_field(model: ExoticModel, fvs: list[list[float]]) -> list[float]:
+        return [_sigmoid(sum(w * f for w, f in zip(model.weights, fv)) + model.bias) for fv in fvs]
+
+    def _box_hit_rate_by_tier(model: ExoticModel, holdout_groups: list[tuple]) -> dict:
+        """Score holdout race groups, compute box hit rate overall and by tier."""
+        combined_scores = []
+        for race_id, fvs, positions in holdout_groups:
+            probs = _score_field(model, fvs)
+            ranked = sorted(zip(probs, positions), reverse=True)
+            top3_probs = [p for p, _ in ranked[:3]]
+            if len(top3_probs) < 3:
+                continue
+            combined = top3_probs[0] * top3_probs[1] * top3_probs[2]
+            if combined * 100 < 5.0:
+                continue
+            combined_scores.append((race_id, combined, fvs, positions, probs))
+
+        if not combined_scores:
+            return {"races": 0, "box_hit_rate": 0.0, "hot": {}, "high": {}, "strong": {}}
+
+        sorted_by_combined = sorted(combined_scores, key=lambda x: x[1], reverse=True)
+        n = len(sorted_by_combined)
+        hot_threshold  = sorted_by_combined[int(n * 0.25)][1] if n > 4 else float("inf")
+        high_threshold = sorted_by_combined[int(n * 0.60)][1] if n > 4 else float("inf")
+
+        tiers: dict[str, dict] = {
+            "hot":    {"races": 0, "hits": 0},
+            "high":   {"races": 0, "hits": 0},
+            "strong": {"races": 0, "hits": 0},
+        }
+        total_hits = 0
+
+        for _, combined, fvs, positions, probs in sorted_by_combined:
+            ranked = sorted(zip(probs, range(len(probs))), reverse=True)
+            predicted_top3_idx = {idx for _, idx in ranked[:3]}
+            actual_top3_idx = {i for i, pos in enumerate(positions) if pos in (1, 2, 3)}
+
+            if len(actual_top3_idx) != 3:
+                continue
+
+            hit = predicted_top3_idx == actual_top3_idx
+
+            if combined >= hot_threshold:
+                tier = "hot"
+            elif combined >= high_threshold:
+                tier = "high"
+            else:
+                tier = "strong"
+
+            tiers[tier]["races"] += 1
+            if hit:
+                tiers[tier]["hits"] += 1
+                total_hits += 1
+
+        total_races = sum(t["races"] for t in tiers.values())
+
+        def _rate(t):
+            return round(t["hits"] / t["races"] * 100, 1) if t["races"] else 0.0
+
+        return {
+            "races": total_races,
+            "box_hit_rate": round(total_hits / total_races * 100, 1) if total_races else 0.0,
+            "hot":    {**tiers["hot"],    "hit_rate_pct": _rate(tiers["hot"])},
+            "high":   {**tiers["high"],   "hit_rate_pct": _rate(tiers["high"])},
+            "strong": {**tiers["strong"], "hit_rate_pct": _rate(tiers["strong"])},
+        }
+
+    # Build holdout race groups: field_size >= 7, exactly 3 top-3 finishers, within holdout window
+    holdout_race_data: dict[str, list[tuple[list[float], int]]] = {}
+    for row in all_hr:
+        if row.race_id < holdout_cutoff:
+            continue
+        pred = pred_by_key.get((row.race_id, row.horse_name))
+        if not pred or row.position is None:
+            continue
+        try:
+            er = EnrichedRunner(**json.loads(pred.enriched_json))
+            fv = build_feature_vector(er)
+            holdout_race_data.setdefault(row.race_id, []).append((fv, row.position))
+        except Exception:
+            continue
+
+    holdout_groups: list[tuple] = []
+    for race_id, runners in holdout_race_data.items():
+        if len(runners) < 7:
+            continue
+        top3_count = sum(1 for _, pos in runners if pos in (1, 2, 3))
+        if top3_count != 3:
+            continue
+        fvs = [fv for fv, _ in runners]
+        positions = [pos for _, pos in runners]
+        holdout_groups.append((race_id, fvs, positions))
+
+    if not holdout_groups:
+        return {"error": "No eligible holdout races found (need field_size >= 7 with complete top-3 results)"}
+
+    # Window sweep
+    window_results = []
+    best_window = None
+    best_hit_rate = -1.0
+    best_model_weights: dict | None = None
+
+    for window in _CANDIDATE_WINDOWS:
+        train_cutoff = (today - timedelta(days=window)).isoformat()
+
+        race_train_data: dict[str, list[tuple[list[float], int]]] = {}
+        for row in all_hr:
+            if row.race_id < train_cutoff or row.race_id >= holdout_cutoff:
+                continue
+            pred = pred_by_key.get((row.race_id, row.horse_name))
+            if not pred:
+                continue
+            try:
+                er = EnrichedRunner(**json.loads(pred.enriched_json))
+                fv = build_feature_vector(er)
+                label = 1 if row.placed else 0
+                race_train_data.setdefault(row.race_id, []).append((fv, label))
+            except Exception:
+                continue
+
+        race_groups_train = []
+        for race_id, runners in race_train_data.items():
+            if len(runners) < 7:
+                continue
+            top3_count = sum(1 for _, lbl in runners if lbl == 1)
+            if top3_count != 3:
+                continue
+            race_groups_train.append(runners)
+
+        if len(race_groups_train) < 20:
+            window_results.append({
+                "window_days": window,
+                "training_races": len(race_groups_train),
+                "skipped": True,
+                "reason": "insufficient training races",
+            })
+            continue
+
+        m = ExoticModel()
+        stats = m.train_exotic(race_groups_train)
+        holdout_stats = _box_hit_rate_by_tier(m, holdout_groups)
+
+        result = {
+            "window_days": window,
+            "training_races": len(race_groups_train),
+            "training_box_hit_rate": round(stats.get("box_hit_rate", 0) * 100, 1),
+            "holdout_races": holdout_stats["races"],
+            "holdout_box_hit_rate": holdout_stats["box_hit_rate"],
+            "by_tier": {
+                "hot":    holdout_stats["hot"],
+                "high":   holdout_stats["high"],
+                "strong": holdout_stats["strong"],
+            },
+        }
+        window_results.append(result)
+        log.info("[backtest-exotic] window=%d train_races=%d holdout_box_hit=%.1f%%",
+                 window, len(race_groups_train), holdout_stats["box_hit_rate"])
+
+        if holdout_stats["box_hit_rate"] > best_hit_rate:
+            best_hit_rate = holdout_stats["box_hit_rate"]
+            best_window = window
+            best_model_weights = {"weights": list(m.weights), "bias": m.bias}
+
+    if best_model_weights is None:
+        return {
+            "error": "No valid training windows found",
+            "holdout_races": len(holdout_groups),
+            "window_results": window_results,
+        }
+
+    # Feature ablation using best window model
+    from horse_engine.prediction.features import FEATURE_NAMES, NUM_FEATURES
+
+    best_m = ExoticModel()
+    best_m.weights = best_model_weights["weights"]
+    best_m.bias = best_model_weights["bias"]
+    baseline_stats = _box_hit_rate_by_tier(best_m, holdout_groups)
+    baseline_hit_rate = baseline_stats["box_hit_rate"]
+
+    ablation_results = []
+    for feat_idx, feat_name in enumerate(FEATURE_NAMES):
+        # Zero out this feature in all holdout race groups
+        zeroed_groups = []
+        for race_id, fvs, positions in holdout_groups:
+            zeroed_fvs = []
+            for fv in fvs:
+                zfv = list(fv)
+                if feat_idx < len(zfv):
+                    zfv[feat_idx] = 0.0
+                zeroed_fvs.append(zfv)
+            zeroed_groups.append((race_id, zeroed_fvs, positions))
+
+        ablated_stats = _box_hit_rate_by_tier(best_m, zeroed_groups)
+        delta = round(ablated_stats["box_hit_rate"] - baseline_hit_rate, 1)
+        ablation_results.append({
+            "feature": feat_name,
+            "feature_idx": feat_idx,
+            "weight": round(best_m.weights[feat_idx] if feat_idx < len(best_m.weights) else 0.0, 4),
+            "baseline_hit_rate": baseline_hit_rate,
+            "ablated_hit_rate": ablated_stats["box_hit_rate"],
+            "delta": delta,
+            "verdict": "valuable" if delta < -1.0 else ("noisy/harmful" if delta > 1.0 else "neutral"),
+        })
+
+    ablation_results.sort(key=lambda x: x["delta"])
+
+    return {
+        "holdout_races": len(holdout_groups),
+        "holdout_days": holdout_days,
+        "best_window": best_window,
+        "best_holdout_box_hit_rate": best_hit_rate,
+        "window_results": window_results,
+        "feature_ablation": ablation_results,
+    }
+
+
 # ── Admin: seed results ───────────────────────────────────────────────────────
 
 @app.post("/api/admin/results/{race_date}")
