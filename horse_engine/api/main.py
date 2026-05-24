@@ -1115,9 +1115,14 @@ async def get_edge_trifectas():
 
     # Annotate finished races with actual positions
     now_utc = datetime.utcnow().replace(tzinfo=timezone.utc)
+    today_str = _today_aest().isoformat()
     finished_picks = [
         p for p in picks
-        if p["scheduled_time"] and datetime.fromisoformat(p["scheduled_time"].replace("Z", "+00:00")) < now_utc
+        if (
+            p["scheduled_time"] and datetime.fromisoformat(p["scheduled_time"].replace("Z", "+00:00")) < now_utc
+        ) or (
+            not p["scheduled_time"] and p["date"] == today_str
+        )
     ]
     if finished_picks:
         finished_venues: dict[str, str] = {}
