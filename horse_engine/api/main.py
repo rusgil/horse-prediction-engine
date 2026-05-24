@@ -381,6 +381,53 @@ async def _scheduled_seed_results():
         log.exception("[scheduler] Result seeding failed for %s: %s", yesterday, e)
 
 
+async def _scheduled_exotic_retrain():
+    """Run by APScheduler at 3am AEST — retrain exotic model after nightly calibration."""
+    log.info("[scheduler] Running nightly exotic model retrain")
+    try:
+        async with get_session() as session:
+            hr_result = await session.execute(select(HistoricalResultRow))
+            hr_rows = hr_result.scalars().all()
+            pred_result = await session.execute(
+                select(RunnerPredictionRow).where(RunnerPredictionRow.enriched_json.isnot(None))
+            )
+            pred_rows = pred_result.scalars().all()
+
+        pred_by_key = {(p.race_id, p.horse_name): p for p in pred_rows}
+
+        race_data: dict[str, list] = {}
+        for row in hr_rows:
+            pred = pred_by_key.get((row.race_id, row.horse_name))
+            if not pred:
+                continue
+            try:
+                er = EnrichedRunner(**json.loads(pred.enriched_json))
+                fv = build_feature_vector(er)
+                race_data.setdefault(row.race_id, []).append((fv, 1 if row.placed else 0))
+            except Exception:
+                continue
+
+        race_groups = [
+            runners for runners in race_data.values()
+            if len(runners) >= 7 and sum(1 for _, lbl in runners if lbl == 1) == 3
+        ]
+
+        if not race_groups:
+            log.warning("[scheduler] Exotic retrain: no eligible races found")
+            return
+
+        m = ExoticModel()
+        stats = m.train_exotic(race_groups)
+        async with get_session() as session:
+            await save_exotic_model_weights(session, stats["weights"])
+        log.info(
+            "[scheduler] Exotic retrain complete — %d races, box_hit_rate=%.3f",
+            len(race_groups), stats.get("box_hit_rate", 0),
+        )
+    except Exception as e:
+        log.exception("[scheduler] Exotic retrain failed: %s", e)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await init_db()
@@ -393,13 +440,14 @@ async def lifespan(app: FastAPI):
     scheduler.add_job(_scheduled_seed_results, CronTrigger(hour=15, minute=0, timezone="Australia/Sydney"))
     scheduler.add_job(_scheduled_seed_results, CronTrigger(hour=17, minute=0, timezone="Australia/Sydney"))
     scheduler.add_job(_scheduled_seed_results, CronTrigger(hour=23, minute=0, timezone="Australia/Sydney"))
-    scheduler.add_job(_scheduled_calibrate, CronTrigger(hour=2, minute=0, timezone="Australia/Sydney"))
+    scheduler.add_job(_scheduled_calibrate,      CronTrigger(hour=2, minute=0, timezone="Australia/Sydney"))
+    scheduler.add_job(_scheduled_exotic_retrain, CronTrigger(hour=3, minute=0, timezone="Australia/Sydney"))
     scheduler.add_job(
         _scheduled_odds_snapshot,
         CronTrigger(hour="9-18", minute="0,15,30,45", timezone="Australia/Sydney")
     )
     scheduler.start()
-    log.info("[scheduler] Cron jobs scheduled: 6am/10am/1pm enrich, 3pm/5pm/11pm seed results, 2am calibration, every 15min odds snapshots 9am-6pm")
+    log.info("[scheduler] Cron jobs scheduled: 6am/10am/1pm enrich, 3pm/5pm/11pm seed results, 2am calibration, 3am exotic retrain, every 15min odds snapshots 9am-6pm")
 
     # Enrich today on startup so deploys don't leave races un-loaded
     asyncio.create_task(_scheduled_enrich())
