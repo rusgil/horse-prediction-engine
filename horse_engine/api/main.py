@@ -51,13 +51,15 @@ from horse_engine.models.database import (
     init_db,
     load_model_weights,
     save_model_weights,
+    load_place_model_weights,
+    save_place_model_weights,
     save_race_predictions,
 )
 from horse_engine.models.enriched import EnrichedRunner
 from horse_engine.pipeline import enrich_and_predict_race, enrich_meeting
 from horse_engine.prediction.engine import _value_rating
 from horse_engine.prediction.features import build_feature_vector
-from horse_engine.prediction.model import HorseModel
+from horse_engine.prediction.model import HorseModel, PlaceModel
 from horse_engine.prediction.venue_calibration import compute_venue_multipliers
 
 log = logging.getLogger(__name__)
@@ -230,6 +232,7 @@ async def _scheduled_pre_race_enrich():
         client = get_tab_client()
         async with get_session() as session:
             model = await _load_model(session)
+            place_model = await _load_place_model(session)
         meetings = await client.get_meetings(today)
 
         # Build set of active venue codes from Punters
@@ -285,7 +288,7 @@ async def _scheduled_pre_race_enrich():
                     if not full_event:
                         continue
                     race = await client.parse_race(full_event, today, venue_name, state)
-                    predictions, _ = await enrich_and_predict_race(race, model)
+                    predictions, _ = await enrich_and_predict_race(race, model, place_model=place_model)
                     async with get_session() as session:
                         await save_race_predictions(
                             session,
@@ -466,6 +469,13 @@ async def _load_model(session) -> HorseModel:
     if weights:
         return HorseModel.from_weights_dict(weights)
     return HorseModel()
+
+
+async def _load_place_model(session) -> PlaceModel:
+    weights = await load_place_model_weights(session)
+    if weights:
+        return PlaceModel.from_weights_dict(weights)
+    return PlaceModel()
 
 
 def _today() -> str:
@@ -1380,6 +1390,70 @@ async def retrain_model(
 
     asyncio.create_task(_do_retrain())
     return {"status": "retrain_started", "training_days": days or "all", "training_examples": len(training_data)}
+
+
+@app.post("/api/admin/retrain-place")
+async def retrain_place_model(
+    days: int = Query(0, ge=0, le=365),
+    x_cron_secret: Optional[str] = Header(None),
+):
+    """
+    Train the place model on P(position ≤ 3) labels.
+    Uses the same feature vectors as the win model but with placed=True as the target.
+    """
+    _check_admin(x_cron_secret)
+    async with get_session() as session:
+        hr_query = select(HistoricalResultRow)
+        if days > 0:
+            cutoff = (date.today() - timedelta(days=days)).isoformat()
+            hr_query = hr_query.where(HistoricalResultRow.race_id >= cutoff)
+        hr_result = await session.execute(hr_query)
+        hr_rows = hr_result.scalars().all()
+
+        pred_result = await session.execute(
+            select(RunnerPredictionRow).where(RunnerPredictionRow.enriched_json.isnot(None))
+        )
+        pred_rows = pred_result.scalars().all()
+
+    if len(hr_rows) < 50:
+        raise HTTPException(400, f"Need at least 50 results to train (have {len(hr_rows)})")
+
+    pred_by_key = {(p.race_id, p.horse_name): p for p in pred_rows}
+
+    training_data = []
+    for row in hr_rows:
+        pred = pred_by_key.get((row.race_id, row.horse_name))
+        if not pred:
+            continue
+        try:
+            er = EnrichedRunner(**json.loads(pred.enriched_json))
+            fv = build_feature_vector(er)
+            label = 1 if row.placed else 0   # ← placed label, not winner
+            training_data.append((fv, label))
+        except Exception as e:
+            log.debug("Skipping place retrain row %s/%s: %s", row.race_id, row.horse_name, e)
+
+    if not training_data:
+        raise HTTPException(400, "No matched training examples for place model")
+
+    placed_count = sum(1 for _, label in training_data if label == 1)
+    log.info("[place-retrain] %d examples, %d placed (%.1f%%)",
+             len(training_data), placed_count, placed_count / len(training_data) * 100)
+
+    async def _do_retrain():
+        m = PlaceModel()
+        s = m.train(training_data)
+        async with get_session() as sess:
+            await save_place_model_weights(sess, s["weights"])
+        log.info("[place-retrain] complete — %d examples, accuracy=%.3f", len(training_data), s.get("accuracy", 0))
+
+    asyncio.create_task(_do_retrain())
+    return {
+        "status": "place_retrain_started",
+        "training_examples": len(training_data),
+        "placed_examples": placed_count,
+        "placed_rate_pct": round(placed_count / len(training_data) * 100, 1),
+    }
 
 
 # ── Admin: seed results ───────────────────────────────────────────────────────
@@ -2751,9 +2825,12 @@ async def _load_venue_calibration() -> dict[str, float]:
     return multipliers
 
 
-async def _enrich_date(race_date: str, client, model, force: bool = False) -> list[dict]:
+async def _enrich_date(race_date: str, client, model, force: bool = False, place_model: PlaceModel | None = None) -> list[dict]:
     """Enrich all meetings for a single date. Returns summary list."""
     venue_cal = await _load_venue_calibration()
+    if place_model is None:
+        async with get_session() as session:
+            place_model = await _load_place_model(session)
     meetings = await client.get_meetings(race_date)
     summary = []
     for m in meetings:
@@ -2781,7 +2858,7 @@ async def _enrich_date(race_date: str, client, model, force: bool = False) -> li
                 if not full_event:
                     continue
                 race = await client.parse_race(full_event, race_date, venue_name, state)
-                predictions, _ = await enrich_and_predict_race(race, model, venue_calibration=venue_cal)
+                predictions, _ = await enrich_and_predict_race(race, model, venue_calibration=venue_cal, place_model=place_model)
                 async with get_session() as session:
                     await save_race_predictions(
                         session,
@@ -2849,6 +2926,7 @@ def _prediction_to_db_dict(pred, race_id: str) -> dict:
         "win_probability": round(pred.win_prob, 4),
         "place_probability": round(pred.place_prob, 4),
         "model_rank": pred.model_rank,
+        "place_model_rank": pred.place_model_rank if pred.place_model_rank else None,
         "market_rank": pred.enriched.market_rank,
         "overlay": round(pred.overlay, 4),
         "best_available_odds": pred.enriched.best_available_odds,
@@ -2874,6 +2952,7 @@ def _runner_response(row: RunnerPredictionRow) -> dict:
         "trainer": row.trainer,
         "weight": row.weight,
         "model_rank": row.model_rank,
+        "place_model_rank": row.place_model_rank,
         "market_rank": row.market_rank,
         "win_probability": row.win_probability,
         "place_probability": row.place_probability,

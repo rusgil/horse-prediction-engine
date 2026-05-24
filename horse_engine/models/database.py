@@ -75,12 +75,22 @@ class RunnerPredictionRow(Base):
     narrative = Column(Text, nullable=True)
     key_flags = Column(Text)             # JSON list of flag strings
     enriched_json = Column(Text)         # full EnrichedRunner JSON
+    place_model_rank = Column(Integer, nullable=True)   # rank by dedicated place model
     enriched_at = Column(DateTime, default=datetime.utcnow)
     cancelled = Column(Boolean, default=False, nullable=True)
 
 
 class ModelWeightRow(Base):
     __tablename__ = "model_weights"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    feature_name = Column(String, unique=True)
+    weight = Column(Float)
+    updated_at = Column(DateTime, default=datetime.utcnow)
+
+
+class PlaceModelWeightRow(Base):
+    __tablename__ = "place_model_weights"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     feature_name = Column(String, unique=True)
@@ -178,6 +188,9 @@ async def init_db() -> None:
         await conn.execute(text(
             "ALTER TABLE runner_predictions ADD COLUMN IF NOT EXISTS cancelled BOOLEAN DEFAULT FALSE"
         ))
+        await conn.execute(text(
+            "ALTER TABLE runner_predictions ADD COLUMN IF NOT EXISTS place_model_rank INTEGER"
+        ))
 
 
 async def save_race_predictions(session: AsyncSession, race_id: str, predictions: list[dict]) -> None:
@@ -208,4 +221,18 @@ async def save_model_weights(session: AsyncSession, weights: dict[str, float]) -
     await session.execute(delete(ModelWeightRow))
     for name, w in weights.items():
         session.add(ModelWeightRow(feature_name=name, weight=w))
+    await session.commit()
+
+
+async def load_place_model_weights(session: AsyncSession) -> dict[str, float]:
+    result = await session.execute(select(PlaceModelWeightRow))
+    rows = result.scalars().all()
+    return {r.feature_name: r.weight for r in rows}
+
+
+async def save_place_model_weights(session: AsyncSession, weights: dict[str, float]) -> None:
+    from sqlalchemy import delete
+    await session.execute(delete(PlaceModelWeightRow))
+    for name, w in weights.items():
+        session.add(PlaceModelWeightRow(feature_name=name, weight=w))
     await session.commit()

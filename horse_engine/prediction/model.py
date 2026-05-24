@@ -15,7 +15,7 @@ import math
 import logging
 from datetime import datetime
 
-from horse_engine.prediction.features import DEFAULT_WEIGHTS, FEATURE_NAMES, NUM_FEATURES
+from horse_engine.prediction.features import DEFAULT_WEIGHTS, DEFAULT_PLACE_WEIGHTS, FEATURE_NAMES, NUM_FEATURES
 
 log = logging.getLogger(__name__)
 
@@ -139,4 +139,28 @@ class HorseModel:
     @classmethod
     def from_weights_dict(cls, weights_dict: dict[str, float], bias: float = 0.0) -> "HorseModel":
         weights = [weights_dict.get(name, DEFAULT_WEIGHTS[i]) for i, name in enumerate(FEATURE_NAMES)]
+        return cls(weights=weights, bias=bias)
+
+
+class PlaceModel(HorseModel):
+    """
+    Logistic regression trained on P(position ≤ 3) labels.
+    Same feature vector as HorseModel; different default weights and DB table.
+    Used to rank legs 2 and 3 of trifecta picks.
+    """
+
+    def __init__(self, weights: list[float] | None = None, bias: float = 0.0):
+        if weights is None:
+            weights = list(DEFAULT_PLACE_WEIGHTS)
+        # Bypass HorseModel.__init__ assertion by calling grandparent directly,
+        # then set attributes manually so assertion uses correct defaults.
+        object.__setattr__(self, "weights", list(weights))
+        object.__setattr__(self, "bias", bias)
+        assert len(self.weights) == NUM_FEATURES, (
+            f"PlaceModel: expected {NUM_FEATURES} weights, got {len(self.weights)}"
+        )
+
+    @classmethod
+    def from_weights_dict(cls, weights_dict: dict[str, float], bias: float = 0.0) -> "PlaceModel":
+        weights = [weights_dict.get(name, DEFAULT_PLACE_WEIGHTS[i]) for i, name in enumerate(FEATURE_NAMES)]
         return cls(weights=weights, bias=bias)

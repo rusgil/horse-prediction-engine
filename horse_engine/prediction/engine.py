@@ -29,7 +29,7 @@ from horse_engine.pedigree.sire_profiles import (
     parse_condition_category,
 )
 from horse_engine.prediction.features import build_feature_vector
-from horse_engine.prediction.model import HorseModel
+from horse_engine.prediction.model import HorseModel, PlaceModel
 
 log = logging.getLogger(__name__)
 
@@ -49,6 +49,7 @@ class RunnerPrediction:
         self.place_prob = place_prob
         self.feature_vector = feature_vector
         self.model_rank: int = 0
+        self.place_model_rank: int = 0   # rank by dedicated place model
         self.overlay: float = 0.0
         self.value_rating: float = 0.0
         self.key_flags: list[str] = []
@@ -277,7 +278,7 @@ def enrich_runner(
     )
 
 
-def predict_race(race: Race, model: HorseModel, venue_calibration: dict[str, float] | None = None) -> list[RunnerPrediction]:
+def predict_race(race: Race, model: HorseModel, venue_calibration: dict[str, float] | None = None, place_model: PlaceModel | None = None) -> list[RunnerPrediction]:
     """Full prediction pipeline for one race. Returns ranked RunnerPredictions."""
     if not race.runners:
         return []
@@ -333,6 +334,17 @@ def predict_race(race: Race, model: HorseModel, venue_calibration: dict[str, flo
     for rank, p in enumerate(predictions, 1):
         p.model_rank = rank
         p.value_rating = _value_rating(p.win_prob, p.enriched.best_available_odds, p.overlay)
+
+    # Run place model if provided — assigns place_model_rank independently
+    if place_model is not None:
+        place_win_probs, _ = place_model.predict_field(feature_vectors)
+        place_ranked = sorted(
+            zip(place_win_probs, predictions),
+            key=lambda x: x[0],
+            reverse=True,
+        )
+        for place_rank, (_, p) in enumerate(place_ranked, 1):
+            p.place_model_rank = place_rank
 
     return predictions
 

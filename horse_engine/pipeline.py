@@ -9,7 +9,7 @@ from typing import Optional
 
 from horse_engine.models.race import Race
 from horse_engine.prediction.engine import predict_race, RunnerPrediction
-from horse_engine.prediction.model import HorseModel
+from horse_engine.prediction.model import HorseModel, PlaceModel
 from horse_engine.prediction.narrative import generate_race_narratives
 
 log = logging.getLogger(__name__)
@@ -20,6 +20,7 @@ async def enrich_and_predict_race(
     model: HorseModel,
     generate_narratives: bool = True,
     venue_calibration: dict[str, float] | None = None,
+    place_model: PlaceModel | None = None,
 ) -> tuple[list[RunnerPrediction], dict]:
     """
     Run the full pipeline:
@@ -37,7 +38,7 @@ async def enrich_and_predict_race(
         race.track_condition, len(race.runners),
     )
 
-    predictions = predict_race(race, model, venue_calibration=venue_calibration)
+    predictions = predict_race(race, model, venue_calibration=venue_calibration, place_model=place_model)
 
     if generate_narratives:
         try:

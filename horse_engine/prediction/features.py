@@ -99,6 +99,41 @@ DEFAULT_WEIGHTS_ODDS_MOVEMENT = [
 
 DEFAULT_WEIGHTS = DEFAULT_WEIGHTS_BASE + (DEFAULT_WEIGHTS_ODDS_MOVEMENT if USE_ODDS_MOVEMENT_FEATURES else [])
 
+# Place model defaults — same features, weights tuned for P(position ≤ 3)
+# Emphasises consistency, stamina, condition form over explosive speed/barrier
+DEFAULT_PLACE_WEIGHTS_BASE = [
+    0.7,   # form_score — consistency signal
+    0.3,   # win_rate_career — less relevant; place rate matters more
+    0.6,   # win_rate_distance
+    0.5,   # win_rate_track
+    0.6,   # surface_match_score — condition consistency
+    0.15,  # barrier_score — less important for placing than winning
+   -0.15,  # days_since_last_run_norm
+    0.25,  # runs_in_prep_norm
+    0.2,   # class_change
+    0.5,   # trainer_overall_rate
+    0.6,   # trainer_track_rate
+    0.3,   # trainer_jockey_combo_rate
+    0.4,   # jockey_overall_rate
+    0.5,   # jockey_track_rate
+    0.25,  # jockey_wins_today_norm
+    0.5,   # pedigree_distance_match — stamina for running on
+    0.35,  # pedigree_wet_score_norm
+    0.7,   # market_rank_norm
+    0.4,   # odds_movement_norm
+    0.4,   # speed_map_advantage
+    0.15,  # gear_change_score
+   -0.15,  # weight_vs_field_norm
+    0.25,  # jockey_booking_significance
+    0.5,   # stable_form — in-form stables place consistently
+    0.35,  # track_bias_advantage
+    0.7,   # win_rate_track_distance — track+dist consistency
+    0.65,  # condition_win_rate — performs in today's going
+    0.3,   # first_up_win_rate
+]
+
+DEFAULT_PLACE_WEIGHTS = DEFAULT_PLACE_WEIGHTS_BASE + (DEFAULT_WEIGHTS_ODDS_MOVEMENT if USE_ODDS_MOVEMENT_FEATURES else [])
+
 
 def build_feature_vector(er: EnrichedRunner) -> list[float]:
     import math
