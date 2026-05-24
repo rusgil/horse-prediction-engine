@@ -1340,6 +1340,7 @@
     .exotic-align-badge.confirmed { color: var(--green-bright); background: var(--green-dim); border: 1px solid rgba(34,197,94,0.25); }
     .exotic-align-badge.partial   { color: var(--gold); background: var(--gold-dim); border: 1px solid var(--gold-mid); }
     .exotic-align-badge.diverge   { color: #f87171; background: rgba(239,68,68,0.1); border: 1px solid rgba(239,68,68,0.25); }
+    .exotic-align-badge.no-edge   { color: var(--text-dim); background: var(--bg-elevated); border: 1px solid var(--border); }
   </style>
 </head>
 <body>
@@ -2702,10 +2703,10 @@
 
     const alignBadge = (() => {
       const a = pick.exotic_alignment;
-      if (!a || a === 'no_edge_pick') return '';
-      if (a === 'confirmed') return `<span class="exotic-align-badge confirmed">✓ Win aligned</span>`;
-      if (a === 'partial')   return `<span class="exotic-align-badge partial">~ Partial</span>`;
-      if (a === 'diverge')   return `<span class="exotic-align-badge diverge">⚠ Diverge</span>`;
+      if (a === 'confirmed')    return `<span class="exotic-align-badge confirmed">✓ Win aligned</span>`;
+      if (a === 'partial')      return `<span class="exotic-align-badge partial">~ Partial</span>`;
+      if (a === 'diverge')      return `<span class="exotic-align-badge diverge">⚠ Diverge</span>`;
+      if (a === 'no_edge_pick') return `<span class="exotic-align-badge no-edge">– No win pick</span>`;
       return '';
     })();
 
