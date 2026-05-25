@@ -1664,6 +1664,26 @@ async def list_meetings(race_date: str = _today()):
         if vc:
             rp_venue_meta.setdefault(vc, (row.venue, row.state))
 
+    # Fallback venue→state for common AU venues when state wasn't stored
+    _VENUE_STATE_FALLBACK: dict[str, str] = {
+        "wellington": "NSW", "hamilton": "VIC", "albury": "NSW", "wagga": "NSW",
+        "tamworth": "NSW", "dubbo": "NSW", "orange": "NSW", "bathurst": "NSW",
+        "canberra": "ACT", "goulburn": "NSW", "nowra": "NSW", "grafton": "NSW",
+        "lismore": "NSW", "armidale": "NSW", "mudgee": "NSW", "moruya": "NSW",
+        "eagle-farm": "QLD", "doomben": "QLD", "ipswich": "QLD", "sunshine-coast": "QLD",
+        "toowoomba": "QLD", "gold-coast": "QLD", "rockhampton": "QLD", "cairns": "QLD",
+        "townsville": "QLD", "mackay": "QLD", "emerald": "QLD", "longreach": "QLD",
+        "flemington": "VIC", "caulfield": "VIC", "moonee-valley": "VIC", "sandown": "VIC",
+        "mornington": "VIC", "geelong": "VIC", "bendigo": "VIC", "ballarat": "VIC",
+        "echuca": "VIC", "sale": "VIC", "warrnambool": "VIC", "wodonga": "VIC",
+        "morphettville": "SA", "murray-bridge": "SA", "gawler": "SA", "port-augusta": "SA",
+        "ascot": "WA", "belmont": "WA", "bunbury": "WA", "kalgoorlie": "WA",
+        "randwick": "NSW", "rosehill": "NSW", "warwick-farm": "NSW", "hawkesbury": "NSW",
+        "gosford": "NSW", "newcastle": "NSW", "kembla-grange": "NSW",
+        "darwin": "NT", "alice-springs": "NT",
+        "launceston": "TAS", "hobart": "TAS", "devonport": "TAS",
+    }
+
     # Union both sources
     all_db_vcs = set(rp_venue_meta.keys())
     for rid in runner_race_ids:
@@ -1675,6 +1695,9 @@ async def list_meetings(race_date: str = _today()):
         if vc not in active_codes and vc not in seen_vc:
             seen_vc.add(vc)
             venue_name, state = rp_venue_meta.get(vc, (None, None))
+            # Resolve state from fallback table when not stored in DB
+            if not state:
+                state = _VENUE_STATE_FALLBACK.get(vc)
             items.append({
                 "venue": venue_name or vc.replace("-", " ").title(),
                 "venue_code": vc,
@@ -1700,11 +1723,13 @@ async def list_meetings(race_date: str = _today()):
         _, vc, _ = _parse_race_id(race_id)
         if vc not in active_codes and vc not in seen_cancelled:
             seen_cancelled.add(vc)
-            venue_display = vc.replace("-", " ").title()
+            venue_name_c, state_c = rp_venue_meta.get(vc, (None, None))
+            if not state_c:
+                state_c = _VENUE_STATE_FALLBACK.get(vc)
             items.append({
-                "venue": venue_display,
+                "venue": venue_name_c or vc.replace("-", " ").title(),
                 "venue_code": vc,
-                "state": None,
+                "state": state_c,
                 "rail_position": None,
                 "slug": None,
                 "cancelled": True,
@@ -3535,7 +3560,7 @@ async def performance_summary(days: int = Query(5, ge=1, le=365)):
         if overlay > 0.05 and sp >= 3.0:
             d["value_bets"] += 1
             d["value_pnl"] += (sp - 1) if actual.winner else -1.0
-            if model_pct >= 30:
+            if model_pct >= 50:
                 d["tier_premium"] += 1
             elif model_pct >= 45:
                 d["tier_hot"] += 1
