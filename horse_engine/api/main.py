@@ -206,6 +206,11 @@ async def _cancel_abandoned_meetings(client, today: str) -> None:
         log.warning("[cancel-check] Could not fetch meetings: %s", e)
         return
 
+    # Guard: if Punters returns nothing, it's likely blocked — never mass-cancel on empty response
+    if not meetings:
+        log.warning("[cancel-check] Punters returned 0 meetings for %s — skipping to avoid false cancellations", today)
+        return
+
     active_venue_codes: set[str] = set()
     punters_race_statuses: dict[str, set[str]] = {}
     for m in meetings:
@@ -223,16 +228,26 @@ async def _cancel_abandoned_meetings(client, today: str) -> None:
             select(RunnerPredictionRow.race_id)
             .where(RunnerPredictionRow.race_id.like(f"{today}_%"))
             .where(RunnerPredictionRow.model_rank == 1)
-            .where(RunnerPredictionRow.cancelled.is_(False) | RunnerPredictionRow.cancelled.is_(None))
             .distinct()
         )).scalars().all()
 
     for race_id in db_race_ids:
         _, venue_code, _ = _parse_race_id(race_id)
-        dropped = venue_code not in active_venue_codes
         statuses = punters_race_statuses.get(venue_code, set())
+        dropped = venue_code not in active_venue_codes
         all_abandoned = bool(statuses) and statuses.issubset({"abandoned", "cancelled", "closed"}) and "open" not in statuses and "resulted" not in statuses
-        if dropped or all_abandoned:
+
+        if not dropped and not all_abandoned:
+            # Venue is confirmed active — restore any false cancellations from a prior blocked run
+            async with get_session() as session:
+                await session.execute(
+                    sa_update(RunnerPredictionRow)
+                    .where(RunnerPredictionRow.race_id == race_id)
+                    .where(RunnerPredictionRow.cancelled.is_(True))
+                    .values(cancelled=False)
+                )
+                await session.commit()
+        elif dropped or all_abandoned:
             async with get_session() as session:
                 await session.execute(
                     sa_update(RunnerPredictionRow)
@@ -4369,6 +4384,22 @@ async def admin_reenrich(
 
     asyncio.create_task(_do_reenrich())
     return {"status": "reenrich_started", "date": target}
+
+
+@app.post("/api/admin/restore-cancelled")
+async def restore_cancelled(
+    date: Optional[str] = None,
+    x_cron_secret: Optional[str] = Header(None),
+):
+    """
+    Re-run cancellation check for a date, restoring any races that were
+    falsely marked cancelled when Punters was blocked. Fast — no re-enrichment.
+    """
+    _check_admin(x_cron_secret)
+    target = date or _today_aest().isoformat()
+    client = get_tab_client()
+    await _cancel_abandoned_meetings(client, target)
+    return {"status": "done", "date": target}
 
 
 # ── Serialisation helpers ─────────────────────────────────────────────────────
