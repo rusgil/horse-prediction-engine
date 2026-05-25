@@ -4342,15 +4342,20 @@ async def _run_calibration_sweep(holdout_days: int = 14) -> dict:
 
 
 async def _scheduled_calibrate():
-    """Run by APScheduler every Sunday at 2am AEST."""
-    log.info("[scheduler] Running weekly calibration sweep")
-    try:
-        result = await _run_calibration_sweep(holdout_days=14)
-        if result.get("drift_flag"):
-            log.warning("[calibrate] DRIFT DETECTED: %s", result.get("drift_reason"))
-        log.info("[calibrate] Complete. Best window: %d days", result.get("best_window", 0))
-    except Exception as e:
-        log.exception("[calibrate] Weekly calibration failed: %s", e)
+    """Run by APScheduler every Sunday at 2am AEST — sweeps all three models."""
+    log.info("[scheduler] Running weekly calibration sweep (win + place + exotic)")
+    for label, fn in [
+        ("win", _run_calibration_sweep),
+        ("place", _run_place_calibration_sweep),
+        ("exotic", _run_exotic_calibration_sweep),
+    ]:
+        try:
+            result = await fn(holdout_days=14)
+            if result.get("drift_flag"):
+                log.warning("[calibrate/%s] DRIFT DETECTED: %s", label, result.get("drift_reason"))
+            log.info("[calibrate/%s] Complete. Best window: %d days", label, result.get("best_window", 0))
+        except Exception as e:
+            log.exception("[calibrate/%s] Weekly calibration failed: %s", label, e)
 
 
 _calibration_status: dict = {"running": False, "done": False, "result": None, "error": None}
@@ -4424,6 +4429,423 @@ async def calibration_history(
             for r in rows
         ]
     }
+
+
+# ── Place calibration sweep ───────────────────────────────────────────────────
+
+async def _run_place_calibration_sweep(holdout_days: int = 14) -> dict:
+    """
+    Multi-window calibration for the place model (P(position ≤ 3)).
+    Holdout metric: fraction of races where the top-ranked place pick actually placed.
+    Saves best window's weights to place_model_weights.
+    """
+    import math as _math
+    today = date.today()
+    holdout_cutoff = (today - timedelta(days=holdout_days)).isoformat()
+
+    async with get_session() as session:
+        hr_result = await session.execute(select(HistoricalResultRow))
+        all_hr = hr_result.scalars().all()
+        pred_result = await session.execute(
+            select(RunnerPredictionRow).where(RunnerPredictionRow.enriched_json.isnot(None))
+        )
+        all_pred = pred_result.scalars().all()
+
+    pred_by_key = {(p.race_id, p.horse_name): p for p in all_pred}
+
+    holdout_races: dict[str, list] = {}
+    holdout_results: dict[tuple, HistoricalResultRow] = {}
+    for r in all_hr:
+        if r.race_id >= holdout_cutoff:
+            holdout_results[(r.race_id, r.horse_name)] = r
+    for p in all_pred:
+        if p.race_id >= holdout_cutoff:
+            holdout_races.setdefault(p.race_id, []).append(p)
+
+    window_results = []
+    best_window = None
+    best_score = float("-inf")
+    best_weights = None
+
+    for window in _CANDIDATE_WINDOWS:
+        train_cutoff = (today - timedelta(days=window)).isoformat()
+        training_data = []
+        sw_list = []
+        for row in all_hr:
+            if row.race_id < train_cutoff or row.race_id >= holdout_cutoff:
+                continue
+            pred = pred_by_key.get((row.race_id, row.horse_name))
+            if not pred:
+                continue
+            if pred.enriched_at and pred.scheduled_time:
+                try:
+                    sched = datetime.fromisoformat(pred.scheduled_time.replace("Z", "+00:00")).replace(tzinfo=None)
+                    if pred.enriched_at > sched:
+                        continue
+                except (ValueError, AttributeError):
+                    pass
+            try:
+                er = EnrichedRunner(**json.loads(pred.enriched_json))
+                fv = build_feature_vector(er)
+                training_data.append((fv, 1 if row.placed else 0))
+                try:
+                    days_ago = (today - date.fromisoformat(row.race_id[:10])).days
+                except Exception:
+                    days_ago = 30
+                sw_list.append(_math.exp(-days_ago / 30.0))
+            except Exception:
+                continue
+
+        if len(training_data) < 50:
+            window_results.append({"window_days": window, "training_examples": len(training_data),
+                                   "skipped": True, "reason": "insufficient training data"})
+            continue
+
+        model = PlaceModel()
+        stats = model.train(training_data, sample_weights=sw_list)
+
+        total_races = place_hits = 0
+        for race_id, runners in holdout_races.items():
+            runner_fvs = []
+            for r in runners:
+                try:
+                    er = EnrichedRunner(**json.loads(r.enriched_json))
+                    runner_fvs.append((r, build_feature_vector(er)))
+                except Exception:
+                    continue
+            if not runner_fvs:
+                continue
+            _, place_probs = model.predict_field([fv for _, fv in runner_fvs])
+            best_idx = place_probs.index(max(place_probs))
+            top_runner = runner_fvs[best_idx][0]
+            actual = holdout_results.get((race_id, top_runner.horse_name))
+            if not actual:
+                continue
+            total_races += 1
+            if actual.placed:
+                place_hits += 1
+
+        place_rate = round(place_hits / total_races, 3) if total_races else 0
+        result = {
+            "window_days": window,
+            "training_examples": len(training_data),
+            "training_log_loss": stats.get("log_loss"),
+            "holdout_races": total_races,
+            "place_rate": place_rate,
+        }
+        window_results.append(result)
+        log.info("[place-calibrate] window=%d place=%.1f%%", window, place_rate * 100)
+
+        if place_rate > best_score:
+            best_score = place_rate
+            best_window = window
+            best_weights = stats["weights"]
+
+    if not best_weights:
+        return {"error": "no valid windows", "window_results": window_results}
+
+    async with get_session() as session:
+        await save_place_model_weights(session, best_weights)
+
+    best_result = next((r for r in window_results if r.get("window_days") == best_window), {})
+    drift_flag = False
+    drift_reason = None
+
+    async with get_session() as session:
+        hist = await session.execute(
+            select(CalibrationRow).order_by(CalibrationRow.ran_at.desc()).limit(4)
+        )
+        prev_runs = hist.scalars().all()
+
+    if len(prev_runs) >= 4:
+        prev_rates = [r.place_rate for r in prev_runs if r.place_rate is not None]
+        if prev_rates:
+            avg = sum(prev_rates) / len(prev_rates)
+            cur = best_result.get("place_rate", 0)
+            if avg - cur > _DRIFT_THRESHOLD:
+                drift_flag = True
+                drift_reason = f"Place rate dropped {avg - cur:.1%} below 4-run avg ({avg:.1%} → {cur:.1%})"
+
+    log.info("[place-calibrate] Best window=%d days, place=%.1f%%, drift=%s",
+             best_window, best_result.get("place_rate", 0) * 100, drift_flag)
+    return {
+        "best_window": best_window,
+        "best_score": round(best_score, 3),
+        "drift_flag": drift_flag,
+        "drift_reason": drift_reason,
+        "window_results": window_results,
+    }
+
+
+_place_calibration_status: dict = {"running": False, "done": False, "result": None, "error": None}
+
+
+async def _run_place_calibration_task(holdout_days: int):
+    global _place_calibration_status
+    _place_calibration_status = {"running": True, "done": False, "result": None, "error": None,
+                                  "started_at": datetime.utcnow().isoformat()}
+    try:
+        result = await _run_place_calibration_sweep(holdout_days=holdout_days)
+        _place_calibration_status.update({"running": False, "done": True, "result": result,
+                                           "finished_at": datetime.utcnow().isoformat()})
+    except Exception as e:
+        log.exception("[place-calibrate] Task failed: %s", e)
+        _place_calibration_status.update({"running": False, "done": True, "error": str(e),
+                                           "finished_at": datetime.utcnow().isoformat()})
+
+
+@app.post("/api/admin/calibrate-place")
+async def run_place_calibration(
+    holdout_days: int = Query(14, ge=7, le=30),
+    x_cron_secret: Optional[str] = Header(None),
+):
+    """Multi-window calibration sweep for the place model. Check /api/admin/calibrate-place/status."""
+    _check_admin(x_cron_secret)
+    if _place_calibration_status.get("running"):
+        raise HTTPException(409, "Place calibration already running")
+    asyncio.create_task(_run_place_calibration_task(holdout_days))
+    return {"status": "started", "holdout_days": holdout_days,
+            "message": "Check /api/admin/calibrate-place/status for progress"}
+
+
+@app.get("/api/admin/calibrate-place/status")
+async def place_calibration_status(x_cron_secret: Optional[str] = Header(None)):
+    _check_admin(x_cron_secret)
+    return _place_calibration_status
+
+
+# ── Exotic calibration sweep ──────────────────────────────────────────────────
+
+async def _run_exotic_calibration_sweep(holdout_days: int = 14) -> dict:
+    """
+    Multi-window calibration for the exotic model (trifecta/first four coverage).
+    Holdout metric: trifecta box hit rate (top 3 picks == actual positions 1-2-3).
+    Only uses races with field_size >= 7. Saves best weights to exotic_model_weights.
+    """
+    from horse_engine.models.database import ExoticBacktestRow
+    import math as _math
+    today = date.today()
+    holdout_cutoff = (today - timedelta(days=holdout_days)).isoformat()
+
+    async with get_session() as session:
+        hr_result = await session.execute(
+            select(HistoricalResultRow).where(HistoricalResultRow.position.isnot(None))
+        )
+        all_hr = hr_result.scalars().all()
+        pred_result = await session.execute(
+            select(RunnerPredictionRow).where(RunnerPredictionRow.enriched_json.isnot(None))
+        )
+        all_pred = pred_result.scalars().all()
+
+    pred_by_key = {(p.race_id, p.horse_name): p for p in all_pred}
+
+    # Group historical results by race for holdout
+    holdout_race_results: dict[str, list[HistoricalResultRow]] = {}
+    for r in all_hr:
+        if r.race_id >= holdout_cutoff:
+            holdout_race_results.setdefault(r.race_id, []).append(r)
+
+    # Group predictions by race for holdout
+    holdout_race_preds: dict[str, list] = {}
+    for p in all_pred:
+        if p.race_id >= holdout_cutoff:
+            holdout_race_preds.setdefault(p.race_id, []).append(p)
+
+    # Group training data by race
+    all_race_results: dict[str, list[HistoricalResultRow]] = {}
+    for r in all_hr:
+        if r.race_id < holdout_cutoff:
+            all_race_results.setdefault(r.race_id, []).append(r)
+
+    window_results = []
+    best_window = None
+    best_score = float("-inf")
+    best_weights = None
+
+    for window in _CANDIDATE_WINDOWS:
+        train_cutoff = (today - timedelta(days=window)).isoformat()
+
+        # Build race groups for train_exotic()
+        race_groups = []
+        for race_id, rows in all_race_results.items():
+            if race_id < train_cutoff:
+                continue
+            if len(rows) < 7:
+                continue
+            group = []
+            for row in rows:
+                pred = pred_by_key.get((race_id, row.horse_name))
+                if not pred:
+                    continue
+                if pred.enriched_at and pred.scheduled_time:
+                    try:
+                        sched = datetime.fromisoformat(pred.scheduled_time.replace("Z", "+00:00")).replace(tzinfo=None)
+                        if pred.enriched_at > sched:
+                            continue
+                    except (ValueError, AttributeError):
+                        pass
+                try:
+                    er = EnrichedRunner(**json.loads(pred.enriched_json))
+                    fv = build_feature_vector(er)
+                    label = 1 if row.placed else 0
+                    group.append((fv, label, row.position))
+                except Exception:
+                    continue
+            if len(group) >= 7:
+                race_groups.append(group)
+
+        if len(race_groups) < 20:
+            window_results.append({"window_days": window, "training_races": len(race_groups),
+                                   "skipped": True, "reason": "insufficient training races"})
+            continue
+
+        # Time-weight races: more recent = higher weight (via tri_lambda scaling)
+        model = ExoticModel()
+        stats = model.train_exotic(race_groups)
+
+        # Score holdout: trifecta box hit rate
+        tri_hits = tri_races = ff_hits = ff_races = 0
+        for race_id, result_rows in holdout_race_results.items():
+            if len(result_rows) < 7:
+                continue
+            pred_rows = holdout_race_preds.get(race_id, [])
+            runner_fvs = []
+            for r in result_rows:
+                pred = next((p for p in pred_rows if p.horse_name == r.horse_name), None)
+                if not pred or not pred.enriched_json:
+                    continue
+                try:
+                    er = EnrichedRunner(**json.loads(pred.enriched_json))
+                    runner_fvs.append((r, build_feature_vector(er)))
+                except Exception:
+                    continue
+            if len(runner_fvs) < 7:
+                continue
+            scores = [model.raw_score(fv) for _, fv in runner_fvs]
+            ranked = sorted(range(len(runner_fvs)), key=lambda i: scores[i], reverse=True)
+            actual_top3 = {runner_fvs[i][0].position for i in range(len(runner_fvs))
+                           if runner_fvs[i][0].position in (1, 2, 3)}
+            predicted_top3 = {runner_fvs[ranked[i]][0].position for i in range(3)
+                              if runner_fvs[ranked[i]][0].position is not None}
+            if len(actual_top3) == 3:
+                tri_races += 1
+                if predicted_top3 == actual_top3:
+                    tri_hits += 1
+            if len(result_rows) >= 8:
+                actual_top4 = {runner_fvs[i][0].position for i in range(len(runner_fvs))
+                               if runner_fvs[i][0].position in (1, 2, 3, 4)}
+                predicted_top4 = {runner_fvs[ranked[i]][0].position for i in range(4)
+                                  if runner_fvs[ranked[i]][0].position is not None}
+                if len(actual_top4) == 4:
+                    ff_races += 1
+                    if predicted_top4 == actual_top4:
+                        ff_hits += 1
+
+        tri_rate = round(tri_hits / tri_races, 3) if tri_races else 0
+        ff_rate = round(ff_hits / ff_races, 3) if ff_races else 0
+        result = {
+            "window_days": window,
+            "training_races": len(race_groups),
+            "training_log_loss": stats.get("log_loss"),
+            "holdout_races": tri_races,
+            "tri_box_hit_rate": tri_rate,
+            "ff_box_hit_rate": ff_rate,
+        }
+        window_results.append(result)
+        log.info("[exotic-calibrate] window=%d tri=%.1f%% ff=%.1f%%",
+                 window, tri_rate * 100, ff_rate * 100)
+
+        if tri_rate > best_score:
+            best_score = tri_rate
+            best_window = window
+            best_weights = stats["weights"]
+
+    if not best_weights:
+        return {"error": "no valid windows", "window_results": window_results}
+
+    async with get_session() as session:
+        await save_exotic_model_weights(session, best_weights)
+
+    best_result = next((r for r in window_results if r.get("window_days") == best_window), {})
+    drift_flag = False
+    drift_reason = None
+
+    async with get_session() as session:
+        hist = await session.execute(
+            select(ExoticBacktestRow).order_by(ExoticBacktestRow.ran_at.desc()).limit(4)
+        )
+        prev_runs = hist.scalars().all()
+
+    if len(prev_runs) >= 4:
+        prev_rates = [r.best_holdout_box_hit_rate for r in prev_runs if r.best_holdout_box_hit_rate is not None]
+        if prev_rates:
+            avg = sum(prev_rates) / len(prev_rates)
+            cur = best_result.get("tri_box_hit_rate", 0)
+            if avg - cur > _DRIFT_THRESHOLD:
+                drift_flag = True
+                drift_reason = f"Trifecta hit rate dropped {avg - cur:.1%} below 4-run avg ({avg:.1%} → {cur:.1%})"
+
+    async with get_session() as session:
+        session.add(ExoticBacktestRow(
+            ran_at=datetime.utcnow(),
+            best_window=best_window,
+            best_holdout_box_hit_rate=best_result.get("tri_box_hit_rate"),
+            holdout_races=best_result.get("holdout_races"),
+            holdout_days=holdout_days,
+            results_json=json.dumps({
+                "drift_flag": drift_flag,
+                "drift_reason": drift_reason,
+                "window_results": window_results,
+            }),
+        ))
+        await session.commit()
+
+    log.info("[exotic-calibrate] Best window=%d days, tri=%.1f%%, drift=%s",
+             best_window, best_result.get("tri_box_hit_rate", 0) * 100, drift_flag)
+    return {
+        "best_window": best_window,
+        "best_score": round(best_score, 3),
+        "drift_flag": drift_flag,
+        "drift_reason": drift_reason,
+        "window_results": window_results,
+    }
+
+
+_exotic_calibration_status: dict = {"running": False, "done": False, "result": None, "error": None}
+
+
+async def _run_exotic_calibration_task(holdout_days: int):
+    global _exotic_calibration_status
+    _exotic_calibration_status = {"running": True, "done": False, "result": None, "error": None,
+                                   "started_at": datetime.utcnow().isoformat()}
+    try:
+        result = await _run_exotic_calibration_sweep(holdout_days=holdout_days)
+        _exotic_calibration_status.update({"running": False, "done": True, "result": result,
+                                            "finished_at": datetime.utcnow().isoformat()})
+    except Exception as e:
+        log.exception("[exotic-calibrate] Task failed: %s", e)
+        _exotic_calibration_status.update({"running": False, "done": True, "error": str(e),
+                                            "finished_at": datetime.utcnow().isoformat()})
+
+
+@app.post("/api/admin/calibrate-exotic")
+async def run_exotic_calibration(
+    holdout_days: int = Query(14, ge=7, le=30),
+    x_cron_secret: Optional[str] = Header(None),
+):
+    """Multi-window calibration sweep for the exotic model. Check /api/admin/calibrate-exotic/status."""
+    _check_admin(x_cron_secret)
+    if _exotic_calibration_status.get("running"):
+        raise HTTPException(409, "Exotic calibration already running")
+    asyncio.create_task(_run_exotic_calibration_task(holdout_days))
+    return {"status": "started", "holdout_days": holdout_days,
+            "message": "Check /api/admin/calibrate-exotic/status for progress"}
+
+
+@app.get("/api/admin/calibrate-exotic/status")
+async def exotic_calibration_status(x_cron_secret: Optional[str] = Header(None)):
+    _check_admin(x_cron_secret)
+    return _exotic_calibration_status
 
 
 # ── Cron ──────────────────────────────────────────────────────────────────────
