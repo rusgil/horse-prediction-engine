@@ -1477,17 +1477,17 @@
     <span class="legend-sep">·</span>
     <span class="legend-item">
       <span class="legend-badge hot">🔥 Hot Pick</span>
-      <span class="legend-desc"><span class="legend-odds">82% win rate</span> · 222 races</span>
+      <span class="legend-desc"><span class="legend-odds" id="leg-hot-pct">83% win rate</span> · <span id="leg-hot-races">227</span> races</span>
     </span>
     <span class="legend-sep">·</span>
     <span class="legend-item">
       <span class="legend-badge high">⚡ High Confidence</span>
-      <span class="legend-desc"><span class="legend-odds">71–76% win rate</span> · 809 races</span>
+      <span class="legend-desc"><span class="legend-odds" id="leg-high-pct">68% win rate</span> · <span id="leg-high-races">821</span> races</span>
     </span>
     <span class="legend-sep">·</span>
     <span class="legend-item">
       <span class="legend-badge standard">Strong Pick</span>
-      <span class="legend-desc"><span class="legend-odds">66% win rate</span> · 1,086 races</span>
+      <span class="legend-desc"><span class="legend-odds" id="leg-std-pct">61% win rate</span> · <span id="leg-std-races">1,106</span> races</span>
     </span>
   </div>
 
@@ -2649,6 +2649,14 @@
       const res = await fetch(`${API}/api/track-record`);
       if (!res.ok) throw new Error(res.statusText);
       const data = await res.json();
+      // Update legend bar with live stats
+      data.tiers.forEach(tier => {
+        const pctEl   = document.getElementById(`leg-${tier.badge === 'standard' ? 'std' : tier.badge}-pct`);
+        const racesEl = document.getElementById(`leg-${tier.badge === 'standard' ? 'std' : tier.badge}-races`);
+        if (pctEl)   pctEl.textContent   = `${Math.round(tier.win_pct)}% win rate`;
+        if (racesEl) racesEl.textContent = tier.races.toLocaleString();
+      });
+
       const grid = document.getElementById('trTierGrid');
       grid.innerHTML = data.tiers.map(tier => {
         const m = TIER_META[tier.badge] || {};
