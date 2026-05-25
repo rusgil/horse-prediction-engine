@@ -1180,6 +1180,7 @@ async def get_edge_yesterday(for_date: Optional[str] = Query(None, alias="date")
 
     # Key: (venue_code, race_num, horse_name) → result dict
     all_results: dict = {}
+    seeded_race_ids: set[str] = {hr.race_id for hr in hr_rows}
     for hr in hr_rows:
         _, venue_code, race_num = _parse_race_id(hr.race_id)
         all_results[(venue_code, race_num, hr.horse_name)] = {
@@ -1187,7 +1188,7 @@ async def get_edge_yesterday(for_date: Optional[str] = Query(None, alias="date")
             "sp": hr.starting_price,
             "winner": bool(hr.winner),
             "placed": bool(hr.placed),
-            "scratched": False,  # scratched horses are never seeded to HistoricalResultRow
+            "scratched": False,
         }
 
     output = []
@@ -1197,7 +1198,8 @@ async def get_edge_yesterday(for_date: Optional[str] = Query(None, alias="date")
         sp = r.get("sp") or p.best_available_odds or None
         winner = r.get("winner", False)
         position = r.get("position")
-        scratched = r.get("scratched", False)
+        # Race seeded but horse absent → scratched (HistoricalResultRow skips scratched runners)
+        scratched = bool(p.race_id in seeded_race_ids and not r)
         model_pct = round(p.win_probability * 100, 1)
         payout = round(sp * stake, 2) if winner and sp else 0
         profit = round(payout - stake, 2) if winner and sp else -stake
