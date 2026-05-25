@@ -103,6 +103,9 @@ def _like_safe(value: str) -> str:
 
 async def _scheduled_odds_snapshot():
     """Snapshot current odds for all upcoming races within the next 3 hours."""
+    delay = random.uniform(0, 600)
+    log.info("[odds-snapshot] Waiting %.0fs before Punters requests", delay)
+    await asyncio.sleep(delay)
     log.info("[odds-snapshot] Running odds snapshot")
     try:
         client = get_tab_client()
