@@ -1102,36 +1102,26 @@ async def get_edge_yesterday(for_date: Optional[str] = Query(None, alias="date")
     for key in yst_trifecta_map:
         yst_trifecta_map[key].sort(key=lambda r: r.place_model_rank)
 
-    client = get_tab_client()
-    unique_venues = {_parse_race_id(p.race_id)[1] for p in picks}
+    # Use HistoricalResultRow (seeded nightly) — avoids Punters call that fails for expired meetings
+    all_race_ids = list({p.race_id for p in picks} | {pr.race_id for pr in yst_place_rows})
+    async with get_session() as session:
+        hr_result = await session.execute(
+            select(HistoricalResultRow)
+            .where(HistoricalResultRow.race_id.in_(all_race_ids))
+        )
+        hr_rows = hr_result.scalars().all()
 
-    async def fetch_results(venue: str) -> dict:
-        slug = _meeting_slug(venue, target_date)
-        try:
-            events = await asyncio.wait_for(client.get_meeting_races(slug), timeout=30)
-            out = {}
-            for event in events:
-                race_num = event.get("eventNumber")
-                for sel in event.get("selections") or []:
-                    name = (sel.get("competitor") or {}).get("name")
-                    if name:
-                        pos = sel.get("selectionResult")
-                        sp = sel.get("startingPrice")
-                        out[(venue, race_num, name)] = {
-                            "position": int(pos) if isinstance(pos, (int, float)) and pos > 0 else None,
-                            "sp": float(sp) if sp else None,
-                            "winner": pos == 1,
-                            "scratched": sel.get("status") == "SCRATCHED",
-                        }
-            return out
-        except Exception as e:
-            log.warning("yesterday results fetch failed for %s: %s", venue, e)
-            return {}
-
-    results_list = await asyncio.gather(*[fetch_results(v) for v in unique_venues])
+    # Key: (venue_code, race_num, horse_name) → result dict
     all_results: dict = {}
-    for r in results_list:
-        all_results.update(r)
+    for hr in hr_rows:
+        _, venue_code, race_num = _parse_race_id(hr.race_id)
+        all_results[(venue_code, race_num, hr.horse_name)] = {
+            "position": hr.position,
+            "sp": hr.starting_price,
+            "winner": bool(hr.winner),
+            "placed": bool(hr.placed),
+            "scratched": False,  # scratched horses are never seeded to HistoricalResultRow
+        }
 
     output = []
     for p in picks:
@@ -1145,7 +1135,7 @@ async def get_edge_yesterday(for_date: Optional[str] = Query(None, alias="date")
         payout = round(sp * stake, 2) if winner and sp else 0
         profit = round(payout - stake, 2) if winner and sp else -stake
 
-        placed = bool(position and position <= 3 and not scratched)
+        placed = r.get("placed", False) or bool(position and position <= 3 and not scratched)
 
         # Find the actual race winner when our pick didn't win
         winner_name = None
