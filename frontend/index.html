@@ -339,6 +339,10 @@
       background: rgba(59,130,246,0.15); border-radius: 3px;
       padding: 0 3px; margin-left: 1px;
     }
+    .race-pill-time {
+      display: block; font-size: 0.58rem; color: var(--text-dim);
+      font-weight: 500; margin-top: 1px; letter-spacing: 0.01em;
+    }
 
     /* ── Info bar (meeting context) ──────────────────────────── */
     .info-bar {
@@ -1336,7 +1340,8 @@
       const placePct = r.top_place_probability != null ? Math.round(r.top_place_probability * 100) : null;
       const pctHtml = topPct >= 25 ? ` <span class="race-pill-pct">Win: ${topPct}%</span>` : '';
       const placeHtml = placePct >= 25 ? ` <span class="race-pill-place">Place: ${placePct}%</span>` : '';
-      el.innerHTML = `R${r.race_number}${pctHtml}${placeHtml}${dotHtml ? ' ' + dotHtml : ''}`;
+      const tStr = r.scheduled_time || r.time ? formatTime(r.scheduled_time || r.time) : '';
+      el.innerHTML = `R${r.race_number}${pctHtml}${placeHtml}${dotHtml ? ' ' + dotHtml : ''}${tStr ? `<span class="race-pill-time">${tStr}</span>` : ''}`;
       el.addEventListener('click', () => selectRace(r));
       container.appendChild(el);
     });

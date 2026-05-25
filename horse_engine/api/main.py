@@ -416,6 +416,82 @@ async def _seed_results_for_date(race_date: str) -> int:
     return seeded
 
 
+async def _seed_race_results_on_demand(race_ids: list[str]) -> dict[tuple, int]:
+    """
+    For finished races not yet in HistoricalResultRow, fetch from Punters once and persist.
+    Returns {(race_id, horse_name): position} for all seeded entries.
+    Only called on first page load after a race finishes — subsequent loads use DB.
+    """
+    if not race_ids:
+        return {}
+
+    async with get_session() as session:
+        existing_rows = (await session.execute(
+            select(HistoricalResultRow.race_id, HistoricalResultRow.horse_name, HistoricalResultRow.position)
+            .where(HistoricalResultRow.race_id.in_(race_ids))
+        )).all()
+
+    db_positions: dict[tuple, int] = {(r.race_id, r.horse_name): r.position for r in existing_rows}
+    seeded_ids: set[str] = {r.race_id for r in existing_rows}
+    unseeded = [rid for rid in race_ids if rid not in seeded_ids]
+
+    if unseeded:
+        client = get_tab_client()
+        # Group unseeded race_ids by (date, venue_code)
+        venue_date_map: dict[tuple, list[str]] = {}
+        for rid in unseeded:
+            date_str, vc, _ = _parse_race_id(rid)
+            venue_date_map.setdefault((vc, date_str), []).append(rid)
+
+        for (vc, date_str), target_race_ids in venue_date_map.items():
+            slug = _meeting_slug(vc, date_str)
+            try:
+                events = await asyncio.wait_for(client.get_meeting_races(slug), timeout=20)
+                for event in events or []:
+                    rn = event.get("eventNumber")
+                    race_id = f"{date_str}_{vc}_R{rn}"
+                    if race_id not in target_race_ids:
+                        continue
+                    rows_to_add = []
+                    for sel in event.get("selections") or []:
+                        if (sel.get("status") or "").upper() == "SCRATCHED":
+                            continue
+                        pos = sel.get("selectionResult")
+                        if not pos or int(pos) <= 0:
+                            continue
+                        horse = (sel.get("competitor") or {}).get("name", "")
+                        if not horse:
+                            continue
+                        sp = sel.get("startingPrice")
+                        rows_to_add.append(HistoricalResultRow(
+                            race_id=race_id,
+                            horse_name=horse,
+                            position=int(pos),
+                            beaten_margin=float(sel.get("officialMargin") or 0),
+                            winner=int(pos) == 1,
+                            placed=int(pos) <= 3,
+                            starting_price=float(sp) if sp else None,
+                        ))
+                        db_positions[(race_id, horse)] = int(pos)
+                    if rows_to_add:
+                        async with get_session() as session:
+                            for row in rows_to_add:
+                                exists = (await session.execute(
+                                    select(HistoricalResultRow.id)
+                                    .where(HistoricalResultRow.race_id == row.race_id)
+                                    .where(HistoricalResultRow.horse_name == row.horse_name)
+                                    .limit(1)
+                                )).scalar()
+                                if not exists:
+                                    session.add(row)
+                            await session.commit()
+                        log.info("[on-demand-seed] Seeded %d results for %s", len(rows_to_add), race_id)
+            except Exception as e:
+                log.warning("[on-demand-seed] Failed to fetch %s/%s: %s", vc, date_str, e)
+
+    return db_positions
+
+
 async def _scheduled_seed_results():
     """Run by APScheduler nightly — seed yesterday's settled results."""
     yesterday = (_today_aest() - timedelta(days=1)).isoformat()
@@ -931,66 +1007,36 @@ async def get_edge_picks():
                 "hedge": hedge,
             })
 
-    # For picks whose race has already jumped, fetch results and annotate trifecta legs
+    # Annotate trifecta legs for finished races — DB-first, seeds from Punters once if missing
     now_utc = datetime.utcnow().replace(tzinfo=timezone.utc)
     finished_picks = [
         p for p in picks
         if p["scheduled_time"] and datetime.fromisoformat(p["scheduled_time"].replace("Z", "+00:00")) < now_utc
     ]
     if finished_picks:
-        finished_venues: dict[str, str] = {}  # venue_code → date
-        for p in finished_picks:
-            finished_venues[p["venue"]] = p["date"]
-
-        async def _fetch_today_results(venue: str, date: str) -> dict:
-            slug = _meeting_slug(venue, date)
-            try:
-                events = await asyncio.wait_for(client.get_meeting_races(slug), timeout=30)
-                out = {}
-                for event in events:
-                    rn = event.get("eventNumber")
-                    for sel in event.get("selections") or []:
-                        name = (sel.get("competitor") or {}).get("name")
-                        if name:
-                            pos = sel.get("selectionResult")
-                            out[(venue, rn, name)] = {
-                                "position": int(pos) if isinstance(pos, (int, float)) and pos > 0 else None,
-                                "scratched": sel.get("status") == "SCRATCHED",
-                            }
-                return out
-            except Exception:
-                return {}
-
-        result_batches = await asyncio.gather(*[
-            _fetch_today_results(v, d) for v, d in finished_venues.items()
-        ])
-        today_results: dict = {}
-        for rb in result_batches:
-            today_results.update(rb)
+        finished_race_ids = list({p["race_id"] for p in finished_picks})
+        db_positions = await _seed_race_results_on_demand(finished_race_ids)
+        seeded_race_ids: set[str] = {rid for (rid, _) in db_positions}
 
         for p in finished_picks:
             tri = p.get("trifecta")
             if not tri:
                 continue
-            venue_code, race_num = p["venue"], p["race_number"]
+            race_id = p["race_id"]
 
             def _annotate_legs(legs):
-                out = []
-                for l in legs:
-                    res = today_results.get((venue_code, race_num, l["horse_name"]), {})
-                    out.append({**l, "position": res.get("position"), "scratched": res.get("scratched", False)})
-                return out
+                return [{**l, "position": db_positions.get((race_id, l["horse_name"])), "scratched": False}
+                        for l in legs]
 
             tri["legs"] = _annotate_legs(tri["legs"])
-            tri_positions = {l["position"] for l in tri["legs"] if l["position"] and not l["scratched"]}
-            has_positions = any(l["position"] for l in tri["legs"] if not l["scratched"])
-            if has_positions:
+            if race_id in seeded_race_ids:
+                tri_positions = {l["position"] for l in tri["legs"] if l["position"]}
                 tri["hit"] = tri_positions == {1, 2, 3}
 
             if tri.get("first_four"):
                 tri["first_four"] = _annotate_legs(tri["first_four"])
-                ff_positions = {l["position"] for l in tri["first_four"] if l["position"] and not l["scratched"]}
-                if has_positions:
+                if race_id in seeded_race_ids:
+                    ff_positions = {l["position"] for l in tri["first_four"] if l["position"]}
                     tri["first_four_hit"] = ff_positions == {1, 2, 3, 4}
 
     return {
@@ -1448,15 +1494,9 @@ async def get_edge_trifectas():
     ]
     if finished_picks:
         finished_race_ids = list({p["race_id"] for p in finished_picks})
-        async with get_session() as session:
-            hr_rows = (await session.execute(
-                select(HistoricalResultRow.race_id, HistoricalResultRow.horse_name, HistoricalResultRow.position)
-                .where(HistoricalResultRow.race_id.in_(finished_race_ids))
-            )).all()
-
-        # (race_id, horse_name) → finishing position; races absent here haven't been seeded yet
-        db_positions: dict[tuple, int] = {(r.race_id, r.horse_name): r.position for r in hr_rows}
-        seeded_race_ids: set[str] = {r.race_id for r in hr_rows}
+        # Fetch from DB; on first load after a race finishes, seeds missing results from Punters once
+        db_positions = await _seed_race_results_on_demand(finished_race_ids)
+        seeded_race_ids: set[str] = {rid for (rid, _) in db_positions}
 
         for p in finished_picks:
             race_id = p["race_id"]

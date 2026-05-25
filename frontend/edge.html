@@ -356,6 +356,7 @@
       border-radius: 5px;
       padding: 1px 7px;
     }
+    .pick-time-wrap { margin-left: auto; display: flex; align-items: center; gap: 6px; }
     .pick-time {
       font-size: 0.72rem; color: var(--text-dim);
       background: var(--bg-elevated);
@@ -1923,8 +1924,10 @@
             ${pick.race_name ? `<span class="sep">·</span><span style="color:var(--text-secondary)">${escHtml(pick.race_name)}</span>` : ''}
             ${pick.cancelled ? `<span class="abandoned-tag">Abandoned</span>` : ''}
           </div>
-          ${timeStr ? `<span class="pick-time">${escHtml(timeStr)}</span>` : ''}
-          ${pick.scheduled_time ? `<span class="pick-countdown" id="${countdownId}" data-jump="${escHtml(pick.scheduled_time)}"></span>` : ''}
+          <div class="pick-time-wrap">
+            ${timeStr ? `<span class="pick-time">${escHtml(timeStr)}</span>` : ''}
+            ${pick.scheduled_time ? `<span class="pick-countdown" id="${countdownId}" data-jump="${escHtml(pick.scheduled_time)}"></span>` : ''}
+          </div>
         </div>
         <div class="pick-body">
           <div class="pick-left">
@@ -2961,9 +2964,11 @@
             <span class="sep">·</span>
             <span>R${pick.race_number}</span>
           </div>
-          ${timeStr ? `<span class="pick-time">${escHtml(timeStr)}</span>` : ''}
-          ${pick.scheduled_time ? `<span class="pick-countdown" id="${countdownId}" data-jump="${escHtml(pick.scheduled_time)}" data-race-id="${escHtml(pick.race_id)}"></span>` : ''}
-          ${resultBadge}
+          <div class="pick-time-wrap">
+            ${timeStr ? `<span class="pick-time">${escHtml(timeStr)}</span>` : ''}
+            ${pick.scheduled_time ? `<span class="pick-countdown" id="${countdownId}" data-jump="${escHtml(pick.scheduled_time)}" data-race-id="${escHtml(pick.race_id)}"></span>` : ''}
+            ${resultBadge}
+          </div>
         </div>
         <div class="exotic-runners">${runnersHtml}</div>
         <div class="exotic-card-footer">
