@@ -192,6 +192,58 @@ async def _scheduled_odds_snapshot():
         log.exception("[odds-snapshot] Snapshot failed: %s", e)
 
 
+async def _cancel_abandoned_meetings(client, today: str) -> None:
+    """
+    Compare today's DB predictions against Punters' live meeting list.
+    Mark runners cancelled for any venue that has been dropped or where
+    all races are abandoned/closed without having resulted.
+    """
+    from sqlalchemy import update as sa_update
+    date_sfx = f"-{today.replace('-', '')}"
+    try:
+        meetings = await asyncio.wait_for(client.get_meetings(today), timeout=20)
+    except Exception as e:
+        log.warning("[cancel-check] Could not fetch meetings: %s", e)
+        return
+
+    active_venue_codes: set[str] = set()
+    punters_race_statuses: dict[str, set[str]] = {}
+    for m in meetings:
+        slug = m.get("slug", "")
+        vc = slug[:-len(date_sfx)] if slug.endswith(date_sfx) else slug
+        active_venue_codes.add(vc)
+        try:
+            raw_events = await asyncio.wait_for(client.get_meeting_races(slug), timeout=15)
+            punters_race_statuses[vc] = {(e.get("status") or "").lower() for e in raw_events}
+        except Exception:
+            pass
+
+    async with get_session() as session:
+        db_race_ids = (await session.execute(
+            select(RunnerPredictionRow.race_id)
+            .where(RunnerPredictionRow.race_id.like(f"{today}_%"))
+            .where(RunnerPredictionRow.model_rank == 1)
+            .where(RunnerPredictionRow.cancelled.is_(False) | RunnerPredictionRow.cancelled.is_(None))
+            .distinct()
+        )).scalars().all()
+
+    for race_id in db_race_ids:
+        _, venue_code, _ = _parse_race_id(race_id)
+        dropped = venue_code not in active_venue_codes
+        statuses = punters_race_statuses.get(venue_code, set())
+        all_abandoned = bool(statuses) and statuses.issubset({"abandoned", "cancelled", "closed"}) and "open" not in statuses and "resulted" not in statuses
+        if dropped or all_abandoned:
+            async with get_session() as session:
+                await session.execute(
+                    sa_update(RunnerPredictionRow)
+                    .where(RunnerPredictionRow.race_id == race_id)
+                    .values(cancelled=True)
+                )
+                await session.commit()
+            reason = "venue dropped" if dropped else "all races abandoned/closed"
+            log.info("[cancel-check] Marked %s CANCELLED (%s)", race_id, reason)
+
+
 async def _scheduled_enrich():
     """Run by APScheduler — enrich today + next 2 days, then seed today's results."""
     log.info("[scheduler] Running scheduled enrichment")
@@ -203,6 +255,8 @@ async def _scheduled_enrich():
             race_date = (_today_aest() + timedelta(days=i)).isoformat()
             log.info("[scheduler] Enriching %s", race_date)
             await _enrich_date(race_date, client, model)
+        # Check for abandoned meetings after enrichment
+        await _cancel_abandoned_meetings(client, _today_aest().isoformat())
         # Seed yesterday + today so every startup/deploy auto-backfills the most recent gap
         for offset in (-1, 0):
             seed_date = (_today_aest() + timedelta(days=offset)).isoformat()
@@ -237,51 +291,8 @@ async def _scheduled_pre_race_enrich():
             place_model = await _load_place_model(session)
         meetings = await client.get_meetings(today)
 
-        # Build set of active venue codes from Punters
-        active_venue_codes: set[str] = set()
-        for m in meetings:
-            slug = m.get("slug", "")
-            vc = slug[:-len(date_sfx)] if slug.endswith(date_sfx) else slug.split("-")[0] if slug else ""
-            if vc:
-                active_venue_codes.add(vc)
-
-        # Detect venues in our DB that Punters has dropped — mark their races cancelled
-        async with get_session() as session:
-            db_rows = (await session.execute(
-                select(RunnerPredictionRow.race_id)
-                .where(RunnerPredictionRow.race_id.like(f"{today}_%"))
-                .where(RunnerPredictionRow.model_rank == 1)
-                .where(RunnerPredictionRow.cancelled.is_(False) | RunnerPredictionRow.cancelled.is_(None))
-                .distinct()
-            )).scalars().all()
-
-        # Build per-venue race-status map from Punters for abandonment detection
-        punters_race_statuses: dict[str, set[str]] = {}  # venue_code -> set of statuses
-        for m in meetings:
-            slug = m.get("slug", "")
-            vc = slug[:-len(date_sfx)] if slug.endswith(date_sfx) else slug
-            try:
-                raw_events = await asyncio.wait_for(client.get_meeting_races(slug), timeout=15)
-                punters_race_statuses[vc] = {(e.get("status") or "").lower() for e in raw_events}
-            except Exception:
-                pass
-
-        for race_id in db_rows:
-            _, venue_code, _ = _parse_race_id(race_id)
-            dropped = venue_code not in active_venue_codes
-            # Also detect if all races in the meeting are abandoned/cancelled by Punters
-            statuses = punters_race_statuses.get(venue_code, set())
-            all_abandoned = bool(statuses) and statuses.issubset({"abandoned", "cancelled", "closed"}) and "open" not in statuses and "resulted" not in statuses
-            if dropped or all_abandoned:
-                async with get_session() as session:
-                    await session.execute(
-                        sa_update(RunnerPredictionRow)
-                        .where(RunnerPredictionRow.race_id == race_id)
-                        .values(cancelled=True)
-                    )
-                    await session.commit()
-                reason = "venue dropped from Punters" if dropped else "all races abandoned/closed"
-                log.info("[pre-race] Marked %s CANCELLED (%s)", race_id, reason)
+        # Check for abandoned meetings (dropped venues or all races closed)
+        await _cancel_abandoned_meetings(client, today)
 
         enriched_count = 0
         for m in meetings:
