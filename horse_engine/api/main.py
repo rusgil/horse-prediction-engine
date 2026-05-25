@@ -1612,23 +1612,23 @@ async def list_meetings(race_date: str = _today()):
     # Add any DB-cancelled meetings that are no longer on Punters
     active_codes = {it["venue_code"] for it in items}
     async with get_session() as session:
-        cancelled_race_rows = (await session.execute(
-            select(RacePredictionRow.race_id, RacePredictionRow.venue, RacePredictionRow.state)
-            .join(RunnerPredictionRow, RunnerPredictionRow.race_id == RacePredictionRow.race_id)
-            .where(RacePredictionRow.date == race_date)
+        cancelled_race_ids = (await session.execute(
+            select(RunnerPredictionRow.race_id)
+            .where(RunnerPredictionRow.race_id.like(f"{race_date}_%"))
             .where(RunnerPredictionRow.model_rank == 1)
             .where(RunnerPredictionRow.cancelled.is_(True))
             .distinct()
-        )).all()
+        )).scalars().all()
     seen_cancelled: set[str] = set()
-    for row in cancelled_race_rows:
-        _, vc, _ = _parse_race_id(row.race_id)
+    for race_id in cancelled_race_ids:
+        _, vc, _ = _parse_race_id(race_id)
         if vc not in active_codes and vc not in seen_cancelled:
             seen_cancelled.add(vc)
+            venue_display = vc.replace("-", " ").title()
             items.append({
-                "venue": row.venue,
+                "venue": venue_display,
                 "venue_code": vc,
-                "state": row.state,
+                "state": None,
                 "rail_position": None,
                 "slug": None,
                 "cancelled": True,
