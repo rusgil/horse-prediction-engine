@@ -1599,20 +1599,24 @@ async def list_meetings(race_date: str = _today()):
     from horse_engine.clients.weather import get_weather_for_venue
 
     date_suffix = f"-{race_date.replace('-', '')}"
-    items = [
-        {
-            "venue": m.get("venue"),
-            "venue_code": (
-                m["slug"][: -len(date_suffix)]
-                if (slug := m.get("slug", "")) and slug.endswith(date_suffix)
-                else slug.split("-")[0] if slug else m.get("name", "").lower().replace(" ", "-")
-            ),
+    items = []
+    for m in meetings:
+        slug = m.get("slug", "")
+        if slug and slug.endswith(date_suffix):
+            vc = slug[: -len(date_suffix)]
+        elif slug:
+            vc = slug.split("-")[0]
+        else:
+            vc = m.get("name", "").lower().replace(" ", "-")
+        # Derive display name from venue_code — Punters sometimes labels Taree as "Port Macquarie"
+        venue_display = vc.replace("-", " ").title()
+        items.append({
+            "venue": venue_display,
+            "venue_code": vc,
             "state": m.get("state"),
             "rail_position": m.get("rail_position"),
-            "slug": m.get("slug"),
-        }
-        for m in meetings
-    ]
+            "slug": slug,
+        })
 
     # Merge DB-enriched meetings — ensures venues still appear when Punters is blocked
     active_codes = {it["venue_code"] for it in items}
@@ -1649,9 +1653,9 @@ async def list_meetings(race_date: str = _today()):
     for vc in all_db_vcs:
         if vc not in active_codes and vc not in seen_vc:
             seen_vc.add(vc)
-            venue_name, state = rp_venue_meta.get(vc, (None, None))
+            _venue_name, state = rp_venue_meta.get(vc, (None, None))
             items.append({
-                "venue": venue_name or vc.replace("-", " ").title(),
+                "venue": vc.replace("-", " ").title(),
                 "venue_code": vc,
                 "state": state,
                 "rail_position": None,
