@@ -3223,6 +3223,28 @@
     } catch (e) { /* silent — odds refresh is best-effort */ }
   }
 
+  // Refresh resultsMap from the API once after any race has jumped
+  let _resultsRefreshTimer = null;
+  async function _doResultsRefresh() {
+    _resultsRefreshTimer = null;
+    const todayStr = new Date().toLocaleDateString('en-CA', { timeZone: 'Australia/Sydney' });
+    try {
+      const rr = await fetch(`${API}/api/edge/yesterday?date=${todayStr}`);
+      if (rr.ok) {
+        const rd = await rr.json();
+        for (const r of rd.picks) resultsMap[r.race_id] = r;
+        if (picksData) {
+          const stake = parseFloat(document.getElementById('stakeInput').value) || 10;
+          renderContent(picksData, stake, resultsMap);
+        }
+      }
+    } catch (e) { /* silent */ }
+  }
+  function scheduleResultsRefresh() {
+    if (_resultsRefreshTimer) return; // already queued
+    _resultsRefreshTimer = setTimeout(_doResultsRefresh, 3 * 60 * 1000); // 3 min after jump
+  }
+
   function tickCountdowns() {
     const now = Date.now();
     document.querySelectorAll('.pick-countdown[data-jump]').forEach(el => {
@@ -3233,9 +3255,9 @@
       if (diff <= 0) {
         el.textContent = 'RACING';
         el.classList.add('done');
-        // Schedule a result fetch (15-25 min after jump) for exotic picks
+        scheduleResultsRefresh();                          // win picks
         const raceId = el.dataset.raceId;
-        if (raceId) scheduleTriResultFetch(raceId, jump);
+        if (raceId) scheduleTriResultFetch(raceId, jump); // exotic picks
       } else if (diff < 3600) {
         const m = Math.floor(diff / 60), s = diff % 60;
         el.textContent = `${m}m ${String(s).padStart(2,'0')}s`;
