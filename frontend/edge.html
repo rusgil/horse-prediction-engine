@@ -3192,9 +3192,8 @@
   function scheduleTriResultFetch(raceId, jumpMs) {
     if (_triResultScheduled.has(raceId)) return;
     _triResultScheduled.add(raceId);
-    // Mirror the scheduler strategy: random delay 15-25 min after jump
-    const delayMs = (15 + Math.random() * 10) * 60 * 1000;
-    const waitMs  = Math.max(0, jumpMs + delayMs - Date.now());
+    // Wait 3 min after jump to give Punters time to post results, then fetch once
+    const waitMs = Math.max(0, jumpMs + 3 * 60 * 1000 - Date.now());
     setTimeout(async () => {
       if (!trifectasData) return;
       try {
@@ -3202,7 +3201,7 @@
         if (!res.ok) return;
         trifectasData = await res.json();
         renderTrifectasContent(trifectasData);
-        // If still pending, schedule one more attempt
+        // If still pending (Punters slow to post), retry once more after 5 min
         const still = trifectasData.picks.find(p => p.race_id === raceId && p.hit === undefined);
         if (still) {
           _triResultScheduled.delete(raceId);
