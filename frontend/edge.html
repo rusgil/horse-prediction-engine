@@ -3187,7 +3187,13 @@
   }
 
   async function refreshTrifectas() {
-    if (!trifectasLoaded) return;
+    if (!trifectasLoaded || !trifectasData) return;
+    // Only hit the API while there are picks that have jumped but don't have a result yet
+    const now = Date.now();
+    const needsResult = trifectasData.picks.some(
+      p => p.scheduled_time && new Date(p.scheduled_time).getTime() < now && p.hit === undefined
+    );
+    if (!needsResult) return;
     try {
       const res = await fetch(`${API}/api/edge/trifectas`);
       if (!res.ok) return;
