@@ -1599,29 +1599,27 @@ async def list_meetings(race_date: str = _today()):
         for m in meetings
     ]
 
-    # If Punters is unreachable/blocked, fall back to DB-enriched meetings for this date
-    if not items:
-        log.warning("list_meetings: Punters returned empty for %s — falling back to DB", race_date)
-        async with get_session() as session:
-            db_race_ids = (await session.execute(
-                select(RunnerPredictionRow.race_id)
-                .where(RunnerPredictionRow.race_id.like(f"{race_date}_%"))
-                .where(RunnerPredictionRow.model_rank == 1)
-                .where(RunnerPredictionRow.cancelled.is_(False) | RunnerPredictionRow.cancelled.is_(None))
-                .distinct()
-            )).scalars().all()
-        seen_vc: set[str] = set()
-        for rid in db_race_ids:
-            _, vc, _ = _parse_race_id(rid)
-            if vc and vc not in seen_vc:
-                seen_vc.add(vc)
-                items.append({
-                    "venue": vc.replace("-", " ").title(),
-                    "venue_code": vc,
-                    "state": None,
-                    "rail_position": None,
-                    "slug": None,
-                })
+    # Merge DB-enriched meetings — ensures venues still appear when Punters is blocked
+    active_codes = {it["venue_code"] for it in items}
+    async with get_session() as session:
+        rp_meta = (await session.execute(
+            select(RacePredictionRow.race_id, RacePredictionRow.venue, RacePredictionRow.state)
+            .where(RacePredictionRow.race_id.like(f"{race_date}_%"))
+        )).all()
+    seen_vc: set[str] = set()
+    for row in rp_meta:
+        _, vc, _ = _parse_race_id(row.race_id)
+        if vc and vc not in active_codes and vc not in seen_vc:
+            seen_vc.add(vc)
+            items.append({
+                "venue": row.venue or vc.replace("-", " ").title(),
+                "venue_code": vc,
+                "state": row.state,
+                "rail_position": None,
+                "slug": None,
+            })
+    if seen_vc:
+        log.info("list_meetings: added %d DB-only venues for %s: %s", len(seen_vc), race_date, seen_vc)
 
     # Add any DB-cancelled meetings that are no longer on Punters
     active_codes = {it["venue_code"] for it in items}
@@ -1665,66 +1663,96 @@ async def get_meeting(race_date: str, venue_code: str):
     _validate_date(race_date)
     _validate_venue(venue_code)
     """Get all races at a meeting with current predictions if available."""
-    client = get_tab_client()
-    slug = _meeting_slug(venue_code, race_date)
-    raw_races = await client.get_meeting_races(slug)
+    prefix = f"{_like_safe(race_date)}_{_like_safe(venue_code)}_R"
 
-    race_list = [
-        {
-            "race_id": f"{race_date}_{venue_code}_R{r.get('eventNumber')}",
-            "race_number": r.get("eventNumber"),
-            "race_name": r.get("name"),
-            "distance": r.get("distance"),
-            "scheduled_time": r.get("startTime"),
-            "time": r.get("startTime"),
-            "status": r.get("status"),
-            "enriched_at": None,
-            "track_condition": None,
-            "field_size": None,
-            "prize_money": None,
-        }
-        for r in raw_races
-    ]
+    # ── Step 1: build race list from DB (always available) ───────────────────
+    async with get_session() as session:
+        rp_result = await session.execute(
+            select(RacePredictionRow)
+            .where(RacePredictionRow.race_id.like(f"{prefix}%"))
+            .order_by(RacePredictionRow.race_number)
+        )
+        rp_rows = {r.race_id: r for r in rp_result.scalars().all()}
 
-    # For past dates punters returns nothing — derive race list from DB
-    if not race_list:
-        prefix = f"{_like_safe(race_date)}_{_like_safe(venue_code)}_R"
-        async with get_session() as session:
+        # Fall back to RunnerPredictionRow race_ids if RacePredictionRow is empty
+        if not rp_rows:
             db_result = await session.execute(
                 select(RunnerPredictionRow.race_id)
                 .where(RunnerPredictionRow.race_id.like(f"{prefix}%"))
                 .where(RunnerPredictionRow.model_rank == 1)
                 .order_by(RunnerPredictionRow.race_id)
             )
-            db_race_ids = [row[0] for row in db_result]
-        # Also check historical results if no predictions
-        if not db_race_ids:
-            async with get_session() as session:
+            fallback_ids = [row[0] for row in db_result]
+            if not fallback_ids:
                 hr_result = await session.execute(
                     select(HistoricalResultRow.race_id)
                     .where(HistoricalResultRow.race_id.like(f"{prefix}%"))
-                    .distinct()
-                    .order_by(HistoricalResultRow.race_id)
+                    .distinct().order_by(HistoricalResultRow.race_id)
                 )
-                db_race_ids = [row[0] for row in hr_result]
-        for rid in db_race_ids:
-            try:
-                rnum = int(rid.split("_R")[-1])
-            except ValueError:
-                continue
-            race_list.append({
-                "race_id": rid,
-                "race_number": rnum,
-                "race_name": None,
-                "distance": None,
-                "scheduled_time": None,
-                "time": None,
-                "status": "closed",
-                "enriched_at": None,
-                "track_condition": None,
-                "field_size": None,
-                "prize_money": None,
-            })
+                fallback_ids = [row[0] for row in hr_result]
+            for rid in fallback_ids:
+                try:
+                    rnum = int(rid.split("_R")[-1])
+                except ValueError:
+                    continue
+                rp_rows[rid] = None  # sentinel — no RacePredictionRow
+
+    race_list = []
+    for race_id, rp in rp_rows.items():
+        try:
+            rnum = int(race_id.split("_R")[-1])
+        except ValueError:
+            continue
+        race_list.append({
+            "race_id": race_id,
+            "race_number": rnum,
+            "race_name": rp.race_name if rp else None,
+            "distance": rp.distance if rp else None,
+            "scheduled_time": rp.scheduled_time if rp else None,
+            "time": rp.scheduled_time if rp else None,
+            "status": None,  # filled by Punters below if available
+            "track_condition": rp.track_condition if rp else None,
+            "field_size": rp.field_size if rp else None,
+            "prize_money": rp.prize_money if rp else None,
+        })
+    race_list.sort(key=lambda r: r["race_number"])
+
+    # ── Step 2: top-up with live Punters data (best-effort) ──────────────────
+    # Adds: live status for open/closed races + any races not yet enriched
+    try:
+        client = get_tab_client()
+        slug = _meeting_slug(venue_code, race_date)
+        raw_races = await asyncio.wait_for(client.get_meeting_races(slug), timeout=15)
+        punters_by_num = {r.get("eventNumber"): r for r in raw_races}
+        existing_nums = {r["race_number"] for r in race_list}
+        for r_num, r in punters_by_num.items():
+            race_id = f"{race_date}_{venue_code}_R{r_num}"
+            if r_num in existing_nums:
+                # update status and fill any null metadata
+                for item in race_list:
+                    if item["race_number"] == r_num:
+                        item["status"] = r.get("status")
+                        if not item["race_name"]:   item["race_name"]   = r.get("name")
+                        if not item["distance"]:    item["distance"]    = r.get("distance")
+                        if not item["scheduled_time"]: item["scheduled_time"] = r.get("startTime")
+                        if not item["time"]:        item["time"]        = r.get("startTime")
+                        break
+            else:
+                race_list.append({
+                    "race_id": race_id,
+                    "race_number": r_num,
+                    "race_name": r.get("name"),
+                    "distance": r.get("distance"),
+                    "scheduled_time": r.get("startTime"),
+                    "time": r.get("startTime"),
+                    "status": r.get("status"),
+                    "track_condition": None,
+                    "field_size": None,
+                    "prize_money": None,
+                })
+        race_list.sort(key=lambda r: r["race_number"])
+    except Exception:
+        pass  # DB data is sufficient; Punters down or blocked
 
     race_ids = [r["race_id"] for r in race_list]
 
