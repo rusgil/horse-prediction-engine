@@ -45,6 +45,7 @@ FEATURE_NAMES_BASE = [
     "win_rate_track_distance",  # 25 — win % at this exact track+distance (Punters stats)
     "condition_win_rate",       # 26 — win % in today's going (good/soft/heavy/firm)
     "first_up_win_rate",        # 27 — win % when first-up (only relevant if resuming)
+    "going_preference",         # 28 — signed differential: how much better on today's going vs opposite
 ]
 
 FEATURE_NAMES_ODDS_MOVEMENT = [
@@ -87,6 +88,7 @@ DEFAULT_WEIGHTS_BASE = [
     0.8,   # win_rate_track_distance — strongest per-horse signal
     0.5,   # condition_win_rate
     0.4,   # first_up_win_rate
+    0.6,   # going_preference — wet/dry differential signed for today's going
 ]
 
 DEFAULT_WEIGHTS_ODDS_MOVEMENT = [
@@ -130,6 +132,7 @@ DEFAULT_PLACE_WEIGHTS_BASE = [
     0.7,   # win_rate_track_distance — track+dist consistency
     0.65,  # condition_win_rate — performs in today's going
     0.3,   # first_up_win_rate
+    0.65,  # going_preference — stronger signal for placing (conditions matter more)
 ]
 
 DEFAULT_PLACE_WEIGHTS = DEFAULT_PLACE_WEIGHTS_BASE + (DEFAULT_WEIGHTS_ODDS_MOVEMENT if USE_ODDS_MOVEMENT_FEATURES else [])
@@ -165,6 +168,7 @@ DEFAULT_EXOTIC_WEIGHTS_BASE = [
     0.75,  # win_rate_track_distance
     0.70,  # condition_win_rate
     0.25,  # first_up_win_rate
+    0.60,  # going_preference
 ]
 
 DEFAULT_EXOTIC_WEIGHTS = DEFAULT_EXOTIC_WEIGHTS_BASE + (DEFAULT_WEIGHTS_ODDS_MOVEMENT if USE_ODDS_MOVEMENT_FEATURES else [])
@@ -204,6 +208,19 @@ def build_feature_vector(er: EnrichedRunner) -> list[float]:
     # Weight vs field (-2kg to +2kg → -1 to +1)
     weight_norm = max(-1.0, min(1.0, er.weight_vs_field_avg / 2.0))
 
+    # Going preference: signed differential — how much better on today's going vs opposite.
+    # Wet track day → wet_record - dry_record (positive = wet-tracker, good today)
+    # Dry track day → dry_record - wet_record (positive = dry-tracker, good today)
+    # Capped to [-1, 1]; 0.0 when no form on either surface.
+    cond = er.track_condition_category
+    if cond in ("soft", "heavy"):
+        going_pref = er.wet_track_record - er.dry_track_record
+    elif cond in ("good", "firm", "synthetic"):
+        going_pref = er.dry_track_record - er.wet_track_record
+    else:
+        going_pref = 0.0
+    going_pref = max(-1.0, min(1.0, going_pref))
+
     return [
         er.form_score,
         er.win_rate_career,
@@ -233,4 +250,5 @@ def build_feature_vector(er: EnrichedRunner) -> list[float]:
         er.win_rate_track_distance,
         er.win_rate_condition,
         er.first_up_win_rate if er.is_resuming else 0.0,
+        going_pref,
     ]
