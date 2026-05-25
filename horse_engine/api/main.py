@@ -1579,7 +1579,7 @@ async def list_meetings(race_date: str = _today()):
         meetings = await client.get_meetings(race_date)
     except Exception as e:
         log.exception("list_meetings failed for %s", race_date)
-        raise HTTPException(502, "Failed to fetch meetings from data provider")
+        meetings = []
 
     from horse_engine.clients.weather import get_weather_for_venue
 
@@ -1598,6 +1598,30 @@ async def list_meetings(race_date: str = _today()):
         }
         for m in meetings
     ]
+
+    # If Punters is unreachable/blocked, fall back to DB-enriched meetings for this date
+    if not items:
+        log.warning("list_meetings: Punters returned empty for %s — falling back to DB", race_date)
+        async with get_session() as session:
+            db_race_ids = (await session.execute(
+                select(RunnerPredictionRow.race_id)
+                .where(RunnerPredictionRow.race_id.like(f"{race_date}_%"))
+                .where(RunnerPredictionRow.model_rank == 1)
+                .where(RunnerPredictionRow.cancelled.is_(False) | RunnerPredictionRow.cancelled.is_(None))
+                .distinct()
+            )).scalars().all()
+        seen_vc: set[str] = set()
+        for rid in db_race_ids:
+            _, vc, _ = _parse_race_id(rid)
+            if vc and vc not in seen_vc:
+                seen_vc.add(vc)
+                items.append({
+                    "venue": vc.replace("-", " ").title(),
+                    "venue_code": vc,
+                    "state": None,
+                    "rail_position": None,
+                    "slug": None,
+                })
 
     # Add any DB-cancelled meetings that are no longer on Punters
     active_codes = {it["venue_code"] for it in items}

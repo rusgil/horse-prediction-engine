@@ -1169,7 +1169,12 @@
       renderDayAccuracyBanner(iso);
       document.getElementById('meetingsSection').style.display = '';
 
-      await selectMeeting(S.meetings[0]);
+      const firstActive = S.meetings.find(m => !m.cancelled);
+      if (firstActive) {
+        await selectMeeting(firstActive);
+      } else {
+        document.getElementById('raceContent').innerHTML = '<div style="padding:32px;text-align:center;color:var(--text-dim)">All meetings abandoned for this date.</div>';
+      }
 
     } catch (e) {
       document.getElementById('heroSub').textContent = 'Failed to load meetings.';
