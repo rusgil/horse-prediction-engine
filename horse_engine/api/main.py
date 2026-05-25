@@ -613,7 +613,7 @@ def _compute_hedge(pick_odds: float, field_size: int, hedge_horses: list[dict]) 
     Tries up to 4 hedge horses with graduated recovery targets.
     Stakes normalised to a $10 win bet — UI scales proportionally.
     """
-    if not pick_odds or pick_odds < 2.0 or not hedge_horses:
+    if not pick_odds or pick_odds < 4.0 or not hedge_horses:
         return None
 
     WIN_STAKE = 10.0
