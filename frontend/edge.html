@@ -346,6 +346,16 @@
       font-size: 0.85rem; letter-spacing: 0.06em;
     }
     .pick-race-ref .sep { color: var(--text-dim); }
+    .abandoned-tag {
+      font-family: 'Barlow Condensed', sans-serif;
+      font-size: 0.72rem; font-weight: 700; letter-spacing: 0.07em;
+      text-transform: uppercase;
+      background: rgba(251,146,60,0.15);
+      color: #fb923c;
+      border: 1px solid rgba(251,146,60,0.35);
+      border-radius: 5px;
+      padding: 1px 7px;
+    }
     .pick-time {
       font-size: 0.72rem; color: var(--text-dim);
       background: var(--bg-elevated);
@@ -1816,7 +1826,7 @@
     // Result badge — shown for past races alongside tier badge
     let resultBadge = '';
     if (pick.cancelled) {
-      resultBadge = `<span class="pick-badge-standard" style="background:var(--bg-elevated);color:var(--text-dim);border-color:var(--border);">🚫 Cancelled</span>`;
+      resultBadge = `<span class="pick-badge-standard" style="background:rgba(251,146,60,0.12);color:#fb923c;border-color:rgba(251,146,60,0.35);">⚠️ Abandoned</span>`;
     } else if (isPast && result) {
       if (result.scratched) {
         resultBadge = `<span class="pick-badge-standard" style="background:var(--bg-elevated);color:var(--text-dim);border-color:var(--border);">Scratched</span>`;
@@ -1899,7 +1909,7 @@
     })() : '';
     const valueChip = '';
 
-    const cardStyle = pick.cancelled ? 'opacity:0.45;filter:grayscale(0.6);' : (isPast && result && !result.winner && !result.scratched ? 'opacity:0.75;' : '');
+    const cardStyle = pick.cancelled ? 'opacity:0.55;filter:grayscale(0.4);' : (isPast && result && !result.winner && !result.scratched ? 'opacity:0.75;' : '');
     const pastAttr  = isPast && result ? 'data-past-result="true"' : '';
 
     return `
@@ -1911,6 +1921,7 @@
             <span class="sep">·</span>
             <span>R${pick.race_number}</span>
             ${pick.race_name ? `<span class="sep">·</span><span style="color:var(--text-secondary)">${escHtml(pick.race_name)}</span>` : ''}
+            ${pick.cancelled ? `<span class="abandoned-tag">Abandoned</span>` : ''}
           </div>
           ${timeStr ? `<span class="pick-time">${escHtml(timeStr)}</span>` : ''}
           ${pick.scheduled_time ? `<span class="pick-countdown" id="${countdownId}" data-jump="${escHtml(pick.scheduled_time)}"></span>` : ''}
