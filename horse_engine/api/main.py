@@ -614,7 +614,7 @@ def _compute_hedge(pick_odds: float, field_size: int, hedge_horses: list[dict]) 
     hedge_horses: list of {horse_name, tab_number, win_odds} for rank-2, rank-3 etc.
     All stakes normalised to a $10 win bet — UI scales proportionally.
     """
-    if not pick_odds or pick_odds < 4.0 or not hedge_horses:
+    if not pick_odds or pick_odds < 2.0 or not hedge_horses:
         return None
 
     RECOVERY = 0.70
