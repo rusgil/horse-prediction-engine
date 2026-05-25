@@ -1200,6 +1200,8 @@ async def get_edge_yesterday(for_date: Optional[str] = Query(None, alias="date")
         position = r.get("position")
         # Race seeded but horse absent → scratched (HistoricalResultRow skips scratched runners)
         scratched = bool(p.race_id in seeded_race_ids and not r)
+        # Race not seeded at all → result unavailable (Punters had no data; don't show as Unplaced)
+        no_result = bool(p.race_id not in seeded_race_ids and not r)
         model_pct = round(p.win_probability * 100, 1)
         payout = round(sp * stake, 2) if winner and sp else 0
         profit = round(payout - stake, 2) if winner and sp else -stake
@@ -1276,13 +1278,14 @@ async def get_edge_yesterday(for_date: Optional[str] = Query(None, alias="date")
             "position": position,
             "winner_name": winner_name,
             "scratched": scratched,
+            "no_result": no_result,
             "payout": payout,
             "profit": profit,
             "stake": stake,
             "trifecta": yst_trifecta,
         })
 
-    active = [o for o in output if not o["scratched"]]
+    active = [o for o in output if not o["scratched"] and not o["no_result"]]
     wins = [o for o in active if o["winner"]]
     placed_picks = [o for o in active if o["placed"] and not o["winner"]]
     total_staked = len(active) * stake
