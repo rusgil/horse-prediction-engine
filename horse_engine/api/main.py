@@ -3363,7 +3363,7 @@ async def trifecta_analysis(x_cron_secret: Optional[str] = Header(None)):
 
 
 @app.get("/api/performance")
-async def performance_summary(days: int = Query(5, ge=1, le=30)):
+async def performance_summary(days: int = Query(5, ge=1, le=365)):
     """
     Per-day performance strip for the last N days.
     Shows top-pick win rate, place rate, and value P&L per day.
