@@ -2065,10 +2065,15 @@
             </div>`;
           };
 
+          const hedgeTabLabel = (m, opt) => {
+            const n = opt.horses.length;
+            const labels = { single: '1-horse', double: '2-horse', triple: '3-horse', quad: '4-horse' };
+            return `${labels[m] || m} · ${opt.recovery_pct}% back`;
+          };
           const tabBtns = modes.map((m, i) =>
             `<button class="hedge-tab-btn${i === 0 ? ' active' : ''}"
               onclick="switchHedgeTab('${cardId2}','${m}',this)"
-            >${m === 'single' ? '1-horse hedge' : '2-horse dutch'}</button>`
+            >${hedgeTabLabel(m, opts[m])}</button>`
           ).join('');
 
           const panels = modes.map((m, i) => {

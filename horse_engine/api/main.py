@@ -610,16 +610,17 @@ async def _fetch_race_times(client, slug: str) -> dict[int, str]:
 def _compute_hedge(pick_odds: float, field_size: int, hedge_horses: list[dict]) -> dict | None:
     """
     Compute Dutch place-bet insurance for a win pick.
-    Returns single + double hedge options (where viable), or None.
-    hedge_horses: list of {horse_name, tab_number, win_odds} for rank-2, rank-3 etc.
-    All stakes normalised to a $10 win bet — UI scales proportionally.
+    Tries up to 4 hedge horses with graduated recovery targets.
+    Stakes normalised to a $10 win bet — UI scales proportionally.
     """
     if not pick_odds or pick_odds < 2.0 or not hedge_horses:
         return None
 
-    RECOVERY = 0.70
     WIN_STAKE = 10.0
     divisor = 4 if field_size >= 8 else 3 if field_size >= 5 else 2
+
+    # Recovery targets per number of hedge horses (more horses = accept lower recovery)
+    RECOVERY_BY_N = {1: 0.70, 2: 0.70, 3: 0.55, 4: 0.45}
 
     # Estimate place odds for each hedge candidate
     candidates = []
@@ -633,16 +634,21 @@ def _compute_hedge(pick_odds: float, field_size: int, hedge_horses: list[dict]) 
     if not candidates:
         return None
 
+    LABELS = {1: "single", 2: "double", 3: "triple", 4: "quad"}
     options = {}
-    for n in [1, 2]:
+    for n in range(1, min(len(candidates), 4) + 1):
         subset = candidates[:n]
+        recovery = RECOVERY_BY_N.get(n, 0.45)
         sum_inv = sum(1 / h["place_est"] for h in subset)
-        factor = RECOVERY * sum_inv
+        factor = recovery * sum_inv
         if factor >= 1.0:
             continue
-        R = RECOVERY * WIN_STAKE / (1 - factor)
+        R = recovery * WIN_STAKE / (1 - factor)
         total_hedge = R * sum_inv
         total_out = WIN_STAKE + total_hedge
+        win_net = round(WIN_STAKE * (pick_odds - 1) - total_hedge, 2)
+        if win_net < 0:
+            continue
         horses = [
             {
                 "horse_name": h["horse_name"],
@@ -654,10 +660,7 @@ def _compute_hedge(pick_odds: float, field_size: int, hedge_horses: list[dict]) 
             }
             for h in subset
         ]
-        win_net = round(WIN_STAKE * (pick_odds - 1) - total_hedge, 2)
-        if win_net < 0:
-            continue  # hedge too expensive — skip this option
-        key = "single" if n == 1 else "double"
+        key = LABELS.get(n, f"{n}-horse")
         options[key] = {
             "horses": horses,
             "total_hedge": round(total_hedge, 2),
@@ -724,11 +727,11 @@ async def get_edge_picks():
             )
             exotic_rows_list = exotic_result.scalars().all()
 
-            # Batch-fetch win model rank 2 + 3 for hedge insurance calculations
+            # Batch-fetch win model ranks 2–5 for hedge insurance calculations
             hedge_rank_result = await session.execute(
                 select(RunnerPredictionRow)
                 .where(RunnerPredictionRow.race_id.in_(race_ids))
-                .where(RunnerPredictionRow.model_rank.in_([2, 3]))
+                .where(RunnerPredictionRow.model_rank.in_([2, 3, 4, 5]))
                 .where(RunnerPredictionRow.cancelled.is_(False) | RunnerPredictionRow.cancelled.is_(None))
             )
             hedge_rank_rows = hedge_rank_result.scalars().all()
