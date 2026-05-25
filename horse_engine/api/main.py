@@ -1617,19 +1617,43 @@ async def list_meetings(race_date: str = _today()):
     # Merge DB-enriched meetings — ensures venues still appear when Punters is blocked
     active_codes = {it["venue_code"] for it in items}
     async with get_session() as session:
+        # RacePredictionRow has venue/state metadata from enrichment
         rp_meta = (await session.execute(
             select(RacePredictionRow.race_id, RacePredictionRow.venue, RacePredictionRow.state)
             .where(RacePredictionRow.race_id.like(f"{race_date}_%"))
         )).all()
+        # RunnerPredictionRow covers future dates enriched before RacePredictionRow was written
+        runner_race_ids = (await session.execute(
+            select(RunnerPredictionRow.race_id)
+            .where(RunnerPredictionRow.race_id.like(f"{race_date}_%"))
+            .where(RunnerPredictionRow.model_rank == 1)
+            .where(RunnerPredictionRow.cancelled.is_(False) | RunnerPredictionRow.cancelled.is_(None))
+            .distinct()
+        )).scalars().all()
+
     seen_vc: set[str] = set()
+    # Build venue→metadata map from RacePredictionRow first
+    rp_venue_meta: dict[str, tuple] = {}
     for row in rp_meta:
         _, vc, _ = _parse_race_id(row.race_id)
-        if vc and vc not in active_codes and vc not in seen_vc:
+        if vc:
+            rp_venue_meta.setdefault(vc, (row.venue, row.state))
+
+    # Union both sources
+    all_db_vcs = set(rp_venue_meta.keys())
+    for rid in runner_race_ids:
+        _, vc, _ = _parse_race_id(rid)
+        if vc:
+            all_db_vcs.add(vc)
+
+    for vc in all_db_vcs:
+        if vc not in active_codes and vc not in seen_vc:
             seen_vc.add(vc)
+            venue_name, state = rp_venue_meta.get(vc, (None, None))
             items.append({
-                "venue": row.venue or vc.replace("-", " ").title(),
+                "venue": venue_name or vc.replace("-", " ").title(),
                 "venue_code": vc,
-                "state": row.state,
+                "state": state,
                 "rail_position": None,
                 "slug": None,
             })
