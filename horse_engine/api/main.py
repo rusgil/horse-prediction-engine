@@ -562,8 +562,36 @@ def _parse_race_id(race_id: str) -> tuple[str, str, int | None]:
         return "", race_id, None
 
 
-# Cache meeting start times for 5 min to avoid hitting punters on every edge load
+# Cache meeting start times + live odds for 5 min
 _edge_times_cache: dict[str, tuple[datetime, dict[int, str]]] = {}
+_edge_odds_cache: dict[str, tuple[datetime, dict[str, float]]] = {}  # race_id → {horse_name: flucs_win}
+
+async def _fetch_live_odds(client, race_id: str) -> dict[str, float]:
+    """Return {horse_name: flucs_win_odds} for a race. Cached 5 min."""
+    cached = _edge_odds_cache.get(race_id)
+    if cached and (datetime.utcnow() - cached[0]).total_seconds() < 300:
+        return cached[1]
+    try:
+        _, venue, race_num = _parse_race_id(race_id)
+        date_part = race_id[:10]
+        slug = _meeting_slug(venue, date_part)
+        event = await asyncio.wait_for(client.get_race(slug, race_num), timeout=20)
+        if not event:
+            return {}
+        odds: dict[str, float] = {}
+        for sel in event.get("selections", []):
+            if (sel.get("status") or "").upper() == "SCRATCHED":
+                continue
+            comp = sel.get("competitor") or {}
+            name = comp.get("name")
+            flucs = sel.get("flucs") or {}
+            win = sel.get("topToteWin") or flucs.get("low") or flucs.get("open") or sel.get("startingPrice")
+            if name and win:
+                odds[name] = float(win)
+        _edge_odds_cache[race_id] = (datetime.utcnow(), odds)
+        return odds
+    except Exception:
+        return {}
 
 async def _fetch_race_times(client, slug: str) -> dict[int, str]:
     """Return {race_number: startTime ISO string} for a meeting slug. Cached 5 min."""
@@ -743,6 +771,18 @@ async def get_edge_picks():
             for race_num, start_time in times.items():
                 race_times[f"{target_date}_{venue}_R{race_num}"] = start_time
 
+        # For races where rank-2/3 hedge candidates have 0 odds, fetch live odds in parallel
+        races_needing_live_odds = [
+            r.race_id for r in rows
+            if any((hr.best_available_odds or 0) <= 1.0 for hr in hedge_map.get(r.race_id, []))
+        ]
+        live_odds_results = await asyncio.gather(*[
+            _fetch_live_odds(client, rid) for rid in races_needing_live_odds
+        ])
+        live_odds_by_race: dict[str, dict[str, float]] = dict(
+            zip(races_needing_live_odds, live_odds_results)
+        )
+
         for runner_row in rows:
             odds = runner_row.best_available_odds or 0
             model_pct = round(runner_row.win_probability * 100, 1)
@@ -796,17 +836,20 @@ async def get_edge_picks():
                 "exotic_alignment": exotic_alignment,
             } if len(tri_legs) >= 3 else None
 
-            # Insurance hedge: only computed when pick odds >= $4
+            # Insurance hedge: only computed when pick odds >= threshold
             hedge_runners = hedge_map.get(runner_row.race_id, [])
-            hedge_candidates = [
-                {
-                    "horse_name": hr.horse_name,
-                    "tab_number": hr.tab_number,
-                    "win_odds": hr.best_available_odds or 0,
-                }
-                for hr in hedge_runners
-                if (hr.best_available_odds or 0) > 1.0
-            ]
+            live_race_odds = live_odds_by_race.get(runner_row.race_id, {})
+            hedge_candidates = []
+            for hr in hedge_runners:
+                w = hr.best_available_odds or 0
+                if w <= 1.0:
+                    w = live_race_odds.get(hr.horse_name, 0)
+                if w > 1.0:
+                    hedge_candidates.append({
+                        "horse_name": hr.horse_name,
+                        "tab_number": hr.tab_number,
+                        "win_odds": w,
+                    })
             hedge = _compute_hedge(odds, field_sizes.get(runner_row.race_id, 8), hedge_candidates)
 
             picks.append({
