@@ -716,6 +716,7 @@ async def get_edge_picks():
                 .where(RunnerPredictionRow.model_rank == 1)
                 .where(RunnerPredictionRow.win_probability >= threshold)
                 .where(RunnerPredictionRow.race_id.like(f"{prefix}%"))
+                .where(RunnerPredictionRow.cancelled.is_(False) | RunnerPredictionRow.cancelled.is_(None))
                 .order_by(RunnerPredictionRow.win_probability.desc())
             )
             rows = result.scalars().all()
@@ -2092,11 +2093,10 @@ async def cancel_meeting(
     from sqlalchemy import update as sa_update
     _check_admin(x_cron_secret)
     target_date = date or _today_aest().isoformat()
-    prefix = f"{target_date}_{venue}_"
     async with get_session() as session:
         result = await session.execute(
             sa_update(RunnerPredictionRow)
-            .where(RunnerPredictionRow.race_id.like(f"{prefix}%"))
+            .where(RunnerPredictionRow.race_id.like(f"{target_date}_{venue}_%"))
             .values(cancelled=True)
         )
         await session.commit()
