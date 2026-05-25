@@ -1347,21 +1347,7 @@ async def get_edge_trifectas():
         for row in exotic_rows:
             race_map.setdefault(row.race_id, []).append(row)
 
-        # Fetch live race times for any race missing scheduled_time in DB
-        live_race_times: dict[str, str] = {}
-        if any(not r.scheduled_time for r in exotic_rows):
-            try:
-                tri_client = get_tab_client()
-                unique_venues = {_parse_race_id(rid)[1] for rid in race_map}
-                slug_map = {v: _meeting_slug(v, target_date) for v in unique_venues}
-                time_results = await asyncio.gather(*[
-                    _fetch_race_times(tri_client, slug) for slug in slug_map.values()
-                ])
-                for venue, times in zip(slug_map.keys(), time_results):
-                    for rn, st in times.items():
-                        live_race_times[f"{target_date}_{venue}_R{rn}"] = st
-            except Exception:
-                pass
+        # Race times come from DB (RunnerPredictionRow.scheduled_time) — no Punters call needed
 
         for race_id, runners in race_map.items():
             runners.sort(key=rank_key)
@@ -1416,7 +1402,7 @@ async def get_edge_trifectas():
                 "race_name": race.race_name if race else None,
                 "distance": race.distance if race else None,
                 "track_condition": race.track_condition if race else None,
-                "scheduled_time": (runners[0].scheduled_time if runners else None) or live_race_times.get(race_id),
+                "scheduled_time": runners[0].scheduled_time if runners else None,
                 "combined_pct": combined_pct,
                 "multiplier": multiplier,
                 "field_size": field_size,
@@ -1454,66 +1440,40 @@ async def get_edge_trifectas():
 
     _assign_trifecta_tiers(picks)   # sorts + assigns Hot/High/Strong by percentile
 
-    # Annotate finished races with actual positions
+    # Annotate finished races from DB — HistoricalResultRow seeded at 3/5/11pm
     now_utc = datetime.utcnow().replace(tzinfo=timezone.utc)
-    today_str = _today_aest().isoformat()
     finished_picks = [
         p for p in picks
         if p["scheduled_time"] and datetime.fromisoformat(p["scheduled_time"].replace("Z", "+00:00")) < now_utc
     ]
     if finished_picks:
-        finished_venues: dict[str, str] = {}
-        for p in finished_picks:
-            finished_venues[p["venue"]] = p["date"]
+        finished_race_ids = list({p["race_id"] for p in finished_picks})
+        async with get_session() as session:
+            hr_rows = (await session.execute(
+                select(HistoricalResultRow.race_id, HistoricalResultRow.horse_name, HistoricalResultRow.position)
+                .where(HistoricalResultRow.race_id.in_(finished_race_ids))
+            )).all()
 
-        async def _fetch_tri_results(venue: str, date: str) -> dict:
-            slug = _meeting_slug(venue, date)
-            try:
-                client = get_tab_client()
-                events = await asyncio.wait_for(client.get_meeting_races(slug), timeout=30)
-                out = {}
-                for event in events:
-                    rn = event.get("eventNumber")
-                    for sel in event.get("selections") or []:
-                        name = (sel.get("competitor") or {}).get("name")
-                        if name:
-                            pos = sel.get("selectionResult")
-                            out[(venue, rn, name)] = {
-                                "position": int(pos) if isinstance(pos, (int, float)) and pos > 0 else None,
-                                "scratched": sel.get("status") == "SCRATCHED",
-                            }
-                return out
-            except Exception:
-                return {}
-
-        result_batches = await asyncio.gather(*[
-            _fetch_tri_results(v, d) for v, d in finished_venues.items()
-        ])
-        today_results: dict = {}
-        for rb in result_batches:
-            today_results.update(rb)
+        # (race_id, horse_name) → finishing position; races absent here haven't been seeded yet
+        db_positions: dict[tuple, int] = {(r.race_id, r.horse_name): r.position for r in hr_rows}
+        seeded_race_ids: set[str] = {r.race_id for r in hr_rows}
 
         for p in finished_picks:
-            venue_code, race_num = p["venue"], p["race_number"]
+            race_id = p["race_id"]
 
             def _annotate(legs):
-                out = []
-                for l in legs:
-                    res = today_results.get((venue_code, race_num, l["horse_name"]), {})
-                    out.append({**l, "position": res.get("position"), "scratched": res.get("scratched", False)})
-                return out
+                return [{**l, "position": db_positions.get((race_id, l["horse_name"])), "scratched": False}
+                        for l in legs]
 
             p["legs"] = _annotate(p["legs"])
-            tri_positions = {l["position"] for l in p["legs"] if l["position"] and not l["scratched"]}
-            # Only mark hit/miss when Punters has published at least one actual position
-            has_positions = any(l["position"] for l in p["legs"] if not l["scratched"])
-            if has_positions:
+            if race_id in seeded_race_ids:
+                tri_positions = {l["position"] for l in p["legs"] if l["position"]}
                 p["hit"] = tri_positions == {1, 2, 3}
 
             if p.get("first_four"):
                 p["first_four"] = _annotate(p["first_four"])
-                ff_positions = {l["position"] for l in p["first_four"] if l["position"] and not l["scratched"]}
-                if has_positions:
+                if race_id in seeded_race_ids:
+                    ff_positions = {l["position"] for l in p["first_four"] if l["position"]}
                     p["first_four_hit"] = ff_positions == {1, 2, 3, 4}
 
     return {"generated_at": datetime.utcnow().isoformat(), "picks": picks}
