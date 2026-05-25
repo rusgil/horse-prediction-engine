@@ -234,10 +234,22 @@ async def _cancel_abandoned_meetings(client, today: str) -> None:
             .distinct()
         )).scalars().all()
 
+    db_venue_codes = {_parse_race_id(rid)[1] for rid in db_race_ids}
+    punters_count = len(active_venue_codes)
+    db_count = len(db_venue_codes)
+    # Only trust "dropped" signal if Punters returned >= 80% of known DB venues.
+    # A partial Punters response (e.g. 2 of 5 venues when blocked) must NOT cancel the rest.
+    trust_drop_signal = punters_count >= max(1, round(db_count * 0.8))
+    if not trust_drop_signal:
+        log.warning(
+            "[cancel-check] Punters returned %d venues but DB has %d — partial response, ignoring 'dropped' signal",
+            punters_count, db_count,
+        )
+
     for race_id in db_race_ids:
         _, venue_code, _ = _parse_race_id(race_id)
         statuses = punters_race_statuses.get(venue_code, set())
-        dropped = venue_code not in active_venue_codes
+        dropped = trust_drop_signal and (venue_code not in active_venue_codes)
         all_abandoned = bool(statuses) and statuses.issubset({"abandoned", "cancelled", "closed"}) and "open" not in statuses and "resulted" not in statuses
 
         if not dropped and not all_abandoned:
@@ -4437,6 +4449,31 @@ async def restore_cancelled(
     client = get_tab_client()
     await _cancel_abandoned_meetings(client, target)
     return {"status": "done", "date": target}
+
+
+@app.post("/api/admin/force-restore")
+async def force_restore(
+    date: Optional[str] = None,
+    x_cron_secret: Optional[str] = Header(None),
+):
+    """
+    Directly uncancels ALL cancelled predictions for a date without hitting Punters.
+    Use when Punters is blocked and restore-cancelled can't succeed.
+    """
+    from sqlalchemy import update as sa_update
+    _check_admin(x_cron_secret)
+    target = date or _today_aest().isoformat()
+    async with get_session() as session:
+        result = await session.execute(
+            sa_update(RunnerPredictionRow)
+            .where(RunnerPredictionRow.race_id.like(f"{target}_%"))
+            .where(RunnerPredictionRow.cancelled.is_(True))
+            .values(cancelled=False)
+        )
+        await session.commit()
+        affected = result.rowcount
+    log.info("[force-restore] Uncancelled %d runners for %s", affected, target)
+    return {"status": "done", "date": target, "rows_restored": affected}
 
 
 # ── Serialisation helpers ─────────────────────────────────────────────────────
