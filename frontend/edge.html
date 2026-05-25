@@ -2962,7 +2962,7 @@
             <span>R${pick.race_number}</span>
           </div>
           ${timeStr ? `<span class="pick-time">${escHtml(timeStr)}</span>` : ''}
-          ${pick.scheduled_time ? `<span class="pick-countdown" id="${countdownId}" data-jump="${escHtml(pick.scheduled_time)}"></span>` : ''}
+          ${pick.scheduled_time ? `<span class="pick-countdown" id="${countdownId}" data-jump="${escHtml(pick.scheduled_time)}" data-race-id="${escHtml(pick.race_id)}"></span>` : ''}
           ${resultBadge}
         </div>
         <div class="exotic-runners">${runnersHtml}</div>
@@ -3186,20 +3186,30 @@
     }
   }
 
-  async function refreshTrifectas() {
-    if (!trifectasLoaded || !trifectasData) return;
-    // Only hit the API while there are picks that have jumped but don't have a result yet
-    const now = Date.now();
-    const needsResult = trifectasData.picks.some(
-      p => p.scheduled_time && new Date(p.scheduled_time).getTime() < now && p.hit === undefined
-    );
-    if (!needsResult) return;
-    try {
-      const res = await fetch(`${API}/api/edge/trifectas`);
-      if (!res.ok) return;
-      trifectasData = await res.json();
-      renderTrifectasContent(trifectasData);
-    } catch (e) { /* silent */ }
+  // Track which race_ids have had a result-fetch scheduled so we don't double-up
+  const _triResultScheduled = new Set();
+
+  function scheduleTriResultFetch(raceId, jumpMs) {
+    if (_triResultScheduled.has(raceId)) return;
+    _triResultScheduled.add(raceId);
+    // Mirror the scheduler strategy: random delay 15-25 min after jump
+    const delayMs = (15 + Math.random() * 10) * 60 * 1000;
+    const waitMs  = Math.max(0, jumpMs + delayMs - Date.now());
+    setTimeout(async () => {
+      if (!trifectasData) return;
+      try {
+        const res = await fetch(`${API}/api/edge/trifectas`);
+        if (!res.ok) return;
+        trifectasData = await res.json();
+        renderTrifectasContent(trifectasData);
+        // If still pending, schedule one more attempt
+        const still = trifectasData.picks.find(p => p.race_id === raceId && p.hit === undefined);
+        if (still) {
+          _triResultScheduled.delete(raceId);
+          scheduleTriResultFetch(raceId, Date.now());
+        }
+      } catch (e) { /* silent */ }
+    }, waitMs);
   }
 
   async function refreshOdds() {
@@ -3224,6 +3234,9 @@
       if (diff <= 0) {
         el.textContent = 'RACING';
         el.classList.add('done');
+        // Schedule a result fetch (15-25 min after jump) for exotic picks
+        const raceId = el.dataset.raceId;
+        if (raceId) scheduleTriResultFetch(raceId, jump);
       } else if (diff < 3600) {
         const m = Math.floor(diff / 60), s = diff % 60;
         el.textContent = `${m}m ${String(s).padStart(2,'0')}s`;
@@ -3236,8 +3249,7 @@
   }
 
   setInterval(tickCountdowns, 1000);
-  setInterval(refreshOdds, 120_000);
-  setInterval(refreshTrifectas, 120_000);
+  setInterval(refreshOdds, 20 * 60 * 1000); // 20 min — server has its own 15-25 min Punters cadence
 
   document.getElementById('stakeInput').addEventListener('input', function() {
     const stake = parseFloat(this.value) || 10;
