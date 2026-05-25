@@ -2239,14 +2239,25 @@ async def retrain_model(
     if len(hr_rows) < 50:
         raise HTTPException(400, f"Need at least 50 labelled results to retrain (have {len(hr_rows)})")
 
-    # Join on (race_id, horse_name) — enriched_json lives on the prediction row
+    # Join on (race_id, horse_name) — enriched_json lives on the prediction row.
+    # Only use rows where enriched_at is before scheduled_time (pre-race features only).
+    # Post-race re-enrichment can overwrite features with data unavailable at race time.
     pred_by_key = {(p.race_id, p.horse_name): p for p in pred_rows}
 
     training_data = []
+    skipped_post_race = 0
     for row in hr_rows:
         pred = pred_by_key.get((row.race_id, row.horse_name))
         if not pred:
             continue
+        if pred.enriched_at and pred.scheduled_time:
+            try:
+                sched = datetime.fromisoformat(pred.scheduled_time.replace("Z", "+00:00")).replace(tzinfo=None)
+                if pred.enriched_at > sched:
+                    skipped_post_race += 1
+                    continue
+            except (ValueError, AttributeError):
+                pass
         try:
             er = EnrichedRunner(**json.loads(pred.enriched_json))
             fv = build_feature_vector(er)
@@ -2255,6 +2266,8 @@ async def retrain_model(
         except Exception as e:
             log.debug("Skipping retrain row %s/%s: %s", row.race_id, row.horse_name, e)
 
+    if skipped_post_race:
+        log.info("[retrain] Skipped %d post-race enrichment examples (feature leakage guard)", skipped_post_race)
     if not training_data:
         raise HTTPException(400, f"No matched training examples (have {len(hr_rows)} results, {len(pred_rows)} predictions — check race_id/horse_name alignment)")
 
@@ -4097,7 +4110,7 @@ async def _run_calibration_sweep(holdout_days: int = 14) -> dict:
     for window in _CANDIDATE_WINDOWS:
         train_cutoff = (today - timedelta(days=window)).isoformat()
 
-        # Training data: within window, outside holdout
+        # Training data: within window, outside holdout; pre-race enrichments only
         training_data = []
         for row in all_hr:
             if row.race_id < train_cutoff or row.race_id >= holdout_cutoff:
@@ -4105,6 +4118,13 @@ async def _run_calibration_sweep(holdout_days: int = 14) -> dict:
             pred = pred_by_key.get((row.race_id, row.horse_name))
             if not pred:
                 continue
+            if pred.enriched_at and pred.scheduled_time:
+                try:
+                    sched = datetime.fromisoformat(pred.scheduled_time.replace("Z", "+00:00")).replace(tzinfo=None)
+                    if pred.enriched_at > sched:
+                        continue
+                except (ValueError, AttributeError):
+                    pass
             try:
                 er = EnrichedRunner(**json.loads(pred.enriched_json))
                 fv = build_feature_vector(er)
@@ -4167,7 +4187,8 @@ async def _run_calibration_sweep(holdout_days: int = 14) -> dict:
         result = {
             "window_days": window,
             "training_examples": len(training_data),
-            "training_accuracy": stats["accuracy"],
+            "training_log_loss": stats.get("log_loss"),
+            "training_top1_hit_rate": stats.get("top1_hit_rate"),
             "holdout_races": total_races,
             "win_rate": win_rate,
             "place_rate": place_rate,

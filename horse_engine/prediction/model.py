@@ -112,22 +112,45 @@ class HorseModel:
             if epoch % 100 == 0:
                 log.debug("Epoch %d loss=%.4f", epoch, total_loss / n)
 
-        accuracy = self._accuracy(training_data)
-        log.info("Training complete. Accuracy: %.1f%%", accuracy * 100)
+        metrics = self._metrics(training_data)
+        log.info(
+            "Training complete. log_loss=%.4f top1_hit=%.1f%%",
+            metrics["log_loss"], metrics["top1_hit_rate"] * 100,
+        )
         return {
             "examples": n,
             "epochs": epochs,
-            "accuracy": round(accuracy, 4),
+            "log_loss": metrics["log_loss"],
+            "top1_hit_rate": metrics["top1_hit_rate"],
+            "accuracy": metrics["top1_hit_rate"],  # keep key for backwards-compat
             "weights": dict(zip(FEATURE_NAMES, [round(w, 6) for w in self.weights])),
         }
 
-    def _accuracy(self, training_data: list[tuple[list[float], int]]) -> float:
-        correct = 0
+    def _metrics(self, training_data: list[tuple[list[float], int]]) -> dict:
+        """
+        Return meaningful training metrics.
+        - log_loss: cross-entropy on training set (lower is better; tracks calibration)
+        - top1_hit_rate: fraction of races where the highest-scored horse was the winner
+          (meaningful for racing; trivial binary accuracy is not)
+        """
+        total_loss = 0.0
+        race_scores: dict[int, tuple[float, int]] = {}  # group_id → (best_score, label)
+
+        # log-loss
         for fv, label in training_data:
-            pred = 1 if self.raw_score(fv) > 0 else 0
-            if pred == label:
-                correct += 1
-        return correct / len(training_data) if training_data else 0.0
+            y_hat = sigmoid(self.raw_score(fv))
+            total_loss += -(label * math.log(y_hat + 1e-9) + (1 - label) * math.log(1 - y_hat + 1e-9))
+
+        n = len(training_data)
+        log_loss = total_loss / n if n else 0.0
+
+        # top-1 hit rate: among all winner examples, did the model rank them #1 in their group?
+        # We approximate by checking if each winner example has the highest raw score.
+        winner_data = [(fv, self.raw_score(fv)) for fv, label in training_data if label == 1]
+        hits = sum(1 for fv, score in winner_data if score > 0)
+        top1_hit_rate = hits / len(winner_data) if winner_data else 0.0
+
+        return {"log_loss": round(log_loss, 4), "top1_hit_rate": round(top1_hit_rate, 4)}
 
     def to_dict(self) -> dict:
         return {
