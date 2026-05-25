@@ -1892,35 +1892,54 @@ async def live_odds(race_id: str):
     model_probs = {r.horse_name: r.win_probability or 0.0 for r in stored}
     stored_odds = {r.horse_name: r.best_available_odds for r in stored}
     stored_overlay = {r.horse_name: r.overlay or 0.0 for r in stored}
+    top_model_pick = stored[0].horse_name if stored else None
 
-    # Fetch current odds from punters
+    # ── Step 1: load settled results from DB (HistoricalResultRow) ───────────
+    async with get_session() as session:
+        hr_rows = (await session.execute(
+            select(HistoricalResultRow)
+            .where(HistoricalResultRow.race_id == race_id)
+        )).scalars().all()
+    db_results = {r.horse_name: r for r in hr_rows}
+    db_settled = bool(db_results)
+
+    # ── Step 2: try Punters for live odds + any missing positions ─────────────
+    punters_tote: dict[str, tuple] = {}   # horse → (current_odds, actual_position)
+    punters_ok = False
     try:
         client = get_tab_client()
         slug = _meeting_slug(venue_code, race_date)
-        raw_event = await client.get_race(slug, race_num)
-    except Exception as e:
-        raise HTTPException(502, f"Could not fetch live odds: {e}")
+        raw_event = await asyncio.wait_for(client.get_race(slug, race_num), timeout=15)
+        if raw_event:
+            for sel in raw_event.get("selections", []):
+                if (sel.get("status") or "").upper() == "SCRATCHED":
+                    continue
+                horse = (sel.get("competitor") or {}).get("name", "")
+                tote_win = sel.get("topToteWin")
+                sp = sel.get("startingPrice")
+                flucs = sel.get("flucs") or {}
+                fluc_low = flucs.get("low")
+                current_odds = (float(tote_win) if tote_win
+                                else float(fluc_low) if fluc_low
+                                else float(sp) if sp
+                                else None)
+                result_pos = sel.get("selectionResult")
+                actual_position = int(result_pos) if result_pos and int(result_pos) > 0 else None
+                punters_tote[horse] = (current_odds, actual_position)
+            punters_ok = True
+    except Exception:
+        pass  # use DB data only
 
-    if not raw_event:
-        raise HTTPException(404, "Race not found on punters")
-
-    # Build updated odds snapshot — also capture settled result if available
-    runners_odds = []
+    # ── Step 3: merge — DB results are authoritative for settled races ─────────
+    all_horses = set(model_probs.keys()) | set(punters_tote.keys())
     all_tote = []
-    for sel in raw_event.get("selections", []):
-        if (sel.get("status") or "").upper() == "SCRATCHED":
-            continue
-        horse = (sel.get("competitor") or {}).get("name", "")
-        tote_win = sel.get("topToteWin")
-        sp = sel.get("startingPrice")
-        flucs = sel.get("flucs") or {}
-        fluc_low = flucs.get("low")
-        current_odds = (float(tote_win) if tote_win
-                        else float(fluc_low) if fluc_low
-                        else float(sp) if sp
-                        else None)
-        result_pos = sel.get("selectionResult")
-        actual_position = int(result_pos) if result_pos and int(result_pos) > 0 else None
+    for horse in all_horses:
+        p_odds, p_pos = punters_tote.get(horse, (None, None))
+        db_r = db_results.get(horse)
+        # Position: Punters live > DB historical
+        actual_position = p_pos or (db_r.position if db_r else None)
+        # Odds: Punters live > DB historical SP > stored enrichment odds
+        current_odds = p_odds or (db_r.starting_price if db_r else None) or stored_odds.get(horse)
         all_tote.append((horse, current_odds, actual_position))
 
     # Overround-free implied probs from current tote
@@ -1928,32 +1947,30 @@ async def live_odds(race_id: str):
     total_implied = sum(1 / o for o in valid_odds) if valid_odds else 0
     scale = 1.0 / total_implied if total_implied > 0 else 1.0
 
-    # Find winner and placers for model flags
     winner_name = next((h for h, _, pos in all_tote if pos == 1), None)
     placed_names = {h for h, _, pos in all_tote if pos and pos <= 3}
-    top_model_pick = stored[0].horse_name if stored else None
+    settled = bool(winner_name) or db_settled
     model_correct = (winner_name == top_model_pick) if winner_name else None
     model_placed = (top_model_pick in placed_names) if (placed_names and top_model_pick) else None
 
+    runners_odds = []
     for horse, current_odds, actual_position in all_tote:
         model_prob = model_probs.get(horse, 0.0)
         if current_odds and current_odds > 1.0:
             raw_implied = 1.0 / current_odds
             orf_implied = round(raw_implied * scale, 4)
             overlay = round(model_prob - orf_implied, 4)
-            display_odds = current_odds
         else:
-            # No live tote or flucs data — last resort fallback to stored enrichment values
             overlay = stored_overlay.get(horse, 0.0)
-            display_odds = stored_odds.get(horse)
-            orf_implied = round(1.0 / display_odds, 4) if display_odds and display_odds > 1.0 else 0.0
+            current_odds = stored_odds.get(horse)
+            orf_implied = round(1.0 / current_odds, 4) if current_odds and current_odds > 1.0 else 0.0
         runners_odds.append({
             "horse_name": horse,
-            "current_tote_win": display_odds,
+            "current_tote_win": current_odds,
             "implied_prob": orf_implied,
             "model_win_prob": round(model_prob, 4),
             "overlay": overlay,
-            "value": overlay > 0.05 and display_odds and display_odds >= 3.0,
+            "value": overlay > 0.05 and current_odds and current_odds >= 3.0,
             "actual_position": actual_position,
             "is_top_pick": horse == top_model_pick,
         })
@@ -1963,7 +1980,7 @@ async def live_odds(race_id: str):
     return {
         "race_id": race_id,
         "fetched_at": datetime.utcnow().isoformat(),
-        "settled": winner_name is not None,
+        "settled": settled,
         "winner": winner_name,
         "model_correct": model_correct,
         "model_placed": model_placed,
