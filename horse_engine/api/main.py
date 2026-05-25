@@ -2245,7 +2245,9 @@ async def retrain_model(
     pred_by_key = {(p.race_id, p.horse_name): p for p in pred_rows}
 
     training_data = []
+    sample_weights = []
     skipped_post_race = 0
+    _today = date.today()
     for row in hr_rows:
         pred = pred_by_key.get((row.race_id, row.horse_name))
         if not pred:
@@ -2263,6 +2265,13 @@ async def retrain_model(
             fv = build_feature_vector(er)
             label = 1 if row.winner else 0
             training_data.append((fv, label))
+            try:
+                race_date = date.fromisoformat(row.race_id[:10])
+                days_ago = (_today - race_date).days
+            except Exception:
+                days_ago = 30
+            import math as _math
+            sample_weights.append(_math.exp(-days_ago / 30.0))
         except Exception as e:
             log.debug("Skipping retrain row %s/%s: %s", row.race_id, row.horse_name, e)
 
@@ -2273,7 +2282,7 @@ async def retrain_model(
 
     async def _do_retrain():
         m = HorseModel()
-        s = m.train(training_data)
+        s = m.train(training_data, sample_weights=sample_weights)
         async with get_session() as sess:
             await save_model_weights(sess, s["weights"])
         log.info("[retrain] complete — %d examples, accuracy=%.3f", len(training_data), s.get("accuracy", 0))
@@ -2333,6 +2342,8 @@ async def retrain_place_model(
     pred_by_key = {(p.race_id, p.horse_name): p for p in pred_rows}
 
     training_data = []
+    place_sample_weights = []
+    _today_p = date.today()
     for row in hr_rows:
         pred = pred_by_key.get((row.race_id, row.horse_name))
         if not pred:
@@ -2342,6 +2353,13 @@ async def retrain_place_model(
             fv = build_feature_vector(er)
             label = 1 if row.placed else 0   # ← placed label, not winner
             training_data.append((fv, label))
+            try:
+                race_date = date.fromisoformat(row.race_id[:10])
+                days_ago = (_today_p - race_date).days
+            except Exception:
+                days_ago = 30
+            import math as _math
+            place_sample_weights.append(_math.exp(-days_ago / 30.0))
         except Exception as e:
             log.debug("Skipping place retrain row %s/%s: %s", row.race_id, row.horse_name, e)
 
@@ -2354,7 +2372,7 @@ async def retrain_place_model(
 
     async def _do_retrain():
         m = PlaceModel()
-        s = m.train(training_data)
+        s = m.train(training_data, sample_weights=place_sample_weights)
         async with get_session() as sess:
             await save_place_model_weights(sess, s["weights"])
         log.info("[place-retrain] complete — %d examples, accuracy=%.3f", len(training_data), s.get("accuracy", 0))
@@ -3693,10 +3711,10 @@ async def backtest_trifecta(x_cron_secret: Optional[str] = Header(None)):
     high_threshold = qualifying_sorted[int(n_q * 0.60)][1] if n_q > 4 else 0.0
 
     tiers = {
-        "hot":    {"label": f"🔥 Hot (top 25%, combined ≥{hot_threshold*100:.1f}%)",   "tri": {"races": 0, "hits": 0}, "ff": {"races": 0, "hits": 0}},
-        "high":   {"label": f"⚡ High Confidence (top 60%, combined ≥{high_threshold*100:.1f}%)", "tri": {"races": 0, "hits": 0}, "ff": {"races": 0, "hits": 0}},
-        "strong": {"label": "📈 Strong (bottom 40%)",                                  "tri": {"races": 0, "hits": 0}, "ff": {"races": 0, "hits": 0}},
-        "below":  {"label": "Below threshold / small field",                           "tri": {"races": 0, "hits": 0}, "ff": {"races": 0, "hits": 0}},
+        "hot":    {"label": f"🔥 Hot (top 25%, combined ≥{hot_threshold*100:.1f}%)",   "tri": {"races": 0, "hits": 0}, "ff": {"races": 0, "hits": 0}, "field_size_sum": 0},
+        "high":   {"label": f"⚡ High Confidence (top 60%, combined ≥{high_threshold*100:.1f}%)", "tri": {"races": 0, "hits": 0}, "ff": {"races": 0, "hits": 0}, "field_size_sum": 0},
+        "strong": {"label": "📈 Strong (bottom 40%)",                                  "tri": {"races": 0, "hits": 0}, "ff": {"races": 0, "hits": 0}, "field_size_sum": 0},
+        "below":  {"label": "Below threshold / small field",                           "tri": {"races": 0, "hits": 0}, "ff": {"races": 0, "hits": 0}, "field_size_sum": 0},
     }
 
     # Account for small fields separately
@@ -3705,6 +3723,7 @@ async def backtest_trifecta(x_cron_secret: Optional[str] = Header(None)):
         if field_size < 7:
             field_size_dist[field_size] = field_size_dist.get(field_size, 0) + 1
 
+    totals_field_size_sum = 0
     for race_id, tri_combined, valid, field_size, rows in qualifying_sorted:
         field_size_dist[field_size] = field_size_dist.get(field_size, 0) + 1
 
@@ -3717,6 +3736,9 @@ async def backtest_trifecta(x_cron_secret: Optional[str] = Header(None)):
             tier_key = "high"
         else:
             tier_key = "strong"
+
+        tiers[tier_key]["field_size_sum"] += field_size
+        totals_field_size_sum += field_size
 
         tri_hit = top3_positions == {1, 2, 3}
         tiers[tier_key]["tri"]["races"] += 1
@@ -3740,23 +3762,67 @@ async def backtest_trifecta(x_cron_secret: Optional[str] = Header(None)):
     def _rate(d):
         return round(d["hits"] / d["races"] * 100, 1) if d["races"] else 0
 
+    def _tri_random_baseline(n: float) -> float:
+        """P(random box trifecta) = 6 / (n*(n-1)*(n-2)) × 100%"""
+        if n < 3:
+            return 100.0
+        return 600.0 / (n * (n - 1) * (n - 2))
+
+    def _ff_random_baseline(n: float) -> float:
+        """P(random box first four) = 24 / (n*(n-1)*(n-2)*(n-3)) × 100%"""
+        if n < 4:
+            return 100.0
+        return 2400.0 / (n * (n - 1) * (n - 2) * (n - 3))
+
+    def _edge(hit_rate_pct: float, random_pct: float) -> float:
+        return round(hit_rate_pct / random_pct, 2) if random_pct > 0 else 0.0
+
     tier_results = []
     for key, t in tiers.items():
-        tri_r, ff_r = t["tri"]["races"], t["ff"]["races"]
+        tri_r = t["tri"]["races"]
         if tri_r == 0:
             continue
+        avg_n = t["field_size_sum"] / tri_r if tri_r else 8.0
+        tri_hr = _rate(t["tri"])
+        ff_hr = _rate(t["ff"])
+        tri_rb = _tri_random_baseline(avg_n)
+        ff_rb = _ff_random_baseline(avg_n)
         tier_results.append({
             "tier": t["label"],
-            "trifecta": {**t["tri"], "hit_rate_pct": _rate(t["tri"])},
-            "first_four": {**t["ff"], "hit_rate_pct": _rate(t["ff"])},
+            "avg_field_size": round(avg_n, 1),
+            "trifecta": {
+                **t["tri"],
+                "hit_rate_pct": tri_hr,
+                "random_baseline_pct": round(tri_rb, 2),
+                "edge_multiple": _edge(tri_hr, tri_rb),
+            },
+            "first_four": {
+                **t["ff"],
+                "hit_rate_pct": ff_hr,
+                "random_baseline_pct": round(_ff_random_baseline(avg_n), 2),
+                "edge_multiple": _edge(ff_hr, ff_rb),
+            },
         })
 
+    overall_avg_n = totals_field_size_sum / totals["tri"]["races"] if totals["tri"]["races"] else 8.0
+    overall_tri_hr = _rate(totals["tri"])
+    overall_ff_hr = _rate(totals["ff"])
     return {
         "races_analysed": len(race_map),
         "runners_with_data": len(hist_rows),
         "overall": {
-            "trifecta": {**totals["tri"], "hit_rate_pct": _rate(totals["tri"])},
-            "first_four": {**totals["ff"], "hit_rate_pct": _rate(totals["ff"])},
+            "trifecta": {
+                **totals["tri"],
+                "hit_rate_pct": overall_tri_hr,
+                "random_baseline_pct": round(_tri_random_baseline(overall_avg_n), 2),
+                "edge_multiple": _edge(overall_tri_hr, _tri_random_baseline(overall_avg_n)),
+            },
+            "first_four": {
+                **totals["ff"],
+                "hit_rate_pct": overall_ff_hr,
+                "random_baseline_pct": round(_ff_random_baseline(overall_avg_n), 2),
+                "edge_multiple": _edge(overall_ff_hr, _ff_random_baseline(overall_avg_n)),
+            },
         },
         "by_tier": tier_results,
         "field_size_distribution": dict(sorted(field_size_dist.items())),
@@ -4112,6 +4178,7 @@ async def _run_calibration_sweep(holdout_days: int = 14) -> dict:
 
         # Training data: within window, outside holdout; pre-race enrichments only
         training_data = []
+        cal_sample_weights = []
         for row in all_hr:
             if row.race_id < train_cutoff or row.race_id >= holdout_cutoff:
                 continue
@@ -4129,6 +4196,13 @@ async def _run_calibration_sweep(holdout_days: int = 14) -> dict:
                 er = EnrichedRunner(**json.loads(pred.enriched_json))
                 fv = build_feature_vector(er)
                 training_data.append((fv, 1 if row.winner else 0))
+                try:
+                    race_date = date.fromisoformat(row.race_id[:10])
+                    days_ago = (today - race_date).days
+                except Exception:
+                    days_ago = 30
+                import math as _math
+                cal_sample_weights.append(_math.exp(-days_ago / 30.0))
             except Exception:
                 continue
 
@@ -4142,7 +4216,7 @@ async def _run_calibration_sweep(holdout_days: int = 14) -> dict:
             continue
 
         model = HorseModel()
-        stats = model.train(training_data)
+        stats = model.train(training_data, sample_weights=cal_sample_weights)
 
         # Score holdout races with candidate model
         win_picks = place_picks = value_bets = total_races = 0

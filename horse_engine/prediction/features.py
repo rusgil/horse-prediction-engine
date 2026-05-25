@@ -12,9 +12,8 @@ from __future__ import annotations
 from horse_engine.models.enriched import EnrichedRunner
 
 # ── Toggle: include odds movement snapshot features ───────────────────────────
-# Set False to train/predict without snapshot features (A/B comparison).
-# These features are stubs until odds_snapshots has sufficient history.
-USE_ODDS_MOVEMENT_FEATURES = False
+# Enabled once odds_snapshots has sufficient history (weeks of pre-race data).
+USE_ODDS_MOVEMENT_FEATURES = True
 
 FEATURE_NAMES_BASE = [
     "form_score",               # 0
@@ -46,6 +45,8 @@ FEATURE_NAMES_BASE = [
     "condition_win_rate",       # 26 — win % in today's going (good/soft/heavy/firm)
     "first_up_win_rate",        # 27 — win % when first-up (only relevant if resuming)
     "going_preference",         # 28 — signed differential: how much better on today's going vs opposite
+    "trainer_first_up_fitness", # 29 — trainer_first_up_rate × is_resuming (specialised trainer signal)
+    "class_drop_in_form",       # 30 — class drop × form_score (dropping in class while running well)
 ]
 
 FEATURE_NAMES_ODDS_MOVEMENT = [
@@ -89,6 +90,8 @@ DEFAULT_WEIGHTS_BASE = [
     0.5,   # condition_win_rate
     0.4,   # first_up_win_rate
     0.6,   # going_preference — wet/dry differential signed for today's going
+    0.5,   # trainer_first_up_fitness — trainer specialisation when horse is resuming
+    0.4,   # class_drop_in_form — class relief for a horse already running well
 ]
 
 DEFAULT_WEIGHTS_ODDS_MOVEMENT = [
@@ -133,6 +136,8 @@ DEFAULT_PLACE_WEIGHTS_BASE = [
     0.65,  # condition_win_rate — performs in today's going
     0.3,   # first_up_win_rate
     0.65,  # going_preference — stronger signal for placing (conditions matter more)
+    0.55,  # trainer_first_up_fitness
+    0.35,  # class_drop_in_form
 ]
 
 DEFAULT_PLACE_WEIGHTS = DEFAULT_PLACE_WEIGHTS_BASE + (DEFAULT_WEIGHTS_ODDS_MOVEMENT if USE_ODDS_MOVEMENT_FEATURES else [])
@@ -169,6 +174,8 @@ DEFAULT_EXOTIC_WEIGHTS_BASE = [
     0.70,  # condition_win_rate
     0.25,  # first_up_win_rate
     0.60,  # going_preference
+    0.45,  # trainer_first_up_fitness
+    0.35,  # class_drop_in_form
 ]
 
 DEFAULT_EXOTIC_WEIGHTS = DEFAULT_EXOTIC_WEIGHTS_BASE + (DEFAULT_WEIGHTS_ODDS_MOVEMENT if USE_ODDS_MOVEMENT_FEATURES else [])
@@ -221,6 +228,13 @@ def build_feature_vector(er: EnrichedRunner) -> list[float]:
         going_pref = 0.0
     going_pref = max(-1.0, min(1.0, going_pref))
 
+    # trainer_first_up_fitness: trainer's first-up strike rate × is_resuming flag
+    trainer_first_up_fitness = (er.trainer_first_up_rate / 100.0) if er.is_resuming else 0.0
+
+    # class_drop_in_form: class relief amplified when horse is already running well
+    # class_change = -1 means dropping down; form_score in [0,1]
+    class_drop_in_form = max(0.0, -float(er.class_change)) * er.form_score
+
     return [
         er.form_score,
         er.win_rate_career,
@@ -251,4 +265,11 @@ def build_feature_vector(er: EnrichedRunner) -> list[float]:
         er.win_rate_condition,
         er.first_up_win_rate if er.is_resuming else 0.0,
         going_pref,
+        trainer_first_up_fitness,
+        class_drop_in_form,
+        er.steam_60,
+        er.steam_30,
+        er.drift_flag,
+        er.odds_velocity,
+        er.late_money,
     ]

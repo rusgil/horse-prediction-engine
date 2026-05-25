@@ -78,16 +78,20 @@ class HorseModel:
         learning_rate: float = 0.01,
         epochs: int = 500,
         l2: float = 0.001,
+        sample_weights: list[float] | None = None,
     ) -> dict:
         """
-        Gradient descent on binary cross-entropy.
+        Gradient descent on binary cross-entropy with optional sample weighting.
         training_data: list of (feature_vector, label) where label=1 if winner
+        sample_weights: per-example weights (e.g. exp(-days_ago/30)) — defaults to uniform
         Returns dict of training stats.
         """
         if not training_data:
             return {"error": "no training data"}
 
         n = len(training_data)
+        weights_arr = sample_weights if sample_weights and len(sample_weights) == n else [1.0] * n
+        w_total = sum(weights_arr) or 1.0
         log.info("Training on %d examples, %d features, %d epochs", n, NUM_FEATURES, epochs)
 
         for epoch in range(epochs):
@@ -95,10 +99,10 @@ class HorseModel:
             grad_w = [0.0] * NUM_FEATURES
             grad_b = 0.0
 
-            for fv, label in training_data:
+            for (fv, label), sw in zip(training_data, weights_arr):
                 y_hat = sigmoid(self.raw_score(fv))
-                err = y_hat - label
-                total_loss += -(label * math.log(y_hat + 1e-9) + (1 - label) * math.log(1 - y_hat + 1e-9))
+                err = (y_hat - label) * sw
+                total_loss += sw * -(label * math.log(y_hat + 1e-9) + (1 - label) * math.log(1 - y_hat + 1e-9))
 
                 for j in range(NUM_FEATURES):
                     grad_w[j] += err * fv[j]
@@ -106,11 +110,11 @@ class HorseModel:
 
             # Update weights with L2 regularisation
             for j in range(NUM_FEATURES):
-                self.weights[j] -= learning_rate * (grad_w[j] / n + l2 * self.weights[j])
-            self.bias -= learning_rate * grad_b / n
+                self.weights[j] -= learning_rate * (grad_w[j] / w_total + l2 * self.weights[j])
+            self.bias -= learning_rate * grad_b / w_total
 
             if epoch % 100 == 0:
-                log.debug("Epoch %d loss=%.4f", epoch, total_loss / n)
+                log.debug("Epoch %d loss=%.4f", epoch, total_loss / w_total)
 
         metrics = self._metrics(training_data)
         log.info(
