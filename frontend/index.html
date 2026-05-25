@@ -242,6 +242,17 @@
       font-size: 0.68rem; color: var(--text-secondary);
       margin-top: 2px;
     }
+    .abandoned-tag {
+      font-family: 'Barlow Condensed', sans-serif;
+      font-size: 0.72rem; font-weight: 700; letter-spacing: 0.07em;
+      text-transform: uppercase;
+      background: rgba(251,146,60,0.15);
+      color: #fb923c;
+      border: 1px solid rgba(251,146,60,0.35);
+      border-radius: 5px;
+      padding: 1px 7px;
+      margin-top: 3px;
+    }
 
     /* Date pills */
     .date-pill {
@@ -1199,10 +1210,10 @@
         wxHtml = `<span class="pill-wx">${parts.join(' ')}</span>`;
       }
       if (m.cancelled) {
-        el.style.cssText = 'opacity:0.5;filter:grayscale(0.5);pointer-events:none;cursor:default;';
+        el.style.cssText = 'opacity:0.55;filter:grayscale(0.4);pointer-events:none;cursor:default;';
         el.innerHTML = `
           <span class="pill-name">${escHtml(m.venue || '')}</span>
-          <span class="pill-sub" style="color:#fb923c;font-weight:600;">Abandoned</span>
+          <span class="abandoned-tag">Abandoned</span>
         `;
       } else {
         el.innerHTML = `
