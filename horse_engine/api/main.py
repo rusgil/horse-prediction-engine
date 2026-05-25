@@ -1611,10 +1611,8 @@ async def list_meetings(race_date: str = _today()):
             vc = slug.split("-")[0]
         else:
             vc = m.get("name", "").lower().replace(" ", "-")
-        # Derive display name from venue_code — Punters sometimes labels Taree as "Port Macquarie"
-        venue_display = vc.replace("-", " ").title()
         items.append({
-            "venue": venue_display,
+            "venue": m.get("venue") or vc.replace("-", " ").title(),
             "venue_code": vc,
             "state": m.get("state"),
             "rail_position": m.get("rail_position"),
@@ -1656,9 +1654,9 @@ async def list_meetings(race_date: str = _today()):
     for vc in all_db_vcs:
         if vc not in active_codes and vc not in seen_vc:
             seen_vc.add(vc)
-            _venue_name, state = rp_venue_meta.get(vc, (None, None))
+            venue_name, state = rp_venue_meta.get(vc, (None, None))
             items.append({
-                "venue": vc.replace("-", " ").title(),
+                "venue": venue_name or vc.replace("-", " ").title(),
                 "venue_code": vc,
                 "state": state,
                 "rail_position": None,
