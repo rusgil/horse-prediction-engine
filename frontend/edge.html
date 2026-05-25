@@ -678,6 +678,69 @@
       font-weight: 700; color: #a78bfa; font-size: 0.72rem; white-space: nowrap;
     }
 
+    /* ── Insurance hedge strip ──────────────────────────────── */
+    .hedge-strip {
+      padding: 0 16px 10px;
+      background: rgba(20,184,166,0.04);
+      border-top: 1px solid rgba(20,184,166,0.18);
+    }
+    .hedge-toggle {
+      display: flex; align-items: center; gap: 6px;
+      cursor: pointer; padding: 7px 0 4px;
+      font-size: 0.72rem; font-weight: 700; color: #5eead4;
+      letter-spacing: 0.04em; user-select: none;
+      background: none; border: none; width: 100%;
+    }
+    .hedge-toggle .hedge-chevron { transition: transform 0.2s; font-size: 0.65rem; }
+    .hedge-toggle.open .hedge-chevron { transform: rotate(90deg); }
+    .hedge-body { display: none; }
+    .hedge-body.open { display: block; }
+    .hedge-tabs {
+      display: flex; gap: 6px; margin-bottom: 8px;
+    }
+    .hedge-tab-btn {
+      font-size: 0.68rem; font-weight: 700; padding: 3px 10px; border-radius: 999px;
+      cursor: pointer; border: 1px solid rgba(20,184,166,0.3);
+      background: transparent; color: var(--text-secondary);
+      transition: all 0.15s;
+    }
+    .hedge-tab-btn.active { background: rgba(20,184,166,0.15); color: #5eead4; border-color: rgba(20,184,166,0.5); }
+    .hedge-panel { display: none; }
+    .hedge-panel.active { display: block; }
+    .hedge-bets {
+      display: flex; flex-direction: column; gap: 5px; margin-bottom: 8px;
+    }
+    .hedge-bet-row {
+      display: flex; align-items: center; justify-content: space-between;
+      background: rgba(20,184,166,0.07); border-radius: 6px; padding: 5px 10px;
+      font-size: 0.72rem;
+    }
+    .hedge-bet-name { font-weight: 700; color: var(--text-secondary); }
+    .hedge-bet-meta { color: var(--text-dim); font-size: 0.67rem; }
+    .hedge-bet-stake { font-weight: 800; color: #5eead4; font-size: 0.78rem; }
+    .hedge-scenarios {
+      display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 5px;
+      font-size: 0.67rem;
+    }
+    .hedge-scenario {
+      background: rgba(255,255,255,0.03); border-radius: 5px;
+      padding: 5px 7px; text-align: center;
+    }
+    .hedge-scenario .hs-label { color: var(--text-dim); margin-bottom: 2px; }
+    .hedge-scenario .hs-value { font-weight: 700; font-size: 0.74rem; }
+    .hedge-scenario.win .hs-value { color: var(--green-bright); }
+    .hedge-scenario.recover .hs-value { color: #5eead4; }
+    .hedge-scenario.loss .hs-value { color: #f87171; }
+    .hedge-note {
+      font-size: 0.63rem; color: var(--text-dim); margin-top: 5px;
+      font-style: italic;
+    }
+    .hedge-stake-scale {
+      display: flex; align-items: center; gap: 8px; margin-bottom: 8px; font-size: 0.68rem; color: var(--text-dim);
+    }
+    .hedge-stake-scale input[type=range] { flex: 1; accent-color: #5eead4; }
+    .hedge-stake-val { font-weight: 700; color: #5eead4; min-width: 36px; }
+
     .pick-verdict {
       font-size: 0.72rem; font-weight: 700; letter-spacing: 0.06em;
       padding: 2px 10px; border-radius: 999px; text-transform: uppercase;
@@ -1595,6 +1658,49 @@
     return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
   }
 
+  function toggleHedge(btn) {
+    btn.classList.toggle('open');
+    const body = btn.nextElementSibling;
+    body.classList.toggle('open');
+  }
+
+  function switchHedgeTab(cardId, mode, btn) {
+    const strip = btn.closest('.hedge-strip');
+    strip.querySelectorAll('.hedge-tab-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    strip.querySelectorAll('.hedge-panel').forEach(p => p.classList.remove('active'));
+    const panel = strip.querySelector(`#hpanel-${cardId}-${mode}`);
+    if (panel) panel.classList.add('active');
+  }
+
+  function updateHedgeScale(cardId, mode, winStake, baseStake) {
+    winStake = parseFloat(winStake);
+    const ratio = winStake / baseStake;
+    const strip = document.getElementById(`hpanel-${cardId}-${mode}`).closest('.hedge-strip');
+    // Update stake label
+    const lbl = strip.querySelector(`#hsval-${cardId}-${mode}`);
+    if (lbl) lbl.textContent = '$' + winStake.toFixed(0);
+    // Scale each hedge bet row
+    const betsEl = strip.querySelector(`#hbets-${cardId}-${mode}`);
+    if (betsEl) {
+      betsEl.querySelectorAll('.hedge-bet-row').forEach(row => {
+        const baseS = parseFloat(row.dataset.stake);
+        row.querySelector('[data-field=stake]').textContent = '$' + (baseS * ratio).toFixed(2);
+      });
+    }
+    // Scale scenarios
+    const scenEl = strip.querySelector(`#hscen-${cardId}-${mode}`);
+    if (scenEl) {
+      scenEl.querySelectorAll('[data-field]').forEach(el => {
+        const v = parseFloat(el.dataset.val) * ratio;
+        const f = el.dataset.field;
+        if (f === 'win_net')      el.textContent = (v >= 0 ? '+' : '') + '$' + v.toFixed(2);
+        else if (f === 'recovery') el.textContent = '$' + v.toFixed(2) + ' back';
+        else if (f === 'total_outlay') el.textContent = '−$' + v.toFixed(2);
+      });
+    }
+  }
+
   function fmtDate(iso) {
     const d = new Date(iso + 'T00:00:00');
     return d.toLocaleDateString('en-AU', { weekday:'long', day:'numeric', month:'long' });
@@ -1902,6 +2008,86 @@
             ${triPct}${verdict}${alignBadge}
             <span class="tri-names">${triNames}</span>
             ${ffPart}
+          </div>`;
+        })() : ''}
+        ${pick.hedge && !isPast ? (() => {
+          const h = pick.hedge;
+          const cardId2 = `hedge-${pick.race_id.replace(/[^a-z0-9]/gi,'_')}`;
+          const opts = h.options;
+          const modes = Object.keys(opts);
+          if (!modes.length) return '';
+
+          const buildPanel = (mode) => {
+            const opt = opts[mode];
+            const base = h.win_stake;
+            const scaleId = `hscale-${cardId2}-${mode}`;
+            const betsId = `hbets-${cardId2}-${mode}`;
+            const scenId = `hscen-${cardId2}-${mode}`;
+
+            const betsHtml = opt.horses.map(hh =>
+              `<div class="hedge-bet-row" data-stake="${hh.stake}" data-return="${hh.return_if_places}" data-base="${base}">
+                <div><div class="hedge-bet-name">T${hh.tab_number} ${escHtml(hh.horse_name)}</div>
+                <div class="hedge-bet-meta">PLACE · win ${hh.win_odds} · est place ${hh.place_est}</div></div>
+                <div class="hedge-bet-stake" data-field="stake">$${hh.stake.toFixed(2)}</div>
+              </div>`
+            ).join('');
+
+            return `<div class="hedge-panel" id="hpanel-${cardId2}-${mode}">
+              <div class="hedge-stake-scale">
+                <span>Win stake</span>
+                <input type="range" min="5" max="200" step="5" value="${base}"
+                  id="${scaleId}"
+                  oninput="updateHedgeScale('${cardId2}','${mode}',this.value,${base})">
+                <span class="hedge-stake-val" id="hsval-${cardId2}-${mode}">$${base}</span>
+              </div>
+              <div class="hedge-bets" id="${betsId}">${betsHtml}</div>
+              <div class="hedge-scenarios" id="${scenId}">
+                <div class="hedge-scenario win">
+                  <div class="hs-label">${escHtml(pick.horse_name)} wins</div>
+                  <div class="hs-value" data-field="win_net" data-val="${opt.win_net}" data-base="${base}">
+                    ${opt.win_net >= 0 ? '+' : ''}$${opt.win_net.toFixed(2)}
+                  </div>
+                </div>
+                <div class="hedge-scenario recover">
+                  <div class="hs-label">Hedge fires</div>
+                  <div class="hs-value" data-field="recovery" data-val="${opt.recovery_if_fires}" data-base="${base}">
+                    $${opt.recovery_if_fires.toFixed(2)} back (${opt.recovery_pct}%)
+                  </div>
+                </div>
+                <div class="hedge-scenario loss">
+                  <div class="hs-label">Both miss</div>
+                  <div class="hs-value" data-field="total_outlay" data-val="${opt.total_outlay}" data-base="${base}">
+                    −$${opt.total_outlay.toFixed(2)}
+                  </div>
+                </div>
+              </div>
+              <div class="hedge-note">Place odds estimated · verify on TAB before placing</div>
+            </div>`;
+          };
+
+          const tabBtns = modes.map((m, i) =>
+            `<button class="hedge-tab-btn${i === 0 ? ' active' : ''}"
+              onclick="switchHedgeTab('${cardId2}','${m}',this)"
+            >${m === 'single' ? '1-horse hedge' : '2-horse dutch'}</button>`
+          ).join('');
+
+          const panels = modes.map((m, i) => {
+            const p = buildPanel(m);
+            return p.replace(`class="hedge-panel"`, `class="hedge-panel${i === 0 ? ' active' : ''}"`);
+          }).join('');
+
+          return `<div class="hedge-strip">
+            <button class="hedge-toggle" onclick="toggleHedge(this)">
+              <span>🛡️ INSURANCE</span>
+              <span class="hedge-chevron">▶</span>
+              <span style="color:var(--text-dim);font-weight:400;font-size:0.67rem;margin-left:4px">
+                – available at $${h.pick_odds} odds
+              </span>
+            </button>
+            <div class="hedge-body">
+              <div class="hedge-tabs">${tabBtns}</div>
+              ${panels}
+            </div>
           </div>`;
         })() : ''}
       </div>`;

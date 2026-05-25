@@ -579,6 +579,78 @@ async def _fetch_race_times(client, slug: str) -> dict[int, str]:
         return {}
 
 
+def _compute_hedge(pick_odds: float, field_size: int, hedge_horses: list[dict]) -> dict | None:
+    """
+    Compute Dutch place-bet insurance for a win pick.
+    Returns single + double hedge options (where viable), or None.
+    hedge_horses: list of {horse_name, tab_number, win_odds} for rank-2, rank-3 etc.
+    All stakes normalised to a $10 win bet — UI scales proportionally.
+    """
+    if not pick_odds or pick_odds < 4.0 or not hedge_horses:
+        return None
+
+    RECOVERY = 0.70
+    WIN_STAKE = 10.0
+    divisor = 4 if field_size >= 8 else 3 if field_size >= 5 else 2
+
+    # Estimate place odds for each hedge candidate
+    candidates = []
+    for h in hedge_horses:
+        w = h.get("win_odds") or 0
+        if w <= 1.0:
+            continue
+        p_est = round((w - 1) / divisor + 1, 3)
+        candidates.append({**h, "place_est": p_est})
+
+    if not candidates:
+        return None
+
+    options = {}
+    for n in [1, 2]:
+        subset = candidates[:n]
+        sum_inv = sum(1 / h["place_est"] for h in subset)
+        factor = RECOVERY * sum_inv
+        if factor >= 1.0:
+            continue
+        R = RECOVERY * WIN_STAKE / (1 - factor)
+        total_hedge = R * sum_inv
+        total_out = WIN_STAKE + total_hedge
+        horses = [
+            {
+                "horse_name": h["horse_name"],
+                "tab_number": h["tab_number"],
+                "win_odds": h["win_odds"],
+                "place_est": h["place_est"],
+                "stake": round(R / h["place_est"], 2),
+                "return_if_places": round(R, 2),
+            }
+            for h in subset
+        ]
+        win_net = round(WIN_STAKE * (pick_odds - 1) - total_hedge, 2)
+        if win_net < 0:
+            continue  # hedge too expensive — skip this option
+        key = "single" if n == 1 else "double"
+        options[key] = {
+            "horses": horses,
+            "total_hedge": round(total_hedge, 2),
+            "total_outlay": round(total_out, 2),
+            "recovery_if_fires": round(R, 2),
+            "recovery_pct": round(R / total_out * 100),
+            "win_net": win_net,
+        }
+
+    if not options:
+        return None
+
+    return {
+        "win_stake": WIN_STAKE,
+        "pick_odds": pick_odds,
+        "field_size": field_size,
+        "divisor": divisor,
+        "options": options,
+    }
+
+
 @app.get("/api/edge")
 async def get_edge_picks():
     """High-confidence picks for today + next 3 days. Threshold: model win_probability >= 29.5% (rounds to 30%)."""
@@ -624,6 +696,24 @@ async def get_edge_picks():
             )
             exotic_rows_list = exotic_result.scalars().all()
 
+            # Batch-fetch win model rank 2 + 3 for hedge insurance calculations
+            hedge_rank_result = await session.execute(
+                select(RunnerPredictionRow)
+                .where(RunnerPredictionRow.race_id.in_(race_ids))
+                .where(RunnerPredictionRow.model_rank.in_([2, 3]))
+                .where(RunnerPredictionRow.cancelled.is_(False) | RunnerPredictionRow.cancelled.is_(None))
+            )
+            hedge_rank_rows = hedge_rank_result.scalars().all()
+
+            # Field sizes (active runner count per race) for place divisor
+            field_size_result = await session.execute(
+                select(RunnerPredictionRow.race_id, func.count(RunnerPredictionRow.id))
+                .where(RunnerPredictionRow.race_id.in_(race_ids))
+                .where(RunnerPredictionRow.cancelled.is_(False) | RunnerPredictionRow.cancelled.is_(None))
+                .group_by(RunnerPredictionRow.race_id)
+            )
+            field_sizes: dict[str, int] = dict(field_size_result.fetchall())
+
         # Build place-model lookup: race_id -> sorted list by place_model_rank
         trifecta_map: dict[str, list] = {}
         for pr in place_rows_list:
@@ -636,6 +726,13 @@ async def get_edge_picks():
         exotic_top3_map: dict[str, set] = {}
         for er in exotic_rows_list:
             exotic_top3_map.setdefault(er.race_id, set()).add(er.horse_name)
+
+        # Build hedge lookup: race_id -> sorted list of rank-2/3 runners
+        hedge_map: dict[str, list] = {}
+        for hr in hedge_rank_rows:
+            hedge_map.setdefault(hr.race_id, []).append(hr)
+        for key in hedge_map:
+            hedge_map[key].sort(key=lambda r: r.model_rank)
 
         # Fetch scheduled times per unique meeting in parallel
         unique_venues = {_parse_race_id(r.race_id)[1] for r in rows}
@@ -699,6 +796,19 @@ async def get_edge_picks():
                 "exotic_alignment": exotic_alignment,
             } if len(tri_legs) >= 3 else None
 
+            # Insurance hedge: only computed when pick odds >= $4
+            hedge_runners = hedge_map.get(runner_row.race_id, [])
+            hedge_candidates = [
+                {
+                    "horse_name": hr.horse_name,
+                    "tab_number": hr.tab_number,
+                    "win_odds": hr.best_available_odds or 0,
+                }
+                for hr in hedge_runners
+                if (hr.best_available_odds or 0) > 1.0
+            ]
+            hedge = _compute_hedge(odds, field_sizes.get(runner_row.race_id, 8), hedge_candidates)
+
             picks.append({
                 "date": target_date,
                 "race_id": runner_row.race_id,
@@ -725,6 +835,7 @@ async def get_edge_picks():
                 "place_probability": round(runner_row.place_probability * 100, 1) if runner_row.place_probability else None,
                 "cancelled": bool(runner_row.cancelled),
                 "trifecta": trifecta,
+                "hedge": hedge,
             })
 
     # For picks whose race has already jumped, fetch results and annotate trifecta legs
