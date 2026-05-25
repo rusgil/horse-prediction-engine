@@ -251,12 +251,28 @@ async def _scheduled_pre_race_enrich():
                 select(RunnerPredictionRow.race_id)
                 .where(RunnerPredictionRow.race_id.like(f"{today}_%"))
                 .where(RunnerPredictionRow.model_rank == 1)
+                .where(RunnerPredictionRow.cancelled.is_(False) | RunnerPredictionRow.cancelled.is_(None))
                 .distinct()
             )).scalars().all()
 
+        # Build per-venue race-status map from Punters for abandonment detection
+        punters_race_statuses: dict[str, set[str]] = {}  # venue_code -> set of statuses
+        for m in meetings:
+            slug = m.get("slug", "")
+            vc = slug[:-len(date_sfx)] if slug.endswith(date_sfx) else slug
+            try:
+                raw_events = await asyncio.wait_for(client.get_meeting_races(slug), timeout=15)
+                punters_race_statuses[vc] = {(e.get("status") or "").lower() for e in raw_events}
+            except Exception:
+                pass
+
         for race_id in db_rows:
             _, venue_code, _ = _parse_race_id(race_id)
-            if venue_code not in active_venue_codes:
+            dropped = venue_code not in active_venue_codes
+            # Also detect if all races in the meeting are abandoned/cancelled by Punters
+            statuses = punters_race_statuses.get(venue_code, set())
+            all_abandoned = bool(statuses) and statuses.issubset({"abandoned", "cancelled", "closed"}) and "open" not in statuses and "resulted" not in statuses
+            if dropped or all_abandoned:
                 async with get_session() as session:
                     await session.execute(
                         sa_update(RunnerPredictionRow)
@@ -264,7 +280,8 @@ async def _scheduled_pre_race_enrich():
                         .values(cancelled=True)
                     )
                     await session.commit()
-                log.info("[pre-race] Marked %s CANCELLED (venue dropped from Punters)", race_id)
+                reason = "venue dropped from Punters" if dropped else "all races abandoned/closed"
+                log.info("[pre-race] Marked %s CANCELLED (%s)", race_id, reason)
 
         enriched_count = 0
         for m in meetings:
@@ -2063,6 +2080,29 @@ async def retrain_model(
 
     asyncio.create_task(_do_retrain())
     return {"status": "retrain_started", "training_days": days or "all", "training_examples": len(training_data)}
+
+
+@app.post("/api/admin/cancel-meeting")
+async def cancel_meeting(
+    venue: str = Query(..., description="Venue code, e.g. 'taree'"),
+    date: Optional[str] = Query(None, description="YYYY-MM-DD, defaults to today"),
+    x_cron_secret: Optional[str] = Header(None),
+):
+    """Mark all runner predictions for a venue+date as cancelled (abandoned meeting)."""
+    from sqlalchemy import update as sa_update
+    _check_admin(x_cron_secret)
+    target_date = date or _today_aest().isoformat()
+    prefix = f"{target_date}_{venue}_"
+    async with get_session() as session:
+        result = await session.execute(
+            sa_update(RunnerPredictionRow)
+            .where(RunnerPredictionRow.race_id.like(f"{prefix}%"))
+            .values(cancelled=True)
+        )
+        await session.commit()
+        affected = result.rowcount
+    log.info("[admin] cancel-meeting: marked %d runners cancelled for %s on %s", affected, venue, target_date)
+    return {"status": "cancelled", "venue": venue, "date": target_date, "runners_affected": affected}
 
 
 @app.post("/api/admin/retrain-place")
