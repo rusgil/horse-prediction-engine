@@ -1612,19 +1612,16 @@ async def list_meetings(race_date: str = _today()):
     # Add any DB-cancelled meetings that are no longer on Punters
     active_codes = {it["venue_code"] for it in items}
     async with get_session() as session:
-        cancelled_rows = (await session.execute(
-            select(
-                RunnerPredictionRow.race_id,
-                RunnerPredictionRow.venue,
-                RunnerPredictionRow.state,
-            )
-            .where(RunnerPredictionRow.date == race_date)
+        cancelled_race_rows = (await session.execute(
+            select(RacePredictionRow.race_id, RacePredictionRow.venue, RacePredictionRow.state)
+            .join(RunnerPredictionRow, RunnerPredictionRow.race_id == RacePredictionRow.race_id)
+            .where(RacePredictionRow.date == race_date)
             .where(RunnerPredictionRow.model_rank == 1)
             .where(RunnerPredictionRow.cancelled.is_(True))
             .distinct()
         )).all()
     seen_cancelled: set[str] = set()
-    for row in cancelled_rows:
+    for row in cancelled_race_rows:
         _, vc, _ = _parse_race_id(row.race_id)
         if vc not in active_codes and vc not in seen_cancelled:
             seen_cancelled.add(vc)
@@ -1639,12 +1636,12 @@ async def list_meetings(race_date: str = _today()):
             })
 
     weathers = await asyncio.gather(
-        *[get_weather_for_venue(it["venue"] or "", it["state"] or "", race_date) if not it.get("cancelled") else asyncio.sleep(0) for it in items],
+        *[get_weather_for_venue(it["venue"] or "", it["state"] or "", race_date) for it in items if not it.get("cancelled")],
         return_exceptions=True,
     )
-    for it, w in zip(items, weathers):
-        if not it.get("cancelled"):
-            it["weather"] = w if isinstance(w, dict) else None
+    live_items = [it for it in items if not it.get("cancelled")]
+    for it, w in zip(live_items, weathers):
+        it["weather"] = w if isinstance(w, dict) else None
 
     return {"date": race_date, "meetings": items}
 
