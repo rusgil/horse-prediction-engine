@@ -980,14 +980,14 @@ async def get_edge_picks():
 
             tri["legs"] = _annotate_legs(tri["legs"])
             tri_positions = {l["position"] for l in tri["legs"] if l["position"] and not l["scratched"]}
-            has_data = any((venue_code, race_num, l["horse_name"]) in today_results for l in tri["legs"])
-            if has_data:
+            has_positions = any(l["position"] for l in tri["legs"] if not l["scratched"])
+            if has_positions:
                 tri["hit"] = tri_positions == {1, 2, 3}
 
             if tri.get("first_four"):
                 tri["first_four"] = _annotate_legs(tri["first_four"])
                 ff_positions = {l["position"] for l in tri["first_four"] if l["position"] and not l["scratched"]}
-                if has_data:
+                if has_positions:
                     tri["first_four_hit"] = ff_positions == {1, 2, 3, 4}
 
     return {
@@ -1502,15 +1502,15 @@ async def get_edge_trifectas():
 
             p["legs"] = _annotate(p["legs"])
             tri_positions = {l["position"] for l in p["legs"] if l["position"] and not l["scratched"]}
-            # Only mark hit/miss when we actually received position data; leave None when Punters blocked
-            has_data = any((venue_code, race_num, l["horse_name"]) in today_results for l in p["legs"])
-            if has_data:
+            # Only mark hit/miss when Punters has published at least one actual position
+            has_positions = any(l["position"] for l in p["legs"] if not l["scratched"])
+            if has_positions:
                 p["hit"] = tri_positions == {1, 2, 3}
 
             if p.get("first_four"):
                 p["first_four"] = _annotate(p["first_four"])
                 ff_positions = {l["position"] for l in p["first_four"] if l["position"] and not l["scratched"]}
-                if has_data:
+                if has_positions:
                     p["first_four_hit"] = ff_positions == {1, 2, 3, 4}
 
     return {"generated_at": datetime.utcnow().isoformat(), "picks": picks}
