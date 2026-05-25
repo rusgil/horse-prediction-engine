@@ -1199,16 +1199,15 @@
         wxHtml = `<span class="pill-wx">${parts.join(' ')}</span>`;
       }
       if (m.cancelled) {
-        el.style.cssText = 'opacity:0.6;pointer-events:none;cursor:default;';
+        el.style.cssText = 'opacity:0.5;filter:grayscale(0.5);pointer-events:none;cursor:default;';
         el.innerHTML = `
-          <span class="pill-name">${escHtml(m.venue)}</span>
-          <span class="pill-sub">${escHtml(m.state || '')}</span>
-          <span style="font-family:'Barlow Condensed',sans-serif;font-size:0.7rem;font-weight:700;letter-spacing:0.07em;text-transform:uppercase;background:rgba(251,146,60,0.15);color:#fb923c;border:1px solid rgba(251,146,60,0.35);border-radius:4px;padding:1px 6px;">Abandoned</span>
+          <span class="pill-name">${escHtml(m.venue || '')}</span>
+          <span class="pill-sub" style="color:#fb923c;font-weight:600;">Abandoned</span>
         `;
       } else {
         el.innerHTML = `
-          <span class="pill-name">${escHtml(m.venue)}</span>
-          <span class="pill-sub">${escHtml(m.state)}${m.rail_position && typeof m.rail_position === 'string' ? ' · ' + escHtml(m.rail_position.substring(0,20)) : ''}</span>
+          <span class="pill-name">${escHtml(m.venue || '')}</span>
+          <span class="pill-sub">${escHtml(m.state || '')}${m.rail_position && typeof m.rail_position === 'string' ? ' · ' + escHtml(m.rail_position.substring(0,20)) : ''}</span>
           ${wxHtml}
           ${statHtml}
           ${confHtml}
@@ -1217,8 +1216,8 @@
       }
       container.appendChild(el);
     });
-    // Background-load win% for all meetings
-    S.meetings.forEach(m => _loadMeetingWinRate(m));
+    // Background-load win% for active meetings only
+    S.meetings.filter(m => !m.cancelled).forEach(m => _loadMeetingWinRate(m));
   }
 
   async function _loadMeetingWinRate(m) {
@@ -1295,8 +1294,8 @@
 
   function renderInfoBar(m) {
     return `
-      <span class="info-chip"><strong>${escHtml(m.venue)}</strong></span>
-      <span class="info-chip">${escHtml(m.state)}</span>
+      <span class="info-chip"><strong>${escHtml(m.venue || '')}</strong></span>
+      ${m.state ? `<span class="info-chip">${escHtml(m.state)}</span>` : ''}
       ${m.rail_position ? `<span class="info-chip">Rail: <strong>${escHtml(m.rail_position)}</strong></span>` : ''}
       <span class="info-chip">${formatDate(S.date)}</span>
     `;
