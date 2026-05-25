@@ -1334,8 +1334,8 @@
       else if (enriched)                                             dotHtml = '<span class="enriched-dot"></span>';
       const topPct = r.top_win_probability != null ? Math.round(r.top_win_probability * 100) : null;
       const placePct = r.top_place_probability != null ? Math.round(r.top_place_probability * 100) : null;
-      const pctHtml = topPct >= 25 ? ` <span class="race-pill-pct">${topPct}%</span>` : '';
-      const placeHtml = placePct >= 25 ? ` <span class="race-pill-place">${placePct}%</span>` : '';
+      const pctHtml = topPct >= 25 ? ` <span class="race-pill-pct">Win: ${topPct}%</span>` : '';
+      const placeHtml = placePct >= 25 ? ` <span class="race-pill-place">Place: ${placePct}%</span>` : '';
       el.innerHTML = `R${r.race_number}${pctHtml}${placeHtml}${dotHtml ? ' ' + dotHtml : ''}`;
       el.addEventListener('click', () => selectRace(r));
       container.appendChild(el);
