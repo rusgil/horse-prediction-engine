@@ -4294,21 +4294,22 @@ async def cron_enrich(
 
 @app.post("/api/admin/reenrich")
 async def admin_reenrich(
+    date: Optional[str] = None,
     x_cron_secret: Optional[str] = Header(None),
 ):
-    """Force re-enrich all of today's races (fire-and-forget)."""
+    """Force re-enrich races for a given date (defaults to today). Fire-and-forget."""
     _check_admin(x_cron_secret)
-    today = _today_aest().isoformat()
+    target = date or _today_aest().isoformat()
 
     async def _do_reenrich():
         client = get_tab_client()
         async with get_session() as session:
             model = await _load_model(session)
-        await _enrich_date(today, client, model, force=True)
-        log.info("[reenrich] Completed re-enrich for %s", today)
+        await _enrich_date(target, client, model, force=True)
+        log.info("[reenrich] Completed re-enrich for %s", target)
 
     asyncio.create_task(_do_reenrich())
-    return {"status": "reenrich_started", "date": today}
+    return {"status": "reenrich_started", "date": target}
 
 
 # ── Serialisation helpers ─────────────────────────────────────────────────────
