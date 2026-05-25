@@ -2945,7 +2945,7 @@
       }
     }
 
-    const ffResultBadge = (pick.first_four_hit === true)
+    const ffResultBadge = !isFinished ? '' : (pick.first_four_hit === true)
       ? `<span class="exotic-sep">·</span><span style="color:var(--green-bright);font-size:0.75rem;">✓ FF Hit</span>`
       : (pick.first_four_hit === false)
         ? `<span class="exotic-sep">·</span><span style="color:#f87171;font-size:0.75rem;">✗ FF Missed</span>`

@@ -980,12 +980,15 @@ async def get_edge_picks():
 
             tri["legs"] = _annotate_legs(tri["legs"])
             tri_positions = {l["position"] for l in tri["legs"] if l["position"] and not l["scratched"]}
-            tri["hit"] = tri_positions == {1, 2, 3}
+            has_data = any((venue_code, race_num, l["horse_name"]) in today_results for l in tri["legs"])
+            if has_data:
+                tri["hit"] = tri_positions == {1, 2, 3}
 
             if tri.get("first_four"):
                 tri["first_four"] = _annotate_legs(tri["first_four"])
                 ff_positions = {l["position"] for l in tri["first_four"] if l["position"] and not l["scratched"]}
-                tri["first_four_hit"] = ff_positions == {1, 2, 3, 4}
+                if has_data:
+                    tri["first_four_hit"] = ff_positions == {1, 2, 3, 4}
 
     return {
         "generated_at": datetime.utcnow().isoformat(),
@@ -1453,11 +1456,7 @@ async def get_edge_trifectas():
     today_str = _today_aest().isoformat()
     finished_picks = [
         p for p in picks
-        if (
-            p["scheduled_time"] and datetime.fromisoformat(p["scheduled_time"].replace("Z", "+00:00")) < now_utc
-        ) or (
-            not p["scheduled_time"] and p["date"] == today_str
-        )
+        if p["scheduled_time"] and datetime.fromisoformat(p["scheduled_time"].replace("Z", "+00:00")) < now_utc
     ]
     if finished_picks:
         finished_venues: dict[str, str] = {}
@@ -1503,12 +1502,16 @@ async def get_edge_trifectas():
 
             p["legs"] = _annotate(p["legs"])
             tri_positions = {l["position"] for l in p["legs"] if l["position"] and not l["scratched"]}
-            p["hit"] = tri_positions == {1, 2, 3}
+            # Only mark hit/miss when we actually received position data; leave None when Punters blocked
+            has_data = any((venue_code, race_num, l["horse_name"]) in today_results for l in p["legs"])
+            if has_data:
+                p["hit"] = tri_positions == {1, 2, 3}
 
             if p.get("first_four"):
                 p["first_four"] = _annotate(p["first_four"])
                 ff_positions = {l["position"] for l in p["first_four"] if l["position"] and not l["scratched"]}
-                p["first_four_hit"] = ff_positions == {1, 2, 3, 4}
+                if has_data:
+                    p["first_four_hit"] = ff_positions == {1, 2, 3, 4}
 
     return {"generated_at": datetime.utcnow().isoformat(), "picks": picks}
 
