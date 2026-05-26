@@ -1904,23 +1904,26 @@ async def get_meeting(race_date: str, venue_code: str):
 
     # ── Step 2: top-up with live Punters data (best-effort) ──────────────────
     # Adds: live status for open/closed races + any races not yet enriched
+    punters_times: dict[str, str] = {}  # race_id → startTime, for DB back-fill
     try:
         client = get_tab_client()
         slug = _meeting_slug(venue_code, race_date)
-        raw_races = await asyncio.wait_for(client.get_meeting_races(slug), timeout=15)
+        raw_races = await asyncio.wait_for(client.get_meeting_races(slug), timeout=25)
         punters_by_num = {r.get("eventNumber"): r for r in raw_races}
         existing_nums = {r["race_number"] for r in race_list}
         for r_num, r in punters_by_num.items():
             race_id = f"{race_date}_{venue_code}_R{r_num}"
+            start_time = r.get("startTime")
+            if start_time:
+                punters_times[race_id] = start_time
             if r_num in existing_nums:
-                # update status and fill any null metadata
                 for item in race_list:
                     if item["race_number"] == r_num:
                         item["status"] = r.get("status")
                         if not item["race_name"]:   item["race_name"]   = r.get("name")
                         if not item["distance"]:    item["distance"]    = r.get("distance")
-                        if not item["scheduled_time"]: item["scheduled_time"] = r.get("startTime")
-                        if not item["time"]:        item["time"]        = r.get("startTime")
+                        if not item["scheduled_time"]: item["scheduled_time"] = start_time
+                        if not item["time"]:        item["time"]        = start_time
                         break
             else:
                 race_list.append({
@@ -1928,16 +1931,16 @@ async def get_meeting(race_date: str, venue_code: str):
                     "race_number": r_num,
                     "race_name": r.get("name"),
                     "distance": r.get("distance"),
-                    "scheduled_time": r.get("startTime"),
-                    "time": r.get("startTime"),
+                    "scheduled_time": start_time,
+                    "time": start_time,
                     "status": r.get("status"),
                     "track_condition": None,
                     "field_size": None,
                     "prize_money": None,
                 })
         race_list.sort(key=lambda r: r["race_number"])
-    except Exception:
-        pass  # DB data is sufficient; Punters down or blocked
+    except Exception as e:
+        log.warning("[get_meeting] Punters fallback failed for %s/%s: %s", venue_code, race_date, e)
 
     race_ids = [r["race_id"] for r in race_list]
 
@@ -1949,6 +1952,22 @@ async def get_meeting(race_date: str, venue_code: str):
             .where(RunnerPredictionRow.model_rank == 1)
         )
         enriched_rows = {row.race_id: row.enriched_at for row in enriched_result}
+
+        # Back-fill scheduled_time into DB for enriched races that were missing it
+        if punters_times:
+            from sqlalchemy import update as sa_update
+            missing_time_ids = [rid for rid in enriched_rows if rid in punters_times]
+            if missing_time_ids:
+                for rid in missing_time_ids:
+                    await session.execute(
+                        sa_update(RunnerPredictionRow)
+                        .where(RunnerPredictionRow.race_id == rid)
+                        .where(RunnerPredictionRow.scheduled_time.is_(None))
+                        .values(scheduled_time=punters_times[rid])
+                    )
+                await session.commit()
+                log.info("[get_meeting] Back-filled scheduled_time for %d races at %s/%s",
+                         len(missing_time_ids), venue_code, race_date)
 
         # Top pick per race
         top_picks = {race_id: None for race_id in race_ids}
