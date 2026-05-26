@@ -1283,8 +1283,9 @@ async def get_edge_yesterday(for_date: Optional[str] = Query(None, alias="date")
     for key in yst_trifecta_map:
         yst_trifecta_map[key].sort(key=lambda r: r.place_model_rank)
 
-    # Use HistoricalResultRow (seeded nightly) — avoids Punters call that fails for expired meetings
+    # Seed any missing results on first load, then query DB
     all_race_ids = list({p.race_id for p in picks} | {pr.race_id for pr in yst_place_rows})
+    await _seed_race_results_on_demand(all_race_ids)
     async with get_session() as session:
         hr_result = await session.execute(
             select(HistoricalResultRow)
