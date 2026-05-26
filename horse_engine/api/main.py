@@ -1653,6 +1653,9 @@ async def get_track_record():
             select(RunnerPredictionRow)
             .where(RunnerPredictionRow.race_id >= cutoff)
             .where(RunnerPredictionRow.win_probability.isnot(None))
+            .where(RunnerPredictionRow.enriched_at.isnot(None))
+            .where(RunnerPredictionRow.scheduled_time.isnot(None))
+            .where(RunnerPredictionRow.enriched_at < RunnerPredictionRow.scheduled_time)
         )
         # Find top-probability horse per race
         best_per_race: dict[str, RunnerPredictionRow] = {}
