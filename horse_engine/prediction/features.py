@@ -152,7 +152,7 @@ DEFAULT_EXOTIC_WEIGHTS_BASE = [
     0.65,  # surface_match_score
     0.10,  # barrier_score — less important in exotics
    -0.10,  # days_since_last_run_norm
-    0.0,   # runs_in_prep_norm — zeroed: inverted signal
+    0.15,  # runs_in_prep_norm — positive for exotics: seasoned prep = consistent 3-runner coverage
     0.15,  # class_change
     0.55,  # trainer_overall_rate
     0.65,  # trainer_track_rate
