@@ -452,7 +452,7 @@ async def _scheduled_pre_race_enrich():
                         await save_race_predictions(
                             session,
                             race_id,
-                            [_prediction_to_db_dict(p, race_id, start_raw) for p in predictions],
+                            [_prediction_to_db_dict(p, race_id, start_raw, race=race) for p in predictions],
                         )
                     log.info("[pre-race] Re-enriched %s (jump %s)", race_id, start_raw)
                     enriched_count += 1
@@ -2276,7 +2276,7 @@ async def enrich_race(race_id: str, force: bool = Query(False)):
             await save_race_predictions(
                 session,
                 race_id,
-                [_prediction_to_db_dict(p, race_id, race.scheduled_time) for p in predictions],
+                [_prediction_to_db_dict(p, race_id, race.scheduled_time, race=race) for p in predictions],
             )
 
         return {
@@ -2327,7 +2327,7 @@ async def enrich_meeting_endpoint(race_date: str, venue_code: str):
                 await save_race_predictions(
                     session,
                     race_id,
-                    [_prediction_to_db_dict(p, race_id, race.scheduled_time) for p in predictions],
+                    [_prediction_to_db_dict(p, race_id, race.scheduled_time, race=race) for p in predictions],
                 )
             results.append({"race_id": race_id, "status": "ok", "runners": len(predictions)})
         except Exception as e:
@@ -3075,7 +3075,7 @@ async def _run_backfill(days: int, x_secret: Optional[str], force: bool = False)
                             async with get_session() as session:
                                 await save_race_predictions(
                                     session, race_id,
-                                    [_prediction_to_db_dict(p, race_id, race.scheduled_time) for p in predictions],
+                                    [_prediction_to_db_dict(p, race_id, race.scheduled_time, race=race) for p in predictions],
                                 )
                             # Seed actual results
                             for sel in event.get("selections", []):
@@ -3166,6 +3166,65 @@ async def backfill_history(x_cron_secret: Optional[str] = Header(None)):
     async with get_session() as session:
         copied = await backfill_prediction_history(session)
     return {"status": "ok", "races_copied": copied}
+
+
+@app.post("/api/admin/history/patch-nulls")
+async def patch_history_nulls(x_cron_secret: Optional[str] = Header(None)):
+    """
+    Patch NULL race-level fields (venue, state, distance, etc.) in existing history rows
+    by joining against RacePredictionRow and enriched_json.
+    """
+    from sqlalchemy import update as sa_update
+    _check_admin(x_cron_secret)
+    patched = 0
+    async with get_session() as session:
+        # Find history rows with missing race-level fields
+        null_rows = (await session.execute(
+            select(RunnerPredictionHistoryRow)
+            .where(RunnerPredictionHistoryRow.venue.is_(None))
+        )).scalars().all()
+
+        if not null_rows:
+            return {"status": "ok", "patched": 0}
+
+        # Load RacePredictionRow lookup
+        race_ids = list({r.race_id for r in null_rows})
+        rp_rows = (await session.execute(
+            select(RacePredictionRow).where(RacePredictionRow.race_id.in_(race_ids))
+        )).scalars().all()
+        rp_map = {r.race_id: r for r in rp_rows}
+
+        for row in null_rows:
+            rp = rp_map.get(row.race_id)
+            updates: dict = {}
+            if rp:
+                updates["venue"] = rp.venue
+                updates["state"] = rp.state
+                updates["race_number"] = rp.race_number
+                updates["race_name"] = rp.race_name
+                updates["distance"] = rp.distance
+                updates["track_condition"] = rp.track_condition
+                updates["field_size"] = rp.field_size
+                updates["prize_money"] = rp.prize_money
+            # Pull class_change from enriched_json
+            if row.class_change is None and row.enriched_json:
+                try:
+                    ej = json.loads(row.enriched_json)
+                    cc = ej.get("class_change")
+                    if cc is not None:
+                        updates["class_change"] = int(cc)
+                except Exception:
+                    pass
+            if updates:
+                await session.execute(
+                    sa_update(RunnerPredictionHistoryRow)
+                    .where(RunnerPredictionHistoryRow.id == row.id)
+                    .values(**updates)
+                )
+                patched += 1
+
+        await session.commit()
+    return {"status": "ok", "patched": patched}
 
 
 # ── Backtest ──────────────────────────────────────────────────────────────────
@@ -5334,7 +5393,7 @@ async def _enrich_date(race_date: str, client, model, force: bool = False, place
                     await save_race_predictions(
                         session,
                         race_id,
-                        [_prediction_to_db_dict(p, race_id, race.scheduled_time) for p in predictions],
+                        [_prediction_to_db_dict(p, race_id, race.scheduled_time, race=race) for p in predictions],
                     )
             summary.append({"venue": venue_code, "status": "ok"})
         except Exception as e:
@@ -5427,8 +5486,8 @@ async def force_restore(
 
 # ── Serialisation helpers ─────────────────────────────────────────────────────
 
-def _prediction_to_db_dict(pred, race_id: str, scheduled_time: str | None = None) -> dict:
-    return {
+def _prediction_to_db_dict(pred, race_id: str, scheduled_time: str | None = None, race=None) -> dict:
+    d = {
         "race_id": race_id,
         "horse_name": pred.runner.horse_name,
         "tab_number": pred.runner.tab_number,
@@ -5449,7 +5508,21 @@ def _prediction_to_db_dict(pred, race_id: str, scheduled_time: str | None = None
         "key_flags": json.dumps(pred.key_flags),
         "enriched_json": pred.enriched.model_dump_json(),
         "scheduled_time": scheduled_time or None,
+        "class_change": int(pred.enriched.class_change) if pred.enriched.class_change is not None else None,
     }
+    if race is not None:
+        d.update({
+            "venue": race.venue,
+            "state": race.state,
+            "race_number": race.race_number,
+            "race_name": race.race_name,
+            "distance": race.distance,
+            "track_condition": race.track_condition,
+            "field_size": len(race.runners),
+            "prize_money": race.prize_money,
+            "rail_position": race.rail_position,
+        })
+    return d
 
 
 def _runner_response(row: RunnerPredictionRow) -> dict:

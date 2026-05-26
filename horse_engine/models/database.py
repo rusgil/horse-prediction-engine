@@ -75,11 +75,22 @@ class RunnerPredictionRow(Base):
     narrative = Column(Text, nullable=True)
     key_flags = Column(Text)             # JSON list of flag strings
     enriched_json = Column(Text)         # full EnrichedRunner JSON
-    place_model_rank = Column(Integer, nullable=True)   # rank by dedicated place model
-    exotic_model_rank = Column(Integer, nullable=True)  # rank by exotic (trifecta) model
+    place_model_rank = Column(Integer, nullable=True)
+    exotic_model_rank = Column(Integer, nullable=True)
     scheduled_time = Column(String, nullable=True)
     enriched_at = Column(DateTime, default=datetime.utcnow)
     cancelled = Column(Boolean, default=False, nullable=True)
+
+    venue = Column(String, nullable=True)
+    state = Column(String, nullable=True)
+    race_number = Column(Integer, nullable=True)
+    race_name = Column(String, nullable=True)
+    distance = Column(Integer, nullable=True)
+    track_condition = Column(String, nullable=True)
+    field_size = Column(Integer, nullable=True)
+    prize_money = Column(Integer, nullable=True)
+    rail_position = Column(String, nullable=True)
+    class_change = Column(Integer, nullable=True)
 
 
 class ModelWeightRow(Base):
@@ -270,6 +281,14 @@ async def init_db() -> None:
         await conn.execute(text(
             "ALTER TABLE runner_predictions ADD COLUMN IF NOT EXISTS scheduled_time TEXT"
         ))
+        for col in [
+            "venue TEXT", "state TEXT", "race_number INTEGER", "race_name TEXT",
+            "distance INTEGER", "track_condition TEXT", "field_size INTEGER",
+            "prize_money INTEGER", "rail_position TEXT", "class_change INTEGER",
+        ]:
+            await conn.execute(text(
+                f"ALTER TABLE runner_predictions ADD COLUMN IF NOT EXISTS {col}"
+            ))
 
 
 async def backfill_prediction_history(session: AsyncSession) -> int:
