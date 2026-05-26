@@ -224,6 +224,21 @@ async def init_db() -> None:
 
 async def save_race_predictions(session: AsyncSession, race_id: str, predictions: list[dict]) -> None:
     from sqlalchemy import delete
+    # Never overwrite a pre-race prediction — it's the only valid snapshot for historical accuracy.
+    # Post-race enrichments (enriched_at > scheduled_time) are safe to overwrite since they're
+    # already excluded from calibration/backtest by the leakage guard.
+    existing = (await session.execute(
+        select(RunnerPredictionRow)
+        .where(RunnerPredictionRow.race_id == race_id)
+        .limit(1)
+    )).scalars().first()
+    if existing and existing.scheduled_time and existing.enriched_at:
+        try:
+            sched = datetime.fromisoformat(existing.scheduled_time.replace("Z", "+00:00")).replace(tzinfo=None)
+            if existing.enriched_at < sched:
+                return  # Pre-race snapshot locked — do not overwrite
+        except (ValueError, TypeError):
+            pass
     await session.execute(delete(RunnerPredictionRow).where(RunnerPredictionRow.race_id == race_id))
     for p in predictions:
         row = RunnerPredictionRow(**p)
