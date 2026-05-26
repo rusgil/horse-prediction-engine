@@ -13,7 +13,7 @@ import asyncio
 import json
 import logging
 import re
-from datetime import date
+from datetime import date, datetime
 from typing import Any
 
 import httpx
@@ -202,6 +202,9 @@ class PuntersClient:
     def __init__(self):
         self._cookie_jar: dict[str, str] = {}
         self._person_cache: dict[str, dict] = {}  # slug -> raw stats dict
+        self._meetings_cache: dict[str, tuple] = {}  # date -> (ts, meetings)
+        self._slug_cache: dict[str, tuple] = {}      # slug -> (ts, meeting_dict)
+        self._meeting_full_cache: dict[str, tuple] = {}  # id -> (ts, full_dict)
 
     # ── Internal helpers ────────────────────────────────────────────────
 
@@ -319,6 +322,9 @@ class PuntersClient:
         Each dict: {id, name, slug, venue, state, rail_position, date}
         """
         d = race_date or _today()
+        cached = self._meetings_cache.get(d)
+        if cached and (datetime.utcnow() - cached[0]).total_seconds() < 600:
+            return cached[1]
         query = _MEETINGS_BY_DATE_QUERY.replace("$DATE", d)
         try:
             data = await self._gql(query)
@@ -347,14 +353,21 @@ class PuntersClient:
             })
 
         log.info("Found %d Australian meetings on %s", len(meetings), d)
+        self._meetings_cache[d] = (datetime.utcnow(), meetings)
         return meetings
 
     async def get_meeting_by_slug(self, slug: str) -> dict | None:
         """Resolve a meeting slug to its numeric ID and basic metadata."""
+        cached = self._slug_cache.get(slug)
+        if cached and (datetime.utcnow() - cached[0]).total_seconds() < 600:
+            return cached[1]
         query = _MEETING_SLUG_QUERY.replace("$SLUG", slug)
         try:
             data = await self._gql(query)
-            return data.get("data", {}).get("meeting")
+            result = data.get("data", {}).get("meeting")
+            if result:
+                self._slug_cache[slug] = (datetime.utcnow(), result)
+            return result
         except Exception as e:
             log.warning("get_meeting_by_slug failed for %s: %s", slug, e)
             return None
@@ -371,10 +384,16 @@ class PuntersClient:
         return full.get("events", [])
 
     async def _fetch_meeting_full(self, meeting_id: str) -> dict | None:
+        cached = self._meeting_full_cache.get(meeting_id)
+        if cached and (datetime.utcnow() - cached[0]).total_seconds() < 300:
+            return cached[1]
         query = _MEETING_FULL_QUERY.replace("$MEETING_ID", f'"{meeting_id}"')
         try:
             data = await self._gql(query)
-            return data.get("data", {}).get("meeting")
+            result = data.get("data", {}).get("meeting")
+            if result:
+                self._meeting_full_cache[meeting_id] = (datetime.utcnow(), result)
+            return result
         except Exception as e:
             log.warning("_fetch_meeting_full failed for id=%s: %s", meeting_id, e)
             return None

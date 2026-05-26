@@ -1,6 +1,11 @@
 """Returns the appropriate racing data client."""
 
+_client = None
+
 
 def get_tab_client():
-    from horse_engine.clients.punters import PuntersClient
-    return PuntersClient()
+    global _client
+    if _client is None:
+        from horse_engine.clients.punters import PuntersClient
+        _client = PuntersClient()
+    return _client
