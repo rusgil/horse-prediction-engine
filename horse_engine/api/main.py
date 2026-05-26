@@ -44,11 +44,14 @@ from horse_engine.models.database import (
     BacktestResultRow,
     BacktestStateRow,
     CalibrationRow,
+    ExoticBacktestRow,
     HistoricalResultRow,
     OddsSnapshotRow,
     RunnerPredictionRow,
+    RunnerPredictionHistoryRow,
     RacePredictionRow,
     init_db,
+    backfill_prediction_history,
     load_model_weights,
     save_model_weights,
     load_place_model_weights,
@@ -1650,7 +1653,7 @@ async def get_track_record():
         hr_map = {(r.race_id, r.horse_name): r for r in hr_result.scalars().all()}
 
         live_result = await session.execute(
-            select(RunnerPredictionRow).where(RunnerPredictionRow.model_rank == 1)
+            select(RunnerPredictionHistoryRow).where(RunnerPredictionHistoryRow.model_rank == 1)
         )
         live_rows = []
         for r in live_result.scalars().all():
@@ -3153,6 +3156,18 @@ async def backfill_status():
     return _backfill
 
 
+@app.post("/api/admin/history/backfill")
+async def backfill_history(x_cron_secret: Optional[str] = Header(None)):
+    """
+    Copy all valid pre-race RunnerPredictionRows into the immutable history table.
+    Safe to re-run — skips races already recorded. Returns count of races copied.
+    """
+    _check_admin(x_cron_secret)
+    async with get_session() as session:
+        copied = await backfill_prediction_history(session)
+    return {"status": "ok", "races_copied": copied}
+
+
 # ── Backtest ──────────────────────────────────────────────────────────────────
 
 @app.get("/api/admin/backtest")
@@ -3953,9 +3968,9 @@ async def performance_summary(days: int = Query(5, ge=1, le=365)):
 
         race_ids = list({r.race_id for r in hr_rows})
         pred_result = await session.execute(
-            select(RunnerPredictionRow)
-            .where(RunnerPredictionRow.race_id.in_(race_ids))
-            .where(RunnerPredictionRow.model_rank == 1)
+            select(RunnerPredictionHistoryRow)
+            .where(RunnerPredictionHistoryRow.race_id.in_(race_ids))
+            .where(RunnerPredictionHistoryRow.model_rank == 1)
         )
         top_picks = {p.race_id: p for p in pred_result.scalars().all()}
 
@@ -4234,9 +4249,9 @@ async def performance_by_venue(days: int = Query(30, ge=1, le=90)):
             return {"days": days, "venues": []}
         race_ids = list({r.race_id for r in hr_rows})
         pred_result = await session.execute(
-            select(RunnerPredictionRow)
-            .where(RunnerPredictionRow.race_id.in_(race_ids))
-            .where(RunnerPredictionRow.model_rank == 1)
+            select(RunnerPredictionHistoryRow)
+            .where(RunnerPredictionHistoryRow.race_id.in_(race_ids))
+            .where(RunnerPredictionHistoryRow.model_rank == 1)
         )
         top_picks = {p.race_id: p for p in pred_result.scalars().all()}
 
@@ -4290,9 +4305,9 @@ async def premium_performance(days: int = Query(30, ge=1, le=365), x_cron_secret
 
         race_ids = list({r.race_id for r in hr_rows})
         pred_result = await session.execute(
-            select(RunnerPredictionRow)
-            .where(RunnerPredictionRow.race_id.in_(race_ids))
-            .where(RunnerPredictionRow.model_rank == 1)
+            select(RunnerPredictionHistoryRow)
+            .where(RunnerPredictionHistoryRow.race_id.in_(race_ids))
+            .where(RunnerPredictionHistoryRow.model_rank == 1)
         )
         top_picks = {p.race_id: p for p in pred_result.scalars().all()}
 
@@ -4355,9 +4370,9 @@ async def premium_performance_public():
 
         race_ids = list({r.race_id for r in hr_rows})
         pred_result = await session.execute(
-            select(RunnerPredictionRow)
-            .where(RunnerPredictionRow.race_id.in_(race_ids))
-            .where(RunnerPredictionRow.model_rank == 1)
+            select(RunnerPredictionHistoryRow)
+            .where(RunnerPredictionHistoryRow.race_id.in_(race_ids))
+            .where(RunnerPredictionHistoryRow.model_rank == 1)
         )
         top_picks = {p.race_id: p for p in pred_result.scalars().all()}
 
@@ -4413,9 +4428,9 @@ async def premium_performance_monthly():
 
         race_ids = list({r.race_id for r in hr_rows})
         pred_result = await session.execute(
-            select(RunnerPredictionRow)
-            .where(RunnerPredictionRow.race_id.in_(race_ids))
-            .where(RunnerPredictionRow.model_rank == 1)
+            select(RunnerPredictionHistoryRow)
+            .where(RunnerPredictionHistoryRow.race_id.in_(race_ids))
+            .where(RunnerPredictionHistoryRow.model_rank == 1)
         )
         top_picks = {p.race_id: p for p in pred_result.scalars().all()}
 
@@ -4476,9 +4491,9 @@ async def premium_performance_daily():
 
         race_ids = list({r.race_id for r in hr_rows})
         pred_result = await session.execute(
-            select(RunnerPredictionRow)
-            .where(RunnerPredictionRow.race_id.in_(race_ids))
-            .where(RunnerPredictionRow.model_rank == 1)
+            select(RunnerPredictionHistoryRow)
+            .where(RunnerPredictionHistoryRow.race_id.in_(race_ids))
+            .where(RunnerPredictionHistoryRow.model_rank == 1)
         )
         top_picks = {p.race_id: p for p in pred_result.scalars().all()}
 

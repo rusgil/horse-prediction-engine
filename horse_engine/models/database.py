@@ -204,6 +204,56 @@ class ExoticBacktestRow(Base):
     results_json = Column(Text)   # full response JSON
 
 
+class RunnerPredictionHistoryRow(Base):
+    """
+    Immutable snapshot of pre-race predictions — written once, never updated or deleted.
+    Performance endpoints (track record, premium stats) read exclusively from this table.
+    Only rows where enriched_at < scheduled_time are written here, ensuring no post-race
+    data contaminates historical accuracy reporting.
+    """
+    __tablename__ = "runner_prediction_history"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    race_id = Column(String, index=True)
+    horse_name = Column(String, index=True)
+    tab_number = Column(Integer)
+    barrier = Column(Integer)
+    jockey = Column(String)
+    trainer = Column(String)
+    weight = Column(Float)
+
+    win_probability = Column(Float)
+    place_probability = Column(Float)
+    model_rank = Column(Integer, index=True)
+    market_rank = Column(Integer)
+    overlay = Column(Float)
+    best_available_odds = Column(Float)
+    value_rating = Column(Float)
+
+    narrative = Column(Text, nullable=True)
+    key_flags = Column(Text)
+    enriched_json = Column(Text)
+    place_model_rank = Column(Integer, nullable=True)
+    exotic_model_rank = Column(Integer, nullable=True)
+    scheduled_time = Column(String, nullable=True)
+    enriched_at = Column(DateTime)          # when the prediction was originally made
+    cancelled = Column(Boolean, default=False, nullable=True)
+
+    venue = Column(String, nullable=True)
+    state = Column(String, nullable=True)
+    race_number = Column(Integer, nullable=True)
+    race_name = Column(String, nullable=True)
+    distance = Column(Integer, nullable=True)
+    track_condition = Column(String, nullable=True)
+    field_size = Column(Integer, nullable=True)
+    prize_money = Column(Integer, nullable=True)
+    rail_position = Column(String, nullable=True)
+    class_change = Column(Integer, nullable=True)
+    model_score = Column(Float, nullable=True)
+
+    recorded_at = Column(DateTime, default=datetime.utcnow, index=True)  # when history was written
+
+
 async def init_db() -> None:
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
@@ -222,11 +272,89 @@ async def init_db() -> None:
         ))
 
 
+async def backfill_prediction_history(session: AsyncSession) -> int:
+    """
+    One-time back-fill: copy all pre-race RunnerPredictionRows into history.
+    Safe to call repeatedly — skips races already in history.
+    Returns number of races copied.
+    """
+    from sqlalchemy import func
+    already = (await session.execute(
+        select(func.distinct(RunnerPredictionHistoryRow.race_id))
+    )).scalars().all()
+    already_set = set(already)
+
+    result = await session.execute(
+        select(RunnerPredictionRow)
+        .where(RunnerPredictionRow.enriched_at.isnot(None))
+        .where(RunnerPredictionRow.scheduled_time.isnot(None))
+    )
+    rows = result.scalars().all()
+
+    copied = 0
+    seen_races: set[str] = set()
+    race_rows: dict[str, list] = {}
+    for row in rows:
+        try:
+            sched = datetime.fromisoformat(row.scheduled_time.replace("Z", "+00:00")).replace(tzinfo=None)
+            if row.enriched_at < sched and row.race_id not in already_set:
+                race_rows.setdefault(row.race_id, []).append(row)
+        except (ValueError, TypeError):
+            continue
+
+    for race_id, rrows in race_rows.items():
+        for row in rrows:
+            session.add(RunnerPredictionHistoryRow(
+                race_id=row.race_id,
+                horse_name=row.horse_name,
+                tab_number=row.tab_number,
+                barrier=row.barrier,
+                jockey=row.jockey,
+                trainer=row.trainer,
+                weight=row.weight,
+                win_probability=row.win_probability,
+                place_probability=row.place_probability,
+                model_rank=row.model_rank,
+                market_rank=row.market_rank,
+                overlay=row.overlay,
+                best_available_odds=row.best_available_odds,
+                value_rating=row.value_rating,
+                narrative=row.narrative,
+                key_flags=row.key_flags,
+                enriched_json=row.enriched_json,
+                place_model_rank=row.place_model_rank,
+                exotic_model_rank=row.exotic_model_rank,
+                scheduled_time=row.scheduled_time,
+                enriched_at=row.enriched_at,
+                cancelled=row.cancelled,
+                venue=getattr(row, "venue", None),
+                state=getattr(row, "state", None),
+                race_number=getattr(row, "race_number", None),
+                race_name=getattr(row, "race_name", None),
+                distance=getattr(row, "distance", None),
+                track_condition=getattr(row, "track_condition", None),
+                field_size=getattr(row, "field_size", None),
+                prize_money=getattr(row, "prize_money", None),
+                rail_position=getattr(row, "rail_position", None),
+                class_change=getattr(row, "class_change", None),
+                model_score=getattr(row, "model_score", None),
+                recorded_at=datetime.utcnow(),
+            ))
+        copied += 1
+    await session.commit()
+    return copied
+
+
 async def save_race_predictions(session: AsyncSession, race_id: str, predictions: list[dict]) -> None:
-    from sqlalchemy import delete
-    # Never overwrite a pre-race prediction — it's the only valid snapshot for historical accuracy.
-    # Post-race enrichments (enriched_at > scheduled_time) are safe to overwrite since they're
-    # already excluded from calibration/backtest by the leakage guard.
+    from sqlalchemy import delete, func
+
+    # Check if an immutable history snapshot already exists for this race
+    history_exists = (await session.execute(
+        select(func.count()).select_from(RunnerPredictionHistoryRow)
+        .where(RunnerPredictionHistoryRow.race_id == race_id)
+    )).scalar() or 0
+
+    # Check if there's a pre-race prediction in the mutable table
     existing = (await session.execute(
         select(RunnerPredictionRow)
         .where(RunnerPredictionRow.race_id == race_id)
@@ -236,14 +364,58 @@ async def save_race_predictions(session: AsyncSession, race_id: str, predictions
         try:
             sched = datetime.fromisoformat(existing.scheduled_time.replace("Z", "+00:00")).replace(tzinfo=None)
             if existing.enriched_at < sched:
-                return  # Pre-race snapshot locked — do not overwrite
+                return  # Pre-race snapshot in mutable table — do not overwrite
         except (ValueError, TypeError):
             pass
+
+    # Write to mutable table
     await session.execute(delete(RunnerPredictionRow).where(RunnerPredictionRow.race_id == race_id))
+    rows = []
     for p in predictions:
         row = RunnerPredictionRow(**p)
         session.add(row)
+        rows.append(row)
     await session.commit()
+
+    # Push to immutable history if this is a pre-race prediction and not already recorded
+    if not history_exists and predictions:
+        first = predictions[0]
+        scheduled_time = first.get("scheduled_time")
+        enriched_at = first.get("enriched_at") or datetime.utcnow()
+        is_pre_race = False
+        if scheduled_time and enriched_at:
+            try:
+                sched = datetime.fromisoformat(str(scheduled_time).replace("Z", "+00:00")).replace(tzinfo=None)
+                ea = enriched_at if isinstance(enriched_at, datetime) else datetime.fromisoformat(str(enriched_at))
+                is_pre_race = ea < sched
+            except (ValueError, TypeError):
+                pass
+        if is_pre_race:
+            for p in predictions:
+                session.add(RunnerPredictionHistoryRow(
+                    race_id=p.get("race_id"), horse_name=p.get("horse_name"),
+                    tab_number=p.get("tab_number"), barrier=p.get("barrier"),
+                    jockey=p.get("jockey"), trainer=p.get("trainer"), weight=p.get("weight"),
+                    win_probability=p.get("win_probability"),
+                    place_probability=p.get("place_probability"),
+                    model_rank=p.get("model_rank"), market_rank=p.get("market_rank"),
+                    overlay=p.get("overlay"), best_available_odds=p.get("best_available_odds"),
+                    value_rating=p.get("value_rating"),
+                    narrative=p.get("narrative"), key_flags=p.get("key_flags"),
+                    enriched_json=p.get("enriched_json"),
+                    place_model_rank=p.get("place_model_rank"),
+                    exotic_model_rank=p.get("exotic_model_rank"),
+                    scheduled_time=p.get("scheduled_time"),
+                    enriched_at=enriched_at, cancelled=p.get("cancelled"),
+                    venue=p.get("venue"), state=p.get("state"),
+                    race_number=p.get("race_number"), race_name=p.get("race_name"),
+                    distance=p.get("distance"), track_condition=p.get("track_condition"),
+                    field_size=p.get("field_size"), prize_money=p.get("prize_money"),
+                    rail_position=p.get("rail_position"), class_change=p.get("class_change"),
+                    model_score=p.get("model_score"),
+                    recorded_at=datetime.utcnow(),
+                ))
+            await session.commit()
 
 
 async def load_race_predictions(session: AsyncSession, race_id: str) -> list[RunnerPredictionRow]:
