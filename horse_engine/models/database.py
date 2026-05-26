@@ -373,19 +373,18 @@ async def save_race_predictions(session: AsyncSession, race_id: str, predictions
         .where(RunnerPredictionHistoryRow.race_id == race_id)
     )).scalar() or 0
 
-    # Check if there's a pre-race prediction in the mutable table
-    existing = (await session.execute(
-        select(RunnerPredictionRow)
-        .where(RunnerPredictionRow.race_id == race_id)
-        .limit(1)
-    )).scalars().first()
-    if existing and existing.scheduled_time and existing.enriched_at:
-        try:
-            sched = datetime.fromisoformat(existing.scheduled_time.replace("Z", "+00:00")).replace(tzinfo=None)
-            if existing.enriched_at < sched:
-                return  # Pre-race snapshot in mutable table — do not overwrite
-        except (ValueError, TypeError):
-            pass
+    # Block post-race writes to the mutable table — the race has already run.
+    # Pre-race updates (scratches, odds changes) are always allowed.
+    # History table is separately protected by history_exists check below.
+    if predictions:
+        scheduled_time = predictions[0].get("scheduled_time")
+        if scheduled_time:
+            try:
+                sched = datetime.fromisoformat(str(scheduled_time).replace("Z", "+00:00")).replace(tzinfo=None)
+                if datetime.utcnow() > sched:
+                    return  # Race has started — do not overwrite pre-race snapshot
+            except (ValueError, TypeError):
+                pass
 
     # Write to mutable table
     await session.execute(delete(RunnerPredictionRow).where(RunnerPredictionRow.race_id == race_id))
