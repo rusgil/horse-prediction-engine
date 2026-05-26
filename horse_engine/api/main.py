@@ -2282,7 +2282,7 @@ async def retrain_model(
 
     async def _do_retrain():
         m = HorseModel()
-        s = m.train(training_data, sample_weights=sample_weights)
+        s = await asyncio.to_thread(m.train, training_data, sample_weights=sample_weights)
         async with get_session() as sess:
             await save_model_weights(sess, s["weights"])
         log.info("[retrain] complete — %d examples, accuracy=%.3f", len(training_data), s.get("accuracy", 0))
@@ -2372,7 +2372,7 @@ async def retrain_place_model(
 
     async def _do_retrain():
         m = PlaceModel()
-        s = m.train(training_data, sample_weights=place_sample_weights)
+        s = await asyncio.to_thread(m.train, training_data, sample_weights=place_sample_weights)
         async with get_session() as sess:
             await save_place_model_weights(sess, s["weights"])
         log.info("[place-retrain] complete — %d examples, accuracy=%.3f", len(training_data), s.get("accuracy", 0))
@@ -4216,7 +4216,7 @@ async def _run_calibration_sweep(holdout_days: int = 14) -> dict:
             continue
 
         model = HorseModel()
-        stats = model.train(training_data, sample_weights=cal_sample_weights)
+        stats = await asyncio.to_thread(model.train, training_data, sample_weights=cal_sample_weights)
 
         # Score holdout races with candidate model
         win_picks = place_picks = value_bets = total_races = 0
@@ -4502,7 +4502,7 @@ async def _run_place_calibration_sweep(holdout_days: int = 14) -> dict:
             continue
 
         model = PlaceModel()
-        stats = model.train(training_data, sample_weights=sw_list)
+        stats = await asyncio.to_thread(model.train, training_data, sample_weights=sw_list)
 
         total_races = place_hits = 0
         for race_id, runners in holdout_races.items():
@@ -4701,7 +4701,7 @@ async def _run_exotic_calibration_sweep(holdout_days: int = 14) -> dict:
 
         # Time-weight races: more recent = higher weight (via tri_lambda scaling)
         model = ExoticModel()
-        stats = model.train_exotic(race_groups)
+        stats = await asyncio.to_thread(model.train_exotic, race_groups)
 
         # Score holdout: trifecta box hit rate
         tri_hits = tri_races = ff_hits = ff_races = 0
