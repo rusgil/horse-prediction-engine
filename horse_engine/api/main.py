@@ -796,6 +796,9 @@ def _parse_race_id(race_id: str) -> tuple[str, str, int | None]:
 _edge_times_cache: dict[str, tuple[datetime, dict[int, str]]] = {}
 _edge_odds_cache: dict[str, tuple[datetime, dict[str, float]]] = {}  # race_id → {horse_name: flucs_win}
 
+# Cache full list_meetings response for 10 min (weather + Punters calls are expensive)
+_list_meetings_cache: dict[str, tuple[datetime, dict]] = {}  # date → (ts, response)
+
 async def _fetch_live_odds(client, race_id: str) -> dict[str, float]:
     """Return {horse_name: flucs_win_odds} for a race. Cached 5 min."""
     cached = _edge_odds_cache.get(race_id)
@@ -1708,6 +1711,9 @@ async def health():
 async def list_meetings(race_date: str = _today()):
     """List all Australian thoroughbred meetings for the given date."""
     _validate_date(race_date)
+    cached = _list_meetings_cache.get(race_date)
+    if cached and (datetime.utcnow() - cached[0]).total_seconds() < 600:
+        return cached[1]
     client = get_tab_client()
     try:
         meetings = await client.get_meetings(race_date)
@@ -1840,7 +1846,9 @@ async def list_meetings(race_date: str = _today()):
     for it, w in zip(live_items, weathers):
         it["weather"] = w if isinstance(w, dict) else None
 
-    return {"date": race_date, "meetings": items}
+    result = {"date": race_date, "meetings": items}
+    _list_meetings_cache[race_date] = (datetime.utcnow(), result)
+    return result
 
 
 @app.get("/api/meetings/{race_date}/{venue_code}")
