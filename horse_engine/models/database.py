@@ -261,6 +261,7 @@ class RunnerPredictionHistoryRow(Base):
     rail_position = Column(String, nullable=True)
     class_change = Column(Integer, nullable=True)
     model_score = Column(Float, nullable=True)
+    source = Column(String, default="live", nullable=True)  # "live" | "validation"
 
     recorded_at = Column(DateTime, default=datetime.utcnow, index=True)  # when history was written
 
@@ -289,6 +290,9 @@ async def init_db() -> None:
             await conn.execute(text(
                 f"ALTER TABLE runner_predictions ADD COLUMN IF NOT EXISTS {col}"
             ))
+        await conn.execute(text(
+            "ALTER TABLE runner_prediction_history ADD COLUMN IF NOT EXISTS source TEXT DEFAULT 'live'"
+        ))
 
 
 async def backfill_prediction_history(session: AsyncSession) -> int:
@@ -357,6 +361,7 @@ async def backfill_prediction_history(session: AsyncSession) -> int:
                 rail_position=getattr(row, "rail_position", None),
                 class_change=getattr(row, "class_change", None),
                 model_score=getattr(row, "model_score", None),
+                source="live",
                 recorded_at=datetime.utcnow(),
             ))
         copied += 1
@@ -431,6 +436,7 @@ async def save_race_predictions(session: AsyncSession, race_id: str, predictions
                     field_size=p.get("field_size"), prize_money=p.get("prize_money"),
                     rail_position=p.get("rail_position"), class_change=p.get("class_change"),
                     model_score=p.get("model_score"),
+                    source="live",
                     recorded_at=datetime.utcnow(),
                 ))
             await session.commit()

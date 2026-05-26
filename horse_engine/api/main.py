@@ -1641,28 +1641,23 @@ async def get_edge_trifectas():
 
 @app.get("/api/track-record")
 async def get_track_record():
-    """Public endpoint — tier win rates derived from live + backtest data."""
+    """Public endpoint — tier win rates from history table (live pre-race + validation backtest)."""
     async with get_session() as session:
-        bt_result = await session.execute(
-            select(BacktestResultRow.win_probability, BacktestResultRow.winner)
-            .where(BacktestResultRow.source == "backtest")
-            .where(BacktestResultRow.winner.isnot(None))
-        )
-        bt_rows = [{"win_prob": r.win_probability, "winner": bool(r.winner)} for r in bt_result.all()]
-
         hr_result = await session.execute(select(HistoricalResultRow))
         hr_map = {(r.race_id, r.horse_name): r for r in hr_result.scalars().all()}
 
-        live_result = await session.execute(
+        hist_result = await session.execute(
             select(RunnerPredictionHistoryRow).where(RunnerPredictionHistoryRow.model_rank == 1)
         )
-        live_rows = []
-        for r in live_result.scalars().all():
+        all_rows = []
+        for r in hist_result.scalars().all():
             hr = hr_map.get((r.race_id, r.horse_name))
             if hr:
-                live_rows.append({"win_prob": r.win_probability, "winner": bool(hr.winner)})
-
-    unified = bt_rows + live_rows
+                all_rows.append({
+                    "win_prob": r.win_probability,
+                    "winner": bool(hr.winner),
+                    "source": r.source or "live",
+                })
 
     tiers = [
         {"badge": "hot",      "min": 0.45, "max": 1.0,  "conf_min": 45, "conf_max": None},
@@ -1671,17 +1666,24 @@ async def get_track_record():
     ]
     output = []
     for tier in tiers:
-        picks = [r for r in unified if tier["min"] <= r["win_prob"] < tier["max"]]
+        picks = [r for r in all_rows if tier["min"] <= r["win_prob"] < tier["max"]]
         wins  = [r for r in picks if r["winner"]]
+        live_picks = [r for r in picks if r["source"] == "live"]
         win_pct = round(len(wins) / len(picks) * 100) if picks else 0
         output.append({
-            "badge":    tier["badge"],
-            "win_pct":  win_pct,
-            "races":    len(picks),
-            "conf_min": tier["conf_min"],
-            "conf_max": tier["conf_max"],
+            "badge":      tier["badge"],
+            "win_pct":    win_pct,
+            "races":      len(picks),
+            "live_races": len(live_picks),
+            "conf_min":   tier["conf_min"],
+            "conf_max":   tier["conf_max"],
         })
-    return {"tiers": output, "generated_at": datetime.utcnow().isoformat()}
+    live_total = sum(r["live_races"] for r in output)
+    return {
+        "tiers": output,
+        "live_races_total": live_total,
+        "generated_at": datetime.utcnow().isoformat(),
+    }
 
 
 # ── Frontend ─────────────────────────────────────────────────────────────────
@@ -3235,6 +3237,191 @@ async def patch_history_nulls(x_cron_secret: Optional[str] = Header(None)):
 
         await session.commit()
     return {"status": "ok", "patched": patched}
+
+
+@app.post("/api/admin/history/validation-backtest")
+async def run_validation_backtest(
+    train_days_start: int = Query(270, ge=60, le=730),
+    train_days_end: int = Query(30, ge=7, le=365),
+    x_cron_secret: Optional[str] = Header(None),
+):
+    """
+    Out-of-sample validation backtest:
+    1. Train a fresh model on races from train_days_start to train_days_end days ago
+    2. Score the most recent train_days_end days through that model
+    3. Write results to runner_prediction_history with source='validation'
+
+    Races already in history (live or validation) are skipped.
+    """
+    _check_admin(x_cron_secret)
+
+    today = _today_aest()
+    train_start = (today - timedelta(days=train_days_start)).isoformat()
+    train_end   = (today - timedelta(days=train_days_end)).isoformat()
+    test_start  = (today - timedelta(days=train_days_end)).isoformat()
+    test_end    = today.isoformat()
+
+    # ── 1. Build training data ────────────────────────────────────────────────
+    async with get_session() as session:
+        hr_result = await session.execute(
+            select(HistoricalResultRow)
+            .where(HistoricalResultRow.race_id >= train_start)
+            .where(HistoricalResultRow.race_id < train_end)
+        )
+        hr_rows = hr_result.scalars().all()
+
+        pred_result = await session.execute(
+            select(RunnerPredictionRow)
+            .where(RunnerPredictionRow.race_id >= train_start)
+            .where(RunnerPredictionRow.race_id < train_end)
+            .where(RunnerPredictionRow.enriched_json.isnot(None))
+        )
+        pred_rows = pred_result.scalars().all()
+
+    pred_by_key = {(p.race_id, p.horse_name): p for p in pred_rows}
+    hr_by_key   = {(r.race_id, r.horse_name): r for r in hr_rows}
+
+    win_training: list[tuple[list[float], int]] = []
+    place_training: list[tuple[list[float], int]] = []
+
+    for (race_id, horse_name), hr in hr_by_key.items():
+        pred = pred_by_key.get((race_id, horse_name))
+        if not pred or not pred.enriched_json:
+            continue
+        try:
+            er = EnrichedRunner(**json.loads(pred.enriched_json))
+            fv = build_feature_vector(er)
+            win_training.append((fv, 1 if hr.winner else 0))
+            place_training.append((fv, 1 if hr.placed else 0))
+        except Exception:
+            continue
+
+    if len(win_training) < 100:
+        return {"status": "error", "detail": f"Insufficient training data: {len(win_training)} examples"}
+
+    # ── 2. Train fresh models ─────────────────────────────────────────────────
+    loop = asyncio.get_event_loop()
+
+    win_model = HorseModel()
+    place_model_v = PlaceModel()
+
+    await loop.run_in_executor(None, win_model.train, win_training)
+    await loop.run_in_executor(None, place_model_v.train, place_training)
+
+    log.info("[validation-bt] Trained on %d win / %d place examples (%s to %s)",
+             len(win_training), len(place_training), train_start, train_end)
+
+    # ── 3. Load test-set predictions ─────────────────────────────────────────
+    async with get_session() as session:
+        test_pred_result = await session.execute(
+            select(RunnerPredictionRow)
+            .where(RunnerPredictionRow.race_id >= test_start)
+            .where(RunnerPredictionRow.race_id < test_end)
+            .where(RunnerPredictionRow.enriched_json.isnot(None))
+        )
+        test_rows = test_pred_result.scalars().all()
+
+        # Races already in history (skip)
+        already_result = await session.execute(
+            select(RunnerPredictionHistoryRow.race_id)
+            .where(RunnerPredictionHistoryRow.race_id >= test_start)
+            .where(RunnerPredictionHistoryRow.race_id < test_end)
+            .distinct()
+        )
+        already_set = set(already_result.scalars().all())
+
+        # Race-level metadata from RacePredictionRow
+        rp_result = await session.execute(
+            select(RacePredictionRow)
+            .where(RacePredictionRow.race_id >= test_start)
+            .where(RacePredictionRow.race_id < test_end)
+        )
+        rp_map = {r.race_id: r for r in rp_result.scalars().all()}
+
+    # Group by race
+    races: dict[str, list] = {}
+    for row in test_rows:
+        if row.race_id in already_set:
+            continue
+        races.setdefault(row.race_id, []).append(row)
+
+    # ── 4. Score and write to history ─────────────────────────────────────────
+    written_races = 0
+    written_runners = 0
+    async with get_session() as session:
+        for race_id, runners in races.items():
+            scored = []
+            for row in runners:
+                try:
+                    er = EnrichedRunner(**json.loads(row.enriched_json))
+                    fv = build_feature_vector(er)
+                    win_prob  = float(win_model.predict_proba([fv])[0])
+                    place_prob = float(place_model_v.predict_proba([fv])[0])
+                    scored.append((row, fv, win_prob, place_prob))
+                except Exception:
+                    continue
+
+            if not scored:
+                continue
+
+            # Rank by win prob
+            scored.sort(key=lambda x: x[2], reverse=True)
+            place_sorted = sorted(scored, key=lambda x: x[3], reverse=True)
+            place_rank_map = {row.horse_name: i + 1 for i, (row, _, _, _) in enumerate(place_sorted)}
+
+            rp = rp_map.get(race_id)
+            for rank, (row, fv, win_prob, place_prob) in enumerate(scored, 1):
+                odds = row.best_available_odds or 0.0
+                market_implied = (1.0 / odds) if odds > 1.0 else 0.0
+                overlay = round(win_prob - market_implied, 4)
+                vr = _value_rating(win_prob, odds, overlay)
+
+                session.add(RunnerPredictionHistoryRow(
+                    race_id=race_id,
+                    horse_name=row.horse_name,
+                    tab_number=row.tab_number,
+                    barrier=row.barrier,
+                    jockey=row.jockey,
+                    trainer=row.trainer,
+                    weight=row.weight,
+                    win_probability=round(win_prob, 4),
+                    place_probability=round(place_prob, 4),
+                    model_rank=rank,
+                    place_model_rank=place_rank_map.get(row.horse_name),
+                    market_rank=row.market_rank,
+                    overlay=overlay,
+                    best_available_odds=odds or None,
+                    value_rating=round(vr, 4),
+                    key_flags=row.key_flags,
+                    enriched_json=row.enriched_json,
+                    scheduled_time=row.scheduled_time,
+                    enriched_at=row.enriched_at or datetime.utcnow(),
+                    cancelled=row.cancelled,
+                    venue=row.venue or (rp.venue if rp else None),
+                    state=row.state or (rp.state if rp else None),
+                    race_number=row.race_number or (rp.race_number if rp else None),
+                    race_name=row.race_name or (rp.race_name if rp else None),
+                    distance=row.distance or (rp.distance if rp else None),
+                    track_condition=row.track_condition or (rp.track_condition if rp else None),
+                    field_size=row.field_size or (rp.field_size if rp else None),
+                    prize_money=row.prize_money or (rp.prize_money if rp else None),
+                    source="validation",
+                    recorded_at=datetime.utcnow(),
+                ))
+                written_runners += 1
+
+            await session.commit()
+            written_races += 1
+
+    log.info("[validation-bt] Written %d races / %d runners to history", written_races, written_runners)
+    return {
+        "status": "ok",
+        "train_window": {"start": train_start, "end": train_end, "examples": len(win_training)},
+        "test_window":  {"start": test_start, "end": test_end},
+        "written_races": written_races,
+        "written_runners": written_runners,
+        "skipped_already_in_history": len(already_set),
+    }
 
 
 # ── Backtest ──────────────────────────────────────────────────────────────────
