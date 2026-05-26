@@ -166,6 +166,7 @@ async def _scheduled_odds_snapshot():
                                 "start_time": start_time,
                             }
 
+                    snapped_race_ids: set[str] = set()
                     async with get_session() as session:
                         for pick in slug_picks:
                             hd = horse_data.get(pick.horse_name)
@@ -187,12 +188,107 @@ async def _scheduled_odds_snapshot():
                                 place_odds=hd["place"],
                                 source=hd["source"],
                             ))
+                            snapped_race_ids.add(pick.race_id)
                         await session.commit()
                     log.info("[odds-snapshot] Snapped %d runners for %s", len(horse_data), slug)
+                    # Recompute steam features from full snapshot history for these races
+                    asyncio.create_task(_update_steam_features(list(snapped_race_ids)))
                 except Exception as e:
                     log.warning("[odds-snapshot] Failed for %s: %s", slug, e)
     except Exception as e:
         log.exception("[odds-snapshot] Snapshot failed: %s", e)
+
+
+def _compute_steam_from_snapshots(snaps: list) -> dict:
+    """
+    Compute steam/drift features from a horse's snapshot history.
+    snaps: list of OddsSnapshotRow, any order, pre-race only (minutes_to_jump > 0).
+    Returns dict matching EnrichedRunner steam field names.
+    """
+    pre = [s for s in snaps if s.minutes_to_jump is not None and s.minutes_to_jump > 0 and s.win_odds]
+    if len(pre) < 2:
+        return {"steam_60": 0.0, "steam_30": 0.0, "drift_flag": 0.0, "odds_velocity": 0.0, "late_money": 0.0}
+
+    pre.sort(key=lambda s: s.minutes_to_jump)  # ascending: smallest mtj = closest to jump
+
+    def _closest(target_mtj: int):
+        return min(pre, key=lambda s: abs(s.minutes_to_jump - target_mtj)).win_odds
+
+    odds_t5  = _closest(5)
+    odds_t15 = _closest(15) if any(s.minutes_to_jump >= 10 for s in pre) else None
+    odds_t30 = _closest(30) if any(s.minutes_to_jump >= 25 for s in pre) else None
+    odds_t60 = _closest(60) if any(s.minutes_to_jump >= 50 for s in pre) else None
+    odds_open = pre[-1].win_odds  # highest minutes_to_jump = earliest/opening snapshot
+
+    steam_60 = round(odds_t60 - odds_t5, 2) if odds_t60 else 0.0   # +ve = shortened
+    steam_30 = round(odds_t30 - odds_t5, 2) if odds_t30 else 0.0
+    late_money = round(odds_t15 - odds_t5, 2) if odds_t15 else 0.0
+    drift_flag = 1.0 if (odds_t5 - odds_open) > 1.5 else 0.0       # drifted out $1.50+
+
+    span = pre[-1].minutes_to_jump - pre[0].minutes_to_jump
+    if span > 0 and odds_t60:
+        odds_velocity = round((odds_t60 - odds_t5) / span, 4)
+    else:
+        odds_velocity = 0.0
+
+    return {
+        "steam_60": steam_60,
+        "steam_30": steam_30,
+        "drift_flag": drift_flag,
+        "odds_velocity": odds_velocity,
+        "late_money": late_money,
+    }
+
+
+async def _update_steam_features(race_ids: list[str]) -> None:
+    """
+    For each race_id, load all snapshots, compute steam features per horse,
+    and patch the steam fields into enriched_json on runner_predictions rows.
+    Called after each odds snapshot run.
+    """
+    if not race_ids:
+        return
+    from sqlalchemy import update as sa_update
+
+    async with get_session() as session:
+        snap_result = await session.execute(
+            select(OddsSnapshotRow)
+            .where(OddsSnapshotRow.race_id.in_(race_ids))
+        )
+        all_snaps = snap_result.scalars().all()
+
+        pred_result = await session.execute(
+            select(RunnerPredictionRow)
+            .where(RunnerPredictionRow.race_id.in_(race_ids))
+            .where(RunnerPredictionRow.enriched_json.isnot(None))
+        )
+        pred_rows = pred_result.scalars().all()
+
+    # Group snapshots by (race_id, horse_name)
+    snap_map: dict[tuple, list] = {}
+    for s in all_snaps:
+        snap_map.setdefault((s.race_id, s.horse_name), []).append(s)
+
+    updated = 0
+    async with get_session() as session:
+        for pred in pred_rows:
+            key = (pred.race_id, pred.horse_name)
+            horse_snaps = snap_map.get(key, [])
+            if not horse_snaps:
+                continue
+            steam = _compute_steam_from_snapshots(horse_snaps)
+            try:
+                er_data = json.loads(pred.enriched_json)
+                er_data.update(steam)
+                pred.enriched_json = json.dumps(er_data)
+                session.add(pred)
+                updated += 1
+            except Exception:
+                continue
+        await session.commit()
+
+    if updated:
+        log.info("[steam-update] Updated steam features for %d runners across %d races", updated, len(race_ids))
 
 
 async def _cancel_abandoned_meetings(client, today: str) -> None:
