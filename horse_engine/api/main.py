@@ -2009,6 +2009,15 @@ async def get_meeting(race_date: str, venue_code: str):
         for r in hr_placed.scalars().all():
             placers.setdefault(r.race_id, set()).add(r.horse_name)
 
+    # On-demand result seeding: if any race shows "resulted" in Punters but has no DB result yet,
+    # trigger seeding in the background so the next page load will show won/lost labels.
+    resulted_race_ids = {r["race_id"] for r in race_list if r.get("status") == "resulted"}
+    unseeded = resulted_race_ids - set(winners.keys())
+    if unseeded:
+        log.info("[get_meeting] Triggering on-demand result seed for %s (%d unseeded)", race_date, len(unseeded))
+        asyncio.create_task(_seed_results_for_date(race_date))
+
+    async with get_session() as session:
         # Top place probability per race
         tp_place_result = await session.execute(
             select(RunnerPredictionRow)
