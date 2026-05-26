@@ -1647,10 +1647,17 @@ async def get_track_record():
         hr_map = {(r.race_id, r.horse_name): r for r in hr_result.scalars().all()}
 
         hist_result = await session.execute(
-            select(RunnerPredictionHistoryRow).where(RunnerPredictionHistoryRow.model_rank == 1)
+            select(RunnerPredictionHistoryRow)
         )
-        all_rows = []
+        # Find top-probability horse per race (model_rank may be NULL on backfilled rows)
+        best_per_race: dict[str, RunnerPredictionHistoryRow] = {}
         for r in hist_result.scalars().all():
+            existing = best_per_race.get(r.race_id)
+            if existing is None or (r.win_probability or 0) > (existing.win_probability or 0):
+                best_per_race[r.race_id] = r
+
+        all_rows = []
+        for r in best_per_race.values():
             hr = hr_map.get((r.race_id, r.horse_name))
             if hr:
                 all_rows.append({
