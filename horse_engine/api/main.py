@@ -675,7 +675,7 @@ async def lifespan(app: FastAPI):
     scheduler.add_job(_scheduled_exotic_retrain, CronTrigger(hour=3, minute=0, timezone="Australia/Sydney"))
     scheduler.add_job(
         _scheduled_odds_snapshot,
-        CronTrigger(hour="9-18", minute="0,15,30,45", timezone="Australia/Sydney")
+        CronTrigger(hour="9-20", minute="0,15,30,45", timezone="Australia/Sydney")
     )
     scheduler.start()
     log.info("[scheduler] Cron jobs scheduled: 6am/10am/1pm enrich, 3pm/5pm/11pm seed results, 2am calibration, 3am exotic retrain, every 15min odds snapshots 9am-6pm")

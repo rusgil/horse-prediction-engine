@@ -63,12 +63,12 @@ NUM_FEATURES = len(FEATURE_NAMES)
 DEFAULT_WEIGHTS_BASE = [
     0.8,   # form_score
     0.6,   # win_rate_career
-    0.7,   # win_rate_distance
+    0.3,   # win_rate_distance — reduced: noisy below 3 starts (ablation +6.4%)
     0.5,   # win_rate_track
     0.4,   # surface_match_score
     0.3,   # barrier_score
    -0.2,   # days_since_last_run_norm
-    0.2,   # runs_in_prep_norm
+    0.0,   # runs_in_prep_norm — zeroed: trained sign was inverted vs domain knowledge
     0.3,   # class_change
     0.5,   # trainer_overall_rate
     0.6,   # trainer_track_rate
@@ -109,12 +109,12 @@ DEFAULT_WEIGHTS = DEFAULT_WEIGHTS_BASE + (DEFAULT_WEIGHTS_ODDS_MOVEMENT if USE_O
 DEFAULT_PLACE_WEIGHTS_BASE = [
     0.7,   # form_score — consistency signal
     0.3,   # win_rate_career — less relevant; place rate matters more
-    0.6,   # win_rate_distance
+    0.3,   # win_rate_distance — reduced: noisy below 3 starts
     0.5,   # win_rate_track
     0.6,   # surface_match_score — condition consistency
     0.15,  # barrier_score — less important for placing than winning
    -0.15,  # days_since_last_run_norm
-    0.25,  # runs_in_prep_norm
+    0.0,   # runs_in_prep_norm — zeroed: inverted signal
     0.2,   # class_change
     0.5,   # trainer_overall_rate
     0.6,   # trainer_track_rate
@@ -147,12 +147,12 @@ DEFAULT_PLACE_WEIGHTS = DEFAULT_PLACE_WEIGHTS_BASE + (DEFAULT_WEIGHTS_ODDS_MOVEM
 DEFAULT_EXOTIC_WEIGHTS_BASE = [
     0.75,  # form_score
     0.25,  # win_rate_career
-    0.65,  # win_rate_distance
+    0.3,   # win_rate_distance — reduced: noisy below 3 starts
     0.55,  # win_rate_track
     0.65,  # surface_match_score
     0.10,  # barrier_score — less important in exotics
    -0.10,  # days_since_last_run_norm
-    0.30,  # runs_in_prep_norm
+    0.0,   # runs_in_prep_norm — zeroed: inverted signal
     0.15,  # class_change
     0.55,  # trainer_overall_rate
     0.65,  # trainer_track_rate

@@ -84,8 +84,8 @@ def enrich_runner(
     else:
         wr_career = form_enricher.career_win_rate(runner)
 
-    # Distance win rate — prefer Punters distance stats
-    if runner.distance_starts > 0:
+    # Distance win rate — require >= 3 starts to avoid 50%/100% small-sample noise
+    if runner.distance_starts >= 3:
         wr_distance = runner.distance_wins / runner.distance_starts
     else:
         wr_distance = form_enricher.win_rate_at_distance(starts, race.distance)
