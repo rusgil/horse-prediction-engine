@@ -249,12 +249,12 @@
     <div class="feature-card">
       <span class="feature-icon">🧠</span>
       <div>
-        <div class="feature-title">25 Predictive Signals</div>
+        <div class="feature-title">36 Predictive Signals</div>
         <div class="feature-desc">
-          The model synthesises 25 independent factors per runner: recent form, win rates by distance and track,
+          The model synthesises 36 independent factors per runner: recent form, win rates by distance and track,
           surface suitability, barrier draw, days since last run, class change, trainer and jockey patterns,
-          pedigree signals, gear changes, weight vs field, and live market rank. Each factor is weighted by
-          its historical predictive power.
+          pedigree signals, gear changes, weight vs field, live market rank, and live odds movement in the
+          hour before jump. Each factor is weighted by its historical predictive power.
         </div>
       </div>
     </div>
@@ -319,8 +319,9 @@
         <div class="feature-title" style="color:var(--gold-light)">Hot Pick</div>
         <div class="feature-desc">
           The model's highest-conviction tier. Hot Picks are races where the model assigns ≥45%
-          win probability to the top-ranked runner — a level historically associated with an 82%
-          actual win rate across 222 qualifying races.
+          win probability to the top-ranked runner — a level historically associated with a
+          <strong id="hot-rate-inline" style="color:var(--gold-light)">…</strong>
+          actual win rate across <span id="hot-races-inline">…</span> qualifying races.
         </div>
       </div>
     </div>
@@ -331,7 +332,9 @@
         <div class="feature-title" style="color:#60a5fa">High Confidence</div>
         <div class="feature-desc">
           Races where the model assigns 35–45% win probability. This tier captures a higher volume
-          of picks while maintaining a historically strong win rate of 71–76% across 809 races.
+          of picks while maintaining a historically strong win rate of
+          <strong id="high-rate-inline" style="color:#60a5fa">…</strong>
+          across <span id="high-races-inline">…</span> races.
         </div>
       </div>
     </div>
@@ -343,7 +346,8 @@
         <div class="feature-desc">
           The broadest tier — model confidence of ≥30%. Strong Picks represent races where the
           model has a clear top-ranked selection with meaningful separation from the rest of the
-          field. Historical win rate of 66% across 1,086 races.
+          field. Historical win rate of <strong id="strong-rate-inline" style="color:var(--green)">…</strong>
+          across <span id="strong-races-inline">…</span> races.
         </div>
       </div>
     </div>
@@ -358,40 +362,33 @@
           <th>Tier</th>
           <th>Win Rate</th>
           <th>Races</th>
-          <th>Avg SP</th>
         </tr>
       </thead>
       <tbody>
         <tr>
           <td><span class="tier-badge tier-premium">💎 Premium</span></td>
-          <td><span class="win-rate premium">—</span></td>
-          <td><span class="sample-size">Live tracking</span></td>
-          <td><span style="color:var(--text-primary);font-weight:600">$3.00+</span></td>
+          <td><span class="win-rate premium" id="stat-premium-rate">—</span></td>
+          <td><span class="sample-size" id="stat-premium-races">Live tracking</span></td>
         </tr>
         <tr>
           <td><span class="tier-badge tier-hot">🔥 Hot Pick</span></td>
-          <td><span class="win-rate hot">82%</span></td>
-          <td><span class="sample-size">222 races</span></td>
-          <td><span style="color:var(--text-primary);font-weight:600">$2.35</span></td>
+          <td><span class="win-rate hot" id="stat-hot-rate">…</span></td>
+          <td><span class="sample-size" id="stat-hot-races">…</span></td>
         </tr>
         <tr>
           <td><span class="tier-badge tier-high">⚡ High Confidence</span></td>
-          <td><span class="win-rate high">71–76%</span></td>
-          <td><span class="sample-size">809 races</span></td>
-          <td><span style="color:var(--text-primary);font-weight:600">$2.55</span></td>
+          <td><span class="win-rate high" id="stat-high-rate">…</span></td>
+          <td><span class="sample-size" id="stat-high-races">…</span></td>
         </tr>
         <tr>
           <td><span class="tier-badge tier-strong">Strong Pick</span></td>
-          <td><span class="win-rate strong">66%</span></td>
-          <td><span class="sample-size">1,086 races</span></td>
-          <td><span style="color:var(--text-primary);font-weight:600">$2.79</span></td>
+          <td><span class="win-rate strong" id="stat-strong-rate">…</span></td>
+          <td><span class="sample-size" id="stat-strong-races">…</span></td>
         </tr>
       </tbody>
     </table>
-    <p class="note">
-      Win rates measured across 2,117 qualifying live Australian thoroughbred races since August 2025.
-      Premium win rate is not yet shown — the tier launched recently and requires a larger sample for a meaningful figure.
-      Win rate reflects the model's top-ranked pick per race at each confidence threshold.
+    <p class="note" id="stats-note">
+      Loading performance data…
     </p>
   </div>
 
@@ -431,5 +428,71 @@
 
 </div>
 
+<script>
+  const API = '';
+
+  function fmt(pct, races) {
+    return { rate: pct != null ? pct + '%' : '—', races: races != null ? races + ' races' : '—' };
+  }
+
+  async function loadStats() {
+    try {
+      const [trRes, prRes] = await Promise.all([
+        fetch(API + '/api/track-record'),
+        fetch(API + '/api/performance/premium/public'),
+      ]);
+      const tr = trRes.ok ? await trRes.json() : null;
+      const pr = prRes.ok ? await prRes.json() : null;
+
+      const tierMap = {};
+      if (tr && tr.tiers) {
+        for (const t of tr.tiers) tierMap[t.badge] = t;
+      }
+
+      const hot    = tierMap['hot'];
+      const high   = tierMap['high'];
+      const strong = tierMap['standard'];
+
+      // Tier descriptions (inline)
+      if (hot) {
+        document.getElementById('hot-rate-inline').textContent   = hot.win_pct + '% actual win rate';
+        document.getElementById('hot-races-inline').textContent  = hot.races.toLocaleString();
+      }
+      if (high) {
+        document.getElementById('high-rate-inline').textContent  = high.win_pct + '%';
+        document.getElementById('high-races-inline').textContent = high.races.toLocaleString();
+      }
+      if (strong) {
+        document.getElementById('strong-rate-inline').textContent  = strong.win_pct + '%';
+        document.getElementById('strong-races-inline').textContent = strong.races.toLocaleString();
+      }
+
+      // Stats table
+      if (hot)    { document.getElementById('stat-hot-rate').textContent    = hot.win_pct + '%';    document.getElementById('stat-hot-races').textContent    = hot.races.toLocaleString() + ' races'; }
+      if (high)   { document.getElementById('stat-high-rate').textContent   = high.win_pct + '%';   document.getElementById('stat-high-races').textContent   = high.races.toLocaleString() + ' races'; }
+      if (strong) { document.getElementById('stat-strong-rate').textContent = strong.win_pct + '%'; document.getElementById('stat-strong-races').textContent = strong.races.toLocaleString() + ' races'; }
+
+      // Premium row
+      if (pr && pr.win_pct != null) {
+        document.getElementById('stat-premium-rate').textContent  = pr.win_pct + '%';
+        document.getElementById('stat-premium-races').textContent = (pr.bets || 0).toLocaleString() + ' bets';
+      }
+
+      // Footer note
+      const totalRaces = (hot ? hot.races : 0) + (high ? high.races : 0) + (strong ? strong.races : 0);
+      const noteEl = document.getElementById('stats-note');
+      if (noteEl && totalRaces > 0) {
+        noteEl.textContent =
+          'Win rates measured across ' + totalRaces.toLocaleString() +
+          ' qualifying live Australian thoroughbred races. ' +
+          'Win rate reflects the model\'s top-ranked pick per race at each confidence threshold.';
+      }
+    } catch (e) {
+      console.warn('Failed to load stats:', e);
+    }
+  }
+
+  loadStats();
+</script>
 </body>
 </html>
