@@ -1641,17 +1641,22 @@ async def get_edge_trifectas():
 
 @app.get("/api/track-record")
 async def get_track_record():
-    """Public endpoint — tier win rates from history table (live pre-race + validation backtest)."""
+    """Public endpoint — tier win rates from prediction + result history."""
+    cutoff = (date.today() - timedelta(days=90)).isoformat()
     async with get_session() as session:
-        hr_result = await session.execute(select(HistoricalResultRow))
+        hr_result = await session.execute(
+            select(HistoricalResultRow).where(HistoricalResultRow.race_id >= cutoff)
+        )
         hr_map = {(r.race_id, r.horse_name): r for r in hr_result.scalars().all()}
 
-        hist_result = await session.execute(
-            select(RunnerPredictionHistoryRow)
+        pred_result = await session.execute(
+            select(RunnerPredictionRow)
+            .where(RunnerPredictionRow.race_id >= cutoff)
+            .where(RunnerPredictionRow.win_probability.isnot(None))
         )
-        # Find top-probability horse per race (model_rank may be NULL on backfilled rows)
-        best_per_race: dict[str, RunnerPredictionHistoryRow] = {}
-        for r in hist_result.scalars().all():
+        # Find top-probability horse per race
+        best_per_race: dict[str, RunnerPredictionRow] = {}
+        for r in pred_result.scalars().all():
             existing = best_per_race.get(r.race_id)
             if existing is None or (r.win_probability or 0) > (existing.win_probability or 0):
                 best_per_race[r.race_id] = r
@@ -1663,7 +1668,6 @@ async def get_track_record():
                 all_rows.append({
                     "win_prob": r.win_probability,
                     "winner": bool(hr.winner),
-                    "source": r.source or "live",
                 })
 
     tiers = [
@@ -1675,20 +1679,17 @@ async def get_track_record():
     for tier in tiers:
         picks = [r for r in all_rows if tier["min"] <= r["win_prob"] < tier["max"]]
         wins  = [r for r in picks if r["winner"]]
-        live_picks = [r for r in picks if r["source"] == "live"]
         win_pct = round(len(wins) / len(picks) * 100) if picks else 0
         output.append({
-            "badge":      tier["badge"],
-            "win_pct":    win_pct,
-            "races":      len(picks),
-            "live_races": len(live_picks),
-            "conf_min":   tier["conf_min"],
-            "conf_max":   tier["conf_max"],
+            "badge":    tier["badge"],
+            "win_pct":  win_pct,
+            "races":    len(picks),
+            "conf_min": tier["conf_min"],
+            "conf_max": tier["conf_max"],
         })
-    live_total = sum(r["live_races"] for r in output)
     return {
         "tiers": output,
-        "live_races_total": live_total,
+        "total_races": len(all_rows),
         "generated_at": datetime.utcnow().isoformat(),
     }
 
