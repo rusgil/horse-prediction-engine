@@ -3431,6 +3431,275 @@ async def backtest_analysis(x_cron_secret: Optional[str] = Header(None)):
     }
 
 
+@app.get("/api/admin/backtest/feature-ablation")
+async def win_feature_ablation(
+    holdout_days: int = Query(14, ge=7, le=30),
+    x_cron_secret: Optional[str] = Header(None),
+):
+    """
+    Feature ablation for the win model: zero out each feature in turn on holdout races
+    and measure the drop in top-pick win rate. Shows which features actually matter.
+    """
+    _check_admin(x_cron_secret)
+    import math as _math
+    from horse_engine.prediction.features import FEATURE_NAMES, NUM_FEATURES
+
+    today = date.today()
+    holdout_cutoff = (today - timedelta(days=holdout_days)).isoformat()
+    train_cutoff = (today - timedelta(days=30)).isoformat()
+
+    async with get_session() as session:
+        weights_dict = await load_model_weights(session)
+        hr_result = await session.execute(select(HistoricalResultRow))
+        all_hr = hr_result.scalars().all()
+        pred_result = await session.execute(
+            select(RunnerPredictionRow).where(RunnerPredictionRow.enriched_json.isnot(None))
+        )
+        all_pred = pred_result.scalars().all()
+
+    model = HorseModel.from_weights_dict(weights_dict) if weights_dict else HorseModel()
+
+    pred_by_key = {(p.race_id, p.horse_name): p for p in all_pred}
+    holdout_races: dict[str, list] = {}
+    holdout_results: dict[tuple, HistoricalResultRow] = {}
+    for r in all_hr:
+        if r.race_id >= holdout_cutoff:
+            holdout_results[(r.race_id, r.horse_name)] = r
+    for p in all_pred:
+        if p.race_id >= holdout_cutoff:
+            holdout_races.setdefault(p.race_id, []).append(p)
+
+    # Build holdout feature vectors once
+    holdout_fvs: dict[str, list[tuple]] = {}
+    for race_id, runners in holdout_races.items():
+        fvs = []
+        for r in runners:
+            try:
+                er = EnrichedRunner(**json.loads(r.enriched_json))
+                fvs.append((r, build_feature_vector(er)))
+            except Exception:
+                continue
+        if fvs:
+            holdout_fvs[race_id] = fvs
+
+    def _win_rate(fv_sets):
+        wins = races = 0
+        for race_id, runner_fvs in fv_sets.items():
+            win_probs, _ = model.predict_field([fv for _, fv in runner_fvs])
+            best_idx = win_probs.index(max(win_probs))
+            top_runner = runner_fvs[best_idx][0]
+            actual = holdout_results.get((race_id, top_runner.horse_name))
+            if not actual:
+                continue
+            races += 1
+            if actual.winner:
+                wins += 1
+        return round(wins / races * 100, 1) if races else 0.0, races
+
+    baseline_rate, total_races = _win_rate(holdout_fvs)
+
+    ablation = []
+    for feat_idx, feat_name in enumerate(FEATURE_NAMES):
+        zeroed = {}
+        for race_id, runner_fvs in holdout_fvs.items():
+            zeroed[race_id] = [
+                (r, [v if i != feat_idx else 0.0 for i, v in enumerate(fv)])
+                for r, fv in runner_fvs
+            ]
+        ablated_rate, _ = _win_rate(zeroed)
+        delta = round(ablated_rate - baseline_rate, 1)
+        ablation.append({
+            "feature": feat_name,
+            "weight": round(model.weights[feat_idx] if feat_idx < len(model.weights) else 0.0, 4),
+            "baseline_win_rate": baseline_rate,
+            "ablated_win_rate": ablated_rate,
+            "delta": delta,
+            "verdict": "valuable" if delta < -1.0 else ("noisy/harmful" if delta > 1.0 else "neutral"),
+        })
+
+    ablation.sort(key=lambda x: x["delta"])
+    return {
+        "holdout_races": total_races,
+        "holdout_days": holdout_days,
+        "baseline_win_rate_pct": baseline_rate,
+        "feature_ablation": ablation,
+    }
+
+
+@app.get("/api/admin/backtest-place")
+async def backtest_place(
+    holdout_days: int = Query(14, ge=7, le=60),
+    x_cron_secret: Optional[str] = Header(None),
+):
+    """
+    Place model backtest: scores holdout races through the place model,
+    reports top-pick place rate by tier and overall.
+    """
+    _check_admin(x_cron_secret)
+    from horse_engine.prediction.features import FEATURE_NAMES
+
+    today = date.today()
+    holdout_cutoff = (today - timedelta(days=holdout_days)).isoformat()
+
+    async with get_session() as session:
+        weights_dict = await load_place_model_weights(session)
+        hr_result = await session.execute(
+            select(HistoricalResultRow).where(HistoricalResultRow.race_id >= holdout_cutoff)
+        )
+        hr_rows = hr_result.scalars().all()
+        race_ids = list({r.race_id for r in hr_rows})
+        pred_result = await session.execute(
+            select(RunnerPredictionRow)
+            .where(RunnerPredictionRow.race_id.in_(race_ids))
+            .where(RunnerPredictionRow.enriched_json.isnot(None))
+        )
+        pred_rows = pred_result.scalars().all()
+
+    pm = PlaceModel.from_weights_dict(weights_dict) if weights_dict else PlaceModel()
+    pred_by_key = {(p.race_id, p.horse_name): p for p in pred_rows}
+    hr_map = {(r.race_id, r.horse_name): r for r in hr_rows}
+
+    # Group by race
+    races: dict[str, list] = {}
+    for p in pred_rows:
+        races.setdefault(p.race_id, []).append(p)
+
+    total = place_hits = 0
+    tier_buckets: dict[str, dict] = {
+        "premium": {"races": 0, "hits": 0},
+        "hot":     {"races": 0, "hits": 0},
+        "high":    {"races": 0, "hits": 0},
+        "strong":  {"races": 0, "hits": 0},
+    }
+
+    for race_id, runners in races.items():
+        runner_fvs = []
+        for r in runners:
+            try:
+                er = EnrichedRunner(**json.loads(r.enriched_json))
+                runner_fvs.append((r, build_feature_vector(er)))
+            except Exception:
+                continue
+        if not runner_fvs:
+            continue
+
+        _, place_probs = pm.predict_field([fv for _, fv in runner_fvs])
+        best_idx = place_probs.index(max(place_probs))
+        top_runner = runner_fvs[best_idx][0]
+        top_prob = place_probs[best_idx]
+        actual = hr_map.get((race_id, top_runner.horse_name))
+        if not actual:
+            continue
+
+        # Tier by place probability percentile (same thresholds as win model)
+        model_pct = top_prob * 100
+        if model_pct >= 50:
+            tier = "premium"
+        elif model_pct >= 45:
+            tier = "hot"
+        elif model_pct >= 35:
+            tier = "high"
+        else:
+            tier = "strong"
+
+        total += 1
+        placed = bool(actual.placed)
+        if placed:
+            place_hits += 1
+        tier_buckets[tier]["races"] += 1
+        if placed:
+            tier_buckets[tier]["hits"] += 1
+
+    def _rate(d):
+        return round(d["hits"] / d["races"] * 100, 1) if d["races"] else 0.0
+
+    return {
+        "holdout_days": holdout_days,
+        "total_races": total,
+        "overall_place_rate_pct": round(place_hits / total * 100, 1) if total else 0,
+        "by_tier": {
+            tier: {**b, "place_rate_pct": _rate(b)}
+            for tier, b in tier_buckets.items() if b["races"] > 0
+        },
+    }
+
+
+@app.get("/api/admin/odds-snapshots/health")
+async def odds_snapshots_health(x_cron_secret: Optional[str] = Header(None)):
+    """
+    Validate odds snapshot collection: count rows, non-zero values,
+    coverage by race, and recency — to confirm the cron is working pre-race.
+    """
+    _check_admin(x_cron_secret)
+    cutoff_7d = (date.today() - timedelta(days=7)).isoformat()
+
+    async with get_session() as session:
+        total_result = await session.execute(
+            select(func.count(OddsSnapshotRow.id))
+        )
+        total_snapshots = total_result.scalar() or 0
+
+        nonzero_result = await session.execute(
+            select(func.count(OddsSnapshotRow.id))
+            .where(OddsSnapshotRow.win_odds.isnot(None))
+            .where(OddsSnapshotRow.win_odds > 0)
+        )
+        nonzero_win_odds = nonzero_result.scalar() or 0
+
+        recent_result = await session.execute(
+            select(func.count(OddsSnapshotRow.id))
+            .where(OddsSnapshotRow.race_id >= cutoff_7d)
+        )
+        recent_snapshots = recent_result.scalar() or 0
+
+        recent_races_result = await session.execute(
+            select(func.count(func.distinct(OddsSnapshotRow.race_id)))
+            .where(OddsSnapshotRow.race_id >= cutoff_7d)
+        )
+        recent_races = recent_races_result.scalar() or 0
+
+        latest_result = await session.execute(
+            select(OddsSnapshotRow.snapshotted_at, OddsSnapshotRow.race_id, OddsSnapshotRow.win_odds)
+            .order_by(OddsSnapshotRow.snapshotted_at.desc())
+            .limit(5)
+        )
+        latest = latest_result.all()
+
+        # Check runners with non-zero steam features in enriched_json
+        pred_sample = await session.execute(
+            select(RunnerPredictionRow.enriched_json)
+            .where(RunnerPredictionRow.enriched_json.isnot(None))
+            .where(RunnerPredictionRow.race_id >= cutoff_7d)
+            .limit(200)
+        )
+        sample_rows = pred_sample.scalars().all()
+
+    steam_nonzero = 0
+    for ejson in sample_rows:
+        try:
+            d = json.loads(ejson)
+            if any(d.get(f, 0.0) != 0.0 for f in ("steam_60", "steam_30", "drift_flag", "odds_velocity", "late_money")):
+                steam_nonzero += 1
+        except Exception:
+            continue
+
+    return {
+        "total_snapshots": total_snapshots,
+        "nonzero_win_odds": nonzero_win_odds,
+        "zero_or_null_win_odds": total_snapshots - nonzero_win_odds,
+        "last_7d_snapshots": recent_snapshots,
+        "last_7d_races_covered": recent_races,
+        "avg_snapshots_per_race_7d": round(recent_snapshots / recent_races, 1) if recent_races else 0,
+        "enriched_runners_last_7d_sampled": len(sample_rows),
+        "runners_with_nonzero_steam_features": steam_nonzero,
+        "steam_feature_coverage_pct": round(steam_nonzero / len(sample_rows) * 100, 1) if sample_rows else 0,
+        "latest_snapshots": [
+            {"snapshotted_at": r[0].isoformat(), "race_id": r[1], "win_odds": r[2]}
+            for r in latest
+        ],
+    }
+
+
 @app.get("/api/admin/trifecta-analysis")
 async def trifecta_analysis(x_cron_secret: Optional[str] = Header(None)):
     """
