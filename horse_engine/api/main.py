@@ -1655,11 +1655,16 @@ async def get_track_record():
             .where(RunnerPredictionRow.win_probability.isnot(None))
             .where(RunnerPredictionRow.enriched_at.isnot(None))
             .where(RunnerPredictionRow.scheduled_time.isnot(None))
-            .where(RunnerPredictionRow.enriched_at < RunnerPredictionRow.scheduled_time)
         )
-        # Find top-probability horse per race
+        # Find top-probability horse per race — pre-race enrichments only
         best_per_race: dict[str, RunnerPredictionRow] = {}
         for r in pred_result.scalars().all():
+            try:
+                sched = datetime.fromisoformat(r.scheduled_time.replace("Z", "+00:00")).replace(tzinfo=None)
+                if r.enriched_at >= sched:
+                    continue  # skip post-race enrichments
+            except (ValueError, TypeError):
+                continue
             existing = best_per_race.get(r.race_id)
             if existing is None or (r.win_probability or 0) > (existing.win_probability or 0):
                 best_per_race[r.race_id] = r
