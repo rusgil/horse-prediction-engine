@@ -3239,21 +3239,12 @@ async def patch_history_nulls(x_cron_secret: Optional[str] = Header(None)):
     return {"status": "ok", "patched": patched}
 
 
-@app.post("/api/admin/history/validation-backtest")
-async def run_validation_backtest(
-    train_days_start: int = Query(270, ge=60, le=730),
-    train_days_end: int = Query(30, ge=7, le=365),
-    x_cron_secret: Optional[str] = Header(None),
-):
-    """
-    Out-of-sample validation backtest:
-    1. Train a fresh model on races from train_days_start to train_days_end days ago
-    2. Score the most recent train_days_end days through that model
-    3. Write results to runner_prediction_history with source='validation'
+_validation_bt_state: dict = {"running": False, "status": "idle", "result": None}
 
-    Races already in history (live or validation) are skipped.
-    """
-    _check_admin(x_cron_secret)
+
+async def _run_validation_backtest(train_days_start: int, train_days_end: int) -> None:
+    global _validation_bt_state
+    _validation_bt_state = {"running": True, "status": "training", "result": None}
 
     today = _today_aest()
     train_start = (today - timedelta(days=train_days_start)).isoformat()
@@ -3297,7 +3288,9 @@ async def run_validation_backtest(
             continue
 
     if len(win_training) < 100:
-        return {"status": "error", "detail": f"Insufficient training data: {len(win_training)} examples"}
+        _validation_bt_state.update({"running": False, "status": "error",
+                                     "result": {"detail": f"Insufficient training data: {len(win_training)} examples"}})
+        return
 
     # ── 2. Train fresh models ─────────────────────────────────────────────────
     loop = asyncio.get_event_loop()
@@ -3414,14 +3407,37 @@ async def run_validation_backtest(
             written_races += 1
 
     log.info("[validation-bt] Written %d races / %d runners to history", written_races, written_runners)
-    return {
-        "status": "ok",
-        "train_window": {"start": train_start, "end": train_end, "examples": len(win_training)},
-        "test_window":  {"start": test_start, "end": test_end},
-        "written_races": written_races,
-        "written_runners": written_runners,
-        "skipped_already_in_history": len(already_set),
-    }
+    _validation_bt_state.update({
+        "running": False,
+        "status": "done",
+        "result": {
+            "status": "ok",
+            "train_window": {"start": train_start, "end": train_end, "examples": len(win_training)},
+            "test_window":  {"start": test_start, "end": test_end},
+            "written_races": written_races,
+            "written_runners": written_runners,
+            "skipped_already_in_history": len(already_set),
+        },
+    })
+
+
+@app.post("/api/admin/history/validation-backtest")
+async def start_validation_backtest(
+    train_days_start: int = Query(270, ge=60, le=730),
+    train_days_end: int = Query(30, ge=7, le=365),
+    x_cron_secret: Optional[str] = Header(None),
+):
+    _check_admin(x_cron_secret)
+    if _validation_bt_state["running"]:
+        return {"status": "already_running", "state": _validation_bt_state}
+    asyncio.create_task(_run_validation_backtest(train_days_start, train_days_end))
+    return {"status": "started", "train_days_start": train_days_start, "train_days_end": train_days_end}
+
+
+@app.get("/api/admin/history/validation-backtest/status")
+async def validation_backtest_status(x_cron_secret: Optional[str] = Header(None)):
+    _check_admin(x_cron_secret)
+    return _validation_bt_state
 
 
 # ── Backtest ──────────────────────────────────────────────────────────────────
