@@ -1110,13 +1110,46 @@
     }
 
     /* ── Tabs ────────────────────────────────────────────── */
-    .tabs {
+    /* ── Two-level nav ───────────────────────────────────── */
+    .nav-tabs-wrap {
+      margin-bottom: 24px;
+    }
+    .parent-tabs {
+      display: flex; gap: 6px;
+      margin-bottom: 6px;
+    }
+    .parent-tab {
+      font-family: 'Barlow Condensed', sans-serif;
+      font-size: 1rem; font-weight: 800;
+      letter-spacing: 0.08em; text-transform: uppercase;
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      cursor: pointer;
+      color: var(--text-dim);
+      border-radius: var(--radius);
+      padding: 8px 22px;
+      transition: all 0.15s;
+    }
+    .parent-tab:hover { color: var(--text-primary); border-color: rgba(255,255,255,0.18); }
+    .parent-tab.active {
+      background: var(--bg-elevated);
+      color: var(--text-primary);
+      border-color: var(--gold);
+    }
+    .beta-badge {
+      font-size: 0.6rem; font-weight: 700;
+      letter-spacing: 0.08em; text-transform: uppercase;
+      color: var(--gold); border: 1px solid rgba(245,200,66,0.4);
+      background: rgba(245,200,66,0.08);
+      border-radius: 100px; padding: 1px 6px;
+      vertical-align: middle; margin-left: 4px;
+    }
+    .sub-tabs {
       display: flex; gap: 4px;
       background: var(--bg-card);
       border: 1px solid var(--border);
       border-radius: var(--radius);
       padding: 4px;
-      margin-bottom: 24px;
       width: fit-content;
     }
     .tab-btn {
@@ -1462,11 +1495,16 @@
     </div>
   </div>
 
-  <div class="tabs">
-    <button class="tab-btn active" id="tabUpcoming" onclick="switchTab('upcoming')">Upcoming</button>
-    <button class="tab-btn" id="tabYesterday" onclick="switchTab('yesterday')">Yesterday's Results</button>
-    <button class="tab-btn" id="tabInsights" onclick="switchTab('insights')">Track Record</button>
-    <button class="tab-btn" id="tabTrifectas" onclick="switchTab('trifectas')">Exotics (beta)</button>
+  <div class="nav-tabs-wrap">
+    <div class="parent-tabs">
+      <button class="parent-tab active" id="parentWins" onclick="switchParent('wins')">Wins / Place</button>
+      <button class="parent-tab" id="parentExotics" onclick="switchParent('exotics')">Exotics <span class="beta-badge">beta</span></button>
+    </div>
+    <div class="sub-tabs">
+      <button class="tab-btn active" id="subUpcoming" onclick="switchSub('upcoming')">Upcoming</button>
+      <button class="tab-btn" id="subYesterday" onclick="switchSub('yesterday')">Yesterday's Results</button>
+      <button class="tab-btn" id="subInsights" onclick="switchSub('insights')">Track Record</button>
+    </div>
   </div>
 
   <div class="legend-bar" id="legendWin">
@@ -1652,6 +1690,22 @@
       <div id="trTierGrid" class="tr-tier-grid">
         <div class="loading"><div class="loading-spinner"></div>Loading track record…</div>
       </div>
+    </div>
+  </div>
+
+  <div id="panelExoticsYesterday" style="display:none">
+    <div style="padding:48px 24px;text-align:center;color:var(--text-dim)">
+      <div style="font-size:2rem;margin-bottom:12px">🚧</div>
+      <div style="font-family:'Barlow Condensed',sans-serif;font-size:1.4rem;font-weight:800;color:var(--text-primary);margin-bottom:8px">Exotics Yesterday — Coming Soon</div>
+      <div style="font-size:0.9rem">Yesterday's exotic results will be shown here.</div>
+    </div>
+  </div>
+
+  <div id="panelExoticsInsights" style="display:none">
+    <div style="padding:48px 24px;text-align:center;color:var(--text-dim)">
+      <div style="font-size:2rem;margin-bottom:12px">🚧</div>
+      <div style="font-family:'Barlow Condensed',sans-serif;font-size:1.4rem;font-weight:800;color:var(--text-primary);margin-bottom:8px">Exotics Track Record — Coming Soon</div>
+      <div style="font-size:0.9rem">Historical performance stats for trifecta and first four picks.</div>
     </div>
   </div>
 
@@ -2275,20 +2329,41 @@
 
   let trifectasLoaded = false;
 
+  let currentParent = 'wins';
+  let currentSub = 'upcoming';
+
+  function switchParent(parent) {
+    currentParent = parent;
+    document.getElementById('parentWins').classList.toggle('active', parent === 'wins');
+    document.getElementById('parentExotics').classList.toggle('active', parent === 'exotics');
+    switchSub(currentSub);
+  }
+
+  function switchSub(sub) {
+    currentSub = sub;
+    document.getElementById('subUpcoming').classList.toggle('active', sub === 'upcoming');
+    document.getElementById('subYesterday').classList.toggle('active', sub === 'yesterday');
+    document.getElementById('subInsights').classList.toggle('active', sub === 'insights');
+
+    const isWins = currentParent === 'wins';
+    document.getElementById('panelUpcoming').style.display            = (isWins && sub === 'upcoming')  ? '' : 'none';
+    document.getElementById('panelYesterday').style.display           = (isWins && sub === 'yesterday') ? '' : 'none';
+    document.getElementById('panelInsights').style.display            = (isWins && sub === 'insights')  ? '' : 'none';
+    document.getElementById('panelTrifectas').style.display           = (!isWins && sub === 'upcoming')  ? '' : 'none';
+    document.getElementById('panelExoticsYesterday').style.display    = (!isWins && sub === 'yesterday') ? '' : 'none';
+    document.getElementById('panelExoticsInsights').style.display     = (!isWins && sub === 'insights')  ? '' : 'none';
+
+    document.getElementById('legendWin').style.display     = isWins ? '' : 'none';
+    document.getElementById('legendExotics').style.display = isWins ? 'none' : '';
+
+    if (isWins && sub === 'yesterday' && !yesterdayLoaded) loadYesterday();
+    if (isWins && sub === 'insights' && !trackRecordLoaded) loadTrackRecord();
+    if (!isWins && sub === 'upcoming' && !trifectasLoaded) loadTrifectas();
+  }
+
   function switchTab(tab) {
-    document.getElementById('tabUpcoming').classList.toggle('active', tab === 'upcoming');
-    document.getElementById('tabTrifectas').classList.toggle('active', tab === 'trifectas');
-    document.getElementById('tabYesterday').classList.toggle('active', tab === 'yesterday');
-    document.getElementById('tabInsights').classList.toggle('active', tab === 'insights');
-    document.getElementById('panelUpcoming').style.display = tab === 'upcoming' ? '' : 'none';
-    document.getElementById('panelTrifectas').style.display = tab === 'trifectas' ? '' : 'none';
-    document.getElementById('panelYesterday').style.display = tab === 'yesterday' ? '' : 'none';
-    document.getElementById('panelInsights').style.display = tab === 'insights' ? '' : 'none';
-    document.getElementById('legendWin').style.display = tab === 'trifectas' ? 'none' : '';
-    document.getElementById('legendExotics').style.display = tab === 'trifectas' ? '' : 'none';
-    if (tab === 'trifectas' && !trifectasLoaded) loadTrifectas();
-    if (tab === 'yesterday' && !yesterdayLoaded) loadYesterday();
-    if (tab === 'insights' && !trackRecordLoaded) loadTrackRecord();
+    if (tab === 'trifectas') { switchParent('exotics'); switchSub('upcoming'); }
+    else { switchParent('wins'); switchSub(tab); }
   }
 
   const TIER_META = {
