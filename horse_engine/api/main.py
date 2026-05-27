@@ -687,6 +687,28 @@ async def _snapshot_prerace_predictions() -> int:
     now_utc = datetime.utcnow()
     written = 0
 
+    # Build race_id → scheduled_time from Punters (authoritative start times)
+    sched_map: dict[str, datetime] = {}
+    try:
+        client = get_tab_client()
+        date_sfx = f"-{today.replace('-', '')}"
+        meetings = await asyncio.wait_for(client.get_meetings(today), timeout=20)
+        for m in meetings:
+            slug = m.get("slug", "")
+            vc = slug[:-len(date_sfx)] if slug.endswith(date_sfx) else slug.split("-")[0] if slug else ""
+            try:
+                races_raw = await asyncio.wait_for(client.get_meeting_races(slug), timeout=15)
+                for ev in races_raw:
+                    rnum = ev.get("eventNumber")
+                    start = ev.get("startTime") or ev.get("scheduledTime")
+                    if rnum and start:
+                        rid = f"{today}_{vc}_R{rnum}"
+                        sched_map[rid] = datetime.fromisoformat(start.replace("Z", "+00:00")).replace(tzinfo=None)
+            except Exception:
+                pass
+    except Exception as e:
+        log.warning("[snapshot] Could not fetch Punters start times: %s", e)
+
     async with get_session() as session:
         already_result = await session.execute(
             select(RunnerPredictionHistoryRow.race_id)
@@ -699,7 +721,6 @@ async def _snapshot_prerace_predictions() -> int:
             select(RunnerPredictionRow)
             .where(RunnerPredictionRow.race_id.like(f"{today}_%"))
             .where(RunnerPredictionRow.win_probability.isnot(None))
-            .where(RunnerPredictionRow.scheduled_time.isnot(None))
             .where(RunnerPredictionRow.enriched_json.isnot(None))
         )
         rows = pred_result.scalars().all()
@@ -709,12 +730,15 @@ async def _snapshot_prerace_predictions() -> int:
     for r in rows:
         if r.race_id in already_set:
             continue
-        try:
-            sched = datetime.fromisoformat(r.scheduled_time.replace("Z", "+00:00")).replace(tzinfo=None)
-            if now_utc >= sched:
-                continue  # race has started
-        except (ValueError, TypeError):
-            continue
+        # Resolve scheduled time: Punters live > stored in row
+        sched = sched_map.get(r.race_id)
+        if sched is None and r.scheduled_time:
+            try:
+                sched = datetime.fromisoformat(r.scheduled_time.replace("Z", "+00:00")).replace(tzinfo=None)
+            except (ValueError, TypeError):
+                pass
+        if sched is not None and now_utc >= sched:
+            continue  # race has started
         races.setdefault(r.race_id, []).append(r)
 
     if not races:
