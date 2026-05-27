@@ -484,6 +484,7 @@ async def _seed_results_for_date(race_date: str) -> int:
         full = await client._fetch_meeting_full(meeting_id)
         if not full:
             continue
+        races_with_results: set[str] = set()
         for event in full.get("events", []):
             race_num = event.get("eventNumber")
             race_id = f"{race_date}_{venue_code}_R{race_num}"
@@ -504,6 +505,7 @@ async def _seed_results_for_date(race_date: str) -> int:
                         .limit(1)
                     )
                     if existing.scalars().first():
+                        races_with_results.add(race_id)
                         continue
                     fv_result = await session.execute(
                         select(RunnerPredictionRow)
@@ -524,6 +526,19 @@ async def _seed_results_for_date(race_date: str) -> int:
                     ))
                     await session.commit()
                     seeded += 1
+                    races_with_results.add(race_id)
+
+        # Clear stale cancelled flags — if we have results the race ran
+        if races_with_results:
+            from sqlalchemy import update as sa_update
+            async with get_session() as session:
+                await session.execute(
+                    sa_update(RunnerPredictionRow)
+                    .where(RunnerPredictionRow.race_id.in_(list(races_with_results)))
+                    .where(RunnerPredictionRow.cancelled.is_(True))
+                    .values(cancelled=False)
+                )
+                await session.commit()
     return seeded
 
 
