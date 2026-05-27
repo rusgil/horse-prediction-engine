@@ -688,6 +688,7 @@ async def lifespan(app: FastAPI):
     scheduler.add_job(_scheduled_enrich, CronTrigger(hour=13, minute=0, timezone="Australia/Sydney"))
     scheduler.add_job(_scheduled_seed_results, CronTrigger(hour=15, minute=0, timezone="Australia/Sydney"))
     scheduler.add_job(_scheduled_seed_results, CronTrigger(hour=17, minute=0, timezone="Australia/Sydney"))
+    scheduler.add_job(_scheduled_seed_results, CronTrigger(hour=19, minute=0, timezone="Australia/Sydney"))
     scheduler.add_job(_scheduled_seed_results, CronTrigger(hour=23, minute=0, timezone="Australia/Sydney"))
     scheduler.add_job(_scheduled_calibrate,      CronTrigger(hour=2, minute=0, timezone="Australia/Sydney"))
     scheduler.add_job(_scheduled_exotic_retrain, CronTrigger(hour=3, minute=0, timezone="Australia/Sydney"))
@@ -696,7 +697,7 @@ async def lifespan(app: FastAPI):
         CronTrigger(hour="9-20", minute="0,15,30,45", timezone="Australia/Sydney")
     )
     scheduler.start()
-    log.info("[scheduler] Cron jobs scheduled: 6am/10am/1pm enrich, 3pm/5pm/11pm seed results, 2am calibration, 3am exotic retrain, every 15min odds snapshots 9am-6pm")
+    log.info("[scheduler] Cron jobs scheduled: 6am/10am/1pm enrich, 3pm/5pm/7pm/11pm seed results, 2am calibration, 3am exotic retrain, every 15min odds snapshots 9am-8pm")
 
     # Enrich today on startup so deploys don't leave races un-loaded
     asyncio.create_task(_scheduled_enrich())
