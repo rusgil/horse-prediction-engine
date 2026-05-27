@@ -619,14 +619,16 @@ async def _seed_race_results_on_demand(race_ids: list[str]) -> dict[tuple, int]:
 
 
 async def _scheduled_seed_results():
-    """Run by APScheduler nightly — seed yesterday's settled results."""
+    """Seed today's and yesterday's settled results."""
+    today     = _today_aest().isoformat()
     yesterday = (_today_aest() - timedelta(days=1)).isoformat()
-    log.info("[scheduler] Seeding results for %s", yesterday)
-    try:
-        n = await _seed_results_for_date(yesterday)
-        log.info("[scheduler] Seeded %d results for %s", n, yesterday)
-    except Exception as e:
-        log.exception("[scheduler] Result seeding failed for %s: %s", yesterday, e)
+    for race_date in (today, yesterday):
+        log.info("[scheduler] Seeding results for %s", race_date)
+        try:
+            n = await _seed_results_for_date(race_date)
+            log.info("[scheduler] Seeded %d results for %s", n, race_date)
+        except Exception as e:
+            log.exception("[scheduler] Result seeding failed for %s: %s", race_date, e)
 
 
 async def _scheduled_exotic_retrain():
