@@ -351,17 +351,14 @@
 
   <!-- The Numbers -->
   <div class="section">
-    <div class="section-title">Live Win Rate Tracking</div>
-    <div id="stats-building" style="background:rgba(245,200,66,0.06);border:1px solid rgba(245,200,66,0.2);border-radius:12px;padding:20px 24px;margin-bottom:16px;">
-      <div style="font-size:0.85rem;font-weight:600;color:#f5c842;margin-bottom:6px;">Accumulating live data</div>
+    <div class="section-title">30-Day Backtested Win Rates</div>
+    <div id="stats-building" style="display:none;background:rgba(245,200,66,0.06);border:1px solid rgba(245,200,66,0.2);border-radius:12px;padding:20px 24px;margin-bottom:16px;">
+      <div style="font-size:0.85rem;font-weight:600;color:#f5c842;margin-bottom:6px;">Accumulating data</div>
       <div style="font-size:0.82rem;color:var(--text-dim);line-height:1.6;">
-        Win rate statistics are measured from genuine pre-race predictions — locked in before the
-        race starts. This ensures the numbers reflect what the model actually predicted, not
-        retrospective analysis. Results update daily and will appear here once a meaningful
-        sample has been collected.
+        Performance data is building — check back soon.
       </div>
     </div>
-    <table class="stats-table" id="stats-table" style="display:none;">
+    <table class="stats-table" id="stats-table">
       <thead>
         <tr>
           <th>Tier</th>
@@ -392,7 +389,7 @@
         </tr>
       </tbody>
     </table>
-    <p class="note" id="stats-note" style="display:none;"></p>
+    <p class="note" id="stats-note"></p>
   </div>
 
   <!-- Reading the signals -->
@@ -438,8 +435,6 @@
     return { rate: pct != null ? pct + '%' : '—', races: races != null ? races + ' races' : '—' };
   }
 
-  const MIN_RACES = 50; // minimum per tier before showing stats
-
   async function loadStats() {
     try {
       const [trRes, prRes] = await Promise.all([
@@ -458,30 +453,24 @@
       const high   = tierMap['high'];
       const strong = tierMap['standard'];
 
-      const hasEnoughData = hot && high && strong &&
-        hot.races >= MIN_RACES && high.races >= MIN_RACES && strong.races >= MIN_RACES;
+      const totalRaces = (hot ? hot.races : 0) + (high ? high.races : 0) + (strong ? strong.races : 0);
 
-      if (hasEnoughData) {
+      if (totalRaces > 0) {
         document.getElementById('stats-building').style.display = 'none';
-        document.getElementById('stats-table').style.display    = '';
         document.getElementById('stats-note').style.display     = '';
 
-        document.getElementById('stat-hot-rate').textContent    = hot.win_pct + '%';
-        document.getElementById('stat-hot-races').textContent   = hot.races.toLocaleString() + ' races';
-        document.getElementById('stat-high-rate').textContent   = high.win_pct + '%';
-        document.getElementById('stat-high-races').textContent  = high.races.toLocaleString() + ' races';
-        document.getElementById('stat-strong-rate').textContent = strong.win_pct + '%';
-        document.getElementById('stat-strong-races').textContent = strong.races.toLocaleString() + ' races';
+        if (hot)    { document.getElementById('stat-hot-rate').textContent    = hot.win_pct + '%';    document.getElementById('stat-hot-races').textContent    = hot.races.toLocaleString() + ' races'; }
+        if (high)   { document.getElementById('stat-high-rate').textContent   = high.win_pct + '%';   document.getElementById('stat-high-races').textContent   = high.races.toLocaleString() + ' races'; }
+        if (strong) { document.getElementById('stat-strong-rate').textContent = strong.win_pct + '%'; document.getElementById('stat-strong-races').textContent = strong.races.toLocaleString() + ' races'; }
 
         if (pr && pr.win_pct != null) {
           document.getElementById('stat-premium-rate').textContent  = pr.win_pct + '%';
           document.getElementById('stat-premium-races').textContent = (pr.bets || 0).toLocaleString() + ' bets';
         }
 
-        const totalRaces = hot.races + high.races + strong.races;
         document.getElementById('stats-note').textContent =
-          'Win rates measured across ' + totalRaces.toLocaleString() +
-          ' live Australian thoroughbred races. Predictions locked in pre-race.';
+          'Win rates backtested across ' + totalRaces.toLocaleString() +
+          ' Australian thoroughbred races over the last 30 days.';
       }
     } catch (e) {
       console.warn('Failed to load stats:', e);
