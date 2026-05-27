@@ -4752,11 +4752,17 @@ async def premium_performance(days: int = Query(30, ge=1, le=365), x_cron_secret
 
         race_ids = list({r.race_id for r in hr_rows})
         pred_result = await session.execute(
-            select(RunnerPredictionHistoryRow)
-            .where(RunnerPredictionHistoryRow.race_id.in_(race_ids))
-            .where(RunnerPredictionHistoryRow.model_rank == 1)
+            select(RunnerPredictionRow)
+            .where(RunnerPredictionRow.race_id.in_(race_ids))
+            .where(RunnerPredictionRow.win_probability.isnot(None))
         )
-        top_picks = {p.race_id: p for p in pred_result.scalars().all()}
+        # Top pick per race by win_probability
+        best: dict[str, RunnerPredictionRow] = {}
+        for p in pred_result.scalars().all():
+            ex = best.get(p.race_id)
+            if ex is None or (p.win_probability or 0) > (ex.win_probability or 0):
+                best[p.race_id] = p
+        top_picks = best
 
     result_by_key = {(r.race_id, r.horse_name): r for r in hr_rows}
 
@@ -4817,11 +4823,16 @@ async def premium_performance_public():
 
         race_ids = list({r.race_id for r in hr_rows})
         pred_result = await session.execute(
-            select(RunnerPredictionHistoryRow)
-            .where(RunnerPredictionHistoryRow.race_id.in_(race_ids))
-            .where(RunnerPredictionHistoryRow.model_rank == 1)
+            select(RunnerPredictionRow)
+            .where(RunnerPredictionRow.race_id.in_(race_ids))
+            .where(RunnerPredictionRow.win_probability.isnot(None))
         )
-        top_picks = {p.race_id: p for p in pred_result.scalars().all()}
+        best: dict[str, RunnerPredictionRow] = {}
+        for p in pred_result.scalars().all():
+            ex = best.get(p.race_id)
+            if ex is None or (p.win_probability or 0) > (ex.win_probability or 0):
+                best[p.race_id] = p
+        top_picks = best
 
     result_by_key = {(r.race_id, r.horse_name): r for r in hr_rows}
     bets = wins = 0
