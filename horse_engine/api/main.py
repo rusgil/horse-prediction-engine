@@ -1842,6 +1842,20 @@ async def list_meetings(race_date: str = _today()):
             .where(RunnerPredictionRow.cancelled.is_(True))
             .distinct()
         )).scalars().all()
+
+        # Venues with actual results in HistoricalResultRow are NOT cancelled —
+        # the enrichment cron sometimes marks races abandoned prematurely.
+        resulted_race_ids = (await session.execute(
+            select(HistoricalResultRow.race_id)
+            .where(HistoricalResultRow.race_id.like(f"{race_date}_%"))
+            .distinct()
+        )).scalars().all()
+    resulted_vcs = set()
+    for rid in resulted_race_ids:
+        _, vc, _ = _parse_race_id(rid)
+        if vc:
+            resulted_vcs.add(vc)
+
     seen_cancelled: set[str] = set()
     for race_id in cancelled_race_ids:
         _, vc, _ = _parse_race_id(race_id)
@@ -1850,13 +1864,15 @@ async def list_meetings(race_date: str = _today()):
             venue_name_c, state_c = rp_venue_meta.get(vc, (None, None))
             if not state_c:
                 state_c = _VENUE_STATE_FALLBACK.get(vc)
+            # If HistoricalResultRow has results for this venue, it actually ran
+            actually_cancelled = vc not in resulted_vcs
             items.append({
                 "venue": venue_name_c or vc.replace("-", " ").title(),
                 "venue_code": vc,
                 "state": state_c,
                 "rail_position": None,
                 "slug": None,
-                "cancelled": True,
+                "cancelled": actually_cancelled,
                 "weather": None,
             })
 
