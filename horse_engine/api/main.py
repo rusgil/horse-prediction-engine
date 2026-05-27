@@ -677,6 +677,108 @@ async def _scheduled_exotic_retrain():
         log.exception("[scheduler] Exotic retrain failed: %s", e)
 
 
+async def _snapshot_prerace_predictions() -> int:
+    """
+    9am AEST job: write RunnerPredictionHistoryRow for every today race that
+    (a) has no history snapshot yet, and (b) hasn't started yet.
+    Idempotent — safe to call multiple times.
+    """
+    today = _today_aest().isoformat()
+    now_utc = datetime.utcnow()
+    written = 0
+
+    async with get_session() as session:
+        already_result = await session.execute(
+            select(RunnerPredictionHistoryRow.race_id)
+            .where(RunnerPredictionHistoryRow.race_id.like(f"{today}_%"))
+            .distinct()
+        )
+        already_set = set(already_result.scalars().all())
+
+        pred_result = await session.execute(
+            select(RunnerPredictionRow)
+            .where(RunnerPredictionRow.race_id.like(f"{today}_%"))
+            .where(RunnerPredictionRow.win_probability.isnot(None))
+            .where(RunnerPredictionRow.scheduled_time.isnot(None))
+            .where(RunnerPredictionRow.enriched_json.isnot(None))
+        )
+        rows = pred_result.scalars().all()
+
+    # Group by race, skip races already in history or already started
+    races: dict[str, list[RunnerPredictionRow]] = {}
+    for r in rows:
+        if r.race_id in already_set:
+            continue
+        try:
+            sched = datetime.fromisoformat(r.scheduled_time.replace("Z", "+00:00")).replace(tzinfo=None)
+            if now_utc >= sched:
+                continue  # race has started
+        except (ValueError, TypeError):
+            continue
+        races.setdefault(r.race_id, []).append(r)
+
+    if not races:
+        log.info("[snapshot] No unsnapshotted pre-race races for %s", today)
+        return 0
+
+    # Rank by win_probability within each race
+    async with get_session() as session:
+        for race_id, runners in races.items():
+            runners.sort(key=lambda x: x.win_probability or 0, reverse=True)
+            place_sorted = sorted(runners, key=lambda x: x.place_probability or 0, reverse=True)
+            place_rank_map = {r.horse_name: i + 1 for i, r in enumerate(place_sorted)}
+
+            for rank, r in enumerate(runners, 1):
+                session.add(RunnerPredictionHistoryRow(
+                    race_id=r.race_id,
+                    horse_name=r.horse_name,
+                    tab_number=r.tab_number,
+                    barrier=r.barrier,
+                    jockey=r.jockey,
+                    trainer=r.trainer,
+                    weight=r.weight,
+                    win_probability=r.win_probability,
+                    place_probability=r.place_probability,
+                    model_rank=rank,
+                    place_model_rank=place_rank_map.get(r.horse_name),
+                    market_rank=r.market_rank,
+                    overlay=r.overlay,
+                    best_available_odds=r.best_available_odds,
+                    value_rating=r.value_rating,
+                    key_flags=r.key_flags,
+                    enriched_json=r.enriched_json,
+                    scheduled_time=r.scheduled_time,
+                    enriched_at=r.enriched_at or now_utc,
+                    cancelled=r.cancelled,
+                    venue=r.venue,
+                    state=r.state,
+                    race_number=r.race_number,
+                    race_name=r.race_name,
+                    distance=r.distance,
+                    track_condition=r.track_condition,
+                    field_size=r.field_size,
+                    prize_money=r.prize_money,
+                    rail_position=getattr(r, "rail_position", None),
+                    class_change=getattr(r, "class_change", None),
+                    source="live",
+                    recorded_at=now_utc,
+                ))
+            await session.commit()
+            written += 1
+
+    log.info("[snapshot] Snapshotted %d pre-race races for %s", written, today)
+    return written
+
+
+async def _scheduled_prerace_snapshot():
+    """APScheduler wrapper for _snapshot_prerace_predictions."""
+    try:
+        n = await _snapshot_prerace_predictions()
+        log.info("[scheduler] Pre-race snapshot: %d races written", n)
+    except Exception as e:
+        log.exception("[scheduler] Pre-race snapshot failed: %s", e)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await init_db()
@@ -686,6 +788,7 @@ async def lifespan(app: FastAPI):
     scheduler.add_job(_scheduled_enrich, CronTrigger(hour=6,  minute=0, timezone="Australia/Sydney"))
     scheduler.add_job(_scheduled_enrich, CronTrigger(hour=10, minute=0, timezone="Australia/Sydney"))
     scheduler.add_job(_scheduled_enrich, CronTrigger(hour=13, minute=0, timezone="Australia/Sydney"))
+    scheduler.add_job(_scheduled_prerace_snapshot, CronTrigger(hour=9, minute=0, timezone="Australia/Sydney"))
     scheduler.add_job(_scheduled_seed_results, CronTrigger(hour=15, minute=0, timezone="Australia/Sydney"))
     scheduler.add_job(_scheduled_seed_results, CronTrigger(hour=17, minute=0, timezone="Australia/Sydney"))
     scheduler.add_job(_scheduled_seed_results, CronTrigger(hour=19, minute=0, timezone="Australia/Sydney"))
@@ -697,7 +800,7 @@ async def lifespan(app: FastAPI):
         CronTrigger(hour="9-20", minute="0,15,30,45", timezone="Australia/Sydney")
     )
     scheduler.start()
-    log.info("[scheduler] Cron jobs scheduled: 6am/10am/1pm enrich, 3pm/5pm/7pm/11pm seed results, 2am calibration, 3am exotic retrain, every 15min odds snapshots 9am-8pm")
+    log.info("[scheduler] Cron jobs scheduled: 6am/10am/1pm enrich, 9am pre-race snapshot, 3pm/5pm/7pm/11pm seed results, 2am calibration, 3am exotic retrain, every 15min odds snapshots 9am-8pm")
 
     # Enrich today on startup so deploys don't leave races un-loaded
     asyncio.create_task(_scheduled_enrich())
@@ -3206,6 +3309,14 @@ async def start_backfill(
 async def backfill_status():
     """Current backfill progress."""
     return _backfill
+
+
+@app.post("/api/admin/history/snapshot")
+async def trigger_prerace_snapshot(x_cron_secret: Optional[str] = Header(None)):
+    """Manually trigger the pre-race snapshot job for today."""
+    _check_admin(x_cron_secret)
+    written = await _snapshot_prerace_predictions()
+    return {"status": "ok", "races_written": written}
 
 
 @app.post("/api/admin/history/backfill")
