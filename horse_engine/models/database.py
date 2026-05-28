@@ -378,16 +378,16 @@ async def save_race_predictions(session: AsyncSession, race_id: str, predictions
         .where(RunnerPredictionHistoryRow.race_id == race_id)
     )).scalar() or 0
 
-    # Block post-race writes to the mutable table — the race has already run.
-    # Pre-race updates (scratches, odds changes) are always allowed.
-    # History table is separately protected by history_exists check below.
-    if predictions:
+    # Block post-race re-enrichment only when a pre-race snapshot already exists.
+    # If history_exists=False the race has never been snapshotted — allow the write
+    # so late-listed meetings can still get their first prediction captured.
+    if predictions and history_exists:
         scheduled_time = predictions[0].get("scheduled_time")
         if scheduled_time:
             try:
                 sched = datetime.fromisoformat(str(scheduled_time).replace("Z", "+00:00")).replace(tzinfo=None)
                 if datetime.utcnow() > sched:
-                    return  # Race has started — do not overwrite pre-race snapshot
+                    return  # Pre-race snapshot exists and race has started — don't overwrite
             except (ValueError, TypeError):
                 pass
 

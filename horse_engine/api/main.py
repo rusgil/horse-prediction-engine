@@ -386,16 +386,17 @@ async def _scheduled_enrich():
             await _enrich_date(race_date, client, model)
         # Check for abandoned meetings after enrichment
         await _cancel_abandoned_meetings(client, _today_aest().isoformat())
-        # Seed yesterday + today so every startup/deploy auto-backfills the most recent gap
+        # Snapshot BEFORE seeding results — captures predictions before result
+        # data would be visible. No intraday retrain so predictions are clean.
+        n_snap = await _snapshot_prerace_predictions()
+        if n_snap:
+            log.info("[scheduler] Snapshotted %d races into history after enrichment", n_snap)
+        # Seed yesterday + today after snapshot
         for offset in (-1, 0):
             seed_date = (_today_aest() + timedelta(days=offset)).isoformat()
             n = await _seed_results_for_date(seed_date)
             if n:
                 log.info("[scheduler] Seeded %d results for %s", n, seed_date)
-        # Snapshot any newly enriched pre-race predictions into the immutable history table
-        n_snap = await _snapshot_prerace_predictions()
-        if n_snap:
-            log.info("[scheduler] Snapshotted %d races into history after enrichment", n_snap)
         log.info("[scheduler] Enrichment complete")
     except Exception as e:
         log.exception("[scheduler] Enrichment failed: %s", e)
@@ -655,8 +656,38 @@ async def _seed_race_results_on_demand(race_ids: list[str]) -> dict[tuple, int]:
     return db_positions
 
 
+async def _persist_live_results(race_id: str, all_tote: list) -> None:
+    """Persist settled race results seen in a live-odds fetch to HistoricalResultRow.
+    Called as a background task — does not block the live-odds response."""
+    try:
+        async with get_session() as session:
+            for horse, current_odds, position in all_tote:
+                if not position or not horse:
+                    continue
+                existing = (await session.execute(
+                    select(HistoricalResultRow.id)
+                    .where(HistoricalResultRow.race_id == race_id)
+                    .where(HistoricalResultRow.horse_name == horse)
+                    .limit(1)
+                )).scalar()
+                if not existing:
+                    session.add(HistoricalResultRow(
+                        race_id=race_id,
+                        horse_name=horse,
+                        position=position,
+                        beaten_margin=0.0,
+                        winner=position == 1,
+                        placed=position <= 3,
+                        starting_price=current_odds,
+                    ))
+            await session.commit()
+        log.info("[live-odds] Persisted results for %s", race_id)
+    except Exception as e:
+        log.warning("[live-odds] Failed to persist results for %s: %s", race_id, e)
+
+
 async def _scheduled_seed_results():
-    """Seed today's and yesterday's settled results."""
+    """Seed today's and yesterday's settled results, then snapshot any unrecorded predictions."""
     today     = _today_aest().isoformat()
     yesterday = (_today_aest() - timedelta(days=1)).isoformat()
     for race_date in (today, yesterday):
@@ -666,6 +697,13 @@ async def _scheduled_seed_results():
             log.info("[scheduler] Seeded %d results for %s", n, race_date)
         except Exception as e:
             log.exception("[scheduler] Result seeding failed for %s: %s", race_date, e)
+    # Snapshot after seeding — belt-and-suspenders for races enriched between cycles
+    try:
+        n = await _snapshot_prerace_predictions()
+        if n:
+            log.info("[scheduler] Post-seed snapshot: %d races written", n)
+    except Exception as e:
+        log.exception("[scheduler] Post-seed snapshot failed: %s", e)
 
 
 async def _scheduled_exotic_retrain():
@@ -756,15 +794,6 @@ async def _snapshot_prerace_predictions() -> int:
         )
         already_set = set(already_result.scalars().all())
 
-        # Races with a settled result — don't snapshot after result is known
-        # (prediction could have been updated by a retrain that saw the outcome)
-        settled_result = await session.execute(
-            select(HistoricalResultRow.race_id)
-            .where(HistoricalResultRow.race_id.like(f"{today}_%"))
-            .distinct()
-        )
-        settled_set = set(settled_result.scalars().all())
-
         pred_result = await session.execute(
             select(RunnerPredictionRow)
             .where(RunnerPredictionRow.race_id.like(f"{today}_%"))
@@ -773,13 +802,13 @@ async def _snapshot_prerace_predictions() -> int:
         )
         rows = pred_result.scalars().all()
 
-    # Group by race, skip races already in history or with a known result
+    # Group by race, skip only races already in history
+    # No settled_set guard — retrains only run at 2am so intraday predictions
+    # are never contaminated by results even if the race has already run
     races: dict[str, list[RunnerPredictionRow]] = {}
     for r in rows:
         if r.race_id in already_set:
             continue
-        if r.race_id in settled_set:
-            continue  # result already seeded — prediction may be post-retrain contaminated
         races.setdefault(r.race_id, []).append(r)
 
     if not races:
@@ -2191,19 +2220,39 @@ async def get_meeting(race_date: str, venue_code: str):
                 log.info("[get_meeting] Back-filled scheduled_time for %d races at %s/%s",
                          len(missing_time_ids), venue_code, race_date)
 
-        # Top pick per race
+        # Top pick per race — prefer immutable history (stable across nightly retrains)
         top_picks = {race_id: None for race_id in race_ids}
         top_win_probs = {race_id: None for race_id in race_ids}
-        tp_result = await session.execute(
-            select(RunnerPredictionRow)
-            .where(RunnerPredictionRow.race_id.in_(race_ids))
-            .where(RunnerPredictionRow.model_rank == 1)
+
+        hist_tp_result = await session.execute(
+            select(RunnerPredictionHistoryRow)
+            .where(RunnerPredictionHistoryRow.race_id.in_(race_ids))
+            .where(RunnerPredictionHistoryRow.model_rank == 1)
         )
-        for p in tp_result.scalars().all():
+        for p in hist_tp_result.scalars().all():
             top_picks[p.race_id] = p.horse_name
             top_win_probs[p.race_id] = p.win_probability
 
-        # Winners and placers per race from historical results
+        # Fall back to mutable table for races not yet in history
+        races_without_history = [rid for rid in race_ids if top_picks[rid] is None]
+        if races_without_history:
+            tp_result = await session.execute(
+                select(RunnerPredictionRow)
+                .where(RunnerPredictionRow.race_id.in_(races_without_history))
+                .where(RunnerPredictionRow.model_rank == 1)
+            )
+            for p in tp_result.scalars().all():
+                top_picks[p.race_id] = p.horse_name
+                top_win_probs[p.race_id] = p.win_probability
+
+    # Seed any resulted races inline before querying winners — first load shows
+    # correct model verdict without requiring a page refresh
+    resulted_race_ids = {r["race_id"] for r in race_list if r.get("status") == "resulted"}
+    if resulted_race_ids:
+        await _seed_race_results_on_demand(list(resulted_race_ids))
+
+    async with get_session() as session:
+        # Winners and placers per race from historical results (now includes just-seeded races)
         hr_result = await session.execute(
             select(HistoricalResultRow)
             .where(HistoricalResultRow.race_id.in_(race_ids))
@@ -2219,14 +2268,6 @@ async def get_meeting(race_date: str, venue_code: str):
         placers = {}
         for r in hr_placed.scalars().all():
             placers.setdefault(r.race_id, set()).add(r.horse_name)
-
-    # On-demand result seeding: if any race shows "resulted" in Punters but has no DB result yet,
-    # trigger seeding in the background so the next page load will show won/lost labels.
-    resulted_race_ids = {r["race_id"] for r in race_list if r.get("status") == "resulted"}
-    unseeded = resulted_race_ids - set(winners.keys())
-    if unseeded:
-        log.info("[get_meeting] Triggering on-demand result seed for %s (%d unseeded)", race_date, len(unseeded))
-        asyncio.create_task(_seed_results_for_date(race_date))
 
     async with get_session() as session:
         # Top place probability per race
@@ -2312,14 +2353,24 @@ async def live_odds(race_id: str):
     except ValueError:
         raise HTTPException(400, "Invalid race number in race_id")
 
-    # Load stored model predictions
+    # Load model predictions — prefer immutable history (stable across nightly retrains)
     async with get_session() as session:
-        result = await session.execute(
-            select(RunnerPredictionRow)
-            .where(RunnerPredictionRow.race_id == race_id)
-            .order_by(RunnerPredictionRow.model_rank)
+        hist_result = await session.execute(
+            select(RunnerPredictionHistoryRow)
+            .where(RunnerPredictionHistoryRow.race_id == race_id)
+            .order_by(RunnerPredictionHistoryRow.model_rank)
         )
-        stored = result.scalars().all()
+        hist_stored = hist_result.scalars().all()
+
+        if not hist_stored:
+            mutable_result = await session.execute(
+                select(RunnerPredictionRow)
+                .where(RunnerPredictionRow.race_id == race_id)
+                .order_by(RunnerPredictionRow.model_rank)
+            )
+            stored = mutable_result.scalars().all()
+        else:
+            stored = hist_stored
 
     if not stored:
         raise HTTPException(404, f"No predictions for {race_id} — enrich first")
@@ -2387,6 +2438,11 @@ async def live_odds(race_id: str):
     settled = bool(winner_name) or db_settled
     model_correct = (winner_name == top_model_pick) if winner_name else None
     model_placed = (top_model_pick in placed_names) if (placed_names and top_model_pick) else None
+
+    # Persist results to HistoricalResultRow when seen here for the first time
+    # so performance stats update without waiting for the next scheduled seed cron
+    if settled and not db_settled and any(pos for _, _, pos in all_tote if pos):
+        asyncio.create_task(_persist_live_results(race_id, all_tote))
 
     runners_odds = []
     for horse, current_odds, actual_position in all_tote:
@@ -3394,6 +3450,89 @@ async def backfill_history(x_cron_secret: Optional[str] = Header(None)):
     async with get_session() as session:
         copied = await backfill_prediction_history(session)
     return {"status": "ok", "races_copied": copied}
+
+
+@app.post("/api/admin/history/snapshot-backfill")
+async def snapshot_backfill(
+    date: Optional[str] = Query(None),
+    x_cron_secret: Optional[str] = Header(None),
+):
+    """
+    Retroactively fill missing history snapshots for a given date from RunnerPredictionRow.
+    Only writes races NOT already in history — never modifies existing rows.
+    Rows are flagged source='late' so they can be audited separately.
+    Safe to run multiple times (idempotent).
+    Defaults to yesterday if no date supplied.
+    """
+    _check_admin(x_cron_secret)
+    target_date = date or (_today_aest() - timedelta(days=1)).isoformat()
+    now_utc = datetime.utcnow()
+
+    async with get_session() as session:
+        already_result = await session.execute(
+            select(RunnerPredictionHistoryRow.race_id)
+            .where(RunnerPredictionHistoryRow.race_id.like(f"{target_date}_%"))
+            .distinct()
+        )
+        already_set = set(already_result.scalars().all())
+
+        pred_result = await session.execute(
+            select(RunnerPredictionRow)
+            .where(RunnerPredictionRow.race_id.like(f"{target_date}_%"))
+            .where(RunnerPredictionRow.win_probability.isnot(None))
+            .where(RunnerPredictionRow.enriched_json.isnot(None))
+        )
+        rows = pred_result.scalars().all()
+
+    if not rows:
+        return {"status": "ok", "date": target_date, "written": 0, "message": "No predictions found for this date"}
+
+    race_groups: dict[str, list] = {}
+    for r in rows:
+        if r.race_id not in already_set:
+            race_groups.setdefault(r.race_id, []).append(r)
+
+    if not race_groups:
+        return {"status": "ok", "date": target_date, "written": 0,
+                "skipped_already_in_history": len(already_set),
+                "message": "All races already have history snapshots"}
+
+    written = 0
+    async with get_session() as session:
+        for race_id, runners in race_groups.items():
+            runners.sort(key=lambda x: x.win_probability or 0, reverse=True)
+            place_sorted = sorted(runners, key=lambda x: x.place_probability or 0, reverse=True)
+            place_rank_map = {r.horse_name: i + 1 for i, r in enumerate(place_sorted)}
+            for rank, r in enumerate(runners, 1):
+                session.add(RunnerPredictionHistoryRow(
+                    race_id=r.race_id, horse_name=r.horse_name,
+                    tab_number=r.tab_number, barrier=r.barrier,
+                    jockey=r.jockey, trainer=r.trainer, weight=r.weight,
+                    win_probability=r.win_probability, place_probability=r.place_probability,
+                    model_rank=rank, place_model_rank=place_rank_map.get(r.horse_name),
+                    market_rank=r.market_rank, overlay=r.overlay,
+                    best_available_odds=r.best_available_odds, value_rating=r.value_rating,
+                    key_flags=r.key_flags, enriched_json=r.enriched_json,
+                    scheduled_time=r.scheduled_time, enriched_at=r.enriched_at or now_utc,
+                    cancelled=r.cancelled, venue=r.venue, state=r.state,
+                    race_number=r.race_number, race_name=r.race_name,
+                    distance=r.distance, track_condition=r.track_condition,
+                    field_size=r.field_size, prize_money=r.prize_money,
+                    rail_position=getattr(r, "rail_position", None),
+                    class_change=getattr(r, "class_change", None),
+                    source="late",  # retroactive fill — flagged for auditing
+                    recorded_at=now_utc,
+                ))
+            await session.commit()
+            written += 1
+
+    log.info("[snapshot-backfill] Wrote %d races for %s", written, target_date)
+    return {
+        "status": "ok",
+        "date": target_date,
+        "written": written,
+        "skipped_already_in_history": len(already_set),
+    }
 
 
 @app.post("/api/admin/history/patch-nulls")
@@ -4444,7 +4583,7 @@ async def performance_summary(days: int = Query(5, ge=1, le=365)):
     No auth required — displayed publicly on the frontend.
     Uses the immutable pre-race snapshot table so stats are stable across retrains.
     """
-    cutoff = (date.today() - timedelta(days=days)).isoformat()
+    cutoff = (_today_aest() - timedelta(days=days)).isoformat()
 
     async with get_session() as session:
         hr_result = await session.execute(
@@ -4465,9 +4604,24 @@ async def performance_summary(days: int = Query(5, ge=1, le=365)):
             p.race_id: p for p in pred_result.scalars().all()
         }
 
+        # Count races we actually predicted per date — correct denominator for
+        # data_complete (only penalise coverage of races we tried to predict,
+        # not meetings we never had data for)
+        predicted_ids_result = await session.execute(
+            select(RunnerPredictionRow.race_id)
+            .where(RunnerPredictionRow.race_id >= cutoff)
+            .where(RunnerPredictionRow.model_rank == 1)
+            .where(RunnerPredictionRow.cancelled.is_(False) | RunnerPredictionRow.cancelled.is_(None))
+            .distinct()
+        )
+        predicted_races_by_date: dict[str, int] = {}
+        for (rid,) in predicted_ids_result.all():
+            d = rid[:10]
+            predicted_races_by_date[d] = predicted_races_by_date.get(d, 0) + 1
+
     result_by_key = {(r.race_id, r.horse_name): r for r in hr_rows}
 
-    # Count total races that actually ran per date (unique race_ids in results)
+    # Count total races that actually ran per date (for display only — not denominator)
     result_race_ids_by_date: dict[str, set] = {}
     for r in hr_rows:
         result_race_ids_by_date.setdefault(r.race_id[:10], set()).add(r.race_id)
@@ -4508,9 +4662,10 @@ async def performance_summary(days: int = Query(5, ge=1, le=365)):
     for day_str in sorted(by_date.keys(), reverse=True):
         d = by_date[day_str]
         races = d["races"]
+        total_predicted = predicted_races_by_date.get(day_str, races)
         total_ran = result_races_by_date.get(day_str, races)
-        # Flag as incomplete if snapshots covered <80% of races that ran that day
-        data_complete = races >= total_ran * 0.8
+        # Incomplete if history snapshots cover <95% of races we predicted that day
+        data_complete = races >= total_predicted * 0.95
         summary.append({
             "date": day_str,
             "races": races,
