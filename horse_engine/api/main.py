@@ -467,10 +467,43 @@ async def _scheduled_pre_race_enrich():
 async def _seed_results_for_date(race_date: str) -> int:
     """Fetch settled results for race_date and store as training data. Returns count seeded."""
     client = get_tab_client()
+
+    # Primary source: meetings from Punters (works reliably for today/upcoming)
     meetings = await client.get_meetings(race_date)
-    seeded = 0
     date_sfx = f"-{race_date.replace('-', '')}"
-    for meeting in meetings:
+    punters_slugs = {m.get("slug", ""): m for m in meetings if m.get("slug")}
+
+    # Secondary source: venues we already have predictions for — Punters form guide
+    # doesn't reliably list past country meetings so many venues get missed.
+    async with get_session() as session:
+        db_race_ids = (await session.execute(
+            select(RunnerPredictionRow.race_id, RunnerPredictionRow.venue)
+            .where(RunnerPredictionRow.race_id.like(f"{race_date}_%"))
+            .where(RunnerPredictionRow.cancelled.is_(False) | RunnerPredictionRow.cancelled.is_(None))
+            .distinct()
+        )).all()
+    db_venue_codes = {}
+    for row in db_race_ids:
+        _, vc, _ = _parse_race_id(row.race_id)
+        if vc:
+            db_venue_codes[vc] = row.venue or vc
+
+    # Build union of meetings: Punters slugs + DB-only venues (synthesise slug for DB venues)
+    all_meetings = list(meetings)
+    punters_vcs = set()
+    for m in meetings:
+        slug = m.get("slug", "")
+        vc = slug[:-len(date_sfx)] if slug.endswith(date_sfx) else slug.split("-")[0] if slug else ""
+        if vc:
+            punters_vcs.add(vc)
+    for vc, venue_name in db_venue_codes.items():
+        if vc not in punters_vcs:
+            synth_slug = f"{vc}{date_sfx}"
+            all_meetings.append({"slug": synth_slug, "id": None, "name": venue_name, "state": "", "rail_position": ""})
+            log.info("[seed-results] Adding DB-only venue %s (slug: %s) for %s", vc, synth_slug, race_date)
+
+    seeded = 0
+    for meeting in all_meetings:
         slug = meeting.get("slug", "")
         venue_code = slug[:-len(date_sfx)] if slug.endswith(date_sfx) else slug.split("-")[0] if slug else ""
         # Resolve meeting id: prefer id from get_meetings, fall back to slug lookup
