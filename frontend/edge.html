@@ -1058,14 +1058,24 @@
 
     /* ── Badge legend ────────────────────────────────────── */
     .legend-bar {
-      display: flex; align-items: center; gap: 10px;
-      flex-wrap: wrap;
+      display: flex; flex-direction: column; gap: 8px;
       padding: 10px 14px;
       background: var(--bg-card);
       border: 1px solid var(--border);
       border-radius: var(--radius);
       margin-bottom: 20px;
       font-size: 0.72rem;
+    }
+    .legend-row {
+      display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+    }
+    .legend-row-title {
+      font-family: 'Barlow Condensed', sans-serif;
+      font-size: 0.7rem; font-weight: 800;
+      letter-spacing: 0.1em; text-transform: uppercase;
+      color: var(--text-dim);
+      white-space: nowrap;
+      min-width: 80px;
     }
     .legend-item {
       display: flex; align-items: center; gap: 6px;
@@ -1508,84 +1518,92 @@
   </div>
 
   <div class="legend-bar" id="legendWin">
-    <span class="legend-title">FunkyIQ&#8482; Edge Ranking:</span>
-    <span class="legend-item">
-      <span class="legend-badge premium">💎 Premium</span>
-      <span class="legend-desc">≥30% confidence · <span class="legend-odds">$3.00+ odds</span> · model beats market by 5%+</span>
-    </span>
-    <span class="legend-sep">·</span>
-    <span class="legend-item">
-      <span class="legend-badge hot">🔥 Hot Pick</span>
-      <span class="legend-desc"><span class="legend-odds" id="leg-hot-pct">—</span> · <span id="leg-hot-races">—</span> races</span>
-    </span>
-    <span class="legend-sep">·</span>
-    <span class="legend-item">
-      <span class="legend-badge high">⚡ High Confidence</span>
-      <span class="legend-desc"><span class="legend-odds" id="leg-high-pct">—</span> · <span id="leg-high-races">—</span> races</span>
-    </span>
-    <span class="legend-sep">·</span>
-    <span class="legend-item">
-      <span class="legend-badge standard">Strong Pick</span>
-      <span class="legend-desc"><span class="legend-odds" id="leg-std-pct">—</span> · <span id="leg-std-races">—</span> races</span>
-    </span>
-    <span class="legend-sep">·</span>
-    <span class="legend-item">
-      <span class="exotic-align-badge confirmed" style="font-size:0.68rem">✓ Win aligned</span>
-      <span class="legend-desc">Exotic legs include the win pick</span>
-    </span>
-    <span class="legend-sep">·</span>
-    <span class="legend-item">
-      <span class="exotic-align-badge partial" style="font-size:0.68rem">~ Partial exotic</span>
-      <span class="legend-desc">Some legs overlap with win pick</span>
-    </span>
-    <span class="legend-sep">·</span>
-    <span class="legend-item">
-      <span class="exotic-align-badge diverge" style="font-size:0.68rem">⚠ Models diverge</span>
-      <span class="legend-desc">Win and place models disagree</span>
-    </span>
-    <span class="legend-sep">·</span>
-    <span class="legend-item">
-      <span class="exotic-align-badge no-edge" style="font-size:0.68rem">– No win pick</span>
-      <span class="legend-desc">No qualifying edge pick for this race</span>
-    </span>
+    <div class="legend-row">
+      <span class="legend-row-title">Win / Place</span>
+      <span class="legend-item">
+        <span class="legend-badge premium">💎 Premium</span>
+        <span class="legend-desc">≥30% confidence · <span class="legend-odds">$3.00+ odds</span> · model beats market by 5%+</span>
+      </span>
+      <span class="legend-sep">·</span>
+      <span class="legend-item">
+        <span class="legend-badge hot">🔥 Hot Pick</span>
+        <span class="legend-desc"><span class="legend-odds" id="leg-hot-pct">—</span> · <span id="leg-hot-races">—</span> races</span>
+      </span>
+      <span class="legend-sep">·</span>
+      <span class="legend-item">
+        <span class="legend-badge high">⚡ High Confidence</span>
+        <span class="legend-desc"><span class="legend-odds" id="leg-high-pct">—</span> · <span id="leg-high-races">—</span> races</span>
+      </span>
+      <span class="legend-sep">·</span>
+      <span class="legend-item">
+        <span class="legend-badge standard">Strong Pick</span>
+        <span class="legend-desc"><span class="legend-odds" id="leg-std-pct">—</span> · <span id="leg-std-races">—</span> races</span>
+      </span>
+    </div>
+    <div class="legend-row">
+      <span class="legend-row-title">Exotics</span>
+      <span class="legend-item">
+        <span class="exotic-align-badge confirmed" style="font-size:0.68rem">✓ Win aligned</span>
+        <span class="legend-desc">Exotic legs include the win pick</span>
+      </span>
+      <span class="legend-sep">·</span>
+      <span class="legend-item">
+        <span class="exotic-align-badge partial" style="font-size:0.68rem">~ Partial exotic</span>
+        <span class="legend-desc">Some legs overlap with win pick</span>
+      </span>
+      <span class="legend-sep">·</span>
+      <span class="legend-item">
+        <span class="exotic-align-badge diverge" style="font-size:0.68rem">⚠ Models diverge</span>
+        <span class="legend-desc">Win and place models disagree</span>
+      </span>
+      <span class="legend-sep">·</span>
+      <span class="legend-item">
+        <span class="exotic-align-badge no-edge" style="font-size:0.68rem">– No win pick</span>
+        <span class="legend-desc">No qualifying edge pick for this race</span>
+      </span>
+    </div>
   </div>
 
   <div class="legend-bar" id="legendExotics" style="display:none">
-    <span class="legend-title">FunkyIQ&#8482; Exotic Ranking:</span>
-    <span class="legend-item">
-      <span class="legend-badge hot">🔥 Hot Exotic</span>
-      <span class="legend-desc">Top 25% by combined place probability</span>
-    </span>
-    <span class="legend-sep">·</span>
-    <span class="legend-item">
-      <span class="legend-badge high">⚡ High Confidence</span>
-      <span class="legend-desc">Next 35% — strong box coverage</span>
-    </span>
-    <span class="legend-sep">·</span>
-    <span class="legend-item">
-      <span class="legend-badge standard">📈 Strong Exotic</span>
-      <span class="legend-desc">Remaining picks — value trifectas &amp; first fours</span>
-    </span>
-    <span class="legend-sep">·</span>
-    <span class="legend-item">
-      <span class="exotic-align-badge confirmed" style="font-size:0.68rem">✓ Win aligned</span>
-      <span class="legend-desc">Exotic legs include the win pick</span>
-    </span>
-    <span class="legend-sep">·</span>
-    <span class="legend-item">
-      <span class="exotic-align-badge partial" style="font-size:0.68rem">~ Partial exotic</span>
-      <span class="legend-desc">Some legs overlap with win pick</span>
-    </span>
-    <span class="legend-sep">·</span>
-    <span class="legend-item">
-      <span class="exotic-align-badge diverge" style="font-size:0.68rem">⚠ Models diverge</span>
-      <span class="legend-desc">Win and place models disagree</span>
-    </span>
-    <span class="legend-sep">·</span>
-    <span class="legend-item">
-      <span class="exotic-align-badge no-edge" style="font-size:0.68rem">– No win pick</span>
-      <span class="legend-desc">No qualifying edge pick for this race</span>
-    </span>
+    <div class="legend-row">
+      <span class="legend-row-title">Win / Place</span>
+      <span class="legend-item">
+        <span class="legend-badge hot">🔥 Hot Exotic</span>
+        <span class="legend-desc">Top 25% by combined place probability</span>
+      </span>
+      <span class="legend-sep">·</span>
+      <span class="legend-item">
+        <span class="legend-badge high">⚡ High Confidence</span>
+        <span class="legend-desc">Next 35% — strong box coverage</span>
+      </span>
+      <span class="legend-sep">·</span>
+      <span class="legend-item">
+        <span class="legend-badge standard">📈 Strong Exotic</span>
+        <span class="legend-desc">Remaining picks — value trifectas &amp; first fours</span>
+      </span>
+    </div>
+    <div class="legend-row">
+      <span class="legend-row-title">Exotics</span>
+      <span class="legend-item">
+        <span class="exotic-align-badge confirmed" style="font-size:0.68rem">✓ Win aligned</span>
+        <span class="legend-desc">Exotic legs include the win pick</span>
+      </span>
+      <span class="legend-sep">·</span>
+      <span class="legend-item">
+        <span class="exotic-align-badge partial" style="font-size:0.68rem">~ Partial exotic</span>
+        <span class="legend-desc">Some legs overlap with win pick</span>
+      </span>
+      <span class="legend-sep">·</span>
+      <span class="legend-item">
+        <span class="exotic-align-badge diverge" style="font-size:0.68rem">⚠ Models diverge</span>
+        <span class="legend-desc">Win and place models disagree</span>
+      </span>
+      <span class="legend-sep">·</span>
+      <span class="legend-item">
+        <span class="exotic-align-badge no-edge" style="font-size:0.68rem">– No win pick</span>
+        <span class="legend-desc">No qualifying edge pick for this race</span>
+      </span>
+    </div>
   </div>
 
   <div id="panelUpcoming">
