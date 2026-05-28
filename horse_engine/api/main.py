@@ -5008,6 +5008,7 @@ async def premium_performance_daily():
 # ── Calibration ───────────────────────────────────────────────────────────────
 
 _CANDIDATE_WINDOWS = [30, 60, 90, 180, 270]
+_EXOTIC_CANDIDATE_WINDOWS = [30, 60, 90]   # capped: exotic model only has ~30d of real outcome data
 _DRIFT_THRESHOLD = 0.05   # 5% drop vs 4-week rolling avg triggers flag
 
 
@@ -5536,7 +5537,7 @@ async def _run_exotic_calibration_sweep(holdout_days: int = 14) -> dict:
     best_score = float("-inf")
     best_weights = None
 
-    for window in _CANDIDATE_WINDOWS:
+    for window in _EXOTIC_CANDIDATE_WINDOWS:
         train_cutoff = (today - timedelta(days=window)).isoformat()
 
         # Build race groups for train_exotic()
