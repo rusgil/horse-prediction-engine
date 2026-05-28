@@ -5892,6 +5892,137 @@ async def force_restore(
     return {"status": "done", "date": target, "rows_restored": affected}
 
 
+@app.get("/api/admin/placement-model-comparison")
+async def placement_model_comparison(
+    days: int = Query(default=30, ge=1, le=90),
+    x_cron_secret: Optional[str] = Header(None),
+):
+    """
+    Compare win/place model (place_probability) vs exotic model (exotic_model_rank)
+    at predicting actual placed finishers.
+
+    For each settled race where we have both exotic_model_rank and place_probability
+    in the pre-race history snapshot, we check how many of the actual placed runners
+    appeared in each model's top-3 prediction.
+
+    Returns per-race breakdown and aggregate recall scores.
+    """
+    _check_admin(x_cron_secret)
+
+    cutoff = (_today_aest() - timedelta(days=days)).isoformat()
+
+    async with get_session() as session:
+        # Get all history rows from the window that have exotic_model_rank set
+        history_result = await session.execute(
+            select(RunnerPredictionHistoryRow)
+            .where(RunnerPredictionHistoryRow.race_id >= cutoff)
+            .where(RunnerPredictionHistoryRow.exotic_model_rank.isnot(None))
+            .where(RunnerPredictionHistoryRow.place_probability.isnot(None))
+        )
+        history_rows = history_result.scalars().all()
+
+        # Get all settled results for those races
+        race_ids = list({r.race_id for r in history_rows})
+        if not race_ids:
+            return {"error": "no_data", "message": "No races with exotic_model_rank in history for this window"}
+
+        results_result = await session.execute(
+            select(HistoricalResultRow)
+            .where(HistoricalResultRow.race_id.in_(race_ids))
+        )
+        result_rows = results_result.scalars().all()
+
+    # Index results: race_id -> set of placed horse names
+    placed_by_race: dict[str, set[str]] = {}
+    for r in result_rows:
+        if r.placed:
+            placed_by_race.setdefault(r.race_id, set()).add(r.horse_name.strip().lower())
+
+    # Only evaluate races that have settled results
+    settled_race_ids = set(placed_by_race.keys())
+
+    # Group history rows by race
+    history_by_race: dict[str, list] = {}
+    for h in history_rows:
+        if h.race_id in settled_race_ids:
+            history_by_race.setdefault(h.race_id, []).append(h)
+
+    if not history_by_race:
+        return {"error": "no_settled_data", "message": "No settled races found for comparison"}
+
+    race_results = []
+    win_place_hits = 0
+    exotic_hits = 0
+    win_place_total = 0
+    exotic_total = 0
+
+    for race_id, runners in sorted(history_by_race.items()):
+        placed_names = placed_by_race.get(race_id, set())
+        n_places = len(placed_names)
+        if n_places == 0:
+            continue
+
+        # Win/place model: top-3 by place_probability descending
+        wp_sorted = sorted(runners, key=lambda r: r.place_probability or 0, reverse=True)
+        wp_top3 = {r.horse_name.strip().lower() for r in wp_sorted[:3]}
+
+        # Exotic model: top-3 by exotic_model_rank ascending (rank 1 = best)
+        ex_sorted = sorted(runners, key=lambda r: r.exotic_model_rank or 999)
+        ex_top3 = {r.horse_name.strip().lower() for r in ex_sorted[:3]}
+
+        wp_hit = len(wp_top3 & placed_names)
+        ex_hit = len(ex_top3 & placed_names)
+
+        win_place_hits += wp_hit
+        exotic_hits += ex_hit
+        win_place_total += n_places
+        exotic_total += n_places
+
+        race_results.append({
+            "race_id": race_id,
+            "field_size": len(runners),
+            "n_placed": n_places,
+            "wp_top3": sorted(wp_top3),
+            "ex_top3": sorted(ex_top3),
+            "actual_placed": sorted(placed_names),
+            "wp_hits": wp_hit,
+            "ex_hits": ex_hit,
+            "wp_recall": round(wp_hit / n_places, 3),
+            "ex_recall": round(ex_hit / n_places, 3),
+            "agreement": len(wp_top3 & ex_top3),
+        })
+
+    n_races = len(race_results)
+    wp_overall_recall = round(win_place_hits / win_place_total, 4) if win_place_total else 0
+    ex_overall_recall = round(exotic_hits / exotic_total, 4) if exotic_total else 0
+
+    # Races where each model beats the other
+    wp_wins = sum(1 for r in race_results if r["wp_recall"] > r["ex_recall"])
+    ex_wins = sum(1 for r in race_results if r["ex_recall"] > r["wp_recall"])
+    ties = n_races - wp_wins - ex_wins
+
+    return {
+        "window_days": days,
+        "races_evaluated": n_races,
+        "summary": {
+            "win_place_model": {
+                "total_hits": win_place_hits,
+                "total_placed": win_place_total,
+                "recall": wp_overall_recall,
+                "races_where_better": wp_wins,
+            },
+            "exotic_model": {
+                "total_hits": exotic_hits,
+                "total_placed": exotic_total,
+                "recall": ex_overall_recall,
+                "races_where_better": ex_wins,
+            },
+            "ties": ties,
+        },
+        "races": race_results,
+    }
+
+
 # ── Serialisation helpers ─────────────────────────────────────────────────────
 
 def _prediction_to_db_dict(pred, race_id: str, scheduled_time: str | None = None, race=None) -> dict:
