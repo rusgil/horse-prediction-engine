@@ -937,8 +937,8 @@
         const pct = Math.round(perf.win_rate * 100);
         const placePct = Math.round((perf.place_rate || 0) * 100);
         const cls = !complete ? 'bad' : pct >= 50 ? 'good' : pct >= 38 ? 'ok' : 'bad';
-        const winLabel = complete ? `${pct}%` : 'N/A';
-        const placeLabel = complete ? `${placePct}%` : 'N/A';
+        const winLabel = complete ? `${pct}%` : 'not avail.';
+        const placeLabel = complete ? `${placePct}%` : 'not avail.';
         accHtml = `<span class="date-pill-acc ${cls}">${winLabel}</span><span class="date-pill-acc" style="color:${complete ? '#60a5fa' : 'var(--text-dim)'};background:rgba(59,130,246,0.12);border-color:rgba(59,130,246,0.25)">${placeLabel}</span>`;
       }
       el.innerHTML = `<span class="date-pill-day">${formatDayLabel(iso)}</span><span class="date-pill-date">${formatShortDate(iso)}</span>${accHtml}`;
@@ -1122,8 +1122,8 @@
     const pct = Math.round(perf.win_rate * 100);
     const placePct = Math.round(perf.place_rate * 100);
     const rateClass = !complete ? '' : pct >= 50 ? 'good' : pct >= 38 ? 'ok' : 'bad';
-    const winDisplay = complete ? `${pct}%` : `<span style="color:var(--text-dim);font-size:0.85em">N/A</span>`;
-    const placeDisplay = complete ? `${placePct}%` : `<span style="color:var(--text-dim);font-size:0.85em">N/A</span>`;
+    const winDisplay = complete ? `${pct}%` : `<span style="color:var(--text-dim);font-size:0.85em">not avail.</span>`;
+    const placeDisplay = complete ? `${placePct}%` : `<span style="color:var(--text-dim);font-size:0.85em">not avail.</span>`;
     const pnlClass = perf.value_pnl >= 0 ? 'good' : 'bad';
     const pnlStr = perf.value_pnl >= 0 ? `+$${perf.value_pnl.toFixed(1)}` : `-$${Math.abs(perf.value_pnl).toFixed(1)}`;
     el.innerHTML = `
@@ -1137,7 +1137,7 @@
           <span class="day-acc-label">Place rate</span>
         </div>
         <div class="day-acc-stat">
-          <span class="day-acc-val">${perf.wins}/${perf.races}</span>
+          <span class="day-acc-val">${perf.wins}/${complete ? perf.races : `${perf.races}<span style="color:var(--text-dim);font-size:0.8em"> of ${perf.total_races_ran||perf.races}</span>`}</span>
           <span class="day-acc-label">Races</span>
         </div>
         ${perf.value_bets ? `

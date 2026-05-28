@@ -756,6 +756,15 @@ async def _snapshot_prerace_predictions() -> int:
         )
         already_set = set(already_result.scalars().all())
 
+        # Races with a settled result — don't snapshot after result is known
+        # (prediction could have been updated by a retrain that saw the outcome)
+        settled_result = await session.execute(
+            select(HistoricalResultRow.race_id)
+            .where(HistoricalResultRow.race_id.like(f"{today}_%"))
+            .distinct()
+        )
+        settled_set = set(settled_result.scalars().all())
+
         pred_result = await session.execute(
             select(RunnerPredictionRow)
             .where(RunnerPredictionRow.race_id.like(f"{today}_%"))
@@ -764,20 +773,13 @@ async def _snapshot_prerace_predictions() -> int:
         )
         rows = pred_result.scalars().all()
 
-    # Group by race, skip races already in history or already started
+    # Group by race, skip races already in history or with a known result
     races: dict[str, list[RunnerPredictionRow]] = {}
     for r in rows:
         if r.race_id in already_set:
             continue
-        # Resolve scheduled time: Punters live > stored in row
-        sched = sched_map.get(r.race_id)
-        if sched is None and r.scheduled_time:
-            try:
-                sched = datetime.fromisoformat(r.scheduled_time.replace("Z", "+00:00")).replace(tzinfo=None)
-            except (ValueError, TypeError):
-                pass
-        if sched is not None and now_utc >= sched:
-            continue  # race has started
+        if r.race_id in settled_set:
+            continue  # result already seeded — prediction may be post-retrain contaminated
         races.setdefault(r.race_id, []).append(r)
 
     if not races:
@@ -4463,24 +4465,13 @@ async def performance_summary(days: int = Query(5, ge=1, le=365)):
             p.race_id: p for p in pred_result.scalars().all()
         }
 
-        # Count ALL predicted races per date (not just those with results) to detect incomplete snapshots
-        total_pred_result = await session.execute(
-            select(RunnerPredictionRow.race_id)
-            .where(RunnerPredictionRow.race_id >= cutoff)
-            .where(RunnerPredictionRow.model_rank == 1)
-            .where(RunnerPredictionRow.cancelled.is_(False) | RunnerPredictionRow.cancelled.is_(None))
-        )
-        total_predicted_by_date: dict[str, int] = {}
-        for (rid,) in total_pred_result.all():
-            total_predicted_by_date[rid[:10]] = total_predicted_by_date.get(rid[:10], 0) + 1
-
     result_by_key = {(r.race_id, r.horse_name): r for r in hr_rows}
 
-    # Count history races per date
-    history_races_by_date: dict[str, int] = {}
-    for race_id in top_picks:
-        d = race_id[:10]
-        history_races_by_date[d] = history_races_by_date.get(d, 0) + 1
+    # Count total races that actually ran per date (unique race_ids in results)
+    result_race_ids_by_date: dict[str, set] = {}
+    for r in hr_rows:
+        result_race_ids_by_date.setdefault(r.race_id[:10], set()).add(r.race_id)
+    result_races_by_date = {d: len(ids) for d, ids in result_race_ids_by_date.items()}
 
     # Group by date
     by_date: dict[str, dict] = {}
@@ -4517,12 +4508,13 @@ async def performance_summary(days: int = Query(5, ge=1, le=365)):
     for day_str in sorted(by_date.keys(), reverse=True):
         d = by_date[day_str]
         races = d["races"]
-        total_predicted = total_predicted_by_date.get(day_str, races)
-        # Flag as incomplete if history captured <80% of predicted races for that day
-        data_complete = races >= total_predicted * 0.8
+        total_ran = result_races_by_date.get(day_str, races)
+        # Flag as incomplete if snapshots covered <80% of races that ran that day
+        data_complete = races >= total_ran * 0.8
         summary.append({
             "date": day_str,
             "races": races,
+            "total_races_ran": total_ran,
             "wins": d["wins"],
             "win_rate": round(d["wins"] / races, 3) if races else 0,
             "place_rate": round(d["places"] / races, 3) if races else 0,
