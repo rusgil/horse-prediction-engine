@@ -392,6 +392,10 @@ async def _scheduled_enrich():
             n = await _seed_results_for_date(seed_date)
             if n:
                 log.info("[scheduler] Seeded %d results for %s", n, seed_date)
+        # Snapshot any newly enriched pre-race predictions into the immutable history table
+        n_snap = await _snapshot_prerace_predictions()
+        if n_snap:
+            log.info("[scheduler] Snapshotted %d races into history after enrichment", n_snap)
         log.info("[scheduler] Enrichment complete")
     except Exception as e:
         log.exception("[scheduler] Enrichment failed: %s", e)
