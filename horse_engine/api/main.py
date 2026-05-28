@@ -1433,11 +1433,11 @@ async def get_edge_yesterday(for_date: Optional[str] = Query(None, alias="date")
 
     async with get_session() as session:
         result = await session.execute(
-            select(RunnerPredictionRow)
-            .where(RunnerPredictionRow.model_rank == 1)
-            .where(RunnerPredictionRow.win_probability >= threshold)
-            .where(RunnerPredictionRow.race_id.like(f"{prefix}%"))
-            .order_by(RunnerPredictionRow.win_probability.desc())
+            select(RunnerPredictionHistoryRow)
+            .where(RunnerPredictionHistoryRow.model_rank == 1)
+            .where(RunnerPredictionHistoryRow.win_probability >= threshold)
+            .where(RunnerPredictionHistoryRow.race_id.like(f"{prefix}%"))
+            .order_by(RunnerPredictionHistoryRow.win_probability.desc())
         )
         picks = result.scalars().all()
 
@@ -1447,10 +1447,10 @@ async def get_edge_yesterday(for_date: Optional[str] = Query(None, alias="date")
         # Batch-fetch place model runners for trifecta legs
         yst_race_ids = [p.race_id for p in picks]
         yst_place_result = await session.execute(
-            select(RunnerPredictionRow)
-            .where(RunnerPredictionRow.race_id.in_(yst_race_ids))
-            .where(RunnerPredictionRow.place_model_rank >= 1)
-            .where(RunnerPredictionRow.place_model_rank <= 4)
+            select(RunnerPredictionHistoryRow)
+            .where(RunnerPredictionHistoryRow.race_id.in_(yst_race_ids))
+            .where(RunnerPredictionHistoryRow.place_model_rank >= 1)
+            .where(RunnerPredictionHistoryRow.place_model_rank <= 4)
         )
         yst_place_rows = yst_place_result.scalars().all()
 
@@ -4436,6 +4436,7 @@ async def performance_summary(days: int = Query(5, ge=1, le=365)):
     Per-day performance strip for the last N days.
     Shows top-pick win rate, place rate, and value P&L per day.
     No auth required — displayed publicly on the frontend.
+    Uses the immutable pre-race snapshot table so stats are stable across retrains.
     """
     cutoff = (date.today() - timedelta(days=days)).isoformat()
 
@@ -4450,18 +4451,13 @@ async def performance_summary(days: int = Query(5, ge=1, le=365)):
 
         race_ids = list({r.race_id for r in hr_rows})
         pred_result = await session.execute(
-            select(RunnerPredictionRow)
-            .where(RunnerPredictionRow.race_id.in_(race_ids))
+            select(RunnerPredictionHistoryRow)
+            .where(RunnerPredictionHistoryRow.race_id.in_(race_ids))
+            .where(RunnerPredictionHistoryRow.model_rank == 1)
         )
-        all_preds = pred_result.scalars().all()
-        # Top pick per race = highest win_probability (matches meetings page RAG dots)
-        top_picks: dict[str, RunnerPredictionRow] = {}
-        for p in all_preds:
-            if p.win_probability is None:
-                continue
-            existing = top_picks.get(p.race_id)
-            if existing is None or (p.win_probability or 0) > (existing.win_probability or 0):
-                top_picks[p.race_id] = p
+        top_picks: dict[str, RunnerPredictionHistoryRow] = {
+            p.race_id: p for p in pred_result.scalars().all()
+        }
 
     result_by_key = {(r.race_id, r.horse_name): r for r in hr_rows}
 
