@@ -4463,10 +4463,10 @@ async def performance_summary(days: int = Query(5, ge=1, le=365)):
             p.race_id: p for p in pred_result.scalars().all()
         }
 
-        # Count total predicted races per date from mutable table to detect incomplete snapshots
+        # Count ALL predicted races per date (not just those with results) to detect incomplete snapshots
         total_pred_result = await session.execute(
             select(RunnerPredictionRow.race_id)
-            .where(RunnerPredictionRow.race_id.in_(race_ids))
+            .where(RunnerPredictionRow.race_id >= cutoff)
             .where(RunnerPredictionRow.model_rank == 1)
             .where(RunnerPredictionRow.cancelled.is_(False) | RunnerPredictionRow.cancelled.is_(None))
         )
