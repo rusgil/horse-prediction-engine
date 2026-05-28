@@ -933,10 +933,13 @@
       const perf = isPast ? S.perfByDate[iso] : null;
       let accHtml = '';
       if (perf) {
+        const complete = perf.data_complete !== false;
         const pct = Math.round(perf.win_rate * 100);
         const placePct = Math.round((perf.place_rate || 0) * 100);
-        const cls = pct >= 50 ? 'good' : pct >= 38 ? 'ok' : 'bad';
-        accHtml = `<span class="date-pill-acc ${cls}">${pct}%</span><span class="date-pill-acc" style="color:#60a5fa;background:rgba(59,130,246,0.12);border-color:rgba(59,130,246,0.25)">${placePct}%</span>`;
+        const cls = !complete ? 'bad' : pct >= 50 ? 'good' : pct >= 38 ? 'ok' : 'bad';
+        const winLabel = complete ? `${pct}%` : 'N/A';
+        const placeLabel = complete ? `${placePct}%` : 'N/A';
+        accHtml = `<span class="date-pill-acc ${cls}">${winLabel}</span><span class="date-pill-acc" style="color:${complete ? '#60a5fa' : 'var(--text-dim)'};background:rgba(59,130,246,0.12);border-color:rgba(59,130,246,0.25)">${placeLabel}</span>`;
       }
       el.innerHTML = `<span class="date-pill-day">${formatDayLabel(iso)}</span><span class="date-pill-date">${formatShortDate(iso)}</span>${accHtml}`;
       el.addEventListener('click', () => selectDate(iso));
@@ -1115,19 +1118,22 @@
     if (!el) return;
     const perf = S.perfByDate[iso];
     if (!perf || iso >= todayISO()) { el.innerHTML = ''; return; }
+    const complete = perf.data_complete !== false;
     const pct = Math.round(perf.win_rate * 100);
     const placePct = Math.round(perf.place_rate * 100);
-    const rateClass = pct >= 50 ? 'good' : pct >= 38 ? 'ok' : 'bad';
+    const rateClass = !complete ? '' : pct >= 50 ? 'good' : pct >= 38 ? 'ok' : 'bad';
+    const winDisplay = complete ? `${pct}%` : `<span style="color:var(--text-dim);font-size:0.85em">N/A</span>`;
+    const placeDisplay = complete ? `${placePct}%` : `<span style="color:var(--text-dim);font-size:0.85em">N/A</span>`;
     const pnlClass = perf.value_pnl >= 0 ? 'good' : 'bad';
     const pnlStr = perf.value_pnl >= 0 ? `+$${perf.value_pnl.toFixed(1)}` : `-$${Math.abs(perf.value_pnl).toFixed(1)}`;
     el.innerHTML = `
       <div class="day-accuracy-bar">
         <div class="day-acc-stat">
-          <span class="day-acc-val ${rateClass}">${pct}%</span>
+          <span class="day-acc-val ${rateClass}">${winDisplay}</span>
           <span class="day-acc-label">Win rate</span>
         </div>
         <div class="day-acc-stat">
-          <span class="day-acc-val" style="color:#60a5fa">${placePct}%</span>
+          <span class="day-acc-val" style="color:${complete ? '#60a5fa' : 'var(--text-dim)'}">${placeDisplay}</span>
           <span class="day-acc-label">Place rate</span>
         </div>
         <div class="day-acc-stat">
@@ -1139,6 +1145,7 @@
           <span class="day-acc-val ${pnlClass}">${pnlStr}</span>
           <span class="day-acc-label">${perf.value_bets} value bets</span>
         </div>` : ''}
+        ${!complete ? `<div class="day-acc-stat"><span class="day-acc-val" style="color:var(--text-dim);font-size:0.75rem">Incomplete data</span></div>` : ''}
       </div>`;
   }
 

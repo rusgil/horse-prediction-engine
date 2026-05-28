@@ -4463,7 +4463,24 @@ async def performance_summary(days: int = Query(5, ge=1, le=365)):
             p.race_id: p for p in pred_result.scalars().all()
         }
 
+        # Count total predicted races per date from mutable table to detect incomplete snapshots
+        total_pred_result = await session.execute(
+            select(RunnerPredictionRow.race_id)
+            .where(RunnerPredictionRow.race_id.in_(race_ids))
+            .where(RunnerPredictionRow.model_rank == 1)
+            .where(RunnerPredictionRow.cancelled.is_(False) | RunnerPredictionRow.cancelled.is_(None))
+        )
+        total_predicted_by_date: dict[str, int] = {}
+        for (rid,) in total_pred_result.all():
+            total_predicted_by_date[rid[:10]] = total_predicted_by_date.get(rid[:10], 0) + 1
+
     result_by_key = {(r.race_id, r.horse_name): r for r in hr_rows}
+
+    # Count history races per date
+    history_races_by_date: dict[str, int] = {}
+    for race_id in top_picks:
+        d = race_id[:10]
+        history_races_by_date[d] = history_races_by_date.get(d, 0) + 1
 
     # Group by date
     by_date: dict[str, dict] = {}
@@ -4500,6 +4517,9 @@ async def performance_summary(days: int = Query(5, ge=1, le=365)):
     for day_str in sorted(by_date.keys(), reverse=True):
         d = by_date[day_str]
         races = d["races"]
+        total_predicted = total_predicted_by_date.get(day_str, races)
+        # Flag as incomplete if history captured <80% of predicted races for that day
+        data_complete = races >= total_predicted * 0.8
         summary.append({
             "date": day_str,
             "races": races,
@@ -4512,6 +4532,7 @@ async def performance_summary(days: int = Query(5, ge=1, le=365)):
             "tier_hot": d["tier_hot"],
             "tier_high": d["tier_high"],
             "tier_strong": d["tier_strong"],
+            "data_complete": data_complete,
         })
 
     total_races = sum(d["races"] for d in by_date.values())
