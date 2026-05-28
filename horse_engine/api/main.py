@@ -5893,6 +5893,118 @@ async def force_restore(
     return {"status": "done", "date": target, "rows_restored": affected}
 
 
+@app.get("/api/admin/trifecta-model-comparison")
+async def trifecta_model_comparison(
+    holdout_days: int = Query(default=14, ge=7, le=30),
+    x_cron_secret: Optional[str] = Header(None),
+):
+    """
+    Compare win/place model (place_probability top-3) vs exotic model (exotic_model_rank top-3)
+    on trifecta box hit rate — same holdout dataset used by calibrate-exotic.
+
+    Uses RunnerPredictionRow + HistoricalResultRow (not history snapshot), so the
+    sample size matches the exotic calibration's 530-race holdout.
+    """
+    _check_admin(x_cron_secret)
+    today = _today_aest()
+    holdout_cutoff = (today - timedelta(days=holdout_days)).isoformat()
+
+    async with get_session() as session:
+        hr_result = await session.execute(
+            select(HistoricalResultRow)
+            .where(HistoricalResultRow.race_id >= holdout_cutoff)
+            .where(HistoricalResultRow.position.isnot(None))
+        )
+        all_hr = hr_result.scalars().all()
+
+        pred_result = await session.execute(
+            select(RunnerPredictionRow)
+            .where(RunnerPredictionRow.race_id >= holdout_cutoff)
+        )
+        all_pred = pred_result.scalars().all()
+
+    # Group results by race
+    results_by_race: dict[str, list] = {}
+    for r in all_hr:
+        results_by_race.setdefault(r.race_id, []).append(r)
+
+    # Group preds by race
+    preds_by_race: dict[str, list] = {}
+    for p in all_pred:
+        preds_by_race.setdefault(p.race_id, []).append(p)
+
+    wp_hits = ex_hits = total = 0
+    race_rows = []
+
+    for race_id, results in sorted(results_by_race.items()):
+        if len(results) < 7:
+            continue
+        actual_top3 = {r.horse_name.strip().lower() for r in results if r.position in (1, 2, 3)}
+        if len(actual_top3) != 3:
+            continue
+
+        preds = preds_by_race.get(race_id, [])
+        if not preds:
+            continue
+
+        # Win/place: top-3 by place_probability
+        wp_sorted = sorted(
+            [p for p in preds if p.place_probability is not None],
+            key=lambda p: p.place_probability, reverse=True
+        )
+        if len(wp_sorted) < 3:
+            continue
+        wp_top3 = {p.horse_name.strip().lower() for p in wp_sorted[:3]}
+
+        # Exotic: top-3 by exotic_model_rank (lower = better); fall back to place_model_rank
+        ex_candidates = [p for p in preds if p.exotic_model_rank is not None]
+        if ex_candidates:
+            ex_sorted = sorted(ex_candidates, key=lambda p: p.exotic_model_rank)
+        else:
+            ex_sorted = sorted(
+                [p for p in preds if p.place_model_rank is not None],
+                key=lambda p: p.place_model_rank
+            )
+        if len(ex_sorted) < 3:
+            continue
+        ex_top3 = {p.horse_name.strip().lower() for p in ex_sorted[:3]}
+
+        total += 1
+        wp_hit = wp_top3 == actual_top3
+        ex_hit = ex_top3 == actual_top3
+        if wp_hit:
+            wp_hits += 1
+        if ex_hit:
+            ex_hits += 1
+
+        race_rows.append({
+            "race_id": race_id,
+            "field_size": len(results),
+            "wp_top3": sorted(wp_top3),
+            "ex_top3": sorted(ex_top3),
+            "actual_top3": sorted(actual_top3),
+            "wp_hit": wp_hit,
+            "ex_hit": ex_hit,
+            "using_exotic_rank": len(ex_candidates) >= 3,
+        })
+
+    return {
+        "holdout_days": holdout_days,
+        "races_evaluated": total,
+        "win_place_model": {
+            "trifecta_box_hits": wp_hits,
+            "trifecta_box_hit_rate": round(wp_hits / total, 4) if total else 0,
+        },
+        "exotic_model": {
+            "trifecta_box_hits": ex_hits,
+            "trifecta_box_hit_rate": round(ex_hits / total, 4) if total else 0,
+            "races_using_exotic_rank": sum(1 for r in race_rows if r["using_exotic_rank"]),
+            "races_using_fallback": sum(1 for r in race_rows if not r["using_exotic_rank"]),
+        },
+        "races": race_rows,
+    }
+
+
 @app.get("/api/admin/placement-model-comparison")
 async def placement_model_comparison(
     days: int = Query(default=30, ge=1, le=90),
