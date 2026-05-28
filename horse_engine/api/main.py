@@ -4417,11 +4417,18 @@ async def performance_summary(days: int = Query(5, ge=1, le=365)):
 
         race_ids = list({r.race_id for r in hr_rows})
         pred_result = await session.execute(
-            select(RunnerPredictionHistoryRow)
-            .where(RunnerPredictionHistoryRow.race_id.in_(race_ids))
-            .where(RunnerPredictionHistoryRow.model_rank == 1)
+            select(RunnerPredictionRow)
+            .where(RunnerPredictionRow.race_id.in_(race_ids))
         )
-        top_picks = {p.race_id: p for p in pred_result.scalars().all()}
+        all_preds = pred_result.scalars().all()
+        # Top pick per race = highest win_probability (matches meetings page RAG dots)
+        top_picks: dict[str, RunnerPredictionRow] = {}
+        for p in all_preds:
+            if p.win_probability is None:
+                continue
+            existing = top_picks.get(p.race_id)
+            if existing is None or (p.win_probability or 0) > (existing.win_probability or 0):
+                top_picks[p.race_id] = p
 
     result_by_key = {(r.race_id, r.horse_name): r for r in hr_rows}
 
