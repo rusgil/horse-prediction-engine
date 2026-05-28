@@ -1179,10 +1179,7 @@ async def get_edge_picks():
 
             # Build trifecta legs: win pick + top 2 place-model picks (excluding win)
             place_runners = trifecta_map.get(runner_row.race_id, [])
-            place_excl = sorted(
-                [pr for pr in place_runners if pr.horse_name != runner_row.horse_name],
-                key=lambda r: r.place_probability or 0, reverse=True
-            )
+            place_excl = [pr for pr in place_runners if pr.horse_name != runner_row.horse_name]
             def _leg(pr):
                 return {
                     "tab_number": pr.tab_number,
@@ -1483,10 +1480,7 @@ async def get_edge_yesterday(for_date: Optional[str] = Query(None, alias="date")
 
         # Build trifecta legs for yesterday display
         yst_place_runners = yst_trifecta_map.get(p.race_id, [])
-        yst_place_excl = sorted(
-            [pr for pr in yst_place_runners if pr.horse_name != p.horse_name],
-            key=lambda r: r.place_probability or 0, reverse=True
-        )
+        yst_place_excl = [pr for pr in yst_place_runners if pr.horse_name != p.horse_name]
         def _yst_leg(pr):
             return {
                 "tab_number": pr.tab_number,
@@ -1671,8 +1665,7 @@ async def get_edge_trifectas():
             if len(runners) < 3:
                 continue
 
-            # Re-sort top picks by place_probability desc so display order matches %
-            legs = sorted(runners[:4], key=lambda r: r.place_probability or 0, reverse=True)[:3]
+            legs = runners[:3]
             probs = [r.place_probability for r in legs if r.place_probability]
             if len(probs) < 3:
                 continue

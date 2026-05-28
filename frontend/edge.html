@@ -3058,7 +3058,7 @@
         <div class="exotic-runner-stats">
           ${isFinished
             ? `<div style="${posStyle}font-size:0.8rem;">${posLabel || '—'}</div>`
-            : `<div class="exotic-runner-pct">${l.place_pct != null ? l.place_pct + '%' : '—'}</div>`
+            : `<div class="exotic-runner-pct">${l.place_pct != null ? l.place_pct + '%' : '—'}<span style="color:var(--text-dim);font-size:0.6rem;font-weight:500;margin-left:2px">place</span></div>`
           }
           <div class="exotic-runner-odds">${l.best_available_odds ? '$' + l.best_available_odds.toFixed(2) : '—'}</div>
         </div>
