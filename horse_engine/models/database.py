@@ -293,6 +293,24 @@ async def init_db() -> None:
         await conn.execute(text(
             "ALTER TABLE runner_prediction_history ADD COLUMN IF NOT EXISTS source TEXT DEFAULT 'live'"
         ))
+        # Composite indexes for hot query pattern: race_id + model_rank=1 lookups
+        await conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_runner_pred_race_rank "
+            "ON runner_predictions (race_id, model_rank)"
+        ))
+        await conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_runner_pred_hist_race_rank "
+            "ON runner_prediction_history (race_id, model_rank)"
+        ))
+        # Indexes for winner/placed boolean filter on historical_results
+        await conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_hist_results_race_winner "
+            "ON historical_results (race_id, winner)"
+        ))
+        await conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_hist_results_race_placed "
+            "ON historical_results (race_id, placed)"
+        ))
 
 
 async def backfill_prediction_history(session: AsyncSession) -> int:

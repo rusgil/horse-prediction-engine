@@ -1015,6 +1015,9 @@ _edge_odds_cache: dict[str, tuple[datetime, dict[str, float]]] = {}  # race_id �
 # Cache full list_meetings response for 10 min (weather + Punters calls are expensive)
 _list_meetings_cache: dict[str, tuple[datetime, dict]] = {}  # date → (ts, response)
 
+# Cache per-venue meeting response for 2 min — prevents thundering herd from _loadMeetingWinRate
+_get_meeting_cache: dict[str, tuple[datetime, dict]] = {}  # "date/venue" → (ts, response)
+
 async def _fetch_live_odds(client, race_id: str) -> dict[str, float]:
     """Return {horse_name: flucs_win_odds} for a race. Cached 5 min."""
     cached = _edge_odds_cache.get(race_id)
@@ -2099,6 +2102,10 @@ async def get_meeting(race_date: str, venue_code: str):
     _validate_date(race_date)
     _validate_venue(venue_code)
     """Get all races at a meeting with current predictions if available."""
+    _cache_key = f"{race_date}/{venue_code}"
+    _cached = _get_meeting_cache.get(_cache_key)
+    if _cached and (datetime.utcnow() - _cached[0]).total_seconds() < 120:
+        return _cached[1]
     prefix = f"{_like_safe(race_date)}_{_like_safe(venue_code)}_R"
 
     # ── Step 1: build race list from DB (always available) ───────────────────
@@ -2195,6 +2202,11 @@ async def get_meeting(race_date: str, venue_code: str):
 
     race_ids = [r["race_id"] for r in race_list]
 
+    # Seed resulted races before the main DB read so winners are available immediately
+    resulted_race_ids = {r["race_id"] for r in race_list if r.get("status") == "resulted"}
+    if resulted_race_ids:
+        await _seed_race_results_on_demand(list(resulted_race_ids))
+
     async with get_session() as session:
         # Which races have been enriched
         enriched_result = await session.execute(
@@ -2245,14 +2257,7 @@ async def get_meeting(race_date: str, venue_code: str):
                 top_picks[p.race_id] = p.horse_name
                 top_win_probs[p.race_id] = p.win_probability
 
-    # Seed any resulted races inline before querying winners — first load shows
-    # correct model verdict without requiring a page refresh
-    resulted_race_ids = {r["race_id"] for r in race_list if r.get("status") == "resulted"}
-    if resulted_race_ids:
-        await _seed_race_results_on_demand(list(resulted_race_ids))
-
-    async with get_session() as session:
-        # Winners and placers per race from historical results (now includes just-seeded races)
+        # Winners and placers per race from historical results
         hr_result = await session.execute(
             select(HistoricalResultRow)
             .where(HistoricalResultRow.race_id.in_(race_ids))
@@ -2269,14 +2274,13 @@ async def get_meeting(race_date: str, venue_code: str):
         for r in hr_placed.scalars().all():
             placers.setdefault(r.race_id, set()).add(r.horse_name)
 
-    async with get_session() as session:
-        # Top place probability per race
+        # Top place probability per race (reuse model_rank=1 mutable rows already fetched above)
         tp_place_result = await session.execute(
-            select(RunnerPredictionRow)
+            select(RunnerPredictionRow.race_id, RunnerPredictionRow.place_probability)
             .where(RunnerPredictionRow.race_id.in_(race_ids))
             .where(RunnerPredictionRow.model_rank == 1)
         )
-        top_place_probs = {p.race_id: p.place_probability for p in tp_place_result.scalars().all()}
+        top_place_probs = {row.race_id: row.place_probability for row in tp_place_result}
 
     enriched = bool(enriched_rows)
 
@@ -2306,12 +2310,14 @@ async def get_meeting(race_date: str, venue_code: str):
             "top_place_probability": top_place_probs.get(rid),
         })
 
-    return {
+    result = {
         "date": race_date,
         "venue": venue_code,
         "enriched": enriched,
         "races": races_out,
     }
+    _get_meeting_cache[_cache_key] = (datetime.utcnow(), result)
+    return result
 
 
 # ── Races ─────────────────────────────────────────────────────────────────────
