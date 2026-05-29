@@ -1320,6 +1320,13 @@
     try {
       const data = await fetchMeeting(S.date, m.venue_code);
       S.races = data.races || [];
+      // Back-fill scheduled_time from the meetings list race_times when missing
+      const raceTimes = m.race_times || {};
+      S.races.forEach(r => {
+        if (!r.scheduled_time && !r.time && raceTimes[r.race_number]) {
+          r.scheduled_time = r.time = raceTimes[r.race_number];
+        }
+      });
       S.enrichedRaceIds = new Set(
         S.races.filter(r => r.enriched_at).map(r => r.race_id)
       );
@@ -1377,12 +1384,11 @@
 
     const startTime = race.scheduled_time || race.time || '';
     const raceInfo = `
-      <span class="info-chip race-num">R${race.race_number}</span>
+      <span class="info-chip race-num">R${race.race_number}${startTime ? `<span style="font-size:0.75rem;font-weight:600;opacity:0.8;margin-left:5px">${formatTime(startTime)}</span>` : ''}</span>
       ${race.race_name ? `<span class="info-chip">${escHtml(race.race_name)}</span>` : ''}
       ${race.distance ? `<span class="info-chip">${escHtml(String(race.distance))}m</span>` : ''}
       ${race.track_condition ? `<span class="info-chip">${escHtml(race.track_condition)}</span>` : ''}
       ${race.field_size ? `<span class="info-chip">${escHtml(String(race.field_size))} runners</span>` : ''}
-      ${startTime ? `<span class="info-chip">${formatTime(startTime)}</span>` : ''}
       ${startTime ? `<span class="info-chip countdown" id="race-countdown">…</span>` : ''}
     `;
     document.getElementById('infoBar').innerHTML = renderInfoBar(S.selectedMeeting) + raceInfo;

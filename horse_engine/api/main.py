@@ -1969,6 +1969,7 @@ async def list_meetings(race_date: str = _today()):
             "state": m.get("state"),
             "rail_position": m.get("rail_position"),
             "slug": slug,
+            "race_times": m.get("race_times", {}),  # {race_number: startTime ISO}
         })
 
     # Merge DB-enriched meetings — ensures venues still appear when Punters is blocked

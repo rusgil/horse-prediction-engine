@@ -150,6 +150,7 @@ _MEETINGS_BY_DATE_QUERY = """
     meetingDateLocal
     railPosition
     venue { name state }
+    events { eventNumber startTime }
   }
 }
 """
@@ -342,6 +343,12 @@ class PuntersClient:
             slug = m.get("slug", "")
             if slug.endswith("-bt"):  # exclude barrier trials
                 continue
+            events = m.get("events") or []
+            race_times = {
+                e["eventNumber"]: e["startTime"]
+                for e in events
+                if e.get("eventNumber") and e.get("startTime")
+            }
             meetings.append({
                 "id": str(m.get("id") or ""),
                 "name": m.get("name", ""),
@@ -350,6 +357,7 @@ class PuntersClient:
                 "state": state,
                 "rail_position": m.get("railPosition") or "",
                 "date": d,
+                "race_times": race_times,  # {race_number: startTime ISO}
             })
 
         log.info("Found %d Australian meetings on %s", len(meetings), d)
