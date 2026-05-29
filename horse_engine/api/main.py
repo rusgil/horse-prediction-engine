@@ -4669,8 +4669,8 @@ async def performance_summary(days: int = Query(5, ge=1, le=365)):
         races = d["races"]
         total_predicted_settled = predicted_settled_by_date.get(day_str, races)
         total_ran = result_races_by_date.get(day_str, races)
-        # Incomplete if history snapshots cover <95% of races we predicted that also settled
-        data_complete = races >= total_predicted_settled * 0.95
+        # Incomplete if history snapshots cover <85% of races we predicted that also settled
+        data_complete = races >= total_predicted_settled * 0.85
         summary.append({
             "date": day_str,
             "races": races,
