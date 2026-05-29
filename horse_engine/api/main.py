@@ -4625,7 +4625,6 @@ async def performance_summary(days: int = Query(5, ge=1, le=365)):
     result_races_by_date = {d: len(ids) for d, ids in result_race_ids_by_date.items()}
 
     # predicted+settled intersection — correct denominator for data_complete
-    result_race_id_set = set(result_race_ids_by_date.get(d, set()) for d in result_race_ids_by_date)
     result_race_id_flat: set[str] = {rid for ids in result_race_ids_by_date.values() for rid in ids}
     predicted_settled_by_date: dict[str, int] = {}
     for rid in predicted_id_set:
