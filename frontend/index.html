@@ -1320,13 +1320,6 @@
     try {
       const data = await fetchMeeting(S.date, m.venue_code);
       S.races = data.races || [];
-      // Back-fill scheduled_time from the meetings list race_times when missing
-      const raceTimes = m.race_times || {};
-      S.races.forEach(r => {
-        if (!r.scheduled_time && !r.time && raceTimes[r.race_number]) {
-          r.scheduled_time = r.time = raceTimes[r.race_number];
-        }
-      });
       S.enrichedRaceIds = new Set(
         S.races.filter(r => r.enriched_at).map(r => r.race_id)
       );
