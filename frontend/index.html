@@ -315,6 +315,9 @@
       font-size: 1rem; font-weight: 800;
       text-transform: uppercase; letter-spacing: 0.04em;
       color: var(--text-secondary);
+      display: flex; flex-direction: column; align-items: flex-start; gap: 2px;
+    }
+    .race-pill-main {
       display: flex; align-items: center; gap: 6px;
     }
     .race-pill:hover { border-color: var(--gold-mid); color: var(--text-primary); }
@@ -340,8 +343,9 @@
       padding: 0 3px; margin-left: 1px;
     }
     .race-pill-time {
-      display: block; font-size: 0.58rem; color: var(--text-dim);
-      font-weight: 500; margin-top: 1px; letter-spacing: 0.01em;
+      font-size: 0.68rem; color: var(--text-dim);
+      font-weight: 600; letter-spacing: 0.02em;
+      text-transform: none;
     }
 
     /* ── Info bar (meeting context) ──────────────────────────── */
@@ -1358,7 +1362,7 @@
       const pctHtml = topPct >= 25 ? ` <span class="race-pill-pct">Win: ${topPct}%</span>` : '';
       const placeHtml = placePct >= 25 ? ` <span class="race-pill-place">Place: ${placePct}%</span>` : '';
       const tStr = r.scheduled_time || r.time ? formatTime(r.scheduled_time || r.time) : '';
-      el.innerHTML = `R${r.race_number}${pctHtml}${placeHtml}${dotHtml ? ' ' + dotHtml : ''}${tStr ? `<span class="race-pill-time">${tStr}</span>` : ''}`;
+      el.innerHTML = `<div class="race-pill-main">R${r.race_number}${pctHtml}${placeHtml}${dotHtml ? ' ' + dotHtml : ''}</div>${tStr ? `<span class="race-pill-time">${tStr}</span>` : ''}`;
       el.addEventListener('click', () => selectRace(r));
       container.appendChild(el);
     });
@@ -1456,14 +1460,15 @@
       return `<div class="empty-state">No runners found for this race.</div>`;
     }
 
-    const cards = S.runners.map((r, i) => renderRunnerCard(r, i)).join('');
+    const raceTime = race.scheduled_time || race.time || '';
+    const cards = S.runners.map((r, i) => renderRunnerCard(r, i, raceTime)).join('');
     return `
       <div id="live-odds-bar" class="live-odds-bar" style="display:none"></div>
       <div id="model-verdict" class="model-verdict" style="display:none"></div>
       <div class="runners-list">${cards}</div>`;
   }
 
-  function renderRunnerCard(r, i) {
+  function renderRunnerCard(r, i, raceTime) {
     const rank = r.model_rank || (i + 1);
     const rankClass = rank === 1 ? 'r1' : rank === 2 ? 'r2' : rank === 3 ? 'r3' : 'rn';
     const isTop = rank === 1;
@@ -1572,6 +1577,7 @@
             <div class="runner-name">${escHtml(r.horse_name)}</div>
             <div class="runner-details">
               <span class="runner-detail-chip">#${r.tab_number}</span>
+              ${raceTime ? `<span class="runner-detail-chip" style="color:var(--text-secondary);font-weight:600">🕐 ${formatTime(raceTime)}</span>` : ''}
               ${detailChips1}
               ${rankCompareHtml}
               ${oddsHtml}
