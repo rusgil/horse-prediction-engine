@@ -363,6 +363,16 @@
       font-size: 0.75rem; color: var(--text-dim);
     }
     .info-chip strong { color: var(--text-secondary); }
+    .info-chip.race-num {
+      background: var(--gold-dim);
+      border: 1px solid var(--gold-mid);
+      color: var(--gold-light);
+      font-family: 'Barlow Condensed', sans-serif;
+      font-weight: 900;
+      font-size: 1rem;
+      letter-spacing: 0.06em;
+      padding: 3px 12px;
+    }
     .info-chip.countdown {
       background: var(--gold-dim);
       border: 1px solid var(--gold-mid);
@@ -1362,7 +1372,7 @@
 
     const startTime = race.scheduled_time || race.time || '';
     const raceInfo = `
-      <span class="info-chip"><strong>R${race.race_number}</strong></span>
+      <span class="info-chip race-num">R${race.race_number}</span>
       ${race.race_name ? `<span class="info-chip">${escHtml(race.race_name)}</span>` : ''}
       ${race.distance ? `<span class="info-chip">${escHtml(String(race.distance))}m</span>` : ''}
       ${race.track_condition ? `<span class="info-chip">${escHtml(race.track_condition)}</span>` : ''}
