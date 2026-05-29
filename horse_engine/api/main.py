@@ -4604,9 +4604,9 @@ async def performance_summary(days: int = Query(5, ge=1, le=365)):
             p.race_id: p for p in pred_result.scalars().all()
         }
 
-        # Count races we actually predicted per date — correct denominator for
-        # data_complete (only penalise coverage of races we tried to predict,
-        # not meetings we never had data for)
+        # Count races we predicted that ALSO have settled results — the intersection
+        # is the only meaningful denominator: races we tried to predict AND ran.
+        # Races predicted but unsettled, or settled but never predicted, don't count.
         predicted_ids_result = await session.execute(
             select(RunnerPredictionRow.race_id)
             .where(RunnerPredictionRow.race_id >= cutoff)
@@ -4614,18 +4614,24 @@ async def performance_summary(days: int = Query(5, ge=1, le=365)):
             .where(RunnerPredictionRow.cancelled.is_(False) | RunnerPredictionRow.cancelled.is_(None))
             .distinct()
         )
-        predicted_races_by_date: dict[str, int] = {}
-        for (rid,) in predicted_ids_result.all():
-            d = rid[:10]
-            predicted_races_by_date[d] = predicted_races_by_date.get(d, 0) + 1
+        predicted_id_set = {rid for (rid,) in predicted_ids_result.all()}
 
     result_by_key = {(r.race_id, r.horse_name): r for r in hr_rows}
 
-    # Count total races that actually ran per date (for display only — not denominator)
+    # result races per date (for display — total_races_ran field)
     result_race_ids_by_date: dict[str, set] = {}
     for r in hr_rows:
         result_race_ids_by_date.setdefault(r.race_id[:10], set()).add(r.race_id)
     result_races_by_date = {d: len(ids) for d, ids in result_race_ids_by_date.items()}
+
+    # predicted+settled intersection — correct denominator for data_complete
+    result_race_id_set = set(result_race_ids_by_date.get(d, set()) for d in result_race_ids_by_date)
+    result_race_id_flat: set[str] = {rid for ids in result_race_ids_by_date.values() for rid in ids}
+    predicted_settled_by_date: dict[str, int] = {}
+    for rid in predicted_id_set:
+        if rid in result_race_id_flat:
+            d = rid[:10]
+            predicted_settled_by_date[d] = predicted_settled_by_date.get(d, 0) + 1
 
     # Group by date
     by_date: dict[str, dict] = {}
@@ -4662,10 +4668,10 @@ async def performance_summary(days: int = Query(5, ge=1, le=365)):
     for day_str in sorted(by_date.keys(), reverse=True):
         d = by_date[day_str]
         races = d["races"]
-        total_predicted = predicted_races_by_date.get(day_str, races)
+        total_predicted_settled = predicted_settled_by_date.get(day_str, races)
         total_ran = result_races_by_date.get(day_str, races)
-        # Incomplete if history snapshots cover <95% of races we predicted that day
-        data_complete = races >= total_predicted * 0.95
+        # Incomplete if history snapshots cover <95% of races we predicted that also settled
+        data_complete = races >= total_predicted_settled * 0.95
         summary.append({
             "date": day_str,
             "races": races,
