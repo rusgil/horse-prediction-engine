@@ -1362,8 +1362,8 @@
       const placePct = r.top_place_probability != null ? Math.round(r.top_place_probability * 100) : null;
       const pctHtml = topPct >= 25 ? ` <span class="race-pill-pct">Win: ${topPct}%</span>` : '';
       const placeHtml = placePct >= 25 ? ` <span class="race-pill-place">Place: ${placePct}%</span>` : '';
-      const tStr = r.scheduled_time || r.time ? formatTime(r.scheduled_time || r.time) : '';
-      el.innerHTML = `<div class="race-pill-main">R${r.race_number}${pctHtml}${placeHtml}${dotHtml ? ' ' + dotHtml : ''}</div>${tStr ? `<span class="race-pill-time">${tStr}</span>` : ''}`;
+      const tStr = r.scheduled_time || r.time ? formatTime(r.scheduled_time || r.time) : 'time not avail.';
+      el.innerHTML = `<div class="race-pill-main">R${r.race_number}${pctHtml}${placeHtml}${dotHtml ? ' ' + dotHtml : ''}</div><span class="race-pill-time">${tStr}</span>`;
       el.addEventListener('click', () => selectRace(r));
       container.appendChild(el);
     });
@@ -1377,7 +1377,7 @@
 
     const startTime = race.scheduled_time || race.time || '';
     const raceInfo = `
-      <span class="info-chip race-num">R${race.race_number}${startTime ? `<span style="font-size:0.75rem;font-weight:600;opacity:0.8;margin-left:5px">${formatTime(startTime)}</span>` : ''}</span>
+      <span class="info-chip race-num">R${race.race_number}<span style="font-size:0.75rem;font-weight:600;opacity:0.8;margin-left:5px">${startTime ? formatTime(startTime) : 'time not avail.'}</span></span>
       ${race.race_name ? `<span class="info-chip">${escHtml(race.race_name)}</span>` : ''}
       ${race.distance ? `<span class="info-chip">${escHtml(String(race.distance))}m</span>` : ''}
       ${race.track_condition ? `<span class="info-chip">${escHtml(race.track_condition)}</span>` : ''}
