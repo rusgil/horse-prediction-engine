@@ -218,7 +218,7 @@ class PuntersClient:
                 except Exception as e:
                     log.debug("Cookie priming failed: %s", e)
 
-    @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=3, max=10))
+    @retry(stop=stop_after_attempt(2), wait=wait_exponential(multiplier=2, min=5, max=15))
     async def _gql(self, query: str) -> dict:
         await self._ensure_gql_cookies()
         async with httpx.AsyncClient(
@@ -226,7 +226,7 @@ class PuntersClient:
         ) as client:
             resp = await client.post(_GRAPHQL, json={"query": query})
             if resp.status_code == 403:
-                # Cookie may have expired — reset and let tenacity retry
+                # 403 from CloudFront WAF — do NOT retry aggressively, it worsens the block
                 self._cookie_jar = {}
                 resp.raise_for_status()
             resp.raise_for_status()
