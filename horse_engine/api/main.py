@@ -1422,6 +1422,7 @@ async def refresh_edge_odds():
                 .where(RunnerPredictionRow.race_id.like(f"{prefix}%"))
             )
             picks = result.scalars().all()
+            picks = [p for p in picks if not re.search(r"-(trial|trail)s?-", p.race_id, re.IGNORECASE)]
 
         # Group by meeting slug so we only call punters once per meeting
         slugs: dict[str, list[RunnerPredictionRow]] = {}
@@ -1493,6 +1494,7 @@ async def get_edge_yesterday(for_date: Optional[str] = Query(None, alias="date")
             .order_by(RunnerPredictionHistoryRow.win_probability.desc())
         )
         picks = result.scalars().all()
+        picks = [p for p in picks if not re.search(r"-(trial|trail)s?-", p.race_id, re.IGNORECASE)]
 
         if not picks:
             return {"date": target_date, "picks": [], "summary": None}
@@ -1712,6 +1714,7 @@ async def get_edge_trifectas():
             else:
                 using_fallback = False
 
+            exotic_rows = [r for r in exotic_rows if not re.search(r"-(trial|trail)s?-", r.race_id, re.IGNORECASE)]
             if not exotic_rows:
                 continue
 
@@ -2032,10 +2035,11 @@ async def list_meetings(race_date: str = _today()):
     }
 
     # Union both sources
-    all_db_vcs = set(rp_venue_meta.keys())
+    _TRIAL_VC_RE = re.compile(r"(trial|trail)s?", re.IGNORECASE)
+    all_db_vcs = {vc for vc in rp_venue_meta.keys() if not _TRIAL_VC_RE.search(vc)}
     for rid in runner_race_ids:
         _, vc, _ = _parse_race_id(rid)
-        if vc:
+        if vc and not _TRIAL_VC_RE.search(vc):
             all_db_vcs.add(vc)
 
     for vc in all_db_vcs:
