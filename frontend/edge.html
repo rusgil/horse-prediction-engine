@@ -2310,6 +2310,44 @@
       const dateStr = fmtDate(d);
       const count = picks.length;
 
+      // Build P&L summary for settled picks in this day group
+      const settledPicks = picks.filter(p => {
+        const r = results[p.race_id];
+        return r && !r.scratched && !r.no_result && (r.winner !== undefined);
+      });
+      let dayPnlBar = '';
+      if (settledPicks.length > 0) {
+        const sWins   = settledPicks.filter(p => results[p.race_id].winner).length;
+        const sPlaced = settledPicks.filter(p => { const r = results[p.race_id]; return (r.placed || (r.position && r.position <= 3)) && !r.winner; }).length;
+        const sLoss   = settledPicks.filter(p => { const r = results[p.race_id]; return !r.winner && !(r.placed || (r.position && r.position <= 3)); }).length;
+        const sPnl    = +settledPicks.reduce((s, p) => { const r = results[p.race_id]; return s + (r.winner && r.sp ? r.sp * stake - stake : -stake); }, 0).toFixed(2);
+        const pnlCls  = sPnl >= 0 ? 'pnl-positive' : 'pnl-negative';
+        const pnlSign = sPnl >= 0 ? '+' : '';
+        dayPnlBar = `
+          <div class="pnl-bar" style="margin-bottom:16px;margin-top:4px">
+            <div class="pnl-cell">
+              <div class="pnl-cell-num">${settledPicks.length}</div>
+              <div class="pnl-cell-label">Settled</div>
+            </div>
+            <div class="pnl-cell">
+              <div class="pnl-cell-num pnl-positive">${sWins}</div>
+              <div class="pnl-cell-label">Wins</div>
+            </div>
+            <div class="pnl-cell">
+              <div class="pnl-cell-num" style="color:#f59e0b">${sPlaced}</div>
+              <div class="pnl-cell-label">Placed</div>
+            </div>
+            <div class="pnl-cell">
+              <div class="pnl-cell-num" style="color:var(--text-dim)">${sLoss}</div>
+              <div class="pnl-cell-label">Unplaced</div>
+            </div>
+            <div class="pnl-cell">
+              <div class="pnl-cell-num ${pnlCls}">${pnlSign}$${Math.abs(sPnl).toFixed(2)}</div>
+              <div class="pnl-cell-label">P&amp;L ($${stake}/race)</div>
+            </div>
+          </div>`;
+      }
+
       html += `
         <div class="day-group">
           <div class="day-header">
@@ -2317,6 +2355,7 @@
             <span class="day-date">${escHtml(dateStr)}</span>
             <span class="day-count">${count} pick${count !== 1 ? 's' : ''}</span>
           </div>
+          ${dayPnlBar}
           ${picks.map(p => renderCard(p, stake, results[p.race_id])).join('')}
         </div>`;
     });
