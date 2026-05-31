@@ -3292,6 +3292,114 @@ async def seed_results(race_date: str, x_cron_secret: Optional[str] = Header(Non
     return {"status": "seeded", "results": seeded}
 
 
+@app.post("/api/admin/seed-ra-results/{race_date}")
+async def seed_ra_results(race_date: str, x_cron_secret: Optional[str] = Header(None)):
+    """
+    Seed past results directly from Racing Australia Results.aspx, bypassing Calendar.aspx.
+    Uses stored venue + state from predictions to construct RA keys — works for past dates
+    where Calendar.aspx no longer lists meetings.
+    """
+    _check_admin(x_cron_secret)
+    from horse_engine.clients.racing_australia import _ra_date as _make_ra_date
+
+    client = get_tab_client()
+    ra = client._ra
+
+    # Find all predictions for this date that don't yet have a result
+    async with get_session() as session:
+        pred_rows = (await session.execute(
+            select(RunnerPredictionRow)
+            .where(RunnerPredictionRow.race_id.like(f"{race_date}_%"))
+            .where(RunnerPredictionRow.cancelled.is_(False) | RunnerPredictionRow.cancelled.is_(None))
+        )).scalars().all()
+
+        already_seeded = {
+            hr.race_id
+            for hr in (await session.execute(
+                select(HistoricalResultRow.race_id)
+                .where(HistoricalResultRow.race_id.like(f"{race_date}_%"))
+                .distinct()
+            )).scalars().all()
+        }
+
+    if not pred_rows:
+        return {"status": "ok", "seeded": 0, "detail": "no predictions for this date"}
+
+    # Group predictions by (venue_name, state) → list of race_ids
+    venue_state_map: dict[tuple[str, str], set[str]] = {}
+    for row in pred_rows:
+        v = (row.venue or "").strip()
+        s = (row.state or "").strip().upper()
+        if v and s:
+            venue_state_map.setdefault((v, s), set()).add(row.race_id)
+
+    ra_date_str = _make_ra_date(race_date)
+    seeded_total = 0
+    detail: list[dict] = []
+
+    for (venue_name, state), race_ids in venue_state_map.items():
+        ra_key = f"{ra_date_str},{state},{venue_name}"
+        results = await ra.get_results(ra_key)
+        if not results:
+            detail.append({"venue": venue_name, "state": state, "ra_key": ra_key, "races_found": 0})
+            continue
+
+        venue_code = _parse_race_id(list(race_ids)[0])[1]
+        seeded_here = 0
+
+        for race_num, race_data in results.items():
+            race_id = f"{race_date}_{venue_code}_R{race_num}"
+            if race_id in already_seeded:
+                continue
+            runners = race_data.get("runners", {})  # {name_lower: {position, margin, sp}}
+            if not runners:
+                continue
+
+            async with get_session() as session:
+                for name_lower, rd in runners.items():
+                    pos = rd.get("position")
+                    if not pos or pos <= 0:
+                        continue
+                    sp = rd.get("sp")
+                    margin = float(rd.get("margin") or 0)
+
+                    # Match against stored prediction horse name (case-insensitive, strip country code)
+                    matched_pred = next(
+                        (p for p in pred_rows if p.race_id == race_id
+                         and _normalize_horse(p.horse_name) == _normalize_horse(name_lower)),
+                        None,
+                    )
+
+                    exists = (await session.execute(
+                        select(HistoricalResultRow.id)
+                        .where(HistoricalResultRow.race_id == race_id)
+                        .where(func.lower(HistoricalResultRow.horse_name) == _normalize_horse(name_lower))
+                        .limit(1)
+                    )).scalar()
+                    if exists:
+                        continue
+
+                    display_name = matched_pred.horse_name if matched_pred else name_lower.title()
+                    session.add(HistoricalResultRow(
+                        race_id=race_id,
+                        horse_name=display_name,
+                        position=pos,
+                        beaten_margin=margin,
+                        winner=pos == 1,
+                        placed=pos <= 3,
+                        starting_price=sp,
+                        feature_vector_json=matched_pred.enriched_json if matched_pred else None,
+                    ))
+                    seeded_here += 1
+                await session.commit()
+
+        already_seeded.update(f"{race_date}_{venue_code}_R{n}" for n in results)
+        seeded_total += seeded_here
+        detail.append({"venue": venue_name, "state": state, "ra_key": ra_key, "races_found": len(results), "seeded": seeded_here})
+
+    return {"status": "ok", "seeded": seeded_total, "detail": detail}
+
+
 @app.get("/api/meetings/{race_date}/{venue_code}/results")
 async def get_meeting_results(race_date: str, venue_code: str):
     """
