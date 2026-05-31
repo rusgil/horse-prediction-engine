@@ -536,7 +536,12 @@ async def _seed_results_for_date(race_date: str) -> int:
                         .where(HistoricalResultRow.horse_name == horse)
                         .limit(1)
                     )
-                    if existing.scalars().first():
+                    existing_row = existing.scalars().first()
+                    if existing_row:
+                        # Patch SP if it was missing (e.g. seeded from RA which has no SP)
+                        if existing_row.starting_price is None and sp:
+                            existing_row.starting_price = sp
+                            await session.commit()
                         races_with_results.add(race_id)
                         continue
                     fv_result = await session.execute(
