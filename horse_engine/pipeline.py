@@ -10,25 +10,17 @@ from typing import Optional
 from horse_engine.models.race import Race
 from horse_engine.prediction.engine import predict_race, RunnerPrediction
 from horse_engine.prediction.model import HorseModel, PlaceModel, ExoticModel
-from horse_engine.prediction.narrative import generate_race_narratives
-
 log = logging.getLogger(__name__)
 
 
 async def enrich_and_predict_race(
     race: Race,
     model: HorseModel,
-    generate_narratives: bool = True,
     venue_calibration: dict[str, float] | None = None,
     place_model: PlaceModel | None = None,
     exotic_model: ExoticModel | None = None,
 ) -> tuple[list[RunnerPrediction], dict]:
-    """
-    Run the full pipeline:
-      1. Predict race (enrichment + logistic regression)
-      2. Generate Claude narratives for top 6
-    Returns (predictions, metadata).
-    """
+    """Run the full pipeline: enrichment + logistic regression. Returns (predictions, metadata)."""
     if not race.runners:
         log.warning("Race %s has no runners", race.race_id)
         return [], {}
@@ -40,16 +32,6 @@ async def enrich_and_predict_race(
     )
 
     predictions = predict_race(race, model, venue_calibration=venue_calibration, place_model=place_model, exotic_model=exotic_model)
-
-    if generate_narratives:
-        try:
-            await generate_race_narratives(
-                predictions=predictions,
-                race_distance=race.distance,
-                track_condition=race.track_condition,
-            )
-        except Exception as e:
-            log.warning("Narrative generation failed for %s: %s", race.race_id, e)
 
     meta = {
         "race_id": race.race_id,

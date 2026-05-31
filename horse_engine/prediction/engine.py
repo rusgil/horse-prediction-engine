@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import logging
 from datetime import date
-from typing import Optional
 
 from horse_engine.enrichers import form as form_enricher
 from horse_engine.enrichers.market import compute_market_features
@@ -54,7 +53,6 @@ class RunnerPrediction:
         self.overlay: float = 0.0
         self.value_rating: float = 0.0
         self.key_flags: list[str] = []
-        self.narrative: Optional[str] = None
 
 
 def enrich_runner(

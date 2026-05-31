@@ -11,8 +11,6 @@ class Settings(BaseSettings):
     tab_base_url: str = "https://api.tab.com.au/v1/tab-info-service"
     tab_jurisdiction: str = "NSW"  # default jurisdiction for single-jurisdiction calls
 
-    narrative_model: str = "claude-haiku-4-5-20251001"
-
     # Betfair Exchange API credentials
     betfair_app_key: str = ""
     betfair_username: str = ""

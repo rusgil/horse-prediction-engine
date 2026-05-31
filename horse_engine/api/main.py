@@ -3337,7 +3337,7 @@ async def _run_backfill(days: int, x_secret: Optional[str], force: bool = False)
                             if not race.runners:
                                 continue
                             predictions, _ = await enrich_and_predict_race(
-                                race, model, generate_narratives=False
+                                race, model
                             )
                             async with get_session() as session:
                                 await save_race_predictions(
@@ -6355,7 +6355,6 @@ def _prediction_to_db_dict(pred, race_id: str, scheduled_time: str | None = None
         "overlay": round(pred.overlay, 4),
         "best_available_odds": pred.enriched.best_available_odds,
         "value_rating": round(pred.value_rating, 4),
-        "narrative": pred.narrative,
         "key_flags": json.dumps(pred.key_flags),
         "enriched_json": pred.enriched.model_dump_json(),
         "scheduled_time": scheduled_time or None,
@@ -6398,7 +6397,6 @@ def _runner_response(row: RunnerPredictionRow) -> dict:
         "best_available_odds": row.best_available_odds,
         "overlay": row.overlay,
         "value_rating": row.value_rating,
-        "narrative": row.narrative,
         "key_flags": json.loads(row.key_flags or "[]"),
         "form_score": enriched.get("form_score"),
         "distance_aptitude": enriched.get("distance_aptitude"),
