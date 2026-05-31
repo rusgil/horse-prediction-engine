@@ -1002,10 +1002,10 @@ def _parse_race_id(race_id: str) -> tuple[str, str, int | None]:
         return "", race_id, None
 
 
-_COUNTRY_CODE_RE = re.compile(r"\s*\([A-Z]{2,3}\)\s*$")
+_COUNTRY_CODE_RE = re.compile(r"\s*\([A-Za-z]{2,3}\)\s*$")
 
 def _normalize_horse(name: str) -> str:
-    """Lowercase and strip country code suffixes like (FR), (NZ), (IRE) for consistent matching."""
+    """Lowercase and strip country code suffixes like (FR), (NZ), (IRE), (Nz) for consistent matching."""
     return _COUNTRY_CODE_RE.sub("", name).lower().strip()
 
 
