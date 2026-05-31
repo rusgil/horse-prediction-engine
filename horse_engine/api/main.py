@@ -408,16 +408,8 @@ async def _scheduled_enrich():
 
 
 async def _scheduled_pre_race_enrich():
-    """
-    Re-enrich any race starting within the next 2 hours.
-    Runs every 15 min during racing hours. Waits a random 0-10 min delay
-    before hitting Punters to avoid predictable request patterns.
-    Also detects meetings removed from Punters and marks those races cancelled.
-    """
+    """Re-enrich any race starting within the next 2 hours. Runs every 15 min during racing hours."""
     from sqlalchemy import update as sa_update
-    delay = random.uniform(0, 600)
-    log.info("[pre-race] Waiting %.0fs before Punters requests", delay)
-    await asyncio.sleep(delay)
     now_utc = datetime.utcnow().replace(tzinfo=timezone.utc)
     horizon = now_utc + timedelta(hours=2)
     today = _today_aest().isoformat()
@@ -904,11 +896,31 @@ async def lifespan(app: FastAPI):
         _scheduled_odds_snapshot,
         CronTrigger(hour="9-20", minute="0,15,30,45", timezone="Australia/Sydney")
     )
+    scheduler.add_job(
+        _scheduled_pre_race_enrich,
+        CronTrigger(hour="9-20", minute="0,15,30,45", timezone="Australia/Sydney")
+    )
     scheduler.start()
     log.info("[scheduler] Cron jobs scheduled")
 
     # Enrich today on startup
     asyncio.create_task(_scheduled_enrich())
+
+    # Backfill last 3 days — catch up on any missed enrichments/results
+    async def _startup_backfill():
+        client = get_tab_client()
+        async with get_session() as session:
+            model = await _load_model(session)
+        for offset in (-3, -2, -1):
+            seed_date = (_today_aest() + timedelta(days=offset)).isoformat()
+            try:
+                await _enrich_date(seed_date, client, model)
+                n = await _seed_results_for_date(seed_date)
+                if n:
+                    log.info("[startup] Seeded %d results for %s", n, seed_date)
+            except Exception as e:
+                log.warning("[startup] Backfill failed for %s: %s", seed_date, e)
+    asyncio.create_task(_startup_backfill())
 
     yield
 
