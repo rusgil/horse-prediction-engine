@@ -3305,6 +3305,39 @@ async def exotic_daily_performance(
     return {"summary": summary, "days": days}
 
 
+# ── Admin: purge trial rows ───────────────────────────────────────────────────
+
+@app.delete("/api/admin/purge-trials")
+async def purge_trial_rows(x_cron_secret: Optional[str] = Header(None), dry_run: bool = Query(True)):
+    """Find and delete RunnerPredictionRow + HistoricalResultRow entries for trial/trail venues."""
+    _check_admin(x_cron_secret)
+    from sqlalchemy import delete as sa_delete
+    trial_re = re.compile(r"-(trial|trail)s?[_-]", re.IGNORECASE)
+
+    async with get_session() as session:
+        pred_rows = (await session.execute(select(RunnerPredictionRow.race_id).distinct())).scalars().all()
+        hist_rows = (await session.execute(select(HistoricalResultRow.race_id).distinct())).scalars().all()
+
+    trial_pred_ids = [rid for rid in pred_rows if trial_re.search(rid)]
+    trial_hist_ids = [rid for rid in hist_rows if trial_re.search(rid)]
+
+    if dry_run:
+        return {"dry_run": True, "pred_race_ids": trial_pred_ids, "hist_race_ids": trial_hist_ids}
+
+    async with get_session() as session:
+        if trial_pred_ids:
+            await session.execute(
+                sa_delete(RunnerPredictionRow).where(RunnerPredictionRow.race_id.in_(trial_pred_ids))
+            )
+        if trial_hist_ids:
+            await session.execute(
+                sa_delete(HistoricalResultRow).where(HistoricalResultRow.race_id.in_(trial_hist_ids))
+            )
+        await session.commit()
+
+    return {"dry_run": False, "deleted_pred_race_ids": trial_pred_ids, "deleted_hist_race_ids": trial_hist_ids}
+
+
 # ── Admin: seed results ───────────────────────────────────────────────────────
 
 @app.post("/api/admin/results/{race_date}")
