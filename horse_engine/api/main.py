@@ -3422,6 +3422,88 @@ async def seed_ra_results(race_date: str, x_cron_secret: Optional[str] = Header(
     return {"status": "ok", "seeded": seeded_total, "detail": detail}
 
 
+@app.post("/api/admin/patch-sp/{race_date}")
+async def patch_sp(race_date: str, x_cron_secret: Optional[str] = Header(None)):
+    """Patch null starting_price on existing HistoricalResultRow entries using RA Results.aspx."""
+    _check_admin(x_cron_secret)
+    from horse_engine.clients.racing_australia import _ra_date as _make_ra_date
+
+    client = get_tab_client()
+    ra = client._ra
+
+    async with get_session() as session:
+        pred_rows = (await session.execute(
+            select(RunnerPredictionRow)
+            .where(RunnerPredictionRow.race_id.like(f"{race_date}_%"))
+        )).scalars().all()
+
+        null_sp_rows = (await session.execute(
+            select(HistoricalResultRow)
+            .where(HistoricalResultRow.race_id.like(f"{race_date}_%"))
+            .where(HistoricalResultRow.starting_price.is_(None))
+        )).scalars().all()
+
+    if not null_sp_rows:
+        return {"status": "ok", "patched": 0, "detail": "no null SPs to patch"}
+
+    # Group predictions by venue/state for RA key construction
+    venue_state_map: dict[tuple[str, str], str] = {}
+    for row in pred_rows:
+        v = (row.venue or "").strip()
+        s = (row.state or "").strip().upper()
+        _, vc, _ = _parse_race_id(row.race_id)
+        if v and s and vc:
+            venue_state_map[vc] = (v, s)
+
+    ra_date_str = _make_ra_date(race_date)
+    patched = 0
+    detail: list[dict] = []
+
+    # Group null-SP rows by venue_code
+    vc_rows: dict[str, list[HistoricalResultRow]] = {}
+    for hr in null_sp_rows:
+        _, vc, _ = _parse_race_id(hr.race_id)
+        if vc:
+            vc_rows.setdefault(vc, []).append(hr)
+
+    for vc, hr_list in vc_rows.items():
+        vs = venue_state_map.get(vc)
+        if not vs:
+            detail.append({"venue_code": vc, "skipped": "no venue/state in predictions"})
+            continue
+        venue_name, state = vs
+        ra_key = f"{ra_date_str},{state},{venue_name}"
+        results = await ra.get_results(ra_key)
+        if not results:
+            detail.append({"venue_code": vc, "ra_key": ra_key, "skipped": "no RA results"})
+            continue
+
+        patched_here = 0
+        for hr in hr_list:
+            _, _, race_num = _parse_race_id(hr.race_id)
+            race_data = results.get(race_num, {})
+            runners = race_data.get("runners", {})
+            ra_runner = runners.get(_normalize_horse(hr.horse_name))
+            if not ra_runner:
+                continue
+            sp = ra_runner.get("sp")
+            if not sp:
+                continue
+            async with get_session() as session:
+                row = (await session.execute(
+                    select(HistoricalResultRow).where(HistoricalResultRow.id == hr.id)
+                )).scalars().first()
+                if row and row.starting_price is None:
+                    row.starting_price = sp
+                    await session.commit()
+                    patched_here += 1
+
+        patched += patched_here
+        detail.append({"venue_code": vc, "ra_key": ra_key, "patched": patched_here})
+
+    return {"status": "ok", "patched": patched, "detail": detail}
+
+
 @app.get("/api/meetings/{race_date}/{venue_code}/results")
 async def get_meeting_results(race_date: str, venue_code: str):
     """
