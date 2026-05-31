@@ -1002,6 +1002,13 @@ def _parse_race_id(race_id: str) -> tuple[str, str, int | None]:
         return "", race_id, None
 
 
+_COUNTRY_CODE_RE = re.compile(r"\s*\([A-Z]{2,3}\)\s*$")
+
+def _normalize_horse(name: str) -> str:
+    """Lowercase and strip country code suffixes like (FR), (NZ), (IRE) for consistent matching."""
+    return _COUNTRY_CODE_RE.sub("", name).lower().strip()
+
+
 # Cache meeting start times + live odds for 5 min
 _edge_times_cache: dict[str, tuple[datetime, dict[int, str]]] = {}
 _edge_odds_cache: dict[str, tuple[datetime, dict[str, float]]] = {}  # race_id → {horse_name: flucs_win}
@@ -1508,7 +1515,7 @@ async def get_edge_yesterday(for_date: Optional[str] = Query(None, alias="date")
     seeded_race_ids: set[str] = {hr.race_id for hr in hr_rows}
     for hr in hr_rows:
         _, venue_code, race_num = _parse_race_id(hr.race_id)
-        all_results[(venue_code, race_num, hr.horse_name)] = {
+        all_results[(venue_code, race_num, _normalize_horse(hr.horse_name))] = {
             "position": hr.position,
             "sp": hr.starting_price,
             "winner": bool(hr.winner),
@@ -1519,7 +1526,7 @@ async def get_edge_yesterday(for_date: Optional[str] = Query(None, alias="date")
     output = []
     for p in picks:
         _, venue_code, race_num = _parse_race_id(p.race_id)
-        r = all_results.get((venue_code, race_num, p.horse_name), {})
+        r = all_results.get((venue_code, race_num, _normalize_horse(p.horse_name)), {})
         sp = r.get("sp") or p.best_available_odds or None
         winner = r.get("winner", False)
         position = r.get("position")
@@ -1538,7 +1545,7 @@ async def get_edge_yesterday(for_date: Optional[str] = Query(None, alias="date")
         if not winner and not scratched:
             for (v, rn, name), res in all_results.items():
                 if v == venue_code and rn == race_num and res.get("winner"):
-                    winner_name = name
+                    winner_name = name.title()
                     break
 
         place_pct = round(p.place_probability * 100, 1) if p.place_probability else None
@@ -1565,7 +1572,7 @@ async def get_edge_yesterday(for_date: Optional[str] = Query(None, alias="date")
         yst_ff_combined = round(yst_ff_probs[0] * yst_ff_probs[1] * yst_ff_probs[2] * yst_ff_probs[3] / 1000000, 1) if len(yst_ff_probs) == 4 else None
         # Check actual finishing positions for each trifecta leg
         def _leg_result(leg):
-            res = all_results.get((venue_code, race_num, leg["horse_name"]), {})
+            res = all_results.get((venue_code, race_num, _normalize_horse(leg["horse_name"])), {})
             return {**leg, "position": res.get("position"), "scratched": res.get("scratched", False)}
 
         yst_tri_legs_result = [_leg_result(l) for l in yst_tri_legs]
