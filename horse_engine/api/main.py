@@ -526,7 +526,7 @@ async def _seed_results_for_date(race_date: str) -> int:
                 beaten = float(r.get("margin", 0) or 0)
                 sp = None
                 for p in r.get("prices", []):
-                    if p.get("priceType") in ("StartingPrice", "SP"):
+                    if p.get("priceType") in ("StartingPrice", "SP", "Win"):
                         sp = float(p.get("winPrice", 0) or 0) or None
                         break
                 async with get_session() as session:
