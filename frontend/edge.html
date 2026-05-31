@@ -1665,6 +1665,11 @@
         <div class="stake-slider-labels"><span>$5</span><span>$100</span><span>$250</span><span>$500</span></div>
       </div>
     </div>
+    <div style="display:flex;align-items:center;gap:10px;padding:0 0 12px">
+      <button id="ystPrev" onclick="shiftYesterdayDate(-1)" style="background:var(--bg-elevated);border:1px solid var(--border);color:var(--text-secondary);border-radius:6px;padding:5px 12px;cursor:pointer;font-size:0.85rem">← Prev</button>
+      <span id="ystDateLabel" style="font-size:0.82rem;color:var(--text-dim);flex:1;text-align:center"></span>
+      <button id="ystNext" onclick="shiftYesterdayDate(1)" style="background:var(--bg-elevated);border:1px solid var(--border);color:var(--text-secondary);border-radius:6px;padding:5px 12px;cursor:pointer;font-size:0.85rem">Next →</button>
+    </div>
     <div id="yesterdayContent">
       <div class="loading">
         <div class="loading-spinner"></div>
@@ -3238,10 +3243,43 @@
     tickCountdowns();
   }
 
-  async function loadYesterday() {
+  // Track the date currently shown in Yesterday tab (ISO string)
+  let yesterdayViewDate = null;
+
+  function _aestToday() {
+    return new Date().toLocaleDateString('en-CA', { timeZone: 'Australia/Sydney' });
+  }
+
+  function shiftYesterdayDate(delta) {
+    const base = yesterdayViewDate || (() => {
+      const d = new Date(_aestToday()); d.setDate(d.getDate() - 1); return d.toLocaleDateString('en-CA', { timeZone: 'Australia/Sydney' });
+    })();
+    const d = new Date(base + 'T00:00:00');
+    d.setDate(d.getDate() + delta);
+    const shifted = d.toLocaleDateString('en-CA', { timeZone: 'Australia/Sydney' });
+    // Don't go past today
+    if (shifted >= _aestToday()) return;
+    loadYesterday(shifted);
+  }
+
+  async function loadYesterday(dateStr) {
     yesterdayLoaded = true;
+    if (!dateStr) {
+      const d = new Date(_aestToday()); d.setDate(d.getDate() - 1);
+      dateStr = d.toLocaleDateString('en-CA', { timeZone: 'Australia/Sydney' });
+    }
+    yesterdayViewDate = dateStr;
+
+    // Update nav label
+    const labelEl = document.getElementById('ystDateLabel');
+    const nextBtn  = document.getElementById('ystNext');
+    if (labelEl) labelEl.textContent = fmtDate(dateStr);
+    const tomorrow = new Date(_aestToday()); tomorrow.setDate(tomorrow.getDate() - 1);
+    if (nextBtn) nextBtn.disabled = dateStr >= tomorrow.toLocaleDateString('en-CA', { timeZone: 'Australia/Sydney' });
+
+    document.getElementById('yesterdayContent').innerHTML = `<div class="loading"><div class="loading-spinner"></div>Loading results…</div>`;
     try {
-      const res = await fetch(`${API}/api/edge/yesterday`);
+      const res = await fetch(`${API}/api/edge/yesterday?date=${dateStr}`);
       if (!res.ok) throw new Error(res.statusText);
       yesterdayData = await res.json();
       const stake = parseFloat(document.getElementById('stakeInputYesterday').value) || 10;
