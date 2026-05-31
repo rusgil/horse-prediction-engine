@@ -274,6 +274,86 @@ def _parse_acceptances_page(html: str, ra_key: str, race_date: str, state: str) 
     }
 
 
+# ── Results parser ────────────────────────────────────────────────────────────
+
+def _parse_results_page(html: str) -> dict[int, dict]:
+    """
+    Parse a Results.aspx page.
+    Returns {race_number: {'track_condition': str, 'runners': {name_lower: {'position', 'margin', 'sp'}}}}
+    """
+    soup = BeautifulSoup(html, "html.parser")
+    tables = soup.find_all("table")
+
+    results: dict[int, dict] = {}
+    current_race_num: Optional[int] = None
+
+    for table in tables:
+        rows = table.find_all("tr")
+        if not rows:
+            continue
+        first_text = rows[0].get_text(strip=True)
+
+        # Race header: "Race 3 - 1:55PM ..."
+        m = re.match(r"Race\s+(\d+)\s*-", first_text, re.IGNORECASE)
+        if m:
+            current_race_num = int(m.group(1))
+            results[current_race_num] = {"track_condition": "", "runners": {}}
+            continue
+
+        # Race details: "Of $50,000 ... Track Condition:Heavy 8 ..."
+        if first_text.startswith("Of $") and current_race_num is not None:
+            tc = re.search(r"Track Condition:\s*([A-Za-z]+\s*\d*)", first_text)
+            if tc:
+                results[current_race_num]["track_condition"] = tc.group(1).strip()
+            continue
+
+        # Results table: header row has "Finish" and "Horse"
+        header = [c.get_text(strip=True) for c in rows[0].find_all(["td", "th"])]
+        if "Finish" not in header or "Horse" not in header or current_race_num is None:
+            continue
+
+        fi = header.index("Finish")
+        hi = header.index("Horse")
+        mi = header.index("Margin") if "Margin" in header else None
+        si = header.index("Starting Price") if "Starting Price" in header else None
+
+        for row in rows[1:]:
+            cells = [c.get_text(strip=True) for c in row.find_all(["td", "th"])]
+            if len(cells) <= hi:
+                continue
+            horse = cells[hi]
+            if not horse:
+                continue
+
+            finish = cells[fi] if fi < len(cells) else ""
+            try:
+                position = int(finish) if finish.isdigit() else None
+            except (ValueError, AttributeError):
+                position = None
+
+            margin = 0.0
+            if mi is not None and mi < len(cells):
+                m2 = re.search(r"([\d.]+)", cells[mi])
+                if m2:
+                    margin = float(m2.group(1))
+
+            sp = None
+            if si is not None and si < len(cells):
+                sp_raw = cells[si].replace("F", "").replace("$", "").strip()
+                try:
+                    sp = float(sp_raw) if sp_raw else None
+                except ValueError:
+                    pass
+
+            results[current_race_num]["runners"][horse.lower()] = {
+                "position": position,
+                "margin": margin,
+                "sp": sp,
+            }
+
+    return results
+
+
 # ── Client ────────────────────────────────────────────────────────────────────
 
 class RacingAustraliaClient:
@@ -282,6 +362,8 @@ class RacingAustraliaClient:
         self._calendar_cache: dict[str, tuple[datetime, list]] = {}
         # ra_key → (ts, parsed meeting dict)
         self._meeting_cache: dict[str, tuple[datetime, dict]] = {}
+        # ra_key → (ts, parsed results dict)
+        self._results_cache: dict[str, tuple[datetime, dict]] = {}
         # slug → ra_key
         self._slug_to_key: dict[str, str] = {}
         # rate-limit: one request at a time
@@ -450,6 +532,28 @@ class RacingAustraliaClient:
             log.warning("Race %d not found in meeting %s", race_number, slug)
             return None
         return {**race, "_meeting": meeting}
+
+    async def get_results(self, ra_key: str) -> dict[int, dict]:
+        """
+        Fetch race results for a meeting.
+        Returns {race_num: {'track_condition': str, 'runners': {name_lower: {'position', 'margin', 'sp'}}}}
+        Cached 5 minutes — results don't change once published.
+        """
+        cached = self._results_cache.get(ra_key)
+        if cached and (datetime.utcnow() - cached[0]).total_seconds() < 300:
+            return cached[1]
+        from urllib.parse import quote
+        url = f"{_BASE}/Results.aspx?Key={quote(ra_key, safe='')}"
+        try:
+            html = await self._get(url)
+        except Exception as e:
+            log.warning("RA results fetch failed for %s: %s", ra_key, e)
+            return {}
+        parsed = _parse_results_page(html)
+        self._results_cache[ra_key] = (datetime.utcnow(), parsed)
+        total_runners = sum(len(r["runners"]) for r in parsed.values())
+        log.debug("RA results: %d races, %d runners for %s", len(parsed), total_runners, ra_key)
+        return parsed
 
     async def parse_race(self, raw_event: dict, race_date: str, venue: str, state: str) -> Race:
         meeting = raw_event.get("_meeting") or {}

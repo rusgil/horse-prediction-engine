@@ -1,11 +1,12 @@
 """
-Composite racing client: Racing Australia (race cards) + OddsPro (odds & results).
+Composite racing client: Racing Australia (race cards + results) + OddsPro (odds).
 
-Racing Australia provides: barriers, weights, jockeys, trainers, form strings.
-OddsPro provides: multi-book best odds, opening price (steam/drift), finishing positions.
+Racing Australia provides: barriers, weights, jockeys, trainers, form strings, finishing positions.
+OddsPro provides: multi-book best odds, opening price (steam/drift).
 """
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import date
 
@@ -14,6 +15,10 @@ from horse_engine.clients.oddspro import OddsProClient
 from horse_engine.models.race import Race
 
 log = logging.getLogger(__name__)
+
+
+async def _empty_dict() -> dict:
+    return {}
 
 
 class CompositeClient:
@@ -41,26 +46,38 @@ class CompositeClient:
 
         meeting = raw.get("_meeting") or {}
         venue = meeting.get("venue", "")
+        ra_key = meeting.get("id", "")
         race_date = meeting.get("date") or meeting.get("meetingDateLocal") or date.today().isoformat()
 
         # Find OddsPro track that matches this RA venue
         tracks = await self._odds.get_tracks(race_date)
         op_track = self._odds.find_matching_track(venue, tracks)
-
-        odds_map: dict[tuple, dict] = {}
-        if op_track:
-            odds_map = await self._odds.get_track_odds(op_track)
-        else:
+        if not op_track:
             log.debug("OddsPro: no track match for '%s' on %s", venue, race_date)
 
-        # Enrich RA selections with OddsPro odds data
+        # Fetch OddsPro odds and RA results in parallel
+        odds_map, ra_results = await asyncio.gather(
+            self._odds.get_track_odds(op_track) if op_track else _empty_dict(),
+            self._ra.get_results(ra_key) if ra_key else _empty_dict(),
+        )
+
+        # RA results for this specific race (populated once the race has finished)
+        race_results: dict[str, dict] = (ra_results.get(race_number) or {}).get("runners", {})
+
+        # Enrich RA selections with OddsPro odds + RA finishing positions
         for sel in raw.get("selections", []):
             name = (sel.get("competitor") or {}).get("name", "").lower()
-            op = odds_map.get((race_number, name))
+            op = odds_map.get((race_number, name), {})
+            ra = race_results.get(name, {})
             if op:
                 sel["topToteWin"] = op.get("currentBestOdds")
                 sel["_odds_opening"] = op.get("firstPrice")
-                sel["_finishing_position"] = op.get("finishingPosition")
+            if ra:
+                sel["_finishing_position"] = ra.get("position")
+                sel["_margin"] = ra.get("margin", 0)
+                # Use SP as fallback odds when OddsPro has no pre-race price
+                if ra.get("sp") and not sel.get("topToteWin"):
+                    sel["topToteWin"] = ra["sp"]
 
         # Build runners list in TAB-compatible format for result seeding
         runners_out = []
@@ -69,11 +86,12 @@ class CompositeClient:
                 continue
             name = (sel.get("competitor") or {}).get("name", "")
             op = odds_map.get((race_number, name.lower()), {})
-            best = op.get("currentBestOdds")
+            ra = race_results.get(name.lower(), {})
+            best = op.get("currentBestOdds") or ra.get("sp")
             runners_out.append({
                 "runnerName": name,
-                "finishingPosition": op.get("finishingPosition"),
-                "margin": 0,
+                "finishingPosition": ra.get("position"),
+                "margin": ra.get("margin", 0),
                 "scratched": False,
                 "prices": [{"priceType": "Win", "winPrice": best}] if best else [],
             })
