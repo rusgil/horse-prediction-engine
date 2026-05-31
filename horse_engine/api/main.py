@@ -3313,14 +3313,13 @@ async def seed_ra_results(race_date: str, x_cron_secret: Optional[str] = Header(
             .where(RunnerPredictionRow.cancelled.is_(False) | RunnerPredictionRow.cancelled.is_(None))
         )).scalars().all()
 
-        already_seeded = {
-            hr.race_id
-            for hr in (await session.execute(
+        already_seeded = set(
+            (await session.execute(
                 select(HistoricalResultRow.race_id)
                 .where(HistoricalResultRow.race_id.like(f"{race_date}_%"))
                 .distinct()
             )).scalars().all()
-        }
+        )
 
     if not pred_rows:
         return {"status": "ok", "seeded": 0, "detail": "no predictions for this date"}
