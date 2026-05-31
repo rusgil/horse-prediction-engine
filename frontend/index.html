@@ -877,6 +877,12 @@
   <div id="racesSection" style="display:none">
     <div class="info-bar" id="infoBar"></div>
     <div class="section-label">Races</div>
+    <div style="display:flex;gap:10px;padding:2px 0 8px;align-items:center;font-size:0.72rem;color:var(--text-dim)">
+      <span style="display:flex;align-items:center;gap:4px"><span style="width:7px;height:7px;border-radius:50%;background:#10b981;box-shadow:0 0 5px #10b981;display:inline-block"></span>Win</span>
+      <span style="display:flex;align-items:center;gap:4px"><span style="width:7px;height:7px;border-radius:50%;background:#f59e0b;box-shadow:0 0 5px #f59e0b;display:inline-block"></span>Place</span>
+      <span style="display:flex;align-items:center;gap:4px"><span style="width:7px;height:7px;border-radius:50%;background:#f87171;box-shadow:0 0 5px #f87171;display:inline-block"></span>Loss</span>
+      <span style="display:flex;align-items:center;gap:4px"><span style="width:7px;height:7px;border-radius:50%;background:var(--border);display:inline-block"></span>Not run</span>
+    </div>
     <div class="pills-scroller">
       <div class="pills-row" id="racePills"></div>
       <div class="pills-fade-right"></div>
@@ -1001,9 +1007,9 @@
         const pct = Math.round(perf.win_rate * 100);
         const placePct = Math.round((perf.place_rate || 0) * 100);
         const cls = pct >= 50 ? 'good' : pct >= 38 ? 'ok' : 'bad';
-        const winLabel = `${complete ? '' : '~'}${pct}%`;
-        const placeLabel = `${complete ? '' : '~'}${placePct}%`;
-        accHtml = `<span class="date-pill-acc ${cls}" title="${complete ? '' : 'Partial data'}">${winLabel}</span><span class="date-pill-acc" style="color:#60a5fa;background:rgba(59,130,246,0.12);border-color:rgba(59,130,246,0.25);opacity:${complete ? 1 : 0.65}" title="${complete ? '' : 'Partial data'}">${placeLabel}</span>`;
+        const winLabel = `${pct}%`;
+        const placeLabel = `${placePct}%`;
+        accHtml = `<span class="date-pill-acc ${cls}" title="${complete ? 'Win rate' : 'Win rate (partial)'}">${winLabel}</span><span class="date-pill-acc" style="color:#60a5fa;background:rgba(59,130,246,0.12);border-color:rgba(59,130,246,0.25);opacity:${complete ? 1 : 0.75}" title="${complete ? 'Place rate' : 'Place rate (partial)'}">${placeLabel}</span>`;
       }
       el.innerHTML = `<span class="date-pill-day">${formatDayLabel(iso)}</span><span class="date-pill-date">${formatShortDate(iso)}</span>${accHtml}`;
       el.addEventListener('click', () => selectDate(iso));
@@ -1186,30 +1192,26 @@
     const pct = Math.round(perf.win_rate * 100);
     const placePct = Math.round(perf.place_rate * 100);
     const rateClass = pct >= 50 ? 'good' : pct >= 38 ? 'ok' : 'bad';
-    const winDisplay = `${complete ? '' : '<span style="color:var(--text-dim);font-size:0.8em" title="Partial results">~</span>'}${pct}%`;
-    const placeDisplay = `${complete ? '' : '<span style="color:var(--text-dim);font-size:0.8em">~</span>'}${placePct}%`;
+    const winDisplay = `${pct}%`;
+    const placeDisplay = `${placePct}%`;
     const pnlClass = perf.value_pnl >= 0 ? 'good' : 'bad';
     const pnlStr = perf.value_pnl >= 0 ? `+$${perf.value_pnl.toFixed(1)}` : `-$${Math.abs(perf.value_pnl).toFixed(1)}`;
     el.innerHTML = `
       <div class="day-accuracy-bar">
         <div class="day-acc-stat">
-          <span class="day-acc-val ${rateClass}">${winDisplay}</span>
-          <span class="day-acc-label">Win rate</span>
+          <span class="day-acc-val ${rateClass}" title="Win rate">${winDisplay} <span style="font-size:0.7em;opacity:0.6">win</span></span>
         </div>
         <div class="day-acc-stat">
-          <span class="day-acc-val" style="color:${complete ? '#60a5fa' : 'var(--text-dim)'}">${placeDisplay}</span>
-          <span class="day-acc-label">Place rate</span>
+          <span class="day-acc-val" style="color:${complete ? '#60a5fa' : 'var(--text-dim)'};opacity:${complete ? 1 : 0.75}" title="Place rate (top 3)">${placeDisplay} <span style="font-size:0.7em;opacity:0.6">plc</span></span>
         </div>
         <div class="day-acc-stat">
-          <span class="day-acc-val">${perf.wins}/${complete ? perf.races : `${perf.races}<span style="color:var(--text-dim);font-size:0.8em"> of ${perf.total_races_ran||perf.races}</span>`}</span>
-          <span class="day-acc-label">Races</span>
+          <span class="day-acc-val" title="Wins / qualifying picks">${perf.wins}/${perf.races} <span style="font-size:0.7em;opacity:0.6">picks</span></span>
         </div>
         ${perf.value_bets ? `
         <div class="day-acc-stat">
-          <span class="day-acc-val ${pnlClass}">${pnlStr}</span>
-          <span class="day-acc-label">${perf.value_bets} value bets</span>
+          <span class="day-acc-val ${pnlClass}" title="${perf.value_bets} value bets P&L">${pnlStr} <span style="font-size:0.7em;opacity:0.6">${perf.value_bets}v</span></span>
         </div>` : ''}
-        ${!complete ? `<div class="day-acc-stat"><span class="day-acc-val" style="color:var(--text-dim);font-size:0.75rem" title="Not all race results have been seeded yet">~ partial results</span></div>` : ''}
+        ${!complete ? `<div class="day-acc-stat"><span style="color:var(--text-dim);font-size:0.72rem" title="Not all results seeded yet">partial</span></div>` : ''}
       </div>`;
   }
 
