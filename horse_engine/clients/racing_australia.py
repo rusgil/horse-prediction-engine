@@ -413,6 +413,9 @@ class RacingAustraliaClient:
             if len(parts) < 3:
                 continue
             raw_venue = parts[2]
+            # Skip trial/trackwork meetings — no race cards or odds available
+            if re.search(r"\bTrial\b", raw_venue, re.IGNORECASE):
+                continue
             venue = _clean_venue(raw_venue)
             slug = _make_slug(raw_venue, race_date)
             self._slug_to_key[slug] = ra_key
@@ -452,10 +455,16 @@ class RacingAustraliaClient:
         d = race_date or date.today().isoformat()
         tasks = [self._fetch_state_calendar(s, d) for s in _AU_STATES]
         results = await asyncio.gather(*tasks, return_exceptions=True)
-        meetings = []
+        meetings: list[dict] = []
+        seen_slugs: set[str] = set()
         for r in results:
             if isinstance(r, list):
-                meetings.extend(r)
+                for m in r:
+                    slug = m.get("slug", "")
+                    if slug and slug in seen_slugs:
+                        continue
+                    seen_slugs.add(slug)
+                    meetings.append(m)
         log.info("Found %d AU meetings on %s (Racing Australia)", len(meetings), d)
         return meetings
 
