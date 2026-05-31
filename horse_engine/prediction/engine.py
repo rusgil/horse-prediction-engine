@@ -190,10 +190,8 @@ def enrich_runner(
     tb_adv = track_bias_advantage(speed_pos, race.rail_position, race.venue)
 
     # ── Gear ──────────────────────────────────────────────────────────────
-    gear_changes: list[str] = []
-    gear_score = 0.0
-    # (TAB runner parsing populates gear_changes; here we estimate impact)
-    # In real implementation this comes from runner.gear_changes — left as extension point
+    gear_changes: list[str] = runner.gear_changes
+    gear_score = 0.3 if "blinkers_on" in gear_changes else (-0.1 if "blinkers_off" in gear_changes else 0.0)
 
     # ── Weight ────────────────────────────────────────────────────────────
     weight_vs_avg = runner.weight - field_avg_weight

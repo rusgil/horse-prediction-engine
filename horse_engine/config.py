@@ -8,7 +8,20 @@ class Settings(BaseSettings):
     cron_secret: str = ""
     database_url: str = "sqlite+aiosqlite:///./horse_predictions.db"  # overridden by DATABASE_URL env var on Railway
 
+    tab_base_url: str = "https://api.tab.com.au/v1/tab-info-service"
+    tab_jurisdiction: str = "NSW"  # default jurisdiction for single-jurisdiction calls
+
     narrative_model: str = "claude-haiku-4-5-20251001"
+
+    # Betfair Exchange API credentials
+    betfair_app_key: str = ""
+    betfair_username: str = ""
+    betfair_password: str = ""
+
+    # Cloudflare Worker proxy for Punters API (bypasses IP blocks)
+    # Set to your *.workers.dev URL once deployed
+    punters_proxy_url: str = ""
+    punters_proxy_secret: str = ""
 
     @property
     def async_database_url(self) -> str:

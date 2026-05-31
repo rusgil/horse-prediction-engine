@@ -91,7 +91,7 @@ async def enrich_meeting(
             full_event = await client.get_race(meeting_slug, race_num)
             if not full_event:
                 continue
-            race = client.parse_race(full_event, race_date, venue_name, state)
+            race = await client.parse_race(full_event, race_date, venue_name, state)
             predictions, meta = await enrich_and_predict_race(race, model)
             summaries.append({**meta, "status": "ok"})
         except Exception as e:

@@ -103,6 +103,8 @@ class Runner(BaseModel):
     jockey_stats: Optional[JockeyStats] = None
     pedigree: Optional[PedigreeProfile] = None
 
+    gear_changes: list[str] = []    # e.g. ["blinkers_on", "tongue_tie_on"]
+
     # Market
     fixed_win_odds: Optional[float] = None
     tote_win_odds: Optional[float] = None

@@ -29,8 +29,6 @@ from datetime import date, datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 from typing import Any, Optional
 
-from apscheduler.schedulers.asyncio import AsyncIOScheduler
-from apscheduler.triggers.cron import CronTrigger
 from fastapi import BackgroundTasks, Depends, FastAPI, Header, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, Response
@@ -380,6 +378,13 @@ async def _scheduled_enrich():
         client = get_tab_client()
         async with get_session() as session:
             model = await _load_model(session)
+
+        # Pre-warm jockey/trainer cache for today so parse_race() fires zero extra GQL calls
+        today = _today_aest().isoformat()
+        if hasattr(client, "prefetch_people_for_date"):
+            log.info("[scheduler] Pre-fetching jockey/trainer stats for %s", today)
+            await client.prefetch_people_for_date(today)
+
         for i in range(3):
             race_date = (_today_aest() + timedelta(days=i)).isoformat()
             log.info("[scheduler] Enriching %s", race_date)
@@ -511,30 +516,27 @@ async def _seed_results_for_date(race_date: str) -> int:
     for meeting in all_meetings:
         slug = meeting.get("slug", "")
         venue_code = slug[:-len(date_sfx)] if slug.endswith(date_sfx) else slug.split("-")[0] if slug else ""
-        # Resolve meeting id: prefer id from get_meetings, fall back to slug lookup
-        meeting_id = meeting.get("id")
-        if not meeting_id:
-            meta = await client.get_meeting_by_slug(slug)
-            meeting_id = (meta or {}).get("id")
-        if not meeting_id:
-            continue
-        # Fetch full meeting once — avoids re-fetching per race (was O(N) calls, now O(1))
-        full = await client._fetch_meeting_full(meeting_id)
-        if not full:
-            continue
         races_with_results: set[str] = set()
-        for event in full.get("events", []):
-            race_num = event.get("eventNumber")
+        raw_races = await client.get_meeting_races(slug)
+        for raw_race in raw_races:
+            race_num = raw_race.get("eventNumber")
             race_id = f"{race_date}_{venue_code}_R{race_num}"
-            for sel in event.get("selections", []):
-                if (sel.get("status") or "").upper() == "SCRATCHED":
+            full_race = await client.get_race(slug, race_num)
+            if not full_race:
+                continue
+            for r in full_race.get("runners", []):
+                if r.get("scratched"):
                     continue
-                position = sel.get("selectionResult")
+                position = r.get("finishingPosition")
                 if not position or int(position) <= 0:
                     continue
-                horse = (sel.get("competitor") or {}).get("name", "")
-                sp = sel.get("startingPrice")
-                beaten = sel.get("officialMargin", 0)
+                horse = r.get("runnerName", "")
+                beaten = float(r.get("margin", 0) or 0)
+                sp = None
+                for p in r.get("prices", []):
+                    if p.get("priceType") in ("StartingPrice", "SP"):
+                        sp = float(p.get("winPrice", 0) or 0) or None
+                        break
                 async with get_session() as session:
                     existing = await session.execute(
                         select(HistoricalResultRow)
@@ -556,10 +558,10 @@ async def _seed_results_for_date(race_date: str) -> int:
                         race_id=race_id,
                         horse_name=horse,
                         position=int(position),
-                        beaten_margin=float(beaten or 0),
+                        beaten_margin=beaten,
                         winner=int(position) == 1,
                         placed=int(position) <= 3,
-                        starting_price=float(sp) if sp else None,
+                        starting_price=sp,
                         feature_vector_json=fv_row.enriched_json if fv_row else None,
                     ))
                     await session.commit()
@@ -616,25 +618,32 @@ async def _seed_race_results_on_demand(race_ids: list[str]) -> dict[tuple, int]:
                     race_id = f"{date_str}_{vc}_R{rn}"
                     if race_id not in target_race_ids:
                         continue
+                    full_race = await asyncio.wait_for(client.get_race(slug, rn), timeout=15)
+                    if not full_race:
+                        continue
                     rows_to_add = []
-                    for sel in event.get("selections") or []:
-                        if (sel.get("status") or "").upper() == "SCRATCHED":
+                    for r in full_race.get("runners", []):
+                        if r.get("scratched"):
                             continue
-                        pos = sel.get("selectionResult")
+                        pos = r.get("finishingPosition")
                         if not pos or int(pos) <= 0:
                             continue
-                        horse = (sel.get("competitor") or {}).get("name", "")
+                        horse = r.get("runnerName", "")
                         if not horse:
                             continue
-                        sp = sel.get("startingPrice")
+                        sp = None
+                        for p in r.get("prices", []):
+                            if p.get("priceType") in ("StartingPrice", "SP"):
+                                sp = float(p.get("winPrice", 0) or 0) or None
+                                break
                         rows_to_add.append(HistoricalResultRow(
                             race_id=race_id,
                             horse_name=horse,
                             position=int(pos),
-                            beaten_margin=float(sel.get("officialMargin") or 0),
+                            beaten_margin=float(r.get("margin", 0) or 0),
                             winner=int(pos) == 1,
                             placed=int(pos) <= 3,
-                            starting_price=float(sp) if sp else None,
+                            starting_price=sp,
                         ))
                         db_positions[(race_id, horse)] = int(pos)
                     if rows_to_add:
@@ -877,7 +886,9 @@ async def _scheduled_prerace_snapshot():
 async def lifespan(app: FastAPI):
     await init_db()
 
-    # Schedule enrichment at 6am, 10am, 1pm AEST (UTC+10 = subtract 10h)
+    from apscheduler.schedulers.asyncio import AsyncIOScheduler
+    from apscheduler.triggers.cron import CronTrigger
+
     scheduler = AsyncIOScheduler(timezone="Australia/Sydney")
     scheduler.add_job(_scheduled_enrich, CronTrigger(hour=6,  minute=0, timezone="Australia/Sydney"))
     scheduler.add_job(_scheduled_enrich, CronTrigger(hour=10, minute=0, timezone="Australia/Sydney"))
@@ -887,34 +898,17 @@ async def lifespan(app: FastAPI):
     scheduler.add_job(_scheduled_seed_results, CronTrigger(hour=17, minute=0, timezone="Australia/Sydney"))
     scheduler.add_job(_scheduled_seed_results, CronTrigger(hour=19, minute=0, timezone="Australia/Sydney"))
     scheduler.add_job(_scheduled_seed_results, CronTrigger(hour=23, minute=0, timezone="Australia/Sydney"))
-    scheduler.add_job(_scheduled_calibrate,      CronTrigger(hour=2, minute=0, timezone="Australia/Sydney"))
-    scheduler.add_job(_scheduled_exotic_retrain, CronTrigger(hour=3, minute=0, timezone="Australia/Sydney"))
+    scheduler.add_job(_scheduled_calibrate,      CronTrigger(hour=2,  minute=0, timezone="Australia/Sydney"))
+    scheduler.add_job(_scheduled_exotic_retrain, CronTrigger(hour=3,  minute=0, timezone="Australia/Sydney"))
     scheduler.add_job(
         _scheduled_odds_snapshot,
         CronTrigger(hour="9-20", minute="0,15,30,45", timezone="Australia/Sydney")
     )
     scheduler.start()
-    log.info("[scheduler] Cron jobs scheduled: 6am/10am/1pm enrich, 9am pre-race snapshot, 3pm/5pm/7pm/11pm seed results, 2am calibration, 3am exotic retrain, every 15min odds snapshots 9am-8pm")
+    log.info("[scheduler] Cron jobs scheduled")
 
-    # Enrich today on startup so deploys don't leave races un-loaded
+    # Enrich today on startup
     asyncio.create_task(_scheduled_enrich())
-    # Backfill last 3 days — enrich any un-enriched meetings then seed results
-    async def _startup_backfill():
-        client = get_tab_client()
-        async with get_session() as session:
-            model = await _load_model(session)
-        for offset in (-3, -2, -1, 0):
-            seed_date = (_today_aest() + timedelta(days=offset)).isoformat()
-            try:
-                # Enrich any meetings that are missing predictions
-                await _enrich_date(seed_date, client, model)
-                # Then seed results
-                n = await _seed_results_for_date(seed_date)
-                if n:
-                    log.info("[startup] Seeded %d results for %s", n, seed_date)
-            except Exception as e:
-                log.warning("[startup] Backfill failed for %s: %s", seed_date, e)
-    asyncio.create_task(_startup_backfill())
 
     yield
 
@@ -2395,7 +2389,7 @@ async def live_odds(race_id: str):
     db_results = {r.horse_name: r for r in hr_rows}
     db_settled = bool(db_results)
 
-    # ── Step 2: try Punters for live odds + any missing positions ─────────────
+    # ── Step 2: try TAB for live odds + any missing positions ────────────────
     punters_tote: dict[str, tuple] = {}   # horse → (current_odds, actual_position)
     punters_ok = False
     try:
@@ -2403,20 +2397,15 @@ async def live_odds(race_id: str):
         slug = _meeting_slug(venue_code, race_date)
         raw_event = await asyncio.wait_for(client.get_race(slug, race_num), timeout=15)
         if raw_event:
-            for sel in raw_event.get("selections", []):
-                if (sel.get("status") or "").upper() == "SCRATCHED":
+            for r in raw_event.get("runners", []):
+                if r.get("scratched"):
                     continue
-                horse = (sel.get("competitor") or {}).get("name", "")
-                tote_win = sel.get("topToteWin")
-                sp = sel.get("startingPrice")
-                flucs = sel.get("flucs") or {}
-                fluc_low = flucs.get("low")
-                current_odds = (float(tote_win) if tote_win
-                                else float(fluc_low) if fluc_low
-                                else float(sp) if sp
-                                else None)
-                result_pos = sel.get("selectionResult")
-                actual_position = int(result_pos) if result_pos and int(result_pos) > 0 else None
+                horse = r.get("runnerName", "")
+                tote_win = next((float(p["winPrice"]) for p in r.get("prices", []) if p.get("priceType") == "Win" and p.get("winPrice")), None)
+                fixed_win = next((float(p["winPrice"]) for p in r.get("prices", []) if p.get("priceType") == "FixedWin" and p.get("winPrice")), None)
+                current_odds = fixed_win or tote_win
+                pos_raw = r.get("finishingPosition")
+                actual_position = int(pos_raw) if pos_raw and int(pos_raw) > 0 else None
                 punters_tote[horse] = (current_odds, actual_position)
             punters_ok = True
     except Exception:
@@ -3336,19 +3325,15 @@ async def _run_backfill(days: int, x_secret: Optional[str], force: bool = False)
                     venue_name = m.get("venue", venue_code)
                     state = m.get("state", "")
 
-                    meeting_detail = await client.get_meeting_by_slug(slug)
-                    if not meeting_detail:
-                        continue
-                    full = await client._fetch_meeting_full(meeting_detail["id"])
-                    if not full:
-                        continue
-
-                    for event in full.get("events", []):
-                        race_num = event.get("eventNumber")
+                    raw_races = await client.get_meeting_races(slug)
+                    for raw_race in raw_races:
+                        race_num = raw_race.get("eventNumber")
                         race_id = f"{race_date}_{venue_code}_R{race_num}"
-                        event["_meeting"] = full
+                        full_race = await client.get_race(slug, race_num)
+                        if not full_race:
+                            continue
                         try:
-                            race = await client.parse_race(event, race_date, venue_name, state)
+                            race = await client.parse_race(full_race, race_date, venue_name, state)
                             if not race.runners:
                                 continue
                             predictions, _ = await enrich_and_predict_race(
@@ -3359,16 +3344,21 @@ async def _run_backfill(days: int, x_secret: Optional[str], force: bool = False)
                                     session, race_id,
                                     [_prediction_to_db_dict(p, race_id, race.scheduled_time, race=race) for p in predictions],
                                 )
-                            # Seed actual results
-                            for sel in event.get("selections", []):
-                                position = sel.get("selectionResult")
+                            # Seed actual results from runner finishing positions
+                            for r in full_race.get("runners", []):
+                                if r.get("scratched"):
+                                    continue
+                                position = r.get("finishingPosition")
                                 if not position or int(position) <= 0:
                                     continue
-                                horse = (sel.get("competitor") or {}).get("name", "")
-                                sp = sel.get("startingPrice")
-                                beaten = sel.get("officialMargin") or 0
+                                horse = r.get("runnerName", "")
+                                beaten = float(r.get("margin", 0) or 0)
+                                sp = None
+                                for p in r.get("prices", []):
+                                    if p.get("priceType") in ("StartingPrice", "SP"):
+                                        sp = float(p.get("winPrice", 0) or 0) or None
+                                        break
                                 async with get_session() as session:
-                                    # Skip if historical result already exists
                                     existing_hr = await session.execute(
                                         select(HistoricalResultRow)
                                         .where(HistoricalResultRow.race_id == race_id)
@@ -3383,17 +3373,16 @@ async def _run_backfill(days: int, x_secret: Optional[str], force: bool = False)
                                             .limit(1)
                                         )
                                         fv_row = fv_q.scalars().first()
-                                        hr = HistoricalResultRow(
+                                        session.add(HistoricalResultRow(
                                             race_id=race_id,
                                             horse_name=horse,
                                             position=int(position),
-                                            beaten_margin=float(beaten),
+                                            beaten_margin=beaten,
                                             winner=int(position) == 1,
                                             placed=int(position) <= 3,
-                                            starting_price=float(sp) if sp else None,
+                                            starting_price=sp,
                                             feature_vector_json=fv_row.enriched_json if fv_row else None,
-                                        )
-                                        session.add(hr)
+                                        ))
                                         await session.commit()
                                 _backfill["runners"] += 1
                             _backfill["races"] += 1
@@ -3999,28 +3988,26 @@ async def _run_backtest_range(start_date: str, end_date: str) -> None:
                 venue_name = m.get("venue", venue_code)
                 state_code = m.get("state", "")
                 try:
-                    events = await asyncio.wait_for(client.get_meeting_races(slug), timeout=120)
+                    race_stubs = await asyncio.wait_for(client.get_meeting_races(slug), timeout=120)
                     rows_to_insert = []
-                    for event in events:
-                        selections = event.get("selections") or []
-                        # Only process races with official results
-                        if not any(
-                            isinstance(s.get("selectionResult"), int) and s["selectionResult"] >= 1
-                            for s in selections
-                        ):
+                    for stub in race_stubs:
+                        race_num = stub.get("eventNumber")
+                        full_race = await asyncio.wait_for(client.get_race(slug, race_num), timeout=60)
+                        if not full_race:
                             continue
-                        # Actual positions from selectionResult
+                        runners = full_race.get("runners", [])
+                        # Only process races with official results
                         actuals = {
-                            (s.get("competitor") or {}).get("name"): s["selectionResult"]
-                            for s in selections
-                            if isinstance(s.get("selectionResult"), int) and s["selectionResult"] >= 1
+                            r["runnerName"]: int(r["finishingPosition"])
+                            for r in runners
+                            if r.get("finishingPosition") and int(r["finishingPosition"]) >= 1
                         }
+                        if not actuals:
+                            continue
                         try:
-                            race_num = event.get("eventNumber")
                             race_id = f"{date_str}_{venue_code}_R{race_num}"
-                            event["_meeting"] = {"slug": slug, "railPosition": m.get("rail_position", "")}
                             race = await asyncio.wait_for(
-                                client.parse_race(event, date_str, venue_name, state_code), timeout=60
+                                client.parse_race(full_race, date_str, venue_name, state_code), timeout=60
                             )
                             predictions, _ = await enrich_and_predict_race(race, model)
                             for pred in predictions:

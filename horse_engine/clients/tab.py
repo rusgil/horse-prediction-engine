@@ -6,7 +6,9 @@ Base: https://api.tab.com.au/v1/tab-info-service
 """
 from __future__ import annotations
 
+import asyncio
 import logging
+import re
 from datetime import date, datetime
 from typing import Any
 
@@ -26,15 +28,23 @@ HEADERS = {
 }
 TIMEOUT = 20.0
 
+_AU_JURISDICTIONS = ["NSW", "VIC", "QLD", "SA", "WA", "TAS", "NT", "ACT"]
+
 
 def _today() -> str:
     return date.today().isoformat()
+
+
+def _slugify(name: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "-", name.lower()).strip("-")
 
 
 class TABClient:
     def __init__(self, jurisdiction: str | None = None):
         self.base = settings.tab_base_url
         self.jurisdiction = jurisdiction or settings.tab_jurisdiction
+        # slug → (race_date, raw_meeting_dict)
+        self._slug_cache: dict[str, tuple[str, dict]] = {}
 
     @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=8))
     async def _get(self, path: str, params: dict | None = None) -> Any:
@@ -45,31 +55,130 @@ class TABClient:
             resp.raise_for_status()
             return resp.json()
 
-    async def get_meetings(self, race_date: str | None = None) -> list[dict]:
-        """Return list of thoroughbred meetings for the given date."""
-        d = race_date or _today()
-        data = await self._get(f"/racing/dates/{d}/meetings")
-        meetings = data.get("meetings", [])
-        # Filter to thoroughbreds only (raceType == "R")
-        return [m for m in meetings if m.get("meetingCode") and m.get("raceType") == "R"]
+    def _make_slug(self, meeting: dict, race_date: str) -> str:
+        venue_name = meeting.get("venueName", "")
+        date_compact = race_date.replace("-", "")
+        return f"{_slugify(venue_name)}-{date_compact}"
 
-    async def get_race(self, race_date: str, venue_code: str, race_number: int) -> dict | None:
-        """Return full race card including runners, form, and current odds."""
-        d = race_date or _today()
+    async def _get_meetings_for_jurisdiction(self, race_date: str, jurisdiction: str) -> list[dict]:
         try:
             data = await self._get(
-                f"/racing/dates/{d}/meetings/{venue_code}/R/races/{race_number}"
+                f"/racing/dates/{race_date}/meetings",
+                params={"jurisdiction": jurisdiction},
             )
-            return data
+            meetings = data.get("meetings", [])
+            return [m for m in meetings if m.get("meetingCode") and m.get("raceType") == "R"]
+        except Exception as e:
+            log.debug("TAB meetings fetch failed for %s/%s: %s", jurisdiction, race_date, e)
+            return []
+
+    async def get_meetings(self, race_date: str | None = None) -> list[dict]:
+        """Return thoroughbred meetings for all AU jurisdictions on the given date."""
+        d = race_date or _today()
+        tasks = [self._get_meetings_for_jurisdiction(d, j) for j in _AU_JURISDICTIONS]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        seen: set[str] = set()
+        meetings: list[dict] = []
+        for r in results:
+            if not isinstance(r, list):
+                continue
+            for m in r:
+                mc = m.get("meetingCode", "")
+                if not mc or mc in seen:
+                    continue
+                seen.add(mc)
+                slug = self._make_slug(m, d)
+                m["slug"] = slug
+                self._slug_cache[slug] = (d, m)
+                state = (m.get("location") or {}).get("state", "")
+                meetings.append({
+                    "id": mc,
+                    "slug": slug,
+                    "name": m.get("venueName", ""),
+                    "venue": m.get("venueName", ""),
+                    "state": state,
+                    "rail_position": m.get("railPosition", ""),
+                    "date": d,
+                })
+
+        log.info("Found %d AU thoroughbred meetings on %s (TAB)", len(meetings), d)
+        return meetings
+
+    async def get_meeting_by_slug(self, slug: str) -> dict | None:
+        if slug not in self._slug_cache:
+            m = re.search(r"-(\d{8})$", slug)
+            if m:
+                raw = m.group(1)
+                race_date = f"{raw[:4]}-{raw[4:6]}-{raw[6:]}"
+                await self.get_meetings(race_date)
+        cached = self._slug_cache.get(slug)
+        if not cached:
+            return None
+        d, raw_meeting = cached
+        venue_name = raw_meeting.get("venueName", "")
+        state = (raw_meeting.get("location") or {}).get("state", "")
+        return {
+            "id": raw_meeting.get("meetingCode"),
+            "name": venue_name,
+            "slug": slug,
+            "railPosition": raw_meeting.get("railPosition", ""),
+            "meetingDateLocal": d,
+            "venue": {"name": venue_name, "state": state},
+        }
+
+    async def get_meeting_races(self, slug: str) -> list[dict]:
+        """Return race stubs for a meeting identified by slug."""
+        if slug not in self._slug_cache:
+            await self.get_meeting_by_slug(slug)
+        cached = self._slug_cache.get(slug)
+        if not cached:
+            return []
+        d, raw_meeting = cached
+        venue_code = raw_meeting.get("meetingCode", "")
+        if not venue_code:
+            return []
+        races = await self._get_meeting_races_by_code(d, venue_code)
+        return [
+            {
+                "eventNumber": r.get("raceNumber"),
+                "name": r.get("raceName", ""),
+                "distance": r.get("raceDistance", 0),
+                "startTime": r.get("raceStartTime", ""),
+                "status": r.get("raceStatus", ""),
+                "raceType": "R",
+                "eventClass": r.get("raceClassConditions", ""),
+            }
+            for r in races
+        ]
+
+    async def get_race(self, slug: str, race_number: int) -> dict | None:
+        """Return full race card for a race identified by meeting slug + race number."""
+        if slug not in self._slug_cache:
+            await self.get_meeting_by_slug(slug)
+        cached = self._slug_cache.get(slug)
+        if not cached:
+            return None
+        d, raw_meeting = cached
+        venue_code = raw_meeting.get("meetingCode", "")
+        if not venue_code:
+            return None
+        return await self._get_race_by_code(d, venue_code, race_number)
+
+    # ── Internal code-based fetchers ───────────────────────────────────────
+
+    async def _get_race_by_code(self, race_date: str, venue_code: str, race_number: int) -> dict | None:
+        try:
+            return await self._get(
+                f"/racing/dates/{race_date}/meetings/{venue_code}/R/races/{race_number}"
+            )
         except httpx.HTTPStatusError as e:
-            log.warning("TAB race fetch failed %s/%s R%s: %s", venue_code, d, race_number, e)
+            log.warning("TAB race fetch failed %s/%s R%s: %s", venue_code, race_date, race_number, e)
             return None
 
-    async def get_meeting_races(self, race_date: str, venue_code: str) -> list[dict]:
-        """Return all races at a meeting."""
-        d = race_date or _today()
+    async def _get_meeting_races_by_code(self, race_date: str, venue_code: str) -> list[dict]:
         try:
-            data = await self._get(f"/racing/dates/{d}/meetings/{venue_code}/R/races")
+            data = await self._get(f"/racing/dates/{race_date}/meetings/{venue_code}/R/races")
             return data.get("races", [])
         except httpx.HTTPStatusError:
             return []
@@ -88,7 +197,7 @@ class TABClient:
             track_condition=track_condition,
         )
 
-    def parse_race(self, raw: dict, race_date: str, venue: str, state: str) -> Race:
+    async def parse_race(self, raw: dict, race_date: str, venue: str, state: str) -> Race:
         race_num = raw.get("raceNumber", 0)
         venue_code = raw.get("meetingCode", venue)
         return Race(
@@ -121,14 +230,12 @@ class TABClient:
         return runners
 
     def _parse_runner(self, r: dict) -> Runner:
-        # TAB form is an array of last-10 starts
         form_raw = r.get("form", {}).get("recentStarts", [])
         last_10 = [self._parse_form_start(s) for s in form_raw[:10] if s]
 
         trainer_raw = r.get("trainer", {})
         jockey_raw = r.get("jockey", {})
 
-        # Trainer stats embedded in TAB response
         trainer_stats = TrainerStats(
             name=trainer_raw.get("fullName", "Unknown"),
             win_rate_overall=float(trainer_raw.get("winPercentage", 0) or 0),
@@ -156,13 +263,12 @@ class TABClient:
             trainer_jockey_combo_rate=float(jockey_raw.get("trainerComboWinPct", 0) or 0),
         ) if jockey_raw else None
 
-        # Pedigree — TAB provides sire/dam names
         pedigree_raw = r.get("pedigree", {})
         pedigree = PedigreeProfile(
             sire=pedigree_raw.get("sire", "Unknown"),
             dam=pedigree_raw.get("dam", "Unknown"),
             dam_sire=pedigree_raw.get("damSire", "Unknown"),
-            distance_aptitude="mile",   # will be enriched by pedigree module
+            distance_aptitude="mile",
             distance_min=1000,
             distance_max=2400,
             wet_track_score=5.0,
@@ -173,7 +279,6 @@ class TABClient:
             brilliance_index=5.0,
         ) if pedigree_raw else None
 
-        # Odds
         prices = r.get("prices", [])
         fixed_win = None
         tote_win = None
@@ -215,6 +320,7 @@ class TABClient:
             fixed_win_odds=fixed_win,
             tote_win_odds=tote_win,
             best_available_odds=fixed_win or tote_win,
+            gear_changes=gear_changes,
         )
 
     def _parse_form_start(self, s: dict) -> FormStart:
