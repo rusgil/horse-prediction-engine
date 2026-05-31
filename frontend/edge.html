@@ -3305,6 +3305,10 @@
     const winRate = activePicks.length ? +(activePicks.filter(p => p.winner).length / activePicks.length * 100).toFixed(1) : 0;
     const roi = totalStaked ? +(pnl / totalStaked * 100).toFixed(1) : 0;
 
+    // Update date nav label with win %
+    const ystLbl = document.getElementById('ystDateLabel');
+    if (ystLbl && yesterdayViewDate) ystLbl.textContent = `${fmtDate(yesterdayViewDate)} — ${winRate}% win`;
+
     const pnlCls  = pnl >= 0 ? 'pnl-positive' : 'pnl-negative';
     const pnlSign = pnl >= 0 ? '+' : '';
     const roiSign = roi >= 0 ? '+' : '';
