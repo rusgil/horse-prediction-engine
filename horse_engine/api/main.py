@@ -3285,6 +3285,133 @@ async def seed_results(race_date: str, x_cron_secret: Optional[str] = Header(Non
     return {"status": "seeded", "results": seeded}
 
 
+@app.get("/api/meetings/{race_date}/{venue_code}/results")
+async def get_meeting_results(race_date: str, venue_code: str):
+    """
+    Return today's race results for a single venue, fetched live from Racing Australia.
+    Also seeds HistoricalResultRow so model-correct dots appear immediately.
+    """
+    _validate_date(race_date)
+    _validate_venue(venue_code)
+
+    from horse_engine.clients.composite import CompositeClient
+    client = get_tab_client()
+    slug = _meeting_slug(venue_code, race_date)
+
+    # Prime slug→key cache then get the RA internal key
+    await client.get_meeting_by_slug(slug)
+    ra_key = client._ra._slug_to_key.get(slug) if hasattr(client, "_ra") else None
+    if not ra_key:
+        return {"date": race_date, "venue": venue_code, "races": [], "seeded": 0}
+
+    ra_results = await client._ra.get_results(ra_key)
+    if not ra_results:
+        return {"date": race_date, "venue": venue_code, "races": [], "seeded": 0}
+
+    # Seed HistoricalResultRow from RA results
+    seeded = 0
+    races_with_results: set[str] = set()
+    for race_num, race_data in ra_results.items():
+        race_id = f"{race_date}_{venue_code}_R{race_num}"
+        for name_lower, rd in race_data.get("runners", {}).items():
+            position = rd.get("position")
+            if not position or position <= 0:
+                continue
+            # Horse name from RA results is already uppercase — look it up as stored
+            async with get_session() as session:
+                existing = await session.execute(
+                    select(HistoricalResultRow)
+                    .where(HistoricalResultRow.race_id == race_id)
+                    .where(func.lower(HistoricalResultRow.horse_name) == name_lower)
+                    .limit(1)
+                )
+                if existing.scalars().first():
+                    races_with_results.add(race_id)
+                    continue
+                fv_result = await session.execute(
+                    select(RunnerPredictionRow)
+                    .where(RunnerPredictionRow.race_id == race_id)
+                    .where(func.lower(RunnerPredictionRow.horse_name) == name_lower)
+                    .limit(1)
+                )
+                fv_row = fv_result.scalars().first()
+                horse_name = fv_row.horse_name if fv_row else name_lower.upper()
+                session.add(HistoricalResultRow(
+                    race_id=race_id,
+                    horse_name=horse_name,
+                    position=position,
+                    beaten_margin=float(rd.get("margin") or 0),
+                    winner=position == 1,
+                    placed=position <= 3,
+                    starting_price=rd.get("sp"),
+                    feature_vector_json=fv_row.enriched_json if fv_row else None,
+                ))
+                await session.commit()
+                seeded += 1
+                races_with_results.add(race_id)
+
+    # Clear stale cancelled flags
+    if races_with_results:
+        from sqlalchemy import update as sa_update
+        async with get_session() as session:
+            await session.execute(
+                sa_update(RunnerPredictionRow)
+                .where(RunnerPredictionRow.race_id.in_(list(races_with_results)))
+                .where(RunnerPredictionRow.cancelled.is_(True))
+                .values(cancelled=False)
+            )
+            await session.commit()
+
+    # Load top model picks for these races to compute model_correct
+    top_picks: dict[str, str] = {}
+    async with get_session() as session:
+        for race_id in races_with_results:
+            tp = (await session.execute(
+                select(RunnerPredictionRow.horse_name)
+                .where(RunnerPredictionRow.race_id == race_id)
+                .where(RunnerPredictionRow.model_rank == 1)
+                .limit(1)
+            )).scalars().first()
+            if tp:
+                top_picks[race_id] = tp
+
+    # Build response
+    races_out = []
+    for race_num in sorted(ra_results.keys()):
+        race_data = ra_results[race_num]
+        race_id = f"{race_date}_{venue_code}_R{race_num}"
+        runners_raw = race_data.get("runners", {})
+        runners_sorted = sorted(
+            [(name, rd) for name, rd in runners_raw.items() if rd.get("position")],
+            key=lambda x: x[1]["position"],
+        )
+        winner = runners_sorted[0][0] if runners_sorted else None
+        top_pick = (top_picks.get(race_id) or "").lower()
+        model_correct = (top_pick == winner) if (top_pick and winner) else None
+        model_placed = (top_pick in {n for n, rd in runners_sorted if rd["position"] <= 3}) if top_pick else None
+
+        races_out.append({
+            "race_number": race_num,
+            "race_id": race_id,
+            "track_condition": race_data.get("track_condition", ""),
+            "has_result": bool(runners_sorted),
+            "model_correct": model_correct,
+            "model_placed": model_placed,
+            "top_pick": top_picks.get(race_id),
+            "runners": [
+                {
+                    "position": rd["position"],
+                    "name": name.upper(),
+                    "margin": rd.get("margin", 0),
+                    "sp": rd.get("sp"),
+                }
+                for name, rd in runners_sorted
+            ],
+        })
+
+    return {"date": race_date, "venue": venue_code, "races": races_out, "seeded": seeded}
+
+
 # ── Backfill ──────────────────────────────────────────────────────────────────
 
 _backfill: dict = {"running": False, "done": False, "current": None,

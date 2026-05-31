@@ -773,6 +773,52 @@
       0%, 100% { opacity: 1; } 50% { opacity: 0.4; }
     }
 
+    /* ── Results summary section ─────────────────────────────── */
+    .results-section {
+      margin: 0 0 20px;
+    }
+    .results-section-title {
+      font-family: 'Barlow Condensed', sans-serif;
+      font-size: 0.72rem; font-weight: 700; letter-spacing: 0.08em;
+      text-transform: uppercase; color: var(--text-dim);
+      padding: 0 4px 8px; border-bottom: 1px solid var(--border);
+      margin-bottom: 10px;
+    }
+    .result-race-row {
+      display: flex; align-items: flex-start; gap: 10px;
+      padding: 8px 0; border-bottom: 1px solid rgba(255,255,255,0.04);
+      font-size: 0.8rem;
+    }
+    .result-race-row:last-child { border-bottom: none; }
+    .result-race-num {
+      font-family: 'Barlow Condensed', sans-serif; font-weight: 700;
+      font-size: 0.75rem; color: var(--text-dim);
+      min-width: 24px; padding-top: 1px;
+    }
+    .result-model-dot {
+      width: 8px; height: 8px; border-radius: 50%;
+      margin-top: 4px; flex-shrink: 0;
+    }
+    .result-model-dot.correct { background: #10b981; box-shadow: 0 0 4px #10b981; }
+    .result-model-dot.placed  { background: #f59e0b; box-shadow: 0 0 4px #f59e0b; }
+    .result-model-dot.wrong   { background: #f87171; box-shadow: 0 0 4px #f87171; }
+    .result-model-dot.none    { background: var(--border); }
+    .result-finishers { display: flex; flex-wrap: wrap; gap: 4px; }
+    .result-finisher {
+      font-family: 'Barlow Condensed', sans-serif;
+      font-size: 0.78rem; font-weight: 600;
+      padding: 2px 7px; border-radius: 6px;
+      border: 1px solid var(--border);
+      color: var(--text-secondary); background: var(--bg-elevated);
+    }
+    .result-finisher.win  { background: rgba(232,160,32,0.12); color: var(--gold); border-color: var(--gold-mid); }
+    .result-finisher.place{ background: rgba(232,160,32,0.07); color: var(--gold-light); opacity: 0.75; border-color: var(--border); }
+    .result-finisher.pick { outline: 1px solid #10b981; outline-offset: 1px; }
+    .result-pos-label {
+      font-size: 0.65rem; font-weight: 600; opacity: 0.7; margin-right: 2px;
+    }
+    .result-sp { font-size: 0.68rem; opacity: 0.6; margin-left: 2px; }
+
     /* ── Inline spinner ───────────────────────────────────────── */
     .spin-inline {
       display: inline-block;
@@ -836,6 +882,9 @@
       <div class="pills-fade-right"></div>
     </div>
   </div>
+
+  <!-- Results summary (today only, populated after race data loads) -->
+  <div id="resultsSection" style="display:none; padding: 0 16px;"></div>
 
   <!-- Race content -->
   <div id="raceContent"></div>
@@ -1311,6 +1360,7 @@
     S.selectedRaceId = null;
     S.races = [];
     S.runners = [];
+    document.getElementById('resultsSection').style.display = 'none';
 
     renderMeetingPills();
     document.getElementById('racesSection').style.display = '';
@@ -1326,12 +1376,78 @@
       renderRacePills();
       document.getElementById('raceContent').innerHTML = '';
 
+      // Load results in background for today's meetings
+      if (S.date === todayISO()) loadMeetingResults(m);
+
       // Auto-select first race
       if (S.races.length) await selectRace(S.races[0]);
 
     } catch (e) {
       document.getElementById('raceContent').innerHTML = renderErrorHTML('Failed to load races.', e.message);
     }
+  }
+
+  async function loadMeetingResults(m) {
+    try {
+      const r = await fetch(`${API}/api/meetings/${S.date}/${m.venue_code}/results`, {credentials: 'include'});
+      if (!r.ok) return;
+      const data = await r.json();
+      const completed = (data.races || []).filter(r => r.has_result);
+      if (!completed.length) return;
+
+      // Update race pills with fresh model_correct data from RA results
+      completed.forEach(res => {
+        const race = S.races.find(r => r.race_id === res.race_id);
+        if (race) {
+          race.model_correct = res.model_correct;
+          race.model_placed = res.model_placed;
+        }
+      });
+      renderRacePills();
+
+      // Render results summary section
+      renderResultsSection(completed, m);
+    } catch (_) {}
+  }
+
+  function renderResultsSection(completed, m) {
+    const el = document.getElementById('resultsSection');
+    if (!el || !completed.length) return;
+
+    const rows = completed.map(race => {
+      const topPick = (race.top_pick || '').toLowerCase();
+      const runners = race.runners || [];
+      const finishers = runners.slice(0, 4).map((r, i) => {
+        const nameLower = r.name.toLowerCase();
+        const isPick = topPick && nameLower === topPick;
+        const cls = r.position === 1 ? 'win' : r.position <= 3 ? 'place' : '';
+        const pickCls = isPick ? ' pick' : '';
+        const posLabel = r.position === 1 ? '1st' : r.position === 2 ? '2nd' : r.position === 3 ? '3rd' : `${r.position}th`;
+        const sp = r.sp ? ` <span class="result-sp">$${r.sp.toFixed(1)}</span>` : '';
+        return `<span class="result-finisher ${cls}${pickCls}"><span class="result-pos-label">${posLabel}</span>${escHtml(r.name)}${sp}</span>`;
+      }).join('');
+
+      let dotCls = 'none';
+      if (race.model_correct === true) dotCls = 'correct';
+      else if (race.model_correct === false && race.model_placed === true) dotCls = 'placed';
+      else if (race.model_correct === false) dotCls = 'wrong';
+
+      const tc = race.track_condition ? ` <span style="color:var(--text-dim);font-size:0.7rem">${escHtml(race.track_condition)}</span>` : '';
+
+      return `
+        <div class="result-race-row">
+          <div class="result-race-num">R${race.race_number}</div>
+          <div class="result-model-dot ${dotCls}" title="${dotCls === 'correct' ? 'Model pick won' : dotCls === 'placed' ? 'Model pick placed' : dotCls === 'wrong' ? 'Model pick missed' : 'No prediction'}"></div>
+          <div class="result-finishers">${finishers}${tc}</div>
+        </div>`;
+    }).join('');
+
+    el.innerHTML = `
+      <div class="results-section">
+        <div class="results-section-title">Today's Results</div>
+        ${rows}
+      </div>`;
+    el.style.display = '';
   }
 
   function renderInfoBar(m) {
