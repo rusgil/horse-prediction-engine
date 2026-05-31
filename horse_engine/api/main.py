@@ -1174,7 +1174,7 @@ async def get_edge_picks():
             )
             rows = result.scalars().all()
             # Exclude trial/trackwork venues (race_id venue slug contains -trial- or -trail-)
-            rows = [r for r in rows if not re.search(r"-(trial|trail)s?-", r.race_id, re.IGNORECASE)]
+            rows = [r for r in rows if not re.search(r"-(trial|trail)s?[_-]", r.race_id, re.IGNORECASE)]
 
             if not rows:
                 continue
@@ -1427,7 +1427,7 @@ async def refresh_edge_odds():
                 .where(RunnerPredictionRow.race_id.like(f"{prefix}%"))
             )
             picks = result.scalars().all()
-            picks = [p for p in picks if not re.search(r"-(trial|trail)s?-", p.race_id, re.IGNORECASE)]
+            picks = [p for p in picks if not re.search(r"-(trial|trail)s?[_-]", p.race_id, re.IGNORECASE)]
 
         # Group by meeting slug so we only call punters once per meeting
         slugs: dict[str, list[RunnerPredictionRow]] = {}
@@ -1499,7 +1499,7 @@ async def get_edge_yesterday(for_date: Optional[str] = Query(None, alias="date")
             .order_by(RunnerPredictionHistoryRow.win_probability.desc())
         )
         picks = result.scalars().all()
-        picks = [p for p in picks if not re.search(r"-(trial|trail)s?-", p.race_id, re.IGNORECASE)]
+        picks = [p for p in picks if not re.search(r"-(trial|trail)s?[_-]", p.race_id, re.IGNORECASE)]
 
         if not picks:
             return {"date": target_date, "picks": [], "summary": None}
@@ -1719,7 +1719,7 @@ async def get_edge_trifectas():
             else:
                 using_fallback = False
 
-            exotic_rows = [r for r in exotic_rows if not re.search(r"-(trial|trail)s?-", r.race_id, re.IGNORECASE)]
+            exotic_rows = [r for r in exotic_rows if not re.search(r"-(trial|trail)s?[_-]", r.race_id, re.IGNORECASE)]
             if not exotic_rows:
                 continue
 
