@@ -414,7 +414,7 @@ class RacingAustraliaClient:
                 continue
             raw_venue = parts[2]
             # Skip trial/trackwork meetings — no race cards or odds available
-            if re.search(r"\bTrial\b", raw_venue, re.IGNORECASE):
+            if re.search(r"\b(Trial|Trail|Trials|TRL)\b", raw_venue, re.IGNORECASE):
                 continue
             venue = _clean_venue(raw_venue)
             slug = _make_slug(raw_venue, race_date)

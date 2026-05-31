@@ -1168,6 +1168,8 @@ async def get_edge_picks():
                 .order_by(RunnerPredictionRow.win_probability.desc())
             )
             rows = result.scalars().all()
+            # Exclude trial/trackwork venues (race_id venue slug contains -trial- or -trail-)
+            rows = [r for r in rows if not re.search(r"-(trial|trail)s?-", r.race_id, re.IGNORECASE)]
 
             if not rows:
                 continue
