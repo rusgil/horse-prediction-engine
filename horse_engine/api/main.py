@@ -3405,11 +3405,13 @@ async def probe_tab(race_id: str = "", date: str = "", x_cron_secret: Optional[s
 
     # Step 1: list meetings to discover real venue codes
     meetings_by_code: dict[str, dict] = {}
+    http_statuses: dict[str, int] = {}
     for jur in _AU_JURISDICTIONS:
         try:
             async with _httpx.AsyncClient(headers=HEADERS, timeout=15) as c:
                 resp = await c.get(f"{TAB_BASE}/racing/dates/{target_date}/meetings",
                                    params={"jurisdiction": jur})
+                http_statuses[jur] = resp.status_code
                 if resp.status_code == 200:
                     for m in resp.json().get("meetings", []):
                         if m.get("raceType") == "R" and m.get("meetingCode"):
@@ -3417,11 +3419,11 @@ async def probe_tab(race_id: str = "", date: str = "", x_cron_secret: Optional[s
                                 "venue": m.get("venueName"), "jurisdiction": jur,
                                 "state": (m.get("location") or {}).get("state"),
                             }
-        except Exception:
-            pass
+        except Exception as e:
+            http_statuses[jur] = f"error: {e}"
 
     if not race_id:
-        return {"date": target_date, "meetings": meetings_by_code}
+        return {"date": target_date, "meetings": meetings_by_code, "http_statuses": http_statuses}
 
     # Step 2: fetch specific race using the real meeting code
     parts = race_id.split("_")
