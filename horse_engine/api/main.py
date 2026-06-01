@@ -3393,51 +3393,80 @@ async def exotic_daily_performance(
 # ── Admin: TAB API probe ──────────────────────────────────────────────────────
 
 @app.get("/api/admin/probe-tab")
-async def probe_tab(race_id: str, x_cron_secret: Optional[str] = Header(None)):
-    """Probe the TAB API for a race_id and return the raw runner data for inspection."""
+async def probe_tab(race_id: str = "", date: str = "", x_cron_secret: Optional[str] = Header(None)):
+    """Probe the TAB API. Pass race_id=YYYY-MM-DD_venue_RN for race data, or date=YYYY-MM-DD to list meetings."""
     _check_admin(x_cron_secret)
-    from horse_engine.clients.tab import TABClient
-    parts = race_id.split("_")
-    if len(parts) < 3:
-        raise HTTPException(400, "race_id must be YYYY-MM-DD_venue_RN")
-    race_date, venue_code, race_part = parts[0], parts[1], parts[2]
-    race_num = int(race_part.replace("R", ""))
-
-    client = TABClient()
-    # Try each jurisdiction to find the race
+    import httpx as _httpx
     from horse_engine.clients.tab import _AU_JURISDICTIONS
-    raw = None
-    used_jurisdiction = None
+    TAB_BASE = "https://api.tab.com.au/v1/tab-info-service"
+    HEADERS = {"Accept": "application/json", "User-Agent": "Mozilla/5.0"}
+
+    target_date = date or (race_id.split("_")[0] if race_id else _today_aest().isoformat())
+
+    # Step 1: list meetings to discover real venue codes
+    meetings_by_code: dict[str, dict] = {}
     for jur in _AU_JURISDICTIONS:
         try:
-            client.jurisdiction = jur
-            data = await client._get(
-                f"/racing/dates/{race_date}/meetings/{venue_code.upper()}/R/races/{race_num}"
-            )
-            if data and data.get("runners"):
-                raw = data
-                used_jurisdiction = jur
-                break
+            async with _httpx.AsyncClient(headers=HEADERS, timeout=15) as c:
+                resp = await c.get(f"{TAB_BASE}/racing/dates/{target_date}/meetings",
+                                   params={"jurisdiction": jur})
+                if resp.status_code == 200:
+                    for m in resp.json().get("meetings", []):
+                        if m.get("raceType") == "R" and m.get("meetingCode"):
+                            meetings_by_code[m["meetingCode"]] = {
+                                "venue": m.get("venueName"), "jurisdiction": jur,
+                                "state": (m.get("location") or {}).get("state"),
+                            }
         except Exception:
-            continue
+            pass
 
-    if not raw:
-        return {"error": "no data from TAB for any jurisdiction", "tried": _AU_JURISDICTIONS}
+    if not race_id:
+        return {"date": target_date, "meetings": meetings_by_code}
 
-    # Return first runner's full structure so we can see what fields exist
-    r0 = raw["runners"][0] if raw.get("runners") else {}
+    # Step 2: fetch specific race using the real meeting code
+    parts = race_id.split("_")
+    venue_slug = parts[1] if len(parts) >= 3 else ""
+    race_num = int(parts[2].replace("R", "")) if len(parts) >= 3 else 1
+
+    # Match slug to TAB meeting code (fuzzy: strip hyphens, case-insensitive)
+    slug_clean = venue_slug.replace("-", "").lower()
+    matched_code = next(
+        (code for code, info in meetings_by_code.items()
+         if info["venue"] and info["venue"].replace(" ", "").lower() == slug_clean),
+        None
+    )
+    if not matched_code:
+        # Fall back to trying the slug uppercased as the code
+        matched_code = venue_slug.upper().replace("-", "")
+
+    jur = (meetings_by_code.get(matched_code) or {}).get("jurisdiction", "NSW")
+    try:
+        async with _httpx.AsyncClient(headers=HEADERS, timeout=15) as c:
+            resp = await c.get(
+                f"{TAB_BASE}/racing/dates/{target_date}/meetings/{matched_code}/R/races/{race_num}",
+                params={"jurisdiction": jur}
+            )
+            if resp.status_code != 200:
+                return {"error": f"HTTP {resp.status_code}", "venue_code_tried": matched_code,
+                        "url": str(resp.url), "available_codes": list(meetings_by_code.keys())}
+            raw = resp.json()
+    except Exception as e:
+        return {"error": str(e), "available_codes": list(meetings_by_code.keys())}
+
+    r0 = (raw.get("runners") or [{}])[0]
     return {
-        "jurisdiction": used_jurisdiction,
+        "jurisdiction": jur,
+        "venue_code": matched_code,
         "race_name": raw.get("raceName"),
         "runner_count": len(raw.get("runners", [])),
         "sample_runner_keys": list(r0.keys()),
-        "sample_runner": r0,
         "form_keys": list((r0.get("form") or {}).keys()),
         "career_overall": (r0.get("form") or {}).get("overall"),
         "jockey_keys": list((r0.get("jockey") or {}).keys()),
         "trainer_keys": list((r0.get("trainer") or {}).keys()),
         "recent_starts_count": len((r0.get("form") or {}).get("recentStarts") or []),
         "first_recent_start": ((r0.get("form") or {}).get("recentStarts") or [None])[0],
+        "sample_runner": r0,
     }
 
 
