@@ -2348,14 +2348,14 @@ async def get_meeting(race_date: str, venue_code: str):
         winner = winners.get(race_id)
         if not pick or not winner:
             return None
-        return pick == winner
+        return _normalize_horse(pick) == _normalize_horse(winner)
 
     def _model_placed(race_id: str):
         pick = top_picks.get(race_id)
         race_placers = placers.get(race_id)
         if not pick or not race_placers:
             return None
-        return pick in race_placers
+        return _normalize_horse(pick) in {_normalize_horse(h) for h in race_placers}
 
     races_out = []
     for r in race_list:
@@ -4275,9 +4275,9 @@ async def backtest_report(
             elif p.race_id not in top_pick:
                 top_pick[p.race_id] = p
 
-    # Index results by (race_id, horse_name)
+    # Index results by (race_id, normalized_horse_name)
     result_by_key: dict[tuple, HistoricalResultRow] = {
-        (r.race_id, r.horse_name): r for r in hr_rows
+        (r.race_id, _normalize_horse(r.horse_name)): r for r in hr_rows
     }
 
     races_with_predictions = set(top_pick.keys()) & set(r.race_id for r in hr_rows)
@@ -4297,7 +4297,7 @@ async def backtest_report(
         pick = top_pick.get(race_id)
         if not pick:
             continue
-        actual = result_by_key.get((race_id, pick.horse_name))
+        actual = result_by_key.get((race_id, _normalize_horse(pick.horse_name)))
         if not actual:
             continue
 
@@ -5045,7 +5045,7 @@ async def performance_summary(days: int = Query(5, ge=1, le=365)):
         )
         predicted_id_set = {rid for (rid,) in predicted_ids_result.all()}
 
-    result_by_key = {(r.race_id, r.horse_name): r for r in hr_rows}
+    result_by_key = {(r.race_id, _normalize_horse(r.horse_name)): r for r in hr_rows}
 
     # result races per date (for display — total_races_ran field)
     result_race_ids_by_date: dict[str, set] = {}
@@ -5065,7 +5065,7 @@ async def performance_summary(days: int = Query(5, ge=1, le=365)):
     by_date: dict[str, dict] = {}
     for race_id, pick in top_picks.items():
         race_date = race_id[:10]
-        actual = result_by_key.get((race_id, pick.horse_name))
+        actual = result_by_key.get((race_id, _normalize_horse(pick.horse_name)))
         if not actual:
             continue
         d = by_date.setdefault(race_date, {
@@ -5346,11 +5346,11 @@ async def performance_by_venue(days: int = Query(30, ge=1, le=90)):
         )
         top_picks = {p.race_id: p for p in pred_result.scalars().all()}
 
-    result_by_key = {(r.race_id, r.horse_name): r for r in hr_rows}
+    result_by_key = {(r.race_id, _normalize_horse(r.horse_name)): r for r in hr_rows}
     by_venue: dict[str, dict] = {}
     for race_id, pick in top_picks.items():
         _, venue, _ = _parse_race_id(race_id)
-        result = result_by_key.get((race_id, pick.horse_name))
+        result = result_by_key.get((race_id, _normalize_horse(pick.horse_name)))
         if not result:
             continue
         if venue not in by_venue:
@@ -5408,11 +5408,11 @@ async def premium_performance(days: int = Query(30, ge=1, le=365), x_cron_secret
                 best[p.race_id] = p
         top_picks = best
 
-    result_by_key = {(r.race_id, r.horse_name): r for r in hr_rows}
+    result_by_key = {(r.race_id, _normalize_horse(r.horse_name)): r for r in hr_rows}
 
     picks = []
     for race_id, pick in top_picks.items():
-        actual = result_by_key.get((race_id, pick.horse_name))
+        actual = result_by_key.get((race_id, _normalize_horse(pick.horse_name)))
         if not actual:
             continue
         sp = actual.starting_price or 0.0
@@ -5478,12 +5478,12 @@ async def premium_performance_public():
                 best[p.race_id] = p
         top_picks = best
 
-    result_by_key = {(r.race_id, r.horse_name): r for r in hr_rows}
+    result_by_key = {(r.race_id, _normalize_horse(r.horse_name)): r for r in hr_rows}
     bets = wins = 0
     total_pnl = 0.0
     sp_list = []
     for race_id, pick in top_picks.items():
-        actual = result_by_key.get((race_id, pick.horse_name))
+        actual = result_by_key.get((race_id, _normalize_horse(pick.horse_name)))
         if not actual:
             continue
         sp = actual.starting_price or 0.0
@@ -5536,11 +5536,11 @@ async def premium_performance_monthly():
         )
         top_picks = {p.race_id: p for p in pred_result.scalars().all()}
 
-    result_by_key = {(r.race_id, r.horse_name): r for r in hr_rows}
+    result_by_key = {(r.race_id, _normalize_horse(r.horse_name)): r for r in hr_rows}
     monthly: dict[str, dict] = {}
 
     for race_id, pick in top_picks.items():
-        actual = result_by_key.get((race_id, pick.horse_name))
+        actual = result_by_key.get((race_id, _normalize_horse(pick.horse_name)))
         if not actual:
             continue
         sp = actual.starting_price or 0.0
@@ -5599,11 +5599,11 @@ async def premium_performance_daily():
         )
         top_picks = {p.race_id: p for p in pred_result.scalars().all()}
 
-    result_by_key = {(r.race_id, r.horse_name): r for r in hr_rows}
+    result_by_key = {(r.race_id, _normalize_horse(r.horse_name)): r for r in hr_rows}
     daily: dict[str, dict] = {}
 
     for race_id, pick in top_picks.items():
-        actual = result_by_key.get((race_id, pick.horse_name))
+        actual = result_by_key.get((race_id, _normalize_horse(pick.horse_name)))
         if not actual:
             continue
         sp = actual.starting_price or 0.0
@@ -6378,11 +6378,11 @@ async def _load_venue_calibration() -> dict[str, float]:
         )
         top_picks = {p.race_id: p for p in pred_result.scalars().all()}
 
-    result_by_key = {(r.race_id, r.horse_name): r for r in hr_rows}
+    result_by_key = {(r.race_id, _normalize_horse(r.horse_name)): r for r in hr_rows}
     venue_stats: dict[str, dict] = {}
     for race_id, pick in top_picks.items():
         _, venue, _ = _parse_race_id(race_id)
-        result = result_by_key.get((race_id, pick.horse_name))
+        result = result_by_key.get((race_id, _normalize_horse(pick.horse_name)))
         if not result:
             continue
         if venue not in venue_stats:
