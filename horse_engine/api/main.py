@@ -891,6 +891,7 @@ async def lifespan(app: FastAPI):
     scheduler.add_job(_scheduled_enrich, CronTrigger(hour=10, minute=0, timezone="Australia/Sydney"))
     scheduler.add_job(_scheduled_enrich, CronTrigger(hour=13, minute=0, timezone="Australia/Sydney"))
     scheduler.add_job(_scheduled_prerace_snapshot, CronTrigger(hour=9, minute=0, timezone="Australia/Sydney"))
+    scheduler.add_job(_scheduled_seed_results, CronTrigger(hour=14, minute=0, timezone="Australia/Sydney"))
     scheduler.add_job(_scheduled_seed_results, CronTrigger(hour=15, minute=0, timezone="Australia/Sydney"))
     scheduler.add_job(_scheduled_seed_results, CronTrigger(hour=17, minute=0, timezone="Australia/Sydney"))
     scheduler.add_job(_scheduled_seed_results, CronTrigger(hour=19, minute=0, timezone="Australia/Sydney"))
