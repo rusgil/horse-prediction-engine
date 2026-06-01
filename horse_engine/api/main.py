@@ -3392,6 +3392,62 @@ async def exotic_daily_performance(
 
 # ── Admin: TAB API probe ──────────────────────────────────────────────────────
 
+@app.get("/api/admin/probe-ras")
+async def probe_ras(slug: str = "warwick-farm", date: str = "", race_num: int = 1,
+                    x_cron_secret: Optional[str] = Header(None)):
+    """Probe racingandsports.com.au for form data availability."""
+    _check_admin(x_cron_secret)
+    import httpx as _httpx
+    target_date = date or _today_aest().isoformat()
+
+    HEADERS = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "en-AU,en;q=0.9",
+        "Accept-Encoding": "gzip, deflate, br",
+        "Referer": "https://www.racingandsports.com.au/",
+    }
+
+    results = {}
+
+    # Test 1: enhanced form page (HTML)
+    url_html = f"https://www.racingandsports.com.au/form-guide/thoroughbred/australia/{slug}/{target_date}/R{race_num}/enhanced-form"
+    try:
+        async with _httpx.AsyncClient(headers=HEADERS, timeout=20, follow_redirects=True) as c:
+            resp = await c.get(url_html)
+            results["enhanced_form"] = {
+                "url": url_html, "status": resp.status_code,
+                "content_length": len(resp.content),
+                "snippet": resp.text[:300] if resp.status_code == 200 else resp.text[:200],
+            }
+    except Exception as e:
+        results["enhanced_form"] = {"url": url_html, "error": str(e)}
+
+    # Test 2: try the API endpoint that their SPA likely calls
+    url_api = f"https://www.racingandsports.com.au/api/form-guide/thoroughbred/australia/{slug}/{target_date}/R{race_num}"
+    try:
+        async with _httpx.AsyncClient(headers={**HEADERS, "Accept": "application/json"}, timeout=20, follow_redirects=True) as c:
+            resp = await c.get(url_api)
+            results["api_endpoint"] = {
+                "url": url_api, "status": resp.status_code,
+                "content_type": resp.headers.get("content-type", ""),
+                "snippet": resp.text[:300],
+            }
+    except Exception as e:
+        results["api_endpoint"] = {"url": url_api, "error": str(e)}
+
+    # Test 3: old ASP form guide
+    url_asp = f"https://www.racingandsports.com.au/en/form-guide/meeting.asp"
+    try:
+        async with _httpx.AsyncClient(headers=HEADERS, timeout=20, follow_redirects=True) as c:
+            resp = await c.get(url_asp)
+            results["asp_guide"] = {"url": url_asp, "status": resp.status_code, "snippet": resp.text[:200]}
+    except Exception as e:
+        results["asp_guide"] = {"url": url_asp, "error": str(e)}
+
+    return results
+
+
 @app.get("/api/admin/probe-tab")
 async def probe_tab(race_id: str = "", date: str = "", x_cron_secret: Optional[str] = Header(None)):
     """Probe the TAB API. Pass race_id=YYYY-MM-DD_venue_RN for race data, or date=YYYY-MM-DD to list meetings."""
