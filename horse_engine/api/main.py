@@ -720,22 +720,33 @@ async def _scheduled_exotic_retrain():
         async with get_session() as session:
             hr_result = await session.execute(select(HistoricalResultRow))
             hr_rows = hr_result.scalars().all()
-            pred_result = await session.execute(
-                select(RunnerPredictionRow).where(RunnerPredictionRow.enriched_json.isnot(None))
+            hist_result = await session.execute(
+                select(RunnerPredictionHistoryRow)
+                .where(RunnerPredictionHistoryRow.enriched_json.isnot(None))
+                .where(
+                    RunnerPredictionHistoryRow.cancelled.is_(False)
+                    | RunnerPredictionHistoryRow.cancelled.is_(None)
+                )
             )
-            pred_rows = pred_result.scalars().all()
+            hist_rows = hist_result.scalars().all()
 
-        pred_by_key = {(p.race_id, p.horse_name): p for p in pred_rows}
+        # Result lookup: (race_id, normalized_name) → (placed, position)
+        result_lookup: dict[tuple, tuple] = {
+            (r.race_id, _normalize_horse(r.horse_name)): (bool(r.placed), r.position)
+            for r in hr_rows
+        }
 
         race_data: dict[str, list] = {}
-        for row in hr_rows:
-            pred = pred_by_key.get((row.race_id, row.horse_name))
-            if not pred:
+        for row in hist_rows:
+            key = (row.race_id, _normalize_horse(row.horse_name))
+            outcome = result_lookup.get(key)
+            if not outcome:
                 continue
+            placed, position = outcome
             try:
-                er = EnrichedRunner(**json.loads(pred.enriched_json))
+                er = EnrichedRunner(**json.loads(row.enriched_json))
                 fv = build_feature_vector(er)
-                race_data.setdefault(row.race_id, []).append((fv, 1 if row.placed else 0, row.position))
+                race_data.setdefault(row.race_id, []).append((fv, 1 if placed else 0, position))
             except Exception:
                 continue
 
@@ -2873,38 +2884,50 @@ async def retrain_exotic_model(
     """
     Train the exotic model using race-grouped trifecta-aware loss.
     Only uses field_size >= 7 races (trifecta-eligible fields).
-    Groups runners by race so the trifecta box objective can be applied.
+    Uses the immutable history table to guarantee pre-race features only.
     """
     _check_admin(x_cron_secret)
+    cutoff = (date.today() - timedelta(days=days)).isoformat() if days > 0 else None
+
     async with get_session() as session:
         hr_query = select(HistoricalResultRow)
-        if days > 0:
-            cutoff = (date.today() - timedelta(days=days)).isoformat()
+        if cutoff:
             hr_query = hr_query.where(HistoricalResultRow.race_id >= cutoff)
         hr_result = await session.execute(hr_query)
         hr_rows = hr_result.scalars().all()
 
-        pred_result = await session.execute(
-            select(RunnerPredictionRow).where(RunnerPredictionRow.enriched_json.isnot(None))
+        hist_query = select(RunnerPredictionHistoryRow).where(
+            RunnerPredictionHistoryRow.enriched_json.isnot(None)
+        ).where(
+            RunnerPredictionHistoryRow.cancelled.is_(False)
+            | RunnerPredictionHistoryRow.cancelled.is_(None)
         )
-        pred_rows = pred_result.scalars().all()
+        if cutoff:
+            hist_query = hist_query.where(RunnerPredictionHistoryRow.race_id >= cutoff)
+        hist_result = await session.execute(hist_query)
+        hist_rows = hist_result.scalars().all()
 
     if len(hr_rows) < 50:
         raise HTTPException(400, f"Need at least 50 results to train (have {len(hr_rows)})")
 
-    pred_by_key = {(p.race_id, p.horse_name): p for p in pred_rows}
+    # Result lookup: (race_id, normalized_name) → (placed, position)
+    result_lookup: dict[tuple, tuple] = {
+        (r.race_id, _normalize_horse(r.horse_name)): (bool(r.placed), r.position)
+        for r in hr_rows
+    }
 
     # Group by race_id for race-level trifecta training
     race_data: dict[str, list[tuple[list[float], int, int | None]]] = {}
-    for row in hr_rows:
-        pred = pred_by_key.get((row.race_id, row.horse_name))
-        if not pred:
+    for row in hist_rows:
+        key = (row.race_id, _normalize_horse(row.horse_name))
+        outcome = result_lookup.get(key)
+        if not outcome:
             continue
+        placed, position = outcome
         try:
-            er = EnrichedRunner(**json.loads(pred.enriched_json))
+            er = EnrichedRunner(**json.loads(row.enriched_json))
             fv = build_feature_vector(er)
-            label = 1 if row.placed else 0
-            race_data.setdefault(row.race_id, []).append((fv, label, row.position))
+            race_data.setdefault(row.race_id, []).append((fv, 1 if placed else 0, position))
         except Exception as e:
             log.debug("Skipping exotic retrain row %s/%s: %s", row.race_id, row.horse_name, e)
 
