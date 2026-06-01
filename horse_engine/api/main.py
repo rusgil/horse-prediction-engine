@@ -3390,6 +3390,57 @@ async def exotic_daily_performance(
     return {"summary": summary, "days": days}
 
 
+# ── Admin: TAB API probe ──────────────────────────────────────────────────────
+
+@app.get("/api/admin/probe-tab")
+async def probe_tab(race_id: str, x_cron_secret: Optional[str] = Header(None)):
+    """Probe the TAB API for a race_id and return the raw runner data for inspection."""
+    _check_admin(x_cron_secret)
+    from horse_engine.clients.tab import TABClient
+    parts = race_id.split("_")
+    if len(parts) < 3:
+        raise HTTPException(400, "race_id must be YYYY-MM-DD_venue_RN")
+    race_date, venue_code, race_part = parts[0], parts[1], parts[2]
+    race_num = int(race_part.replace("R", ""))
+
+    client = TABClient()
+    # Try each jurisdiction to find the race
+    from horse_engine.clients.tab import _AU_JURISDICTIONS
+    raw = None
+    used_jurisdiction = None
+    for jur in _AU_JURISDICTIONS:
+        try:
+            client.jurisdiction = jur
+            data = await client._get(
+                f"/racing/dates/{race_date}/meetings/{venue_code.upper()}/R/races/{race_num}"
+            )
+            if data and data.get("runners"):
+                raw = data
+                used_jurisdiction = jur
+                break
+        except Exception:
+            continue
+
+    if not raw:
+        return {"error": "no data from TAB for any jurisdiction", "tried": _AU_JURISDICTIONS}
+
+    # Return first runner's full structure so we can see what fields exist
+    r0 = raw["runners"][0] if raw.get("runners") else {}
+    return {
+        "jurisdiction": used_jurisdiction,
+        "race_name": raw.get("raceName"),
+        "runner_count": len(raw.get("runners", [])),
+        "sample_runner_keys": list(r0.keys()),
+        "sample_runner": r0,
+        "form_keys": list((r0.get("form") or {}).keys()),
+        "career_overall": (r0.get("form") or {}).get("overall"),
+        "jockey_keys": list((r0.get("jockey") or {}).keys()),
+        "trainer_keys": list((r0.get("trainer") or {}).keys()),
+        "recent_starts_count": len((r0.get("form") or {}).get("recentStarts") or []),
+        "first_recent_start": ((r0.get("form") or {}).get("recentStarts") or [None])[0],
+    }
+
+
 # ── Admin: purge trial rows ───────────────────────────────────────────────────
 
 @app.delete("/api/admin/purge-trials")
