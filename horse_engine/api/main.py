@@ -5143,6 +5143,203 @@ async def performance_summary(days: int = Query(5, ge=1, le=365)):
     }
 
 
+@app.get("/api/admin/backtest-win")
+async def backtest_win(
+    split_pct: float = Query(0.7, ge=0.5, le=0.9),
+    x_cron_secret: Optional[str] = Header(None),
+):
+    """
+    Unbiased walk-forward win model backtest.
+
+    Algorithm:
+    1. Load all races from the immutable history table (guaranteed pre-race features).
+    2. Sort chronologically, split at split_pct (default 70% train / 30% test).
+    3. Train a scratch HorseModel on the train races using race-grouped softmax.
+    4. Re-score every runner in every test race with that train-only model.
+    5. Compare top model pick vs actual winner.
+    6. Baseline: always back the market favourite (market_rank == 1).
+
+    Returns per-day breakdown and overall summary so you can inspect where the
+    model beats or loses to the market.
+    """
+    _check_admin(x_cron_secret)
+
+    async with get_session() as session:
+        hist_result = await session.execute(
+            select(RunnerPredictionHistoryRow)
+            .where(RunnerPredictionHistoryRow.enriched_json.isnot(None))
+            .where(
+                RunnerPredictionHistoryRow.cancelled.is_(False)
+                | RunnerPredictionHistoryRow.cancelled.is_(None)
+            )
+            .order_by(RunnerPredictionHistoryRow.race_id)
+        )
+        hist_rows = hist_result.scalars().all()
+
+        hr_result = await session.execute(select(HistoricalResultRow))
+        hr_rows = hr_result.scalars().all()
+
+    # Build lookups
+    winners: dict[str, str] = {
+        r.race_id: _normalize_horse(r.horse_name) for r in hr_rows if r.winner
+    }
+    sp_lookup: dict[str, float] = {
+        r.race_id: r.starting_price
+        for r in hr_rows if r.winner and r.starting_price
+    }
+
+    # Group runners by race, build feature vectors
+    from collections import defaultdict as _ddict
+    by_race: dict[str, list[dict]] = _ddict(list)
+    for row in hist_rows:
+        try:
+            er = EnrichedRunner(**json.loads(row.enriched_json))
+            fv = build_feature_vector(er)
+            by_race[row.race_id].append({
+                "horse": _normalize_horse(row.horse_name),
+                "fv": fv,
+                "market_rank": er.market_rank,
+                "best_odds": er.best_available_odds,
+                "sp": sp_lookup.get(row.race_id),
+            })
+        except Exception:
+            pass
+
+    # Only races with a settled result and ≥2 runners
+    settled_races = sorted(
+        [(rid, runners) for rid, runners in by_race.items() if rid in winners and len(runners) >= 2],
+        key=lambda x: x[0],
+    )
+
+    if len(settled_races) < 20:
+        raise HTTPException(400, f"Only {len(settled_races)} settled races — need ≥20 for a meaningful split")
+
+    split_idx = max(10, int(len(settled_races) * split_pct))
+    train_races = settled_races[:split_idx]
+    test_races  = settled_races[split_idx:]
+
+    log.info("[backtest-win] %d train races, %d test races", len(train_races), len(test_races))
+
+    # Build race groups for training (same format as retrain endpoint)
+    _today = date.today()
+    train_groups: list[list[tuple]] = []
+    train_weights: list[float] = []
+    for race_id, runners in train_races:
+        winner = winners[race_id]
+        group = [(r["fv"], 1 if r["horse"] == winner else 0) for r in runners]
+        if sum(l for _, l in group) != 1:
+            continue
+        train_groups.append(group)
+        try:
+            days_ago = (_today - date.fromisoformat(race_id[:10])).days
+        except Exception:
+            days_ago = 30
+        train_weights.append(math.exp(-days_ago / 30.0))
+
+    # Train a scratch model on train set only (in thread — CPU bound)
+    def _run_backtest():
+        m = HorseModel()
+        m.train_race_grouped(train_groups, sample_weights=train_weights)
+
+        # Score test races with train-only model
+        by_day: dict[str, dict] = {}
+        race_results = []
+
+        for race_id, runners in test_races:
+            winner = winners[race_id]
+            scores = [(r, m.raw_score(r["fv"])) for r in runners]
+            scores.sort(key=lambda x: x[1], reverse=True)
+
+            model_pick = scores[0][0]["horse"]
+            fav_pick   = next(
+                (r["horse"] for r in runners if r["market_rank"] == 1),
+                runners[0]["horse"],
+            )
+            model_wins = model_pick == winner
+            fav_wins   = fav_pick == winner
+            sp = sp_lookup.get(race_id)
+
+            day = race_id[:10]
+            d = by_day.setdefault(day, {
+                "races": 0,
+                "model_wins": 0, "fav_wins": 0,
+                "model_pnl": 0.0, "fav_pnl": 0.0,
+                "sp_races": 0,
+            })
+            d["races"] += 1
+            if model_wins:
+                d["model_wins"] += 1
+            if fav_wins:
+                d["fav_wins"] += 1
+            if sp:
+                d["sp_races"] += 1
+                d["model_pnl"] += (sp - 1.0) if model_wins else -1.0
+                d["fav_pnl"]   += (sp - 1.0) if fav_wins   else -1.0
+
+            race_results.append({
+                "race_id": race_id,
+                "winner": winner,
+                "model_pick": model_pick,
+                "fav_pick": fav_pick,
+                "model_correct": model_wins,
+                "fav_correct": fav_wins,
+                "sp": sp,
+                "field_size": len(runners),
+            })
+
+        # Summary
+        total   = len(race_results)
+        m_wins  = sum(1 for r in race_results if r["model_correct"])
+        fav_wins_t = sum(1 for r in race_results if r["fav_correct"])
+        sp_rows = [r for r in race_results if r["sp"]]
+        m_pnl   = sum(((r["sp"] - 1.0) if r["model_correct"] else -1.0) for r in sp_rows)
+        f_pnl   = sum(((r["sp"] - 1.0) if r["fav_correct"]   else -1.0) for r in sp_rows)
+
+        days_out = []
+        for day in sorted(by_day):
+            d = by_day[day]
+            n = d["races"]
+            days_out.append({
+                "date": day,
+                "races": n,
+                "model_win_rate_pct": round(d["model_wins"] / n * 100, 1),
+                "fav_win_rate_pct":   round(d["fav_wins"]   / n * 100, 1),
+                "model_pnl": round(d["model_pnl"], 2) if d["sp_races"] else None,
+                "fav_pnl":   round(d["fav_pnl"],   2) if d["sp_races"] else None,
+            })
+
+        return {
+            "split": {
+                "train_races": len(train_races),
+                "test_races": len(test_races),
+                "split_pct": split_pct,
+                "train_period": f"{train_races[0][0][:10]} → {train_races[-1][0][:10]}",
+                "test_period":  f"{test_races[0][0][:10]}  → {test_races[-1][0][:10]}",
+            },
+            "summary": {
+                "total_races": total,
+                "model_wins": m_wins,
+                "model_win_rate_pct": round(m_wins / total * 100, 1) if total else 0,
+                "fav_wins": fav_wins_t,
+                "fav_win_rate_pct": round(fav_wins_t / total * 100, 1) if total else 0,
+                "sp_races": len(sp_rows),
+                "model_pnl_at_1": round(m_pnl, 2),
+                "fav_pnl_at_1": round(f_pnl, 2),
+                "model_roi_pct": round(m_pnl / len(sp_rows) * 100, 1) if sp_rows else None,
+                "fav_roi_pct":   round(f_pnl / len(sp_rows) * 100, 1) if sp_rows else None,
+                "model_beats_fav": m_wins > fav_wins_t,
+                "random_baseline_win_rate_pct": round(
+                    100 / (sum(r["field_size"] for r in race_results) / total), 1
+                ) if total else None,
+            },
+            "by_day": days_out,
+            "races": race_results,
+        }
+
+    result = await asyncio.to_thread(_run_backtest)
+    return result
+
+
 @app.get("/api/admin/backtest-trifecta")
 async def backtest_trifecta(x_cron_secret: Optional[str] = Header(None)):
     """
