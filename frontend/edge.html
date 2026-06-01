@@ -3405,6 +3405,7 @@
 
       renderContent(picksData, stake, resultsMap);
       refreshOdds();
+      if (hasPast) refreshResults();
       fetchSparklines(picksData.picks);
     } catch (e) {
       document.getElementById('content').innerHTML = `
@@ -3499,8 +3500,29 @@
     });
   }
 
+  async function refreshResults() {
+    try {
+      const res = await fetch(`${API}/api/edge/refresh-results`, { method: 'POST' });
+      if (!res.ok) return;
+      const data = await res.json();
+      if (data.cached) return; // server rate-limited — no new data
+      // Re-fetch results map and re-render if anything was seeded
+      const todayStr = new Date().toLocaleDateString('en-CA', { timeZone: 'Australia/Sydney' });
+      const rr = await fetch(`${API}/api/edge/yesterday?date=${todayStr}`);
+      if (rr.ok) {
+        const rd = await rr.json();
+        for (const r of rd.picks) resultsMap[r.race_id] = r;
+        if (picksData) {
+          const stake = parseFloat(document.getElementById('stakeInput').value) || 10;
+          renderContent(picksData, stake, resultsMap);
+        }
+      }
+    } catch (e) { /* silent — results refresh is best-effort */ }
+  }
+
   setInterval(tickCountdowns, 1000);
   setInterval(refreshOdds, 20 * 60 * 1000); // 20 min — server has its own 15-25 min Punters cadence
+  setInterval(refreshResults, 90 * 1000);   // 90s client poll — server jitter gates actual TAB calls to ~100-130s
 
   document.getElementById('stakeInput').addEventListener('input', function() {
     const stake = parseFloat(this.value) || 10;

@@ -1482,6 +1482,40 @@ async def refresh_edge_odds():
     return {"updated": updated, "count": len(updated)}
 
 
+_results_refresh_last: datetime | None = None
+_results_refresh_cooldown: float = 100.0  # refreshed each call with jitter
+
+@app.post("/api/edge/refresh-results")
+async def refresh_edge_results():
+    """
+    Seed today's settled results on demand. Rate-limited globally with random jitter
+    (100–130s) so TAB sees one semi-regular user, not a clock-perfect bot.
+    Only runs during race hours 12pm–8pm AEST. Returns cached=True outside that window.
+    """
+    global _results_refresh_last, _results_refresh_cooldown
+    now_aest = datetime.now(_AEST)
+    # Only run during race hours
+    if not (12 <= now_aest.hour < 20):
+        return {"seeded": 0, "cached": True, "reason": "outside race hours"}
+
+    now_utc = datetime.utcnow()
+    if _results_refresh_last and (now_utc - _results_refresh_last).total_seconds() < _results_refresh_cooldown:
+        return {"seeded": 0, "cached": True}
+
+    # Refresh cooldown: 100s base + random 0–30s jitter
+    _results_refresh_cooldown = 100.0 + random.uniform(0, 30)
+    _results_refresh_last = now_utc
+
+    today = _today_aest().isoformat()
+    try:
+        n = await _seed_results_for_date(today)
+        log.info("[refresh-results] Seeded %d results for %s", n, today)
+        return {"seeded": n, "cached": False}
+    except Exception as e:
+        log.warning("[refresh-results] Failed: %s", e)
+        return {"seeded": 0, "cached": False, "error": str(e)}
+
+
 @app.get("/api/edge/yesterday")
 async def get_edge_yesterday(for_date: Optional[str] = Query(None, alias="date")):
     """Qualifying picks with actual results and SP odds from punters.
