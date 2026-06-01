@@ -3373,6 +3373,28 @@ async def purge_trial_rows(x_cron_secret: Optional[str] = Header(None), dry_run:
     return {"dry_run": False, "deleted_pred_race_ids": trial_pred_ids, "deleted_hist_race_ids": trial_hist_ids}
 
 
+@app.delete("/api/admin/purge-venue/{venue_code}")
+async def purge_venue_rows(venue_code: str, x_cron_secret: Optional[str] = Header(None), dry_run: bool = Query(True)):
+    """Delete all RunnerPredictionRow + HistoricalResultRow entries for a venue_code slug."""
+    _check_admin(x_cron_secret)
+    from sqlalchemy import delete as sa_delete
+    pattern = f"%_{venue_code}_%"
+    async with get_session() as session:
+        pred_ids = (await session.execute(
+            select(RunnerPredictionRow.race_id).where(RunnerPredictionRow.race_id.like(pattern)).distinct()
+        )).scalars().all()
+        hist_ids = (await session.execute(
+            select(HistoricalResultRow.race_id).where(HistoricalResultRow.race_id.like(pattern)).distinct()
+        )).scalars().all()
+        if not dry_run:
+            if pred_ids:
+                await session.execute(sa_delete(RunnerPredictionRow).where(RunnerPredictionRow.race_id.like(pattern)))
+            if hist_ids:
+                await session.execute(sa_delete(HistoricalResultRow).where(HistoricalResultRow.race_id.like(pattern)))
+            await session.commit()
+    return {"dry_run": dry_run, "pred_race_ids": list(pred_ids), "hist_race_ids": list(hist_ids)}
+
+
 # ── Admin: seed results ───────────────────────────────────────────────────────
 
 @app.post("/api/admin/results/{race_date}")
