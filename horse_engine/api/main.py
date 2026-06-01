@@ -3401,18 +3401,24 @@ async def purge_trial_rows(x_cron_secret: Optional[str] = Header(None), dry_run:
 
     async with get_session() as session:
         pred_rows = (await session.execute(select(RunnerPredictionRow.race_id).distinct())).scalars().all()
+        snap_rows = (await session.execute(select(RunnerPredictionHistoryRow.race_id).distinct())).scalars().all()
         hist_rows = (await session.execute(select(HistoricalResultRow.race_id).distinct())).scalars().all()
 
     trial_pred_ids = [rid for rid in pred_rows if trial_re.search(rid)]
+    trial_snap_ids = [rid for rid in snap_rows if trial_re.search(rid)]
     trial_hist_ids = [rid for rid in hist_rows if trial_re.search(rid)]
 
     if dry_run:
-        return {"dry_run": True, "pred_race_ids": trial_pred_ids, "hist_race_ids": trial_hist_ids}
+        return {"dry_run": True, "pred_race_ids": trial_pred_ids, "snap_race_ids": trial_snap_ids, "hist_race_ids": trial_hist_ids}
 
     async with get_session() as session:
         if trial_pred_ids:
             await session.execute(
                 sa_delete(RunnerPredictionRow).where(RunnerPredictionRow.race_id.in_(trial_pred_ids))
+            )
+        if trial_snap_ids:
+            await session.execute(
+                sa_delete(RunnerPredictionHistoryRow).where(RunnerPredictionHistoryRow.race_id.in_(trial_snap_ids))
             )
         if trial_hist_ids:
             await session.execute(
@@ -3420,7 +3426,7 @@ async def purge_trial_rows(x_cron_secret: Optional[str] = Header(None), dry_run:
             )
         await session.commit()
 
-    return {"dry_run": False, "deleted_pred_race_ids": trial_pred_ids, "deleted_hist_race_ids": trial_hist_ids}
+    return {"dry_run": False, "deleted_pred_race_ids": trial_pred_ids, "deleted_snap_race_ids": trial_snap_ids, "deleted_hist_race_ids": trial_hist_ids}
 
 
 @app.delete("/api/admin/purge-venue/{venue_code}")
