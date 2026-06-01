@@ -61,9 +61,16 @@ def _ra_date(iso_date: str) -> str:
     return f"{y}{_MONTH_NAMES[int(m)-1]}{int(d):02d}"
 
 
+_TAPETA_RE = re.compile(r"\s+Tapeta\b", re.IGNORECASE)
+
 def _clean_venue(raw: str) -> str:
-    """Strip sponsor prefix: 'Sportsbet Sandown Lakeside' → 'Sandown Lakeside'."""
-    return _SPONSOR_RE.sub("", raw).strip()
+    """Strip sponsor prefix and track-surface qualifiers for consistent slugs.
+    'Sportsbet Sandown Lakeside' → 'Sandown Lakeside'
+    'Devonport Tapeta Synthetic' → 'Devonport Synthetic'
+    """
+    name = _SPONSOR_RE.sub("", raw).strip()
+    name = _TAPETA_RE.sub("", name).strip()
+    return name
 
 
 def _slugify(name: str) -> str:
