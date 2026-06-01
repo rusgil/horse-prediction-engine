@@ -5146,21 +5146,22 @@ async def performance_summary(days: int = Query(5, ge=1, le=365)):
 @app.get("/api/admin/backtest-win")
 async def backtest_win(
     split_pct: float = Query(0.7, ge=0.5, le=0.9),
+    source: str = Query("all"),
     x_cron_secret: Optional[str] = Header(None),
 ):
     """
     Unbiased walk-forward win model backtest.
 
-    Algorithm:
-    1. Load all races from the immutable history table (guaranteed pre-race features).
-    2. Sort chronologically, split at split_pct (default 70% train / 30% test).
-    3. Train a scratch HorseModel on the train races using race-grouped softmax.
-    4. Re-score every runner in every test race with that train-only model.
-    5. Compare top model pick vs actual winner.
-    6. Baseline: always back the market favourite (market_rank == 1).
+    source=history  — immutable pre-race snapshots only (~days of data, very clean)
+    source=all      — also includes mutable rows where enriched_at < scheduled_time
+                      (much larger dataset, same pre-race guarantee for rows with scheduled_time)
 
-    Returns per-day breakdown and overall summary so you can inspect where the
-    model beats or loses to the market.
+    Algorithm:
+    1. Load pre-race feature snapshots, deduplicate by (race_id, horse_name).
+    2. Sort chronologically, split at split_pct (default 70% train / 30% test).
+    3. Train a scratch HorseModel on train races using race-grouped softmax.
+    4. Re-score every runner in every test race with the train-only model.
+    5. Compare top model pick vs actual winner and vs market favourite baseline.
     """
     _check_admin(x_cron_secret)
 
@@ -5172,9 +5173,31 @@ async def backtest_win(
                 RunnerPredictionHistoryRow.cancelled.is_(False)
                 | RunnerPredictionHistoryRow.cancelled.is_(None)
             )
-            .order_by(RunnerPredictionHistoryRow.race_id)
         )
         hist_rows = hist_result.scalars().all()
+
+        # Extend with mutable rows confirmed pre-race via enriched_at < scheduled_time
+        mutable_rows = []
+        if source != "history":
+            mut_result = await session.execute(
+                select(RunnerPredictionRow)
+                .where(RunnerPredictionRow.enriched_json.isnot(None))
+                .where(RunnerPredictionRow.enriched_at.isnot(None))
+                .where(RunnerPredictionRow.scheduled_time.isnot(None))
+                .where(
+                    RunnerPredictionRow.cancelled.is_(False)
+                    | RunnerPredictionRow.cancelled.is_(None)
+                )
+            )
+            for row in mut_result.scalars().all():
+                try:
+                    sched = datetime.fromisoformat(
+                        row.scheduled_time.replace("Z", "+00:00")
+                    ).replace(tzinfo=None)
+                    if row.enriched_at < sched:
+                        mutable_rows.append(row)
+                except (ValueError, TypeError):
+                    pass
 
         hr_result = await session.execute(select(HistoricalResultRow))
         hr_rows = hr_result.scalars().all()
@@ -5188,10 +5211,24 @@ async def backtest_win(
         for r in hr_rows if r.winner and r.starting_price
     }
 
-    # Group runners by race, build feature vectors
+    # Merge rows — history table takes precedence; mutable fills gaps
+    # Deduplicate by (race_id, normalized_horse_name)
     from collections import defaultdict as _ddict
-    by_race: dict[str, list[dict]] = _ddict(list)
+    seen_keys: set[tuple] = set()
+    merged_rows = []
     for row in hist_rows:
+        key = (row.race_id, _normalize_horse(row.horse_name))
+        seen_keys.add(key)
+        merged_rows.append(row)
+    for row in mutable_rows:
+        key = (row.race_id, _normalize_horse(row.horse_name))
+        if key not in seen_keys:
+            seen_keys.add(key)
+            merged_rows.append(row)
+
+    # Group runners by race, build feature vectors
+    by_race: dict[str, list[dict]] = _ddict(list)
+    for row in merged_rows:
         try:
             er = EnrichedRunner(**json.loads(row.enriched_json))
             fv = build_feature_vector(er)
