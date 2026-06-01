@@ -156,6 +156,75 @@ class HorseModel:
 
         return {"log_loss": round(log_loss, 4), "top1_hit_rate": round(top1_hit_rate, 4)}
 
+    def train_race_grouped(
+        self,
+        race_groups: list[list[tuple]],
+        learning_rate: float = 0.01,
+        epochs: int = 500,
+        l2: float = 0.001,
+        sample_weights: list[float] | None = None,
+    ) -> dict:
+        """
+        Race-level conditional logit (multinomial cross-entropy).
+        race_groups: List of races; each race is List[(feature_vector, label)] where label=1 for winner.
+        sample_weights: per-race weights (e.g. exp(-days_ago/30)) — defaults to uniform.
+
+        Directly optimizes -log(softmax_p_of_winner) which matches the softmax inference step,
+        unlike per-runner binary CE which ignores competition within the field.
+        """
+        valid = [r for r in race_groups if sum(t[1] for t in r) == 1 and len(r) >= 2]
+        if not valid:
+            return {"error": "no races with exactly one winner and ≥2 runners"}
+
+        n_races = len(valid)
+        race_w = sample_weights if sample_weights and len(sample_weights) == n_races else [1.0] * n_races
+        w_total = sum(race_w) or 1.0
+        log.info("Race-grouped training on %d races, %d features, %d epochs", n_races, NUM_FEATURES, epochs)
+
+        for epoch in range(epochs):
+            total_loss = 0.0
+            grad_w = [0.0] * NUM_FEATURES
+            grad_b = 0.0
+
+            for race, rw in zip(valid, race_w):
+                fvs = [t[0] for t in race]
+                labels = [t[1] for t in race]
+                winner_idx = next(i for i, l in enumerate(labels) if l == 1)
+
+                scores = [self.raw_score(fv) for fv in fvs]
+                probs = softmax(scores)
+
+                total_loss += rw * -math.log(probs[winner_idx] + 1e-9)
+
+                for i, (fv, p) in enumerate(zip(fvs, probs)):
+                    err = (p - (1.0 if i == winner_idx else 0.0)) * rw
+                    for k in range(NUM_FEATURES):
+                        grad_w[k] += err * fv[k]
+                    grad_b += err
+
+            for j in range(NUM_FEATURES):
+                self.weights[j] -= learning_rate * (grad_w[j] / w_total + l2 * self.weights[j])
+            self.bias -= learning_rate * grad_b / w_total
+
+            if epoch % 100 == 0:
+                log.debug("Epoch %d loss=%.4f", epoch, total_loss / w_total)
+
+        hits = sum(
+            1 for race in valid
+            if [t[1] for t in race][
+                max(range(len(race)), key=lambda i: self.raw_score(race[i][0]))
+            ] == 1
+        )
+        top1_rate = hits / n_races if n_races else 0.0
+        log.info("Race-grouped complete. top1=%.1f%% (%d/%d races)", top1_rate * 100, hits, n_races)
+        return {
+            "races": n_races,
+            "epochs": epochs,
+            "top1_hit_rate": round(top1_rate, 4),
+            "accuracy": round(top1_rate, 4),
+            "weights": dict(zip(FEATURE_NAMES, [round(w, 6) for w in self.weights])),
+        }
+
     def to_dict(self) -> dict:
         return {
             "weights": dict(zip(FEATURE_NAMES, self.weights)),

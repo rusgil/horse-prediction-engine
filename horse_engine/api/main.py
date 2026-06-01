@@ -21,6 +21,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import math
 import random
 import re
 import secrets
@@ -2681,76 +2682,86 @@ async def retrain_model(
     x_cron_secret: Optional[str] = Header(None),
 ):
     """
-    Retrain logistic regression on stored historical results.
-    days=0 (default) uses all available data. days=N uses only the last N days.
+    Retrain win model using race-grouped softmax (conditional logit).
+    Uses the immutable history table to guarantee pre-race features only.
+    days=0 (default) uses all available data.
     """
     _check_admin(x_cron_secret)
+    cutoff = (date.today() - timedelta(days=days)).isoformat() if days > 0 else None
+
     async with get_session() as session:
+        # Fetch immutable pre-race snapshots (all runners, not just rank=1)
+        hist_query = select(RunnerPredictionHistoryRow).where(
+            RunnerPredictionHistoryRow.enriched_json.isnot(None)
+        )
+        if cutoff:
+            hist_query = hist_query.where(RunnerPredictionHistoryRow.race_id >= cutoff)
+        hist_result = await session.execute(hist_query)
+        hist_rows = hist_result.scalars().all()
+
+        # Fetch settled results
         hr_query = select(HistoricalResultRow)
-        if days > 0:
-            cutoff = (date.today() - timedelta(days=days)).isoformat()
+        if cutoff:
             hr_query = hr_query.where(HistoricalResultRow.race_id >= cutoff)
         hr_result = await session.execute(hr_query)
         hr_rows = hr_result.scalars().all()
 
-        pred_result = await session.execute(
-            select(RunnerPredictionRow).where(RunnerPredictionRow.enriched_json.isnot(None))
-        )
-        pred_rows = pred_result.scalars().all()
+    # Winner lookup: normalized name → race
+    winners: dict[str, str] = {
+        r.race_id: _normalize_horse(r.horse_name) for r in hr_rows if r.winner
+    }
 
-    if len(hr_rows) < 50:
-        raise HTTPException(400, f"Need at least 50 labelled results to retrain (have {len(hr_rows)})")
+    # Group history snapshots by race
+    from collections import defaultdict as _defaultdict
+    by_race: dict[str, list] = _defaultdict(list)
+    for row in hist_rows:
+        if not (row.cancelled):
+            by_race[row.race_id].append(row)
 
-    # Join on (race_id, horse_name) — enriched_json lives on the prediction row.
-    # Only use rows where enriched_at is before scheduled_time (pre-race features only).
-    # Post-race re-enrichment can overwrite features with data unavailable at race time.
-    pred_by_key = {(p.race_id, p.horse_name): p for p in pred_rows}
-
-    training_data = []
-    sample_weights = []
-    skipped_post_race = 0
     _today = date.today()
-    for row in hr_rows:
-        pred = pred_by_key.get((row.race_id, row.horse_name))
-        if not pred:
-            continue
-        if pred.enriched_at and pred.scheduled_time:
-            try:
-                sched = datetime.fromisoformat(pred.scheduled_time.replace("Z", "+00:00")).replace(tzinfo=None)
-                if pred.enriched_at > sched:
-                    skipped_post_race += 1
-                    continue
-            except (ValueError, AttributeError):
-                pass
-        try:
-            er = EnrichedRunner(**json.loads(pred.enriched_json))
-            fv = build_feature_vector(er)
-            label = 1 if row.winner else 0
-            training_data.append((fv, label))
-            try:
-                race_date = date.fromisoformat(row.race_id[:10])
-                days_ago = (_today - race_date).days
-            except Exception:
-                days_ago = 30
-            import math as _math
-            sample_weights.append(_math.exp(-days_ago / 30.0))
-        except Exception as e:
-            log.debug("Skipping retrain row %s/%s: %s", row.race_id, row.horse_name, e)
+    race_groups: list[list[tuple]] = []
+    race_weights: list[float] = []
 
-    if skipped_post_race:
-        log.info("[retrain] Skipped %d post-race enrichment examples (feature leakage guard)", skipped_post_race)
-    if not training_data:
-        raise HTTPException(400, f"No matched training examples (have {len(hr_rows)} results, {len(pred_rows)} predictions — check race_id/horse_name alignment)")
+    for race_id, runners in by_race.items():
+        winner_name = winners.get(race_id)
+        if not winner_name:
+            continue  # no settled result for this race
+
+        race: list[tuple] = []
+        for row in runners:
+            try:
+                er = EnrichedRunner(**json.loads(row.enriched_json))
+                fv = build_feature_vector(er)
+                label = 1 if _normalize_horse(row.horse_name) == winner_name else 0
+                race.append((fv, label))
+            except Exception as e:
+                log.debug("Skipping history row %s/%s: %s", race_id, row.horse_name, e)
+
+        # Only include races where we found the winner in our predictions
+        if sum(l for _, l in race) != 1:
+            continue
+
+        race_groups.append(race)
+        try:
+            days_ago = (_today - date.fromisoformat(race_id[:10])).days
+        except Exception:
+            days_ago = 30
+        race_weights.append(math.exp(-days_ago / 30.0))
+
+    if len(race_groups) < 50:
+        raise HTTPException(400, f"Need at least 50 settled races to retrain (have {len(race_groups)} with matched winner)")
+
+    log.info("[retrain] %d races assembled for race-grouped training", len(race_groups))
 
     async def _do_retrain():
         m = HorseModel()
-        s = await asyncio.to_thread(m.train, training_data, sample_weights=sample_weights)
+        s = await asyncio.to_thread(m.train_race_grouped, race_groups, sample_weights=race_weights)
         async with get_session() as sess:
             await save_model_weights(sess, s["weights"])
-        log.info("[retrain] complete — %d examples, accuracy=%.3f", len(training_data), s.get("accuracy", 0))
+        log.info("[retrain] complete — %d races, top1=%.3f", s.get("races", 0), s.get("top1_hit_rate", 0))
 
     asyncio.create_task(_do_retrain())
-    return {"status": "retrain_started", "training_days": days or "all", "training_examples": len(training_data)}
+    return {"status": "retrain_started", "training_days": days or "all", "training_races": len(race_groups)}
 
 
 @app.post("/api/admin/cancel-meeting")
@@ -2782,46 +2793,52 @@ async def retrain_place_model(
 ):
     """
     Train the place model on P(position ≤ 3) labels.
-    Uses the same feature vectors as the win model but with placed=True as the target.
+    Uses the immutable history table to guarantee pre-race features only.
     """
     _check_admin(x_cron_secret)
+    cutoff = (date.today() - timedelta(days=days)).isoformat() if days > 0 else None
+
     async with get_session() as session:
+        hist_query = select(RunnerPredictionHistoryRow).where(
+            RunnerPredictionHistoryRow.enriched_json.isnot(None)
+        )
+        if cutoff:
+            hist_query = hist_query.where(RunnerPredictionHistoryRow.race_id >= cutoff)
+        hist_result = await session.execute(hist_query)
+        hist_rows = hist_result.scalars().all()
+
         hr_query = select(HistoricalResultRow)
-        if days > 0:
-            cutoff = (date.today() - timedelta(days=days)).isoformat()
+        if cutoff:
             hr_query = hr_query.where(HistoricalResultRow.race_id >= cutoff)
         hr_result = await session.execute(hr_query)
         hr_rows = hr_result.scalars().all()
 
-        pred_result = await session.execute(
-            select(RunnerPredictionRow).where(RunnerPredictionRow.enriched_json.isnot(None))
-        )
-        pred_rows = pred_result.scalars().all()
-
     if len(hr_rows) < 50:
         raise HTTPException(400, f"Need at least 50 results to train (have {len(hr_rows)})")
 
-    pred_by_key = {(p.race_id, p.horse_name): p for p in pred_rows}
+    # Lookup: (race_id, normalized_name) → placed bool
+    placed_lookup = {
+        (r.race_id, _normalize_horse(r.horse_name)): bool(r.placed) for r in hr_rows
+    }
 
     training_data = []
     place_sample_weights = []
     _today_p = date.today()
-    for row in hr_rows:
-        pred = pred_by_key.get((row.race_id, row.horse_name))
-        if not pred:
+    for row in hist_rows:
+        if row.cancelled:
+            continue
+        placed = placed_lookup.get((row.race_id, _normalize_horse(row.horse_name)))
+        if placed is None:
             continue
         try:
-            er = EnrichedRunner(**json.loads(pred.enriched_json))
+            er = EnrichedRunner(**json.loads(row.enriched_json))
             fv = build_feature_vector(er)
-            label = 1 if row.placed else 0   # ← placed label, not winner
-            training_data.append((fv, label))
+            training_data.append((fv, 1 if placed else 0))
             try:
-                race_date = date.fromisoformat(row.race_id[:10])
-                days_ago = (_today_p - race_date).days
+                days_ago = (_today_p - date.fromisoformat(row.race_id[:10])).days
             except Exception:
                 days_ago = 30
-            import math as _math
-            place_sample_weights.append(_math.exp(-days_ago / 30.0))
+            place_sample_weights.append(math.exp(-days_ago / 30.0))
         except Exception as e:
             log.debug("Skipping place retrain row %s/%s: %s", row.race_id, row.horse_name, e)
 
