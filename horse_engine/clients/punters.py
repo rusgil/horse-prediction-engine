@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import random
 import re
 from datetime import date, datetime
 from typing import Any
@@ -205,6 +206,14 @@ class PuntersClient:
         self._meetings_cache: dict[str, tuple] = {}  # date -> (ts, meetings)
         self._slug_cache: dict[str, tuple] = {}      # slug -> (ts, meeting_dict)
         self._meeting_full_cache: dict[str, tuple] = {}  # id -> (ts, full_dict)
+        # Semaphore created lazily inside the running event loop
+        self._gql_sem: asyncio.Semaphore | None = None
+
+    def _sem(self) -> asyncio.Semaphore:
+        """Return (lazily created) semaphore — max 3 concurrent GQL calls."""
+        if self._gql_sem is None:
+            self._gql_sem = asyncio.Semaphore(3)
+        return self._gql_sem
 
     # ── Internal helpers ────────────────────────────────────────────────
 
@@ -220,17 +229,34 @@ class PuntersClient:
 
     @retry(stop=stop_after_attempt(2), wait=wait_exponential(multiplier=2, min=5, max=15))
     async def _gql(self, query: str) -> dict:
-        await self._ensure_gql_cookies()
-        async with httpx.AsyncClient(
-            headers=_HEADERS_GQL, cookies=self._cookie_jar, timeout=20.0
-        ) as client:
-            resp = await client.post(_GRAPHQL, json={"query": query})
-            if resp.status_code == 403:
-                # 403 from CloudFront WAF — do NOT retry aggressively, it worsens the block
-                self._cookie_jar = {}
-                resp.raise_for_status()
-            resp.raise_for_status()
-            return resp.json()
+        async with self._sem():
+            # Small random delay so burst traffic spreads over time
+            await asyncio.sleep(0.3 + random.uniform(0, 0.4))
+
+            from horse_engine.config import settings
+            proxy_url = settings.punters_proxy_url
+
+            if proxy_url:
+                # Route via Cloudflare Worker to avoid IP blocks
+                headers = {"Content-Type": "application/json"}
+                if settings.punters_proxy_secret:
+                    headers["X-Proxy-Secret"] = settings.punters_proxy_secret
+                async with httpx.AsyncClient(timeout=20.0) as client:
+                    resp = await client.post(proxy_url, json={"query": query}, headers=headers)
+                    resp.raise_for_status()
+                    return resp.json()
+            else:
+                await self._ensure_gql_cookies()
+                async with httpx.AsyncClient(
+                    headers=_HEADERS_GQL, cookies=self._cookie_jar, timeout=20.0
+                ) as client:
+                    resp = await client.post(_GRAPHQL, json={"query": query})
+                    if resp.status_code == 403:
+                        # 403 from CloudFront WAF — do NOT retry aggressively, it worsens the block
+                        self._cookie_jar = {}
+                        resp.raise_for_status()
+                    resp.raise_for_status()
+                    return resp.json()
 
     async def _ensure_cookies(self, client: httpx.AsyncClient) -> None:
         """Hit homepage to establish session cookies (required for NUXT data)."""
@@ -262,6 +288,51 @@ class PuntersClient:
             log.debug("Failed to fetch %s stats for %s: %s", kind, slug, e)
             self._person_cache[cache_key] = {}
         return self._person_cache[cache_key]
+
+    async def prefetch_people_for_date(self, race_date: str) -> None:
+        """
+        Pre-warm the person cache for all jockeys and trainers racing on race_date.
+        Call once at the top of the cron job so every subsequent parse_race() is a
+        cache hit and fires zero extra GQL requests.
+        """
+        meetings = await self.get_meetings(race_date)
+        if not meetings:
+            return
+
+        # Collect all unique (slug, kind) pairs across every runner in every race
+        all_pairs: set[tuple[str, str]] = set()
+        for meeting in meetings:
+            slug = meeting.get("slug", "")
+            if not slug:
+                continue
+            try:
+                meeting_data = await self.get_meeting_by_slug(slug)
+                if not meeting_data:
+                    continue
+                full = await self._fetch_meeting_full(meeting_data["id"])
+                if not full:
+                    continue
+                for event in full.get("events", []):
+                    for sel in event.get("selections", []):
+                        j = sel.get("jockey") or {}
+                        t = sel.get("trainer") or {}
+                        if j.get("slug"):
+                            all_pairs.add((j["slug"], "jockey"))
+                        if t.get("slug"):
+                            all_pairs.add((t["slug"], "trainer"))
+            except Exception as e:
+                log.debug("prefetch: failed to load meeting %s: %s", slug, e)
+
+        # Skip pairs already in cache
+        uncached = [(s, k) for s, k in all_pairs if f"{k}:{s}" not in self._person_cache]
+        if not uncached:
+            log.info("prefetch: person cache already warm (%d entries)", len(all_pairs))
+            return
+
+        log.info("prefetch: fetching stats for %d jockeys/trainers", len(uncached))
+        tasks = [self._fetch_person_stats(s, k) for s, k in uncached]
+        await asyncio.gather(*tasks, return_exceptions=True)
+        log.info("prefetch: person cache warmed (%d entries total)", len(self._person_cache))
 
     async def _fetch_all_people_stats(self, selections: list[dict]) -> tuple[dict, dict]:
         """Concurrently fetch stats for all unique jockeys and trainers in a race."""
