@@ -3448,6 +3448,28 @@ async def probe_ras(slug: str = "warwick-farm", date: str = "", race_num: int = 
     return results
 
 
+@app.get("/api/admin/probe-punters")
+async def probe_punters(x_cron_secret: Optional[str] = Header(None)):
+    """Probe api.punters.com.au directly from Railway to test if IP is blocked."""
+    _check_admin(x_cron_secret)
+    import httpx as _httpx
+    HEADERS = {
+        "Authorization": "Bearer none",
+        "Content-Type": "application/json",
+        "Origin": "https://www.punters.com.au",
+        "Referer": "https://www.punters.com.au/",
+        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+    }
+    query = '{ meetings(sport: HorseRacing, startDate: "2026-06-04", endDate: "2026-06-04") { id name slug } }'
+    try:
+        async with _httpx.AsyncClient(headers=HEADERS, timeout=15) as c:
+            resp = await c.post("https://api.punters.com.au/racing", json={"query": query})
+            body = resp.text[:500]
+            return {"status": resp.status_code, "blocked": resp.status_code == 403, "snippet": body}
+    except Exception as e:
+        return {"error": str(e)}
+
+
 @app.get("/api/admin/probe-tab")
 async def probe_tab(race_id: str = "", date: str = "", x_cron_secret: Optional[str] = Header(None)):
     """Probe the TAB API. Pass race_id=YYYY-MM-DD_venue_RN for race data, or date=YYYY-MM-DD to list meetings."""

@@ -37,7 +37,8 @@ class CompositeClient:
     def __init__(self) -> None:
         self._ra = RacingAustraliaClient()
         self._odds = OddsProClient()
-        self._bf = None  # BetfairClient — lazy init only if credentials set
+        self._bf = None      # BetfairClient — lazy init only if credentials set
+        self._punters = None  # PuntersClient — lazy init only if proxy URL set
 
     def _get_betfair(self):
         if self._bf is None:
@@ -50,6 +51,18 @@ class CompositeClient:
             except Exception as e:
                 log.debug("BetfairClient init skipped: %s", e)
         return self._bf
+
+    def _get_punters(self):
+        if self._punters is None:
+            try:
+                from horse_engine.config import settings
+                if settings.punters_proxy_url:
+                    from horse_engine.clients.punters import PuntersClient
+                    self._punters = PuntersClient()
+                    log.info("PuntersClient activated via proxy: %s", settings.punters_proxy_url)
+            except Exception as e:
+                log.debug("PuntersClient init skipped: %s", e)
+        return self._punters
 
     # ── Discovery (delegated to RA) ───────────────────────────────────────────
 
@@ -74,17 +87,19 @@ class CompositeClient:
         ra_key = meeting.get("id", "")
         race_date = meeting.get("date") or meeting.get("meetingDateLocal") or date.today().isoformat()
 
-        # Find OddsPro track and start Betfair fetch in parallel
+        # Find OddsPro track and start Betfair + Punters fetches in parallel
         bf = self._get_betfair()
+        punters = self._get_punters()
         tracks = await self._odds.get_tracks(race_date)
         op_track = self._odds.find_matching_track(venue, tracks)
         if not op_track:
             log.debug("OddsPro: no track match for '%s' on %s", venue, race_date)
 
-        odds_map, ra_results, bf_race = await asyncio.gather(
+        odds_map, ra_results, bf_race, punters_race = await asyncio.gather(
             self._odds.get_track_odds(op_track) if op_track else _empty_dict(),
             self._ra.get_results(ra_key) if ra_key else _empty_dict(),
             bf.get_race(slug, race_number) if bf else _none(),
+            punters.get_race(slug, race_number) if punters else _none(),
         )
 
         # Build Betfair selection lookup keyed by normalized horse name
@@ -143,6 +158,10 @@ class CompositeClient:
             })
         raw["runners"] = runners_out
 
+        # Store Punters selections for parse_race enrichment
+        if punters_race:
+            raw["_punters_sels"] = punters_race.get("selections") or []
+
         return raw
 
     # ── Parsing ───────────────────────────────────────────────────────────────
@@ -159,4 +178,92 @@ class CompositeClient:
             if sel:
                 runner.odds_opening = sel.get("_odds_opening")
 
+        punters_sels = raw_event.get("_punters_sels") or []
+        if punters_sels:
+            punters = self._get_punters()
+            if punters:
+                await self._enrich_from_punters(race, punters_sels, punters)
+
         return race
+
+    async def _enrich_from_punters(self, race: Race, punters_sels: list[dict], punters_client) -> None:
+        from horse_engine.clients.punters import PuntersClient, _parse_stat
+
+        j_stats, t_stats = await punters_client._fetch_all_people_stats(punters_sels)
+
+        p_by_name: dict[str, dict] = {}
+        for sel in punters_sels:
+            name = _normalize((sel.get("competitor") or {}).get("name", ""))
+            if name:
+                p_by_name[name] = sel
+
+        for runner in race.runners:
+            sel = p_by_name.get(_normalize(runner.horse_name))
+            if not sel:
+                continue
+
+            comp = sel.get("competitor") or {}
+            jock = sel.get("jockey") or {}
+            trnr = sel.get("trainer") or {}
+            raw_stats = comp.get("stats") or {}
+
+            runner.career_starts = int(raw_stats.get("totalRuns") or 0)
+            runner.career_wins = int(raw_stats.get("wins") or 0)
+            runner.career_places = (
+                runner.career_wins
+                + int(raw_stats.get("seconds") or 0)
+                + int(raw_stats.get("thirds") or 0)
+            )
+
+            tr_s, tr_w, _, _ = _parse_stat(raw_stats.get("track") or "")
+            di_s, di_w, _, _ = _parse_stat(raw_stats.get("distance") or "")
+            td_s, td_w, _, _ = _parse_stat(raw_stats.get("trackDistance") or "")
+            fu_s, fu_w, _, _ = _parse_stat(raw_stats.get("firstUp") or "")
+            su_s, su_w, _, _ = _parse_stat(raw_stats.get("secondUp") or "")
+
+            runner.track_starts = tr_s
+            runner.track_wins = tr_w
+            runner.distance_starts = di_s
+            runner.distance_wins = di_w
+            runner.track_distance_starts = td_s
+            runner.track_distance_wins = td_w
+            runner.first_up_starts = fu_s
+            runner.first_up_wins = fu_w
+            runner.second_up_starts = su_s
+            runner.second_up_wins = su_w
+
+            last_10 = PuntersClient._parse_forms(comp.get("forms") or [], sel.get("lastRun"))
+            if last_10:
+                runner.last_10_starts = last_10
+
+            j_slug = jock.get("slug") or ""
+            j_raw = j_stats.get(j_slug) or {}
+            if j_raw:
+                j_win = float(j_raw.get("winPercentage") or 10)
+                if runner.jockey_stats:
+                    runner.jockey_stats.win_rate_overall = j_win
+                    runner.jockey_stats.win_rate_track = j_win
+                    runner.jockey_stats.win_rate_distance = j_win
+                    runner.jockey_stats.win_rate_barrier_low = j_win
+                    runner.jockey_stats.win_rate_barrier_mid = j_win
+                    runner.jockey_stats.win_rate_barrier_wide = j_win
+                    runner.jockey_stats.wins_season = int(j_raw.get("wins") or 0)
+                    runner.jockey_stats.trainer_jockey_combo_rate = j_win
+
+            t_slug = trnr.get("slug") or ""
+            t_raw = t_stats.get(t_slug) or {}
+            if t_raw:
+                t_win = float(t_raw.get("winPercentage") or 10)
+                if runner.trainer_stats:
+                    runner.trainer_stats.win_rate_overall = t_win
+                    runner.trainer_stats.win_rate_track = t_win
+                    runner.trainer_stats.win_rate_distance = t_win
+                    runner.trainer_stats.win_rate_first_up = t_win
+                    runner.trainer_stats.win_rate_second_up = t_win
+                    runner.trainer_stats.win_rate_wet = t_win
+                    runner.trainer_stats.wins_season = int(t_raw.get("wins") or 0)
+
+            log.debug("Punters enriched: %s (career %d/%d, j=%s %.1f%%, t=%s %.1f%%)",
+                      runner.horse_name, runner.career_wins, runner.career_starts,
+                      jock.get("name", ""), float(j_raw.get("winPercentage") or 0),
+                      trnr.get("name", ""), float(t_raw.get("winPercentage") or 0))
