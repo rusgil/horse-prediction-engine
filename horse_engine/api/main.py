@@ -6652,6 +6652,7 @@ async def performance_by_venue(days: int = Query(30, ge=1, le=90)):
 async def premium_performance(days: int = Query(30, ge=1, le=365), x_cron_secret: Optional[str] = Header(None)):
     """
     P&L analysis for Premium picks: model_pct >= 30%, SP >= $3.00, overlay > 5%.
+    Reads from the immutable history table to guarantee pre-race predictions only.
     Requires admin auth.
     """
     _check_admin(x_cron_secret)
@@ -6667,13 +6668,15 @@ async def premium_performance(days: int = Query(30, ge=1, le=365), x_cron_secret
             return {"days": days, "picks": [], "summary": {"bets": 0, "wins": 0, "win_pct": None, "pnl": 0.0, "roi_pct": None, "avg_sp": None}}
 
         race_ids = list({r.race_id for r in hr_rows})
+        # Use immutable history table — guaranteed pre-race snapshots, never overwritten
         pred_result = await session.execute(
-            select(RunnerPredictionRow)
-            .where(RunnerPredictionRow.race_id.in_(race_ids))
-            .where(RunnerPredictionRow.win_probability.isnot(None))
+            select(RunnerPredictionHistoryRow)
+            .where(RunnerPredictionHistoryRow.race_id.in_(race_ids))
+            .where(RunnerPredictionHistoryRow.win_probability.isnot(None))
+            .where(RunnerPredictionHistoryRow.source == "live")
         )
         # Top pick per race by win_probability
-        best: dict[str, RunnerPredictionRow] = {}
+        best: dict[str, RunnerPredictionHistoryRow] = {}
         for p in pred_result.scalars().all():
             ex = best.get(p.race_id)
             if ex is None or (p.win_probability or 0) > (ex.win_probability or 0):
@@ -6738,12 +6741,14 @@ async def premium_performance_public():
             return {"days": days, "bets": 0, "wins": 0, "win_pct": None, "pnl_at_10": 0.0, "roi_pct": None, "avg_sp": None}
 
         race_ids = list({r.race_id for r in hr_rows})
+        # Immutable history table — guaranteed pre-race, source="live" only
         pred_result = await session.execute(
-            select(RunnerPredictionRow)
-            .where(RunnerPredictionRow.race_id.in_(race_ids))
-            .where(RunnerPredictionRow.win_probability.isnot(None))
+            select(RunnerPredictionHistoryRow)
+            .where(RunnerPredictionHistoryRow.race_id.in_(race_ids))
+            .where(RunnerPredictionHistoryRow.win_probability.isnot(None))
+            .where(RunnerPredictionHistoryRow.source == "live")
         )
-        best: dict[str, RunnerPredictionRow] = {}
+        best: dict[str, RunnerPredictionHistoryRow] = {}
         for p in pred_result.scalars().all():
             ex = best.get(p.race_id)
             if ex is None or (p.win_probability or 0) > (ex.win_probability or 0):
