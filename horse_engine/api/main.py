@@ -5187,7 +5187,10 @@ async def backfill_odds_from_sp(x_cron_secret: Optional[str] = Header(None)):
     async with get_session() as session:
         null_rows = (await session.execute(
             select(RunnerPredictionRow)
-            .where(RunnerPredictionRow.best_available_odds.is_(None))
+            .where(
+                (RunnerPredictionRow.best_available_odds.is_(None)) |
+                (RunnerPredictionRow.best_available_odds <= 1.0)
+            )
             .where(RunnerPredictionRow.race_id.isnot(None))
         )).scalars().all()
 
@@ -5222,7 +5225,10 @@ async def backfill_odds_from_sp(x_cron_secret: Optional[str] = Header(None)):
     async with get_session() as session:
         null_hist = (await session.execute(
             select(RunnerPredictionHistoryRow)
-            .where(RunnerPredictionHistoryRow.best_available_odds.is_(None))
+            .where(
+                (RunnerPredictionHistoryRow.best_available_odds.is_(None)) |
+                (RunnerPredictionHistoryRow.best_available_odds <= 1.0)
+            )
             .where(RunnerPredictionHistoryRow.race_id.isnot(None))
         )).scalars().all()
 
