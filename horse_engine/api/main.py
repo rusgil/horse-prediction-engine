@@ -752,6 +752,7 @@ async def _inject_accumulated_stats(race, session) -> None:
 
     # ── Form history (last_10_starts) from historical_results ─────────────────
     # Only inject if runner has no existing form (RA doesn't provide it)
+    form_by_horse: dict[str, list] = {}
     if horses and all(len(r.last_10_starts) == 0 for r in race.runners):
         from horse_engine.models.race import FormStart
         today_prefix = race.date or date.today().isoformat()
@@ -779,7 +780,6 @@ async def _inject_accumulated_stats(race, session) -> None:
         """), params)).fetchall()
 
         # Group into per-horse form history
-        form_by_horse: dict[str, list] = {}
         for row in form_rows:
             form_by_horse.setdefault(row[0], []).append(row)
 
