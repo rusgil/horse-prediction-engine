@@ -4864,7 +4864,7 @@ async def backfill_status():
 _db_backfill: dict = {"running": False, "done": False}
 
 
-async def _run_db_backfill(holdout_from: str = "2026-05-01", batch_size: int = 50) -> None:
+async def _run_db_backfill(holdout_from: str = "2026-05-01", batch_size: int = 50, force: bool = False) -> None:
     """
     Build RunnerPredictionHistoryRow training snapshots directly from historical_results.
     Does not call any external API — works entirely from stored DB data.
@@ -4897,7 +4897,7 @@ async def _run_db_backfill(holdout_from: str = "2026-05-01", batch_size: int = 5
 
         for race_id in race_ids:
             try:
-                # Skip if history snapshot already exists
+                # Skip if history snapshot already exists (unless force=True)
                 async with get_session() as session:
                     exists = (await session.execute(
                         select(RunnerPredictionHistoryRow.id)
@@ -4905,8 +4905,17 @@ async def _run_db_backfill(holdout_from: str = "2026-05-01", batch_size: int = 5
                         .limit(1)
                     )).scalar()
                 if exists:
-                    _db_backfill["skipped"] += 1
-                    continue
+                    if not force:
+                        _db_backfill["skipped"] += 1
+                        continue
+                    # force=True: delete existing backfill rows so we can regenerate
+                    async with get_session() as session:
+                        await session.execute(
+                            delete(RunnerPredictionHistoryRow)
+                            .where(RunnerPredictionHistoryRow.race_id == race_id)
+                            .where(RunnerPredictionHistoryRow.source == "backfill")
+                        )
+                        await session.commit()
 
                 # Load all runners for this race from historical_results
                 async with get_session() as session:
@@ -5062,18 +5071,19 @@ async def _run_db_backfill(holdout_from: str = "2026-05-01", batch_size: int = 5
 @app.post("/api/admin/backfill/from-db")
 async def start_db_backfill(
     holdout_from: str = Query("2026-05-01", description="Skip races on or after this date"),
+    force: bool = Query(False, description="Overwrite existing backfill rows (regenerates feature_vector_json)"),
     x_cron_secret: Optional[str] = Header(None),
 ):
     """
     Build RunnerPredictionHistoryRow training data directly from historical_results.
     No external API calls — processes 131K stored race rows using DB-joined stats.
     SP from historical_results is used as tote_win_odds so market_rank_norm is real.
-    Safe to restart — skips races that already have a history snapshot.
+    Use force=true to regenerate feature_vector_json for already-processed races.
     """
     _check_admin(x_cron_secret)
     if _db_backfill.get("running"):
         raise HTTPException(409, "DB backfill already running")
-    asyncio.create_task(_run_db_backfill(holdout_from=holdout_from))
+    asyncio.create_task(_run_db_backfill(holdout_from=holdout_from, force=force))
     return {"status": "started", "holdout_from": holdout_from,
             "message": "Check /api/admin/backfill/from-db/status for progress"}
 
