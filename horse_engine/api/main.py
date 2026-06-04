@@ -4422,7 +4422,7 @@ _backfill: dict = {"running": False, "done": False, "current": None,
                    "completed": [], "errors": [], "meetings": 0, "races": 0, "runners": 0}
 
 
-async def _run_backfill(days: int, x_secret: Optional[str], force: bool = False):
+async def _run_backfill(days: int, x_secret: Optional[str], force: bool = False, holdout_from: str = "2026-05-01"):
     global _backfill
     _backfill.update({"running": True, "done": False, "current": None,
                       "completed": [], "errors": [], "meetings": 0, "races": 0, "runners": 0,
@@ -4434,6 +4434,9 @@ async def _run_backfill(days: int, x_secret: Optional[str], force: bool = False)
 
         for i in range(1, days + 1):
             race_date = (date.today() - timedelta(days=i)).isoformat()
+            if race_date >= holdout_from:
+                log.info("[backfill] Skipping %s — holdout period (>= %s)", race_date, holdout_from)
+                continue
             _backfill["current"] = race_date
             if not force:
                 async with get_session() as session:
@@ -4467,16 +4470,83 @@ async def _run_backfill(days: int, x_secret: Optional[str], force: bool = False)
                             race = await client.parse_race(full_race, race_date, venue_name, state)
                             if not race.runners:
                                 continue
+
+                            # Inject SP as tote_win_odds so compute_market_features derives
+                            # correct market_rank for historical races (no live odds available).
+                            sp_by_name: dict[str, float] = {}
+                            for r in full_race.get("runners", []):
+                                if r.get("scratched"):
+                                    continue
+                                horse = (r.get("runnerName") or "").lower()
+                                for p in r.get("prices", []):
+                                    if p.get("priceType") in ("StartingPrice", "SP", "Win"):
+                                        try:
+                                            sp_val = float(p.get("winPrice") or 0)
+                                            if sp_val > 1.0 and horse not in sp_by_name:
+                                                sp_by_name[horse] = sp_val
+                                                break
+                                        except (TypeError, ValueError):
+                                            pass
+                            if sp_by_name:
+                                for runner in race.runners:
+                                    h = runner.horse_name.lower()
+                                    if h in sp_by_name and not (runner.fixed_win_odds or runner.tote_win_odds):
+                                        runner.tote_win_odds = sp_by_name[h]
+                                log.debug("[backfill] %s R%s: injected SP for %d/%d runners",
+                                          venue_code, race_num, len(sp_by_name), len(race.runners))
+
                             async with get_session() as session:
                                 await _inject_accumulated_stats(race, session)
                             predictions, _ = await enrich_and_predict_race(
                                 race, model
                             )
+                            db_dicts = [_prediction_to_db_dict(p, race_id, race.scheduled_time, race=race) for p in predictions]
                             async with get_session() as session:
-                                await save_race_predictions(
-                                    session, race_id,
-                                    [_prediction_to_db_dict(p, race_id, race.scheduled_time, race=race) for p in predictions],
-                                )
+                                await save_race_predictions(session, race_id, db_dicts)
+                                # Write immutable history snapshot for training (skip if live snapshot exists)
+                                existing_hist = (await session.execute(
+                                    select(RunnerPredictionHistoryRow.id)
+                                    .where(RunnerPredictionHistoryRow.race_id == race_id)
+                                    .limit(1)
+                                )).scalar()
+                                if not existing_hist:
+                                    now = datetime.utcnow()
+                                    for p, d in zip(predictions, db_dicts):
+                                        session.add(RunnerPredictionHistoryRow(
+                                            race_id=race_id,
+                                            horse_name=d["horse_name"],
+                                            tab_number=d.get("tab_number"),
+                                            barrier=d.get("barrier"),
+                                            jockey=d.get("jockey"),
+                                            trainer=d.get("trainer"),
+                                            weight=d.get("weight"),
+                                            win_probability=d["win_probability"],
+                                            place_probability=d.get("place_probability"),
+                                            model_rank=d["model_rank"],
+                                            place_model_rank=d.get("place_model_rank"),
+                                            exotic_model_rank=d.get("exotic_model_rank"),
+                                            market_rank=d.get("market_rank"),
+                                            overlay=d.get("overlay"),
+                                            best_available_odds=d.get("best_available_odds"),
+                                            value_rating=d.get("value_rating"),
+                                            key_flags=d.get("key_flags"),
+                                            enriched_json=d.get("enriched_json"),
+                                            scheduled_time=d.get("scheduled_time"),
+                                            venue=d.get("venue"),
+                                            state=d.get("state"),
+                                            race_number=d.get("race_number"),
+                                            race_name=d.get("race_name"),
+                                            distance=d.get("distance"),
+                                            track_condition=d.get("track_condition"),
+                                            field_size=d.get("field_size"),
+                                            prize_money=d.get("prize_money"),
+                                            rail_position=d.get("rail_position"),
+                                            class_change=d.get("class_change"),
+                                            enriched_at=now,
+                                            source="backfill",
+                                        ))
+                                    await session.commit()
+                                    log.debug("[backfill] Wrote %d history rows for %s", len(predictions), race_id)
                             # Seed actual results from runner finishing positions
                             # Build selection lookup for rich context
                             bf_sel_by_name = {}
@@ -4579,18 +4649,23 @@ async def _run_backfill(days: int, x_secret: Optional[str], force: bool = False)
 async def start_backfill(
     days: int = Query(14, ge=1, le=365),
     force: bool = Query(False),
+    holdout_from: str = Query("2026-05-01", description="Skip dates >= this date (holdout period for evaluation)"),
     x_cron_secret: Optional[str] = Header(None),
 ):
     """
     Start background backfill of past N days.
     force=true re-runs predictions even for dates already in the DB (useful after model updates).
+    holdout_from skips dates >= that value so May 2026 stays clean for evaluation.
     Historical results are never duplicated regardless.
+    Writes to RunnerPredictionHistoryRow with source='backfill' for training.
+    SP from race results is injected as tote_win_odds so market_rank_norm is real.
     """
     _check_admin(x_cron_secret)
     if _backfill["running"]:
         raise HTTPException(409, "Backfill already running")
-    asyncio.create_task(_run_backfill(days, x_cron_secret, force=force))
-    return {"status": "started", "days": days, "force": force, "message": "Check /api/admin/backfill/status for progress"}
+    asyncio.create_task(_run_backfill(days, x_cron_secret, force=force, holdout_from=holdout_from))
+    return {"status": "started", "days": days, "force": force, "holdout_from": holdout_from,
+            "message": "Check /api/admin/backfill/status for progress"}
 
 
 @app.get("/api/admin/backfill/status")
