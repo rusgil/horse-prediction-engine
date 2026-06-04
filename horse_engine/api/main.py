@@ -3461,6 +3461,28 @@ async def retrain_exotic_model(
     return {"status": "exotic_retrain_started", "cutoff": cutoff or "all"}
 
 
+@app.get("/api/admin/model-weights/status")
+async def model_weights_status(x_cron_secret: Optional[str] = Header(None)):
+    """Return feature count and last-updated timestamp for each model's weight table."""
+    _check_admin(x_cron_secret)
+    from sqlalchemy import text as _text
+    results = {}
+    async with get_session() as session:
+        for label, table in [
+            ("win", "model_weights"),
+            ("place", "place_model_weights"),
+            ("exotic", "exotic_model_weights"),
+        ]:
+            row = (await session.execute(
+                _text(f"SELECT COUNT(*), MAX(updated_at) FROM {table}")
+            )).one()
+            results[label] = {
+                "feature_count": row[0],
+                "last_updated_utc": row[1].isoformat() if row[1] else None,
+            }
+    return results
+
+
 _exotic_backtest_state: dict = {"running": False, "progress": "", "error": None}
 
 
