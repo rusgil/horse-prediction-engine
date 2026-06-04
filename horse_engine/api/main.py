@@ -4674,6 +4674,231 @@ async def backfill_status():
     return _backfill
 
 
+# ── DB-based backfill: build training history from historical_results ─────────
+
+_db_backfill: dict = {"running": False, "done": False}
+
+
+async def _run_db_backfill(holdout_from: str = "2026-05-01", batch_size: int = 50) -> None:
+    """
+    Build RunnerPredictionHistoryRow training snapshots directly from historical_results.
+    Does not call any external API — works entirely from stored DB data.
+    Processes races in chronological order, oldest first.
+    Skips races that already have a history snapshot.
+    """
+    global _db_backfill
+    from horse_engine.models.race import Race, Runner
+
+    _db_backfill.update({
+        "running": True, "done": False, "races": 0, "runners": 0,
+        "skipped": 0, "errors": 0, "started_at": datetime.utcnow().isoformat(),
+    })
+    try:
+        async with get_session() as session:
+            model = await _load_model(session)
+
+        # Fetch all eligible race_ids from historical_results (before holdout, has results)
+        async with get_session() as session:
+            rows = (await session.execute(
+                select(HistoricalResultRow.race_id)
+                .where(HistoricalResultRow.race_id < holdout_from)
+                .where(HistoricalResultRow.position.isnot(None))
+                .distinct()
+                .order_by(HistoricalResultRow.race_id)
+            )).scalars().all()
+        race_ids = list(rows)
+        _db_backfill["total_races"] = len(race_ids)
+        log.info("[db-backfill] %d eligible races to process", len(race_ids))
+
+        for race_id in race_ids:
+            try:
+                # Skip if history snapshot already exists
+                async with get_session() as session:
+                    exists = (await session.execute(
+                        select(RunnerPredictionHistoryRow.id)
+                        .where(RunnerPredictionHistoryRow.race_id == race_id)
+                        .limit(1)
+                    )).scalar()
+                if exists:
+                    _db_backfill["skipped"] += 1
+                    continue
+
+                # Load all runners for this race from historical_results
+                async with get_session() as session:
+                    hr_rows = (await session.execute(
+                        select(HistoricalResultRow)
+                        .where(HistoricalResultRow.race_id == race_id)
+                        .where(HistoricalResultRow.position.isnot(None))
+                        .order_by(HistoricalResultRow.tab_number, HistoricalResultRow.barrier)
+                    )).scalars().all()
+
+                if len(hr_rows) < 2:
+                    _db_backfill["skipped"] += 1
+                    continue
+
+                race_date, venue_code, race_num = _parse_race_id(race_id)
+                if not race_date or not race_num:
+                    continue
+
+                # Use first row for race-level context
+                ref = hr_rows[0]
+                venue = ref.venue or venue_code.replace("-", " ").title()
+                state = ref.state or "NSW"
+                distance = ref.distance or 1200
+                track_cond = ref.track_condition or "Good"
+                race_class = ref.race_class or ""
+                prize_money = ref.prize_money or 0
+                field_size = ref.field_size or len(hr_rows)
+
+                # Build Runner objects — SP injected as tote_win_odds for real market_rank
+                runners: list[Runner] = []
+                for hr in hr_rows:
+                    runners.append(Runner(
+                        horse_name=hr.horse_name or "",
+                        tab_number=hr.tab_number or 0,
+                        barrier=hr.barrier or 0,
+                        jockey=hr.jockey or "",
+                        trainer=hr.trainer or "",
+                        weight=float(hr.weight or 58.0),
+                        age=int(hr.age or 0),
+                        sex=hr.sex or "G",
+                        colour="",
+                        country="AUS",
+                        career_starts=0,
+                        career_wins=0,
+                        career_places=0,
+                        tote_win_odds=float(hr.starting_price) if hr.starting_price and hr.starting_price > 1.0 else None,
+                    ))
+
+                race = Race(
+                    race_id=race_id,
+                    date=race_date,
+                    venue=venue,
+                    state=state,
+                    race_number=race_num,
+                    race_name=f"Race {race_num}",
+                    race_class=race_class,
+                    distance=distance,
+                    track_condition=track_cond,
+                    rail_position="",
+                    prize_money=prize_money,
+                    scheduled_time=f"{race_date}T10:00:00",
+                    race_type="R",
+                    runners=runners,
+                )
+
+                # Inject accumulated stats from DB (jockey/trainer/career/form)
+                async with get_session() as session:
+                    await _inject_accumulated_stats(race, session)
+
+                predictions, _ = await enrich_and_predict_race(race, model)
+                if not predictions:
+                    _db_backfill["skipped"] += 1
+                    continue
+
+                db_dicts = [_prediction_to_db_dict(p, race_id, race.scheduled_time, race=race) for p in predictions]
+
+                async with get_session() as session:
+                    # Write to mutable predictions table
+                    await save_race_predictions(session, race_id, db_dicts)
+
+                    # Write immutable history snapshot
+                    now = datetime.utcnow()
+                    for hr, d in zip(hr_rows, db_dicts):
+                        session.add(RunnerPredictionHistoryRow(
+                            race_id=race_id,
+                            horse_name=d["horse_name"],
+                            tab_number=d.get("tab_number"),
+                            barrier=d.get("barrier"),
+                            jockey=d.get("jockey"),
+                            trainer=d.get("trainer"),
+                            weight=d.get("weight"),
+                            win_probability=d["win_probability"],
+                            place_probability=d.get("place_probability"),
+                            model_rank=d["model_rank"],
+                            place_model_rank=d.get("place_model_rank"),
+                            exotic_model_rank=d.get("exotic_model_rank"),
+                            market_rank=d.get("market_rank"),
+                            overlay=d.get("overlay"),
+                            best_available_odds=d.get("best_available_odds"),
+                            value_rating=d.get("value_rating"),
+                            key_flags=d.get("key_flags"),
+                            enriched_json=d.get("enriched_json"),
+                            scheduled_time=d.get("scheduled_time"),
+                            venue=d.get("venue"),
+                            state=d.get("state"),
+                            race_number=d.get("race_number"),
+                            race_name=d.get("race_name"),
+                            distance=d.get("distance"),
+                            track_condition=d.get("track_condition"),
+                            field_size=d.get("field_size"),
+                            prize_money=d.get("prize_money"),
+                            rail_position=d.get("rail_position"),
+                            class_change=d.get("class_change"),
+                            enriched_at=now,
+                            source="backfill",
+                        ))
+
+                    # Update feature_vector_json on historical_results for winners/placed
+                    for hr in hr_rows:
+                        d = next((x for x in db_dicts if x["horse_name"] == hr.horse_name), None)
+                        if d and d.get("enriched_json"):
+                            hr_row = (await session.execute(
+                                select(HistoricalResultRow)
+                                .where(HistoricalResultRow.id == hr.id)
+                            )).scalars().first()
+                            if hr_row:
+                                hr_row.feature_vector_json = d["enriched_json"]
+
+                    await session.commit()
+
+                _db_backfill["races"] += 1
+                _db_backfill["runners"] += len(predictions)
+
+                if _db_backfill["races"] % batch_size == 0:
+                    log.info("[db-backfill] %d races done, %d runners, %d skipped",
+                             _db_backfill["races"], _db_backfill["runners"], _db_backfill["skipped"])
+                    await asyncio.sleep(0.1)  # yield to event loop
+
+            except Exception as e:
+                log.warning("[db-backfill] Race %s failed: %s", race_id, e)
+                _db_backfill["errors"] += 1
+
+    finally:
+        _db_backfill.update({
+            "running": False, "done": True,
+            "finished_at": datetime.utcnow().isoformat(),
+        })
+        log.info("[db-backfill] Done — %d races, %d runners, %d skipped, %d errors",
+                 _db_backfill["races"], _db_backfill["runners"],
+                 _db_backfill["skipped"], _db_backfill["errors"])
+
+
+@app.post("/api/admin/backfill/from-db")
+async def start_db_backfill(
+    holdout_from: str = Query("2026-05-01", description="Skip races on or after this date"),
+    x_cron_secret: Optional[str] = Header(None),
+):
+    """
+    Build RunnerPredictionHistoryRow training data directly from historical_results.
+    No external API calls — processes 131K stored race rows using DB-joined stats.
+    SP from historical_results is used as tote_win_odds so market_rank_norm is real.
+    Safe to restart — skips races that already have a history snapshot.
+    """
+    _check_admin(x_cron_secret)
+    if _db_backfill.get("running"):
+        raise HTTPException(409, "DB backfill already running")
+    asyncio.create_task(_run_db_backfill(holdout_from=holdout_from))
+    return {"status": "started", "holdout_from": holdout_from,
+            "message": "Check /api/admin/backfill/from-db/status for progress"}
+
+
+@app.get("/api/admin/backfill/from-db/status")
+async def db_backfill_status():
+    """Current DB backfill progress."""
+    return _db_backfill
+
+
 @app.post("/api/admin/history/snapshot")
 async def trigger_prerace_snapshot(x_cron_secret: Optional[str] = Header(None)):
     """Manually trigger the pre-race snapshot job for today."""
