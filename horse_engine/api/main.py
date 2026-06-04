@@ -5169,6 +5169,94 @@ async def patch_history_nulls(x_cron_secret: Optional[str] = Header(None)):
     return {"status": "ok", "patched": patched}
 
 
+@app.post("/api/admin/backfill-odds-from-sp")
+async def backfill_odds_from_sp(x_cron_secret: Optional[str] = Header(None)):
+    """
+    Backfill best_available_odds from starting_price for RunnerPredictionRow rows
+    where best_available_odds is NULL. Also patches RunnerPredictionHistoryRow.
+    Recomputes overlay and value_rating from SP. Safe to re-run — skips rows
+    that already have best_available_odds set.
+    """
+    from sqlalchemy import update as sa_update
+    _check_admin(x_cron_secret)
+
+    updated_live = 0
+    updated_hist = 0
+
+    # ── 1. RunnerPredictionRow (mutable table) ────────────────────────────────
+    async with get_session() as session:
+        null_rows = (await session.execute(
+            select(RunnerPredictionRow)
+            .where(RunnerPredictionRow.best_available_odds.is_(None))
+            .where(RunnerPredictionRow.race_id.isnot(None))
+        )).scalars().all()
+
+        if null_rows:
+            race_ids = list({r.race_id for r in null_rows})
+            hr_rows = (await session.execute(
+                select(HistoricalResultRow)
+                .where(HistoricalResultRow.race_id.in_(race_ids))
+                .where(HistoricalResultRow.starting_price.isnot(None))
+            )).scalars().all()
+            sp_map: dict[tuple[str, str], float] = {
+                (r.race_id, r.horse_name.lower()): r.starting_price
+                for r in hr_rows if r.starting_price and r.starting_price > 1.0
+            }
+
+            for row in null_rows:
+                sp = sp_map.get((row.race_id, row.horse_name.lower()))
+                if not sp:
+                    continue
+                db_row = await session.get(RunnerPredictionRow, row.id)
+                if not db_row:
+                    continue
+                db_row.best_available_odds = sp
+                market_implied = 1.0 / sp
+                db_row.overlay = round(db_row.win_probability - market_implied, 4)
+                db_row.value_rating = _value_rating(db_row.win_probability, sp, db_row.overlay)
+                updated_live += 1
+
+        await session.commit()
+
+    # ── 2. RunnerPredictionHistoryRow (immutable history) ─────────────────────
+    async with get_session() as session:
+        null_hist = (await session.execute(
+            select(RunnerPredictionHistoryRow)
+            .where(RunnerPredictionHistoryRow.best_available_odds.is_(None))
+            .where(RunnerPredictionHistoryRow.race_id.isnot(None))
+        )).scalars().all()
+
+        if null_hist:
+            race_ids = list({r.race_id for r in null_hist})
+            hr_rows = (await session.execute(
+                select(HistoricalResultRow)
+                .where(HistoricalResultRow.race_id.in_(race_ids))
+                .where(HistoricalResultRow.starting_price.isnot(None))
+            )).scalars().all()
+            sp_map_hist: dict[tuple[str, str], float] = {
+                (r.race_id, r.horse_name.lower()): r.starting_price
+                for r in hr_rows if r.starting_price and r.starting_price > 1.0
+            }
+
+            for row in null_hist:
+                sp = sp_map_hist.get((row.race_id, row.horse_name.lower()))
+                if not sp:
+                    continue
+                db_row = await session.get(RunnerPredictionHistoryRow, row.id)
+                if not db_row:
+                    continue
+                db_row.best_available_odds = sp
+                market_implied = 1.0 / sp
+                db_row.overlay = round(db_row.win_probability - market_implied, 4)
+                db_row.value_rating = _value_rating(db_row.win_probability, sp, db_row.overlay)
+                updated_hist += 1
+
+        await session.commit()
+
+    log.info("[backfill-odds] Patched %d live rows, %d history rows from SP", updated_live, updated_hist)
+    return {"status": "ok", "updated_live": updated_live, "updated_history": updated_hist}
+
+
 _validation_bt_state: dict = {"running": False, "status": "idle", "result": None}
 
 
