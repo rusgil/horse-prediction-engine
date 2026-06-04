@@ -78,7 +78,7 @@ DEFAULT_WEIGHTS_BASE = [
     0.3,   # jockey_wins_today_norm
     0.4,   # pedigree_distance_match
     0.3,   # pedigree_wet_score_norm
-    0.9,   # market_rank_norm
+    0.35,  # market_rank_norm
     0.5,   # odds_movement_norm
     0.3,   # speed_map_advantage
     0.2,   # gear_change_score
@@ -124,7 +124,7 @@ DEFAULT_PLACE_WEIGHTS_BASE = [
     0.25,  # jockey_wins_today_norm
     0.5,   # pedigree_distance_match — stamina for running on
     0.35,  # pedigree_wet_score_norm
-    0.7,   # market_rank_norm
+    0.3,   # market_rank_norm
     0.4,   # odds_movement_norm
     0.4,   # speed_map_advantage
     0.15,  # gear_change_score
@@ -162,7 +162,7 @@ DEFAULT_EXOTIC_WEIGHTS_BASE = [
     0.20,  # jockey_wins_today_norm
     0.55,  # pedigree_distance_match
     0.40,  # pedigree_wet_score_norm
-    0.65,  # market_rank_norm
+    0.3,   # market_rank_norm
     0.35,  # odds_movement_norm
     0.45,  # speed_map_advantage
     0.15,  # gear_change_score
