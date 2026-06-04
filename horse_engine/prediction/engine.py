@@ -82,6 +82,12 @@ def enrich_runner(
     else:
         wr_career = form_enricher.career_win_rate(runner)
 
+    # Career place rate
+    if runner.career_starts > 0:
+        career_place_rate = runner.career_places / runner.career_starts
+    else:
+        career_place_rate = 0.0
+
     # Distance win rate — require >= 3 starts to avoid 50%/100% small-sample noise
     if runner.distance_starts >= 3:
         wr_distance = runner.distance_wins / runner.distance_starts
@@ -272,6 +278,7 @@ def enrich_runner(
         win_rate_condition=wr_condition,
         first_up_win_rate=wr_first_up,
         second_up_win_rate=wr_second_up,
+        career_place_rate=career_place_rate,
     )
 
 

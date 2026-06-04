@@ -718,6 +718,18 @@ async def _inject_accumulated_stats(race, session) -> None:
             runner.distance_starts = hs["dist_starts"]
             runner.distance_wins = hs["dist_wins"]
 
+            # Condition (wet/dry) stats from DB — use career wet record, not just last 10
+            condition_cat = (race.track_condition or "").lower()
+            is_wet_day = any(w in condition_cat for w in ("soft", "heavy"))
+            wet_s = hs.get("wet_starts") or 0
+            wet_w = hs.get("wet_wins") or 0
+            if is_wet_day:
+                runner.condition_starts = wet_s
+                runner.condition_wins = wet_w
+            else:
+                runner.condition_starts = max(0, hs["starts"] - wet_s)
+                runner.condition_wins = max(0, hs["wins"] - wet_w)
+
         # Jockey stats from DB
         js = jockey_stats_map.get(runner.jockey or "")
         if js and runner.jockey_stats:
@@ -803,25 +815,34 @@ async def _inject_accumulated_stats(race, session) -> None:
 
             runner.last_10_starts = starts[:10]
 
-            # Detect first-up runs (gap >= 60 days from previous) and populate stats
+            # Detect first-up and second-up runs and populate stats
             sorted_asc = sorted(starts, key=lambda s: s.date)
             fu_starts = fu_wins = 0
+            su_starts = su_wins = 0
             td_starts = td_wins = 0
+            prev_was_fu = False
             for i, s in enumerate(sorted_asc):
-                # First-up: first ever run OR gap >= 60 days from previous
                 if i == 0:
                     is_fu = True
+                    is_su = False
                 else:
                     try:
                         prev_date = date.fromisoformat(sorted_asc[i - 1].date)
                         curr_date = date.fromisoformat(s.date)
-                        is_fu = (curr_date - prev_date).days >= 60
+                        gap = (curr_date - prev_date).days
+                        is_fu = gap >= 60
+                        is_su = prev_was_fu and gap < 60
                     except Exception:
-                        is_fu = False
+                        is_fu = is_su = False
                 if is_fu:
                     fu_starts += 1
                     if s.position == 1:
                         fu_wins += 1
+                if is_su:
+                    su_starts += 1
+                    if s.position == 1:
+                        su_wins += 1
+                prev_was_fu = is_fu
 
                 # Track+distance: within 200m at same venue
                 if (venue and s.track.lower() == venue and
@@ -833,9 +854,65 @@ async def _inject_accumulated_stats(race, session) -> None:
             if fu_starts > 0:
                 runner.first_up_starts = fu_starts
                 runner.first_up_wins = fu_wins
+            if su_starts > 0:
+                runner.second_up_starts = su_starts
+                runner.second_up_wins = su_wins
             if td_starts > 0:
                 runner.track_distance_starts = td_starts
                 runner.track_distance_wins = td_wins
+
+        # ── Trainer first-up / second-up stats from form history ─────────────────
+        # Compute per-trainer first-up and second-up stats from the full form history.
+        # This covers what Punters enrichment provides, using DB data for backfill rows.
+        if form_by_horse:
+            trainer_fu_map: dict[str, list[tuple[bool, bool, bool]]] = {}  # trainer → [(won, is_fu, is_su), ...]
+
+            for runner in race.runners:
+                if not runner.trainer or not runner.trainer_stats:
+                    continue
+                hname = (runner.horse_name or "").lower()
+                rows = form_by_horse.get(hname, [])
+                if not rows:
+                    continue
+
+                sorted_form = sorted(rows, key=lambda r: r[1])  # sort by race_id asc
+                prev_was_fu_t = False
+                for j, row in enumerate(sorted_form):
+                    won = row[2] == 1  # position == 1
+                    if j == 0:
+                        is_fu_t = True
+                        is_su_t = False
+                    else:
+                        try:
+                            prev_d = date.fromisoformat(sorted_form[j-1][1][:10])
+                            curr_d = date.fromisoformat(row[1][:10])
+                            gap_t = (curr_d - prev_d).days
+                            is_fu_t = gap_t >= 60
+                            is_su_t = prev_was_fu_t and gap_t < 60
+                        except Exception:
+                            is_fu_t = is_su_t = False
+
+                    if is_fu_t or is_su_t:
+                        trainer_fu_map.setdefault(runner.trainer, []).append((won, is_fu_t, is_su_t))
+                    prev_was_fu_t = is_fu_t
+
+            # Inject trainer first-up/second-up rates
+            for runner in race.runners:
+                if not runner.trainer or not runner.trainer_stats:
+                    continue
+                entries = trainer_fu_map.get(runner.trainer, [])
+                fu_entries = [(won, True) for won, is_fu_t, _ in entries if is_fu_t]
+                su_entries = [(won, True) for won, _, is_su_t in entries if is_su_t]
+
+                fu_n = len(fu_entries)
+                fu_w = sum(1 for won, _ in fu_entries if won)
+                if fu_n >= _MIN_JOCKEY_TRAINER_SAMPLES:
+                    runner.trainer_stats.win_rate_first_up = round(100.0 * fu_w / fu_n, 1)
+
+                su_n = len(su_entries)
+                su_w = sum(1 for won, _ in su_entries if won)
+                if su_n >= _MIN_JOCKEY_TRAINER_SAMPLES:
+                    runner.trainer_stats.win_rate_second_up = round(100.0 * su_w / su_n, 1)
 
 
 async def _seed_results_for_date(race_date: str) -> int:

@@ -101,3 +101,4 @@ class EnrichedRunner(BaseModel):
     win_rate_condition: float = 0.0       # win % in today's going (good/soft/heavy/firm)
     first_up_win_rate: float = 0.0        # win % when first-up from spell
     second_up_win_rate: float = 0.0       # win % when second-up
+    career_place_rate: float = 0.0        # career places / career starts
