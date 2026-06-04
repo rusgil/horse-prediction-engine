@@ -3225,6 +3225,7 @@ async def enrich_meeting_endpoint(race_date: str, venue_code: str):
 
 @app.post("/api/retrain")
 async def retrain_model(
+    background_tasks: BackgroundTasks,
     days: int = Query(0, ge=0, le=365),
     x_cron_secret: Optional[str] = Header(None),
 ):
@@ -3294,7 +3295,7 @@ async def retrain_model(
             await save_model_weights(sess, s["weights"])
         log.info("[retrain] complete — %d races, top1=%.3f", s.get("races", 0), s.get("top1_hit_rate", 0))
 
-    asyncio.create_task(_do_win_retrain())
+    background_tasks.add_task(_do_win_retrain)
     return {"status": "retrain_started", "training_days": days or "all"}
 
 
@@ -3322,6 +3323,7 @@ async def cancel_meeting(
 
 @app.post("/api/admin/retrain-place")
 async def retrain_place_model(
+    background_tasks: BackgroundTasks,
     days: int = Query(0, ge=0, le=365),
     x_cron_secret: Optional[str] = Header(None),
 ):
@@ -3382,12 +3384,13 @@ async def retrain_place_model(
             await save_place_model_weights(sess, s["weights"])
         log.info("[place-retrain] complete — %d examples, accuracy=%.3f", len(training_data), s.get("accuracy", 0))
 
-    asyncio.create_task(_do_place_retrain())
+    background_tasks.add_task(_do_place_retrain)
     return {"status": "place_retrain_started", "cutoff": cutoff or "all"}
 
 
 @app.post("/api/admin/retrain-exotic")
 async def retrain_exotic_model(
+    background_tasks: BackgroundTasks,
     days: int = Query(0, ge=0, le=365),
     x_cron_secret: Optional[str] = Header(None),
 ):
@@ -3454,7 +3457,7 @@ async def retrain_exotic_model(
         log.info("[exotic-retrain] complete — %d races, tri_box=%.3f ff_box=%.3f",
                  len(race_groups), s.get("tri_box_hit_rate", 0), s.get("ff_box_hit_rate", 0))
 
-    asyncio.create_task(_do_exotic_retrain())
+    background_tasks.add_task(_do_exotic_retrain)
     return {"status": "exotic_retrain_started", "cutoff": cutoff or "all"}
 
 
