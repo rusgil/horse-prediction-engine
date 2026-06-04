@@ -634,6 +634,105 @@ async def _inject_accumulated_stats(race, session) -> None:
             runner.trainer_stats.win_rate_wet = _rate(ts["wet_wins"], ts["wet_starts"])
             runner.trainer_stats.wins_season = ts["wins"]
 
+    # ── Form history (last_10_starts) from historical_results ─────────────────
+    # Only inject if runner has no existing form (RA doesn't provide it)
+    if horses and all(len(r.last_10_starts) == 0 for r in race.runners):
+        from horse_engine.models.race import FormStart
+        today_prefix = race.date or date.today().isoformat()
+        placeholders = ", ".join(f":h{i}" for i in range(len(horses)))
+        params = {f"h{i}": h.lower() for i, h in enumerate(horses)}
+        params["today_prefix"] = today_prefix
+
+        form_rows = (await session.execute(sa_text(f"""
+            SELECT hname, race_id, position, beaten_margin, venue, distance,
+                   track_condition, barrier, weight, prize_money, race_class,
+                   field_size, starting_price
+            FROM (
+                SELECT LOWER(horse_name) AS hname, race_id, position, beaten_margin,
+                       venue, distance, track_condition, barrier, weight, prize_money,
+                       race_class, field_size, starting_price,
+                       ROW_NUMBER() OVER (
+                           PARTITION BY LOWER(horse_name) ORDER BY race_id DESC
+                       ) AS rn
+                FROM historical_results
+                WHERE LOWER(horse_name) IN ({placeholders})
+                  AND race_id < :today_prefix
+            ) sub
+            WHERE rn <= 20
+            ORDER BY hname, race_id DESC
+        """), params)).fetchall()
+
+        # Group into per-horse form history
+        form_by_horse: dict[str, list] = {}
+        for row in form_rows:
+            form_by_horse.setdefault(row[0], []).append(row)
+
+        for runner in race.runners:
+            hname = (runner.horse_name or "").lower()
+            rows = form_by_horse.get(hname, [])
+            if not rows:
+                continue
+
+            starts: list[FormStart] = []
+            for row in rows:
+                try:
+                    starts.append(FormStart(
+                        date=row[1][:10],                     # race_id[:10] = YYYY-MM-DD
+                        track=row[4] or "",                   # venue
+                        distance=int(row[5] or 0),
+                        track_condition=row[6] or "Good",
+                        barrier=int(row[7] or 0),
+                        weight=float(row[8] or 0),
+                        jockey="",
+                        position=int(row[2] or 0),
+                        finishers=int(row[11] or max(int(row[2] or 1) + 3, 8)),
+                        beaten_margin=float(row[3] or 0),
+                        race_class=row[10] or "",
+                        prize_money=int(row[9] or 0),
+                        starting_price=float(row[12]) if row[12] else None,
+                    ))
+                except Exception:
+                    continue
+
+            if not starts:
+                continue
+
+            runner.last_10_starts = starts[:10]
+
+            # Detect first-up runs (gap >= 60 days from previous) and populate stats
+            sorted_asc = sorted(starts, key=lambda s: s.date)
+            fu_starts = fu_wins = 0
+            td_starts = td_wins = 0
+            for i, s in enumerate(sorted_asc):
+                # First-up: first ever run OR gap >= 60 days from previous
+                if i == 0:
+                    is_fu = True
+                else:
+                    try:
+                        prev_date = date.fromisoformat(sorted_asc[i - 1].date)
+                        curr_date = date.fromisoformat(s.date)
+                        is_fu = (curr_date - prev_date).days >= 60
+                    except Exception:
+                        is_fu = False
+                if is_fu:
+                    fu_starts += 1
+                    if s.position == 1:
+                        fu_wins += 1
+
+                # Track+distance: within 200m at same venue
+                if (venue and s.track.lower() == venue and
+                        distance and abs(s.distance - distance) <= 200):
+                    td_starts += 1
+                    if s.position == 1:
+                        td_wins += 1
+
+            if fu_starts > 0:
+                runner.first_up_starts = fu_starts
+                runner.first_up_wins = fu_wins
+            if td_starts > 0:
+                runner.track_distance_starts = td_starts
+                runner.track_distance_wins = td_wins
+
 
 async def _seed_results_for_date(race_date: str) -> int:
     """Fetch settled results for race_date and store as training data. Returns count seeded."""
