@@ -3550,6 +3550,66 @@ async def probe_tab(race_id: str = "", date: str = "", x_cron_secret: Optional[s
     }
 
 
+@app.get("/api/admin/data-coverage")
+async def data_coverage(x_cron_secret: Optional[str] = Header(None)):
+    """Check how much jockey/trainer/result data we have for building self-accumulated stats."""
+    _check_admin(x_cron_secret)
+    from sqlalchemy import func, text as sa_text
+    async with get_session() as session:
+        hist_count = (await session.execute(
+            select(func.count()).select_from(HistoricalResultRow)
+        )).scalar()
+        hist_winners = (await session.execute(
+            select(func.count()).select_from(HistoricalResultRow)
+            .where(HistoricalResultRow.winner == True)
+        )).scalar()
+        hist_date_range = (await session.execute(
+            select(func.min(HistoricalResultRow.race_id), func.max(HistoricalResultRow.race_id))
+        )).one()
+
+        snap_count = (await session.execute(
+            select(func.count()).select_from(RunnerPredictionHistoryRow)
+        )).scalar()
+        snap_with_jockey = (await session.execute(
+            select(func.count()).select_from(RunnerPredictionHistoryRow)
+            .where(RunnerPredictionHistoryRow.jockey.isnot(None))
+            .where(RunnerPredictionHistoryRow.jockey != "")
+        )).scalar()
+        distinct_jockeys = (await session.execute(
+            select(func.count(func.distinct(RunnerPredictionHistoryRow.jockey)))
+            .select_from(RunnerPredictionHistoryRow)
+            .where(RunnerPredictionHistoryRow.jockey.isnot(None))
+            .where(RunnerPredictionHistoryRow.jockey != "")
+        )).scalar()
+        distinct_trainers = (await session.execute(
+            select(func.count(func.distinct(RunnerPredictionHistoryRow.trainer)))
+            .select_from(RunnerPredictionHistoryRow)
+            .where(RunnerPredictionHistoryRow.trainer.isnot(None))
+            .where(RunnerPredictionHistoryRow.trainer != "")
+        )).scalar()
+
+        # Count joinable rows: history snapshot + result both exist for same race+horse
+        joinable = (await session.execute(sa_text("""
+            SELECT COUNT(*) FROM runner_prediction_history h
+            JOIN historical_results r ON h.race_id = r.race_id AND LOWER(h.horse_name) = LOWER(r.horse_name)
+            WHERE h.jockey IS NOT NULL AND h.jockey != ''
+        """))).scalar()
+
+        snap_date_range = (await session.execute(
+            select(func.min(RunnerPredictionHistoryRow.race_id), func.max(RunnerPredictionHistoryRow.race_id))
+        )).one()
+
+    return {
+        "historical_results": {"total_runners": hist_count, "winners": hist_winners,
+                               "date_range": [hist_date_range[0], hist_date_range[1]]},
+        "prediction_history": {"total_snapshots": snap_count, "with_jockey": snap_with_jockey,
+                               "distinct_jockeys": distinct_jockeys, "distinct_trainers": distinct_trainers,
+                               "date_range": [snap_date_range[0], snap_date_range[1]]},
+        "joinable_rows": joinable,
+        "note": "joinable_rows = rows where we have both jockey/trainer AND race result — usable for win rate computation",
+    }
+
+
 # ── Admin: purge trial rows ───────────────────────────────────────────────────
 
 @app.delete("/api/admin/purge-trials")
