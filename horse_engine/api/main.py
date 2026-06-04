@@ -6810,6 +6810,7 @@ async def premium_performance_monthly():
             select(RunnerPredictionHistoryRow)
             .where(RunnerPredictionHistoryRow.race_id.in_(race_ids))
             .where(RunnerPredictionHistoryRow.model_rank == 1)
+            .where(RunnerPredictionHistoryRow.source == "live")
         )
         top_picks = {p.race_id: p for p in pred_result.scalars().all()}
 
@@ -6873,6 +6874,7 @@ async def premium_performance_daily():
             select(RunnerPredictionHistoryRow)
             .where(RunnerPredictionHistoryRow.race_id.in_(race_ids))
             .where(RunnerPredictionHistoryRow.model_rank == 1)
+            .where(RunnerPredictionHistoryRow.source == "live")
         )
         top_picks = {p.race_id: p for p in pred_result.scalars().all()}
 
