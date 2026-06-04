@@ -3230,85 +3230,72 @@ async def retrain_model(
 ):
     """
     Retrain win model using race-grouped softmax (conditional logit).
-    Uses the immutable history table to guarantee pre-race features only.
+    Returns immediately; all data loading and training runs in a background task.
     days=0 (default) uses all available data.
     """
     _check_admin(x_cron_secret)
     cutoff = (date.today() - timedelta(days=days)).isoformat() if days > 0 else None
 
-    async with get_session() as session:
-        # Fetch immutable pre-race snapshots (all runners, not just rank=1)
-        hist_query = select(RunnerPredictionHistoryRow).where(
-            RunnerPredictionHistoryRow.enriched_json.isnot(None)
-        )
-        if cutoff:
-            hist_query = hist_query.where(RunnerPredictionHistoryRow.race_id >= cutoff)
-        hist_result = await session.execute(hist_query)
-        hist_rows = hist_result.scalars().all()
+    async def _do_win_retrain():
+        from collections import defaultdict as _defaultdict
+        async with get_session() as session:
+            hist_query = select(RunnerPredictionHistoryRow).where(
+                RunnerPredictionHistoryRow.enriched_json.isnot(None)
+            )
+            if cutoff:
+                hist_query = hist_query.where(RunnerPredictionHistoryRow.race_id >= cutoff)
+            hist_rows = (await session.execute(hist_query)).scalars().all()
 
-        # Fetch settled results
-        hr_query = select(HistoricalResultRow)
-        if cutoff:
-            hr_query = hr_query.where(HistoricalResultRow.race_id >= cutoff)
-        hr_result = await session.execute(hr_query)
-        hr_rows = hr_result.scalars().all()
+            hr_query = select(HistoricalResultRow)
+            if cutoff:
+                hr_query = hr_query.where(HistoricalResultRow.race_id >= cutoff)
+            hr_rows = (await session.execute(hr_query)).scalars().all()
 
-    # Winner lookup: normalized name → race
-    winners: dict[str, str] = {
-        r.race_id: _normalize_horse(r.horse_name) for r in hr_rows if r.winner
-    }
+        winners: dict[str, str] = {
+            r.race_id: _normalize_horse(r.horse_name) for r in hr_rows if r.winner
+        }
+        by_race: dict[str, list] = _defaultdict(list)
+        for row in hist_rows:
+            if not row.cancelled:
+                by_race[row.race_id].append(row)
 
-    # Group history snapshots by race
-    from collections import defaultdict as _defaultdict
-    by_race: dict[str, list] = _defaultdict(list)
-    for row in hist_rows:
-        if not (row.cancelled):
-            by_race[row.race_id].append(row)
-
-    _today = date.today()
-    race_groups: list[list[tuple]] = []
-    race_weights: list[float] = []
-
-    for race_id, runners in by_race.items():
-        winner_name = winners.get(race_id)
-        if not winner_name:
-            continue  # no settled result for this race
-
-        race: list[tuple] = []
-        for row in runners:
+        _today_r = date.today()
+        race_groups: list[list[tuple]] = []
+        race_weights: list[float] = []
+        for race_id, runners in by_race.items():
+            winner_name = winners.get(race_id)
+            if not winner_name:
+                continue
+            race: list[tuple] = []
+            for row in runners:
+                try:
+                    er = EnrichedRunner(**json.loads(row.enriched_json))
+                    fv = build_feature_vector(er)
+                    label = 1 if _normalize_horse(row.horse_name) == winner_name else 0
+                    race.append((fv, label))
+                except Exception as e:
+                    log.debug("Skipping history row %s/%s: %s", race_id, row.horse_name, e)
+            if sum(l for _, l in race) != 1:
+                continue
+            race_groups.append(race)
             try:
-                er = EnrichedRunner(**json.loads(row.enriched_json))
-                fv = build_feature_vector(er)
-                label = 1 if _normalize_horse(row.horse_name) == winner_name else 0
-                race.append((fv, label))
-            except Exception as e:
-                log.debug("Skipping history row %s/%s: %s", race_id, row.horse_name, e)
+                days_ago = (_today_r - date.fromisoformat(race_id[:10])).days
+            except Exception:
+                days_ago = 30
+            race_weights.append(math.exp(-days_ago / 30.0))
 
-        # Only include races where we found the winner in our predictions
-        if sum(l for _, l in race) != 1:
-            continue
-
-        race_groups.append(race)
-        try:
-            days_ago = (_today - date.fromisoformat(race_id[:10])).days
-        except Exception:
-            days_ago = 30
-        race_weights.append(math.exp(-days_ago / 30.0))
-
-    if len(race_groups) < 50:
-        raise HTTPException(400, f"Need at least 50 settled races to retrain (have {len(race_groups)} with matched winner)")
-
-    log.info("[retrain] %d races assembled for race-grouped training", len(race_groups))
-
-    async def _do_retrain():
+        if len(race_groups) < 50:
+            log.error("[retrain] Need at least 50 races, have %d", len(race_groups))
+            return
+        log.info("[retrain] %d races assembled for race-grouped training", len(race_groups))
         m = HorseModel()
         s = await asyncio.to_thread(m.train_race_grouped, race_groups, sample_weights=race_weights)
         async with get_session() as sess:
             await save_model_weights(sess, s["weights"])
         log.info("[retrain] complete — %d races, top1=%.3f", s.get("races", 0), s.get("top1_hit_rate", 0))
 
-    asyncio.create_task(_do_retrain())
-    return {"status": "retrain_started", "training_days": days or "all", "training_races": len(race_groups)}
+    asyncio.create_task(_do_win_retrain())
+    return {"status": "retrain_started", "training_days": days or "all"}
 
 
 @app.post("/api/admin/cancel-meeting")
