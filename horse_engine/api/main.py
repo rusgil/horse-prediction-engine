@@ -450,6 +450,8 @@ async def _scheduled_pre_race_enrich():
                     if not full_event:
                         continue
                     race = await client.parse_race(full_event, today, venue_name, state)
+                    async with get_session() as session:
+                        await _inject_accumulated_stats(race, session)
                     predictions, _ = await enrich_and_predict_race(race, model, place_model=place_model)
                     async with get_session() as session:
                         await save_race_predictions(
@@ -465,6 +467,172 @@ async def _scheduled_pre_race_enrich():
             log.info("[pre-race] Re-enriched %d races", enriched_count)
     except Exception as e:
         log.exception("[pre-race] Pre-race enrich failed: %s", e)
+
+
+_MIN_JOCKEY_TRAINER_SAMPLES = 10  # require at least this many starts before using computed rate
+_MIN_HORSE_SAMPLES = 5
+
+
+async def _inject_accumulated_stats(race, session) -> None:
+    """
+    Inject real jockey/trainer/career win rates from historical_results into Race runners.
+    Runs after parse_race() so it overrides the flat 10.0 defaults from RA/Betfair.
+    Only updates fields where we have >= MIN_SAMPLES observations.
+    """
+    from sqlalchemy import text as sa_text
+
+    venue = (race.venue or "").lower()
+    distance = race.distance or 0
+
+    jockeys = list({r.jockey for r in race.runners if r.jockey})
+    trainers = list({r.trainer for r in race.runners if r.trainer})
+    horses = list({r.horse_name for r in race.runners if r.horse_name})
+
+    if not jockeys and not trainers and not horses:
+        return
+
+    # ── Jockey stats ─────────────────────────────────────────────────────
+    jockey_stats_map: dict[str, dict] = {}
+    if jockeys:
+        placeholders = ", ".join(f":j{i}" for i in range(len(jockeys)))
+        params = {f"j{i}": j for i, j in enumerate(jockeys)}
+        params["venue"] = venue
+        params["dist_lo"] = distance - 200
+        params["dist_hi"] = distance + 200
+        rows = (await session.execute(sa_text(f"""
+            SELECT
+                jockey,
+                COUNT(*) AS starts,
+                SUM(CASE WHEN winner THEN 1 ELSE 0 END) AS wins,
+                SUM(CASE WHEN LOWER(venue) = :venue THEN 1 ELSE 0 END) AS track_starts,
+                SUM(CASE WHEN LOWER(venue) = :venue AND winner THEN 1 ELSE 0 END) AS track_wins,
+                SUM(CASE WHEN distance BETWEEN :dist_lo AND :dist_hi THEN 1 ELSE 0 END) AS dist_starts,
+                SUM(CASE WHEN distance BETWEEN :dist_lo AND :dist_hi AND winner THEN 1 ELSE 0 END) AS dist_wins,
+                SUM(CASE WHEN barrier <= 5 THEN 1 ELSE 0 END) AS bl_starts,
+                SUM(CASE WHEN barrier <= 5 AND winner THEN 1 ELSE 0 END) AS bl_wins,
+                SUM(CASE WHEN barrier BETWEEN 6 AND 10 THEN 1 ELSE 0 END) AS bm_starts,
+                SUM(CASE WHEN barrier BETWEEN 6 AND 10 AND winner THEN 1 ELSE 0 END) AS bm_wins,
+                SUM(CASE WHEN barrier > 10 THEN 1 ELSE 0 END) AS bw_starts,
+                SUM(CASE WHEN barrier > 10 AND winner THEN 1 ELSE 0 END) AS bw_wins,
+                SUM(wins_season_placeholder) AS wins_season
+            FROM (
+                SELECT jockey, winner, venue, distance, barrier, 0 AS wins_season_placeholder
+                FROM historical_results
+                WHERE jockey IN ({placeholders}) AND jockey IS NOT NULL
+            ) sub
+            GROUP BY jockey
+        """), params)).fetchall()
+        for row in rows:
+            jockey_stats_map[row[0]] = {
+                "starts": row[1], "wins": row[2],
+                "track_starts": row[3], "track_wins": row[4],
+                "dist_starts": row[5], "dist_wins": row[6],
+                "bl_starts": row[7], "bl_wins": row[8],
+                "bm_starts": row[9], "bm_wins": row[10],
+                "bw_starts": row[11], "bw_wins": row[12],
+            }
+
+    # ── Trainer stats ─────────────────────────────────────────────────────
+    trainer_stats_map: dict[str, dict] = {}
+    if trainers:
+        placeholders = ", ".join(f":t{i}" for i in range(len(trainers)))
+        params = {f"t{i}": t for i, t in enumerate(trainers)}
+        params["venue"] = venue
+        params["dist_lo"] = distance - 200
+        params["dist_hi"] = distance + 200
+        rows = (await session.execute(sa_text(f"""
+            SELECT
+                trainer,
+                COUNT(*) AS starts,
+                SUM(CASE WHEN winner THEN 1 ELSE 0 END) AS wins,
+                SUM(CASE WHEN LOWER(venue) = :venue THEN 1 ELSE 0 END) AS track_starts,
+                SUM(CASE WHEN LOWER(venue) = :venue AND winner THEN 1 ELSE 0 END) AS track_wins,
+                SUM(CASE WHEN distance BETWEEN :dist_lo AND :dist_hi THEN 1 ELSE 0 END) AS dist_starts,
+                SUM(CASE WHEN distance BETWEEN :dist_lo AND :dist_hi AND winner THEN 1 ELSE 0 END) AS dist_wins,
+                SUM(CASE WHEN LOWER(track_condition) LIKE 'soft%' OR LOWER(track_condition) LIKE 'heavy%' THEN 1 ELSE 0 END) AS wet_starts,
+                SUM(CASE WHEN (LOWER(track_condition) LIKE 'soft%' OR LOWER(track_condition) LIKE 'heavy%') AND winner THEN 1 ELSE 0 END) AS wet_wins
+            FROM historical_results
+            WHERE trainer IN ({placeholders}) AND trainer IS NOT NULL
+            GROUP BY trainer
+        """), params)).fetchall()
+        for row in rows:
+            trainer_stats_map[row[0]] = {
+                "starts": row[1], "wins": row[2],
+                "track_starts": row[3], "track_wins": row[4],
+                "dist_starts": row[5], "dist_wins": row[6],
+                "wet_starts": row[7], "wet_wins": row[8],
+            }
+
+    # ── Horse career stats ────────────────────────────────────────────────
+    horse_stats_map: dict[str, dict] = {}
+    if horses:
+        placeholders = ", ".join(f":h{i}" for i in range(len(horses)))
+        params = {f"h{i}": h.lower() for i, h in enumerate(horses)}
+        params["venue"] = venue
+        params["dist_lo"] = distance - 200
+        params["dist_hi"] = distance + 200
+        rows = (await session.execute(sa_text(f"""
+            SELECT
+                LOWER(horse_name) AS hname,
+                COUNT(*) AS starts,
+                SUM(CASE WHEN winner THEN 1 ELSE 0 END) AS wins,
+                SUM(CASE WHEN placed THEN 1 ELSE 0 END) AS places,
+                SUM(CASE WHEN LOWER(venue) = :venue THEN 1 ELSE 0 END) AS track_starts,
+                SUM(CASE WHEN LOWER(venue) = :venue AND winner THEN 1 ELSE 0 END) AS track_wins,
+                SUM(CASE WHEN distance BETWEEN :dist_lo AND :dist_hi THEN 1 ELSE 0 END) AS dist_starts,
+                SUM(CASE WHEN distance BETWEEN :dist_lo AND :dist_hi AND winner THEN 1 ELSE 0 END) AS dist_wins,
+                SUM(CASE WHEN LOWER(track_condition) LIKE 'soft%' OR LOWER(track_condition) LIKE 'heavy%' THEN 1 ELSE 0 END) AS wet_starts,
+                SUM(CASE WHEN (LOWER(track_condition) LIKE 'soft%' OR LOWER(track_condition) LIKE 'heavy%') AND winner THEN 1 ELSE 0 END) AS wet_wins
+            FROM historical_results
+            WHERE LOWER(horse_name) IN ({placeholders})
+            GROUP BY LOWER(horse_name)
+        """), params)).fetchall()
+        for row in rows:
+            horse_stats_map[row[0]] = {
+                "starts": row[1], "wins": row[2], "places": row[3],
+                "track_starts": row[4], "track_wins": row[5],
+                "dist_starts": row[6], "dist_wins": row[7],
+                "wet_starts": row[8], "wet_wins": row[9],
+            }
+
+    def _rate(wins, starts, default=10.0):
+        return round(100.0 * wins / starts, 1) if starts >= _MIN_JOCKEY_TRAINER_SAMPLES else default
+
+    def _horse_rate(wins, starts, default=0):
+        return wins if starts >= _MIN_HORSE_SAMPLES else default
+
+    # ── Inject into runners ───────────────────────────────────────────────
+    for runner in race.runners:
+        # Career stats from DB
+        hs = horse_stats_map.get((runner.horse_name or "").lower())
+        if hs and hs["starts"] >= _MIN_HORSE_SAMPLES:
+            runner.career_starts = hs["starts"]
+            runner.career_wins = hs["wins"]
+            runner.career_places = hs["places"]
+            runner.track_starts = hs["track_starts"]
+            runner.track_wins = hs["track_wins"]
+            runner.distance_starts = hs["dist_starts"]
+            runner.distance_wins = hs["dist_wins"]
+
+        # Jockey stats from DB
+        js = jockey_stats_map.get(runner.jockey or "")
+        if js and runner.jockey_stats:
+            runner.jockey_stats.win_rate_overall = _rate(js["wins"], js["starts"])
+            runner.jockey_stats.win_rate_track = _rate(js["track_wins"], js["track_starts"])
+            runner.jockey_stats.win_rate_distance = _rate(js["dist_wins"], js["dist_starts"])
+            runner.jockey_stats.win_rate_barrier_low = _rate(js["bl_wins"], js["bl_starts"])
+            runner.jockey_stats.win_rate_barrier_mid = _rate(js["bm_wins"], js["bm_starts"])
+            runner.jockey_stats.win_rate_barrier_wide = _rate(js["bw_wins"], js["bw_starts"])
+            runner.jockey_stats.wins_season = js["wins"]
+
+        # Trainer stats from DB
+        ts = trainer_stats_map.get(runner.trainer or "")
+        if ts and runner.trainer_stats:
+            runner.trainer_stats.win_rate_overall = _rate(ts["wins"], ts["starts"])
+            runner.trainer_stats.win_rate_track = _rate(ts["track_wins"], ts["track_starts"])
+            runner.trainer_stats.win_rate_distance = _rate(ts["dist_wins"], ts["dist_starts"])
+            runner.trainer_stats.win_rate_wet = _rate(ts["wet_wins"], ts["wet_starts"])
+            runner.trainer_stats.wins_season = ts["wins"]
 
 
 async def _seed_results_for_date(race_date: str) -> int:
@@ -517,7 +685,26 @@ async def _seed_results_for_date(race_date: str) -> int:
             full_race = await client.get_race(slug, race_num)
             if not full_race:
                 continue
-            for r in full_race.get("runners", []):
+
+            # Build selection lookup: horse_name → selection dict (has jockey, trainer, barrier, etc.)
+            sel_by_name = {}
+            for sel in full_race.get("selections") or []:
+                sel_name = ((sel.get("competitor") or {}).get("name") or "").lower()
+                if sel_name:
+                    sel_by_name[sel_name] = sel
+
+            race_meeting = full_race.get("_meeting") or {}
+            race_venue = race_meeting.get("venue") or venue_code
+            race_state = race_meeting.get("state") or meeting.get("state") or ""
+            race_distance = int(raw_race.get("distance") or 0) or None
+            race_condition = (raw_race.get("trackCondition") or {}).get("overall") or ""
+            if race_condition and (raw_race.get("trackCondition") or {}).get("rating"):
+                race_condition = f"{race_condition} {(raw_race.get('trackCondition') or {}).get('rating')}".strip()
+            race_class = raw_race.get("eventClass") or ""
+            runners_list = full_race.get("runners") or []
+            race_field_size = len([r for r in runners_list if not r.get("scratched")])
+
+            for r in runners_list:
                 if r.get("scratched"):
                     continue
                 position = r.get("finishingPosition")
@@ -530,6 +717,18 @@ async def _seed_results_for_date(race_date: str) -> int:
                     if p.get("priceType") in ("StartingPrice", "SP", "Win"):
                         sp = float(p.get("winPrice", 0) or 0) or None
                         break
+
+                sel = sel_by_name.get(horse.lower()) or {}
+                jockey = (sel.get("jockey") or {}).get("name") or ""
+                trainer = (sel.get("trainer") or {}).get("name") or ""
+                barrier = int(sel.get("barrierNumber") or 0) or None
+                tab_num = int(sel.get("competitorNumber") or 0) or None
+                weight = float(sel.get("weight") or 0) or None
+                comp = sel.get("competitor") or {}
+                age = int(comp.get("age") or 0) or None
+                sex = comp.get("sex") or ""
+                prize = int(full_race.get("prize_money") or 0) or None
+
                 async with get_session() as session:
                     existing = await session.execute(
                         select(HistoricalResultRow)
@@ -539,9 +738,33 @@ async def _seed_results_for_date(race_date: str) -> int:
                     )
                     existing_row = existing.scalars().first()
                     if existing_row:
-                        # Patch SP if it was missing (e.g. seeded from RA which has no SP)
+                        # Patch SP and any missing context fields
+                        updated = False
                         if existing_row.starting_price is None and sp:
                             existing_row.starting_price = sp
+                            updated = True
+                        if not existing_row.jockey and jockey:
+                            existing_row.jockey = jockey
+                            updated = True
+                        if not existing_row.trainer and trainer:
+                            existing_row.trainer = trainer
+                            updated = True
+                        if not existing_row.venue and race_venue:
+                            existing_row.venue = race_venue
+                            updated = True
+                        if not existing_row.distance and race_distance:
+                            existing_row.distance = race_distance
+                            updated = True
+                        if not existing_row.track_condition and race_condition:
+                            existing_row.track_condition = race_condition
+                            updated = True
+                        if existing_row.barrier is None and barrier:
+                            existing_row.barrier = barrier
+                            updated = True
+                        if not existing_row.state and race_state:
+                            existing_row.state = race_state
+                            updated = True
+                        if updated:
                             await session.commit()
                         races_with_results.add(race_id)
                         continue
@@ -561,6 +784,21 @@ async def _seed_results_for_date(race_date: str) -> int:
                         placed=int(position) <= 3,
                         starting_price=sp,
                         feature_vector_json=fv_row.enriched_json if fv_row else None,
+                        jockey=jockey or None,
+                        trainer=trainer or None,
+                        venue=race_venue or None,
+                        state=race_state or None,
+                        distance=race_distance,
+                        track_condition=race_condition or None,
+                        barrier=barrier,
+                        tab_number=tab_num,
+                        weight=weight,
+                        age=age,
+                        sex=sex or None,
+                        race_class=race_class or None,
+                        prize_money=prize,
+                        field_size=race_field_size or None,
+                        race_number=race_num,
                     ))
                     await session.commit()
                     seeded += 1
@@ -2627,6 +2865,8 @@ async def enrich_race(race_id: str, force: bool = Query(False)):
         state = venue_obj.get("state", "")
 
         race = await client.parse_race(raw_event, race_date, venue_name, state)
+        async with get_session() as session:
+            await _inject_accumulated_stats(race, session)
         venue_cal = await _load_venue_calibration()
         predictions, _ = await enrich_and_predict_race(race, model, venue_calibration=venue_cal)
 
@@ -2680,6 +2920,8 @@ async def enrich_meeting_endpoint(race_date: str, venue_code: str):
             if not full_event:
                 continue
             race = await client.parse_race(full_event, race_date, venue_name, state)
+            async with get_session() as session:
+                await _inject_accumulated_stats(race, session)
             predictions, _ = await enrich_and_predict_race(race, model)
             async with get_session() as session:
                 await save_race_predictions(
@@ -3610,6 +3852,84 @@ async def data_coverage(x_cron_secret: Optional[str] = Header(None)):
     }
 
 
+@app.post("/api/admin/backfill-context")
+async def backfill_context(x_cron_secret: Optional[str] = Header(None)):
+    """
+    Patch existing historical_results rows that have NULL jockey/trainer/venue/distance
+    by joining against runner_predictions and runner_prediction_history tables.
+    Pure DB operation — no API calls. Run once after deploying new columns.
+    """
+    _check_admin(x_cron_secret)
+    from sqlalchemy import text as sa_text
+
+    async with get_session() as session:
+        # Pass 1: patch from mutable runner_predictions (has venue, distance, track_condition etc.)
+        r1 = await session.execute(sa_text("""
+            UPDATE historical_results
+            SET
+                jockey          = COALESCE(historical_results.jockey,          rp.jockey),
+                trainer         = COALESCE(historical_results.trainer,         rp.trainer),
+                venue           = COALESCE(historical_results.venue,           rp.venue),
+                state           = COALESCE(historical_results.state,           rp.state),
+                distance        = COALESCE(historical_results.distance,        rp.distance),
+                track_condition = COALESCE(historical_results.track_condition, rp.track_condition),
+                barrier         = COALESCE(historical_results.barrier,         rp.barrier),
+                tab_number      = COALESCE(historical_results.tab_number,      rp.tab_number),
+                weight          = COALESCE(historical_results.weight,          rp.weight),
+                race_class      = COALESCE(historical_results.race_class,      rp.race_name),
+                prize_money     = COALESCE(historical_results.prize_money,     rp.prize_money),
+                field_size      = COALESCE(historical_results.field_size,      rp.field_size),
+                race_number     = COALESCE(historical_results.race_number,     rp.race_number)
+            FROM runner_predictions rp
+            WHERE historical_results.race_id = rp.race_id
+              AND LOWER(historical_results.horse_name) = LOWER(rp.horse_name)
+              AND (historical_results.jockey IS NULL OR historical_results.venue IS NULL)
+        """))
+        patched_from_pred = r1.rowcount
+
+        # Pass 2: patch from immutable prediction history (fills gaps where mutable was overwritten)
+        r2 = await session.execute(sa_text("""
+            UPDATE historical_results
+            SET
+                jockey          = COALESCE(historical_results.jockey,          rph.jockey),
+                trainer         = COALESCE(historical_results.trainer,         rph.trainer),
+                venue           = COALESCE(historical_results.venue,           rph.venue),
+                state           = COALESCE(historical_results.state,           rph.state),
+                distance        = COALESCE(historical_results.distance,        rph.distance),
+                track_condition = COALESCE(historical_results.track_condition, rph.track_condition),
+                barrier         = COALESCE(historical_results.barrier,         rph.barrier),
+                tab_number      = COALESCE(historical_results.tab_number,      rph.tab_number),
+                weight          = COALESCE(historical_results.weight,          rph.weight),
+                race_class      = COALESCE(historical_results.race_class,      rph.race_name),
+                prize_money     = COALESCE(historical_results.prize_money,     rph.prize_money),
+                field_size      = COALESCE(historical_results.field_size,      rph.field_size),
+                race_number     = COALESCE(historical_results.race_number,     rph.race_number)
+            FROM runner_prediction_history rph
+            WHERE historical_results.race_id = rph.race_id
+              AND LOWER(historical_results.horse_name) = LOWER(rph.horse_name)
+              AND (historical_results.jockey IS NULL OR historical_results.venue IS NULL)
+        """))
+        patched_from_history = r2.rowcount
+
+        await session.commit()
+
+        # Check remaining gaps
+        still_null = (await session.execute(sa_text(
+            "SELECT COUNT(*) FROM historical_results WHERE jockey IS NULL"
+        ))).scalar()
+        total = (await session.execute(sa_text(
+            "SELECT COUNT(*) FROM historical_results"
+        ))).scalar()
+
+    return {
+        "patched_from_runner_predictions": patched_from_pred,
+        "patched_from_prediction_history": patched_from_history,
+        "still_missing_jockey": still_null,
+        "total_rows": total,
+        "coverage_pct": round(100 * (total - still_null) / total, 1) if total else 0,
+    }
+
+
 # ── Admin: purge trial rows ───────────────────────────────────────────────────
 
 @app.delete("/api/admin/purge-trials")
@@ -4048,6 +4368,8 @@ async def _run_backfill(days: int, x_secret: Optional[str], force: bool = False)
                             race = await client.parse_race(full_race, race_date, venue_name, state)
                             if not race.runners:
                                 continue
+                            async with get_session() as session:
+                                await _inject_accumulated_stats(race, session)
                             predictions, _ = await enrich_and_predict_race(
                                 race, model
                             )
@@ -4057,6 +4379,22 @@ async def _run_backfill(days: int, x_secret: Optional[str], force: bool = False)
                                     [_prediction_to_db_dict(p, race_id, race.scheduled_time, race=race) for p in predictions],
                                 )
                             # Seed actual results from runner finishing positions
+                            # Build selection lookup for rich context
+                            bf_sel_by_name = {}
+                            for sel in full_race.get("selections") or []:
+                                sel_name = ((sel.get("competitor") or {}).get("name") or "").lower()
+                                if sel_name:
+                                    bf_sel_by_name[sel_name] = sel
+                            bf_meeting = full_race.get("_meeting") or {}
+                            bf_venue = bf_meeting.get("venue") or venue_code
+                            bf_state = bf_meeting.get("state") or ""
+                            raw_race_obj = next((rr for rr in raw_races if rr.get("eventNumber") == race_num), {})
+                            bf_dist = int(raw_race_obj.get("distance") or 0) or None
+                            bf_tc = (raw_race_obj.get("trackCondition") or {})
+                            bf_cond = f"{bf_tc.get('overall','')} {bf_tc.get('rating','')}".strip() or None
+                            bf_class = raw_race_obj.get("eventClass") or None
+                            bf_field = len([rr for rr in full_race.get("runners", []) if not rr.get("scratched")]) or None
+
                             for r in full_race.get("runners", []):
                                 if r.get("scratched"):
                                     continue
@@ -4070,6 +4408,15 @@ async def _run_backfill(days: int, x_secret: Optional[str], force: bool = False)
                                     if p.get("priceType") in ("StartingPrice", "SP"):
                                         sp = float(p.get("winPrice", 0) or 0) or None
                                         break
+                                sel = bf_sel_by_name.get(horse.lower()) or {}
+                                jockey = (sel.get("jockey") or {}).get("name") or None
+                                trainer = (sel.get("trainer") or {}).get("name") or None
+                                barrier = int(sel.get("barrierNumber") or 0) or None
+                                tab_num = int(sel.get("competitorNumber") or 0) or None
+                                wt = float(sel.get("weight") or 0) or None
+                                comp = sel.get("competitor") or {}
+                                age = int(comp.get("age") or 0) or None
+                                sex = comp.get("sex") or None
                                 async with get_session() as session:
                                     existing_hr = await session.execute(
                                         select(HistoricalResultRow)
@@ -4094,6 +4441,20 @@ async def _run_backfill(days: int, x_secret: Optional[str], force: bool = False)
                                             placed=int(position) <= 3,
                                             starting_price=sp,
                                             feature_vector_json=fv_row.enriched_json if fv_row else None,
+                                            jockey=jockey,
+                                            trainer=trainer,
+                                            venue=bf_venue or None,
+                                            state=bf_state or None,
+                                            distance=bf_dist,
+                                            track_condition=bf_cond,
+                                            barrier=barrier,
+                                            tab_number=tab_num,
+                                            weight=wt,
+                                            age=age,
+                                            sex=sex,
+                                            race_class=bf_class,
+                                            field_size=bf_field,
+                                            race_number=race_num,
                                         ))
                                         await session.commit()
                                 _backfill["runners"] += 1
@@ -4721,6 +5082,8 @@ async def _run_backtest_range(start_date: str, end_date: str) -> None:
                             race = await asyncio.wait_for(
                                 client.parse_race(full_race, date_str, venue_name, state_code), timeout=60
                             )
+                            async with get_session() as session:
+                                await _inject_accumulated_stats(race, session)
                             predictions, _ = await enrich_and_predict_race(race, model)
                             for pred in predictions:
                                 pos = actuals.get(pred.runner.horse_name)
@@ -6942,6 +7305,8 @@ async def _enrich_date(race_date: str, client, model, force: bool = False, place
                 if not full_event:
                     continue
                 race = await client.parse_race(full_event, race_date, venue_name, state)
+                async with get_session() as session:
+                    await _inject_accumulated_stats(race, session)
                 predictions, _ = await enrich_and_predict_race(race, model, venue_calibration=venue_cal, place_model=place_model, exotic_model=exotic_model)
                 async with get_session() as session:
                     await save_race_predictions(

@@ -125,13 +125,31 @@ class HistoricalResultRow(Base):
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     race_id = Column(String, index=True)
-    horse_name = Column(String)
+    horse_name = Column(String, index=True)
     position = Column(Integer)
     beaten_margin = Column(Float)
     winner = Column(Boolean)
     placed = Column(Boolean)
     starting_price = Column(Float, nullable=True)
     feature_vector_json = Column(Text, nullable=True)   # for retraining
+
+    # Runner context — populated at seed time for stats computation
+    jockey = Column(String, nullable=True, index=True)
+    trainer = Column(String, nullable=True, index=True)
+    venue = Column(String, nullable=True, index=True)
+    state = Column(String, nullable=True)
+    distance = Column(Integer, nullable=True)
+    track_condition = Column(String, nullable=True)
+    barrier = Column(Integer, nullable=True)
+    tab_number = Column(Integer, nullable=True)
+    weight = Column(Float, nullable=True)
+    age = Column(Integer, nullable=True)
+    sex = Column(String, nullable=True)
+    race_class = Column(String, nullable=True)
+    prize_money = Column(Integer, nullable=True)
+    field_size = Column(Integer, nullable=True)
+    race_number = Column(Integer, nullable=True)
+
     recorded_at = Column(DateTime, default=datetime.utcnow)
 
 
@@ -310,6 +328,29 @@ async def init_db() -> None:
         await conn.execute(text(
             "CREATE INDEX IF NOT EXISTS ix_hist_results_race_placed "
             "ON historical_results (race_id, placed)"
+        ))
+        # New columns on historical_results for accumulated stats
+        for col in [
+            "jockey TEXT", "trainer TEXT", "venue TEXT", "state TEXT",
+            "distance INTEGER", "track_condition TEXT", "barrier INTEGER",
+            "tab_number INTEGER", "weight REAL", "age INTEGER", "sex TEXT",
+            "race_class TEXT", "prize_money INTEGER", "field_size INTEGER",
+            "race_number INTEGER",
+        ]:
+            await conn.execute(text(
+                f"ALTER TABLE historical_results ADD COLUMN IF NOT EXISTS {col}"
+            ))
+        await conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_hist_results_jockey "
+            "ON historical_results (jockey)"
+        ))
+        await conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_hist_results_trainer "
+            "ON historical_results (trainer)"
+        ))
+        await conn.execute(text(
+            "CREATE INDEX IF NOT EXISTS ix_hist_results_venue "
+            "ON historical_results (venue)"
         ))
 
 
