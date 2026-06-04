@@ -3340,76 +3340,63 @@ async def retrain_place_model(
 ):
     """
     Train the place model on P(position ≤ 3) labels.
-    Uses the immutable history table to guarantee pre-race features only.
+    Returns immediately; all data loading and training runs in a background task.
     """
     _check_admin(x_cron_secret)
     cutoff = (date.today() - timedelta(days=days)).isoformat() if days > 0 else None
 
-    async with get_session() as session:
-        hist_query = select(RunnerPredictionHistoryRow).where(
-            RunnerPredictionHistoryRow.enriched_json.isnot(None)
-        )
-        if cutoff:
-            hist_query = hist_query.where(RunnerPredictionHistoryRow.race_id >= cutoff)
-        hist_result = await session.execute(hist_query)
-        hist_rows = hist_result.scalars().all()
+    async def _do_place_retrain():
+        async with get_session() as session:
+            hist_query = select(RunnerPredictionHistoryRow).where(
+                RunnerPredictionHistoryRow.enriched_json.isnot(None)
+            )
+            if cutoff:
+                hist_query = hist_query.where(RunnerPredictionHistoryRow.race_id >= cutoff)
+            hist_rows = (await session.execute(hist_query)).scalars().all()
 
-        hr_query = select(HistoricalResultRow)
-        if cutoff:
-            hr_query = hr_query.where(HistoricalResultRow.race_id >= cutoff)
-        hr_result = await session.execute(hr_query)
-        hr_rows = hr_result.scalars().all()
+            hr_query = select(HistoricalResultRow)
+            if cutoff:
+                hr_query = hr_query.where(HistoricalResultRow.race_id >= cutoff)
+            hr_rows = (await session.execute(hr_query)).scalars().all()
 
-    if len(hr_rows) < 50:
-        raise HTTPException(400, f"Need at least 50 results to train (have {len(hr_rows)})")
-
-    # Lookup: (race_id, normalized_name) → placed bool
-    placed_lookup = {
-        (r.race_id, _normalize_horse(r.horse_name)): bool(r.placed) for r in hr_rows
-    }
-
-    training_data = []
-    place_sample_weights = []
-    _today_p = date.today()
-    for row in hist_rows:
-        if row.cancelled:
-            continue
-        placed = placed_lookup.get((row.race_id, _normalize_horse(row.horse_name)))
-        if placed is None:
-            continue
-        try:
-            er = EnrichedRunner(**json.loads(row.enriched_json))
-            fv = build_feature_vector(er)
-            training_data.append((fv, 1 if placed else 0))
+        placed_lookup = {
+            (r.race_id, _normalize_horse(r.horse_name)): bool(r.placed) for r in hr_rows
+        }
+        training_data = []
+        place_sample_weights = []
+        _today_p = date.today()
+        for row in hist_rows:
+            if row.cancelled:
+                continue
+            placed = placed_lookup.get((row.race_id, _normalize_horse(row.horse_name)))
+            if placed is None:
+                continue
             try:
-                days_ago = (_today_p - date.fromisoformat(row.race_id[:10])).days
-            except Exception:
-                days_ago = 30
-            place_sample_weights.append(math.exp(-days_ago / 30.0))
-        except Exception as e:
-            log.debug("Skipping place retrain row %s/%s: %s", row.race_id, row.horse_name, e)
+                er = EnrichedRunner(**json.loads(row.enriched_json))
+                fv = build_feature_vector(er)
+                training_data.append((fv, 1 if placed else 0))
+                try:
+                    days_ago = (_today_p - date.fromisoformat(row.race_id[:10])).days
+                except Exception:
+                    days_ago = 30
+                place_sample_weights.append(math.exp(-days_ago / 30.0))
+            except Exception as e:
+                log.debug("Skipping place retrain row %s/%s: %s", row.race_id, row.horse_name, e)
 
-    if not training_data:
-        raise HTTPException(400, "No matched training examples for place model")
-
-    placed_count = sum(1 for _, label in training_data if label == 1)
-    log.info("[place-retrain] %d examples, %d placed (%.1f%%)",
-             len(training_data), placed_count, placed_count / len(training_data) * 100)
-
-    async def _do_retrain():
+        if not training_data:
+            log.error("[place-retrain] No matched training examples")
+            return
+        placed_count = sum(1 for _, label in training_data if label == 1)
+        log.info("[place-retrain] %d examples, %d placed (%.1f%%)",
+                 len(training_data), placed_count, placed_count / len(training_data) * 100)
         m = PlaceModel()
         s = await asyncio.to_thread(m.train, training_data, sample_weights=place_sample_weights)
         async with get_session() as sess:
             await save_place_model_weights(sess, s["weights"])
         log.info("[place-retrain] complete — %d examples, accuracy=%.3f", len(training_data), s.get("accuracy", 0))
 
-    asyncio.create_task(_do_retrain())
-    return {
-        "status": "place_retrain_started",
-        "training_examples": len(training_data),
-        "placed_examples": placed_count,
-        "placed_rate_pct": round(placed_count / len(training_data) * 100, 1),
-    }
+    asyncio.create_task(_do_place_retrain())
+    return {"status": "place_retrain_started", "cutoff": cutoff or "all"}
 
 
 @app.post("/api/admin/retrain-exotic")
@@ -3419,88 +3406,69 @@ async def retrain_exotic_model(
 ):
     """
     Train the exotic model using race-grouped trifecta-aware loss.
-    Only uses field_size >= 7 races (trifecta-eligible fields).
-    Uses the immutable history table to guarantee pre-race features only.
+    Returns immediately; all data loading and training runs in a background task.
     """
     _check_admin(x_cron_secret)
     cutoff = (date.today() - timedelta(days=days)).isoformat() if days > 0 else None
 
-    async with get_session() as session:
-        hr_query = select(HistoricalResultRow)
-        if cutoff:
-            hr_query = hr_query.where(HistoricalResultRow.race_id >= cutoff)
-        hr_result = await session.execute(hr_query)
-        hr_rows = hr_result.scalars().all()
+    async def _do_exotic_retrain():
+        async with get_session() as session:
+            hr_query = select(HistoricalResultRow)
+            if cutoff:
+                hr_query = hr_query.where(HistoricalResultRow.race_id >= cutoff)
+            hr_rows = (await session.execute(hr_query)).scalars().all()
 
-        hist_query = select(RunnerPredictionHistoryRow).where(
-            RunnerPredictionHistoryRow.enriched_json.isnot(None)
-        ).where(
-            RunnerPredictionHistoryRow.cancelled.is_(False)
-            | RunnerPredictionHistoryRow.cancelled.is_(None)
-        )
-        if cutoff:
-            hist_query = hist_query.where(RunnerPredictionHistoryRow.race_id >= cutoff)
-        hist_result = await session.execute(hist_query)
-        hist_rows = hist_result.scalars().all()
+            hist_query = select(RunnerPredictionHistoryRow).where(
+                RunnerPredictionHistoryRow.enriched_json.isnot(None)
+            ).where(
+                RunnerPredictionHistoryRow.cancelled.is_(False)
+                | RunnerPredictionHistoryRow.cancelled.is_(None)
+            )
+            if cutoff:
+                hist_query = hist_query.where(RunnerPredictionHistoryRow.race_id >= cutoff)
+            hist_rows = (await session.execute(hist_query)).scalars().all()
 
-    if len(hr_rows) < 50:
-        raise HTTPException(400, f"Need at least 50 results to train (have {len(hr_rows)})")
+        result_lookup: dict[tuple, tuple] = {
+            (r.race_id, _normalize_horse(r.horse_name)): (bool(r.placed), r.position)
+            for r in hr_rows
+        }
+        race_data: dict[str, list[tuple[list[float], int, int | None]]] = {}
+        for row in hist_rows:
+            key = (row.race_id, _normalize_horse(row.horse_name))
+            outcome = result_lookup.get(key)
+            if not outcome:
+                continue
+            placed, position = outcome
+            try:
+                er = EnrichedRunner(**json.loads(row.enriched_json))
+                fv = build_feature_vector(er)
+                race_data.setdefault(row.race_id, []).append((fv, 1 if placed else 0, position))
+            except Exception as e:
+                log.debug("Skipping exotic retrain row %s/%s: %s", row.race_id, row.horse_name, e)
 
-    # Result lookup: (race_id, normalized_name) → (placed, position)
-    result_lookup: dict[tuple, tuple] = {
-        (r.race_id, _normalize_horse(r.horse_name)): (bool(r.placed), r.position)
-        for r in hr_rows
-    }
+        race_groups = []
+        for race_id, runners in race_data.items():
+            if len(runners) < 7:
+                continue
+            top3_count = sum(1 for _, lbl, _ in runners if lbl == 1)
+            if top3_count != 3:
+                continue
+            race_groups.append([(fv, lbl, pos) for fv, lbl, pos in runners])
 
-    # Group by race_id for race-level trifecta training
-    race_data: dict[str, list[tuple[list[float], int, int | None]]] = {}
-    for row in hist_rows:
-        key = (row.race_id, _normalize_horse(row.horse_name))
-        outcome = result_lookup.get(key)
-        if not outcome:
-            continue
-        placed, position = outcome
-        try:
-            er = EnrichedRunner(**json.loads(row.enriched_json))
-            fv = build_feature_vector(er)
-            race_data.setdefault(row.race_id, []).append((fv, 1 if placed else 0, position))
-        except Exception as e:
-            log.debug("Skipping exotic retrain row %s/%s: %s", row.race_id, row.horse_name, e)
-
-    # Filter to field_size >= 7 with complete top-3 data
-    race_groups = []
-    for race_id, runners in race_data.items():
-        if len(runners) < 7:
-            continue
-        top3_count = sum(1 for _, lbl, _ in runners if lbl == 1)
-        if top3_count != 3:
-            continue
-        race_groups.append([(fv, lbl, pos) for fv, lbl, pos in runners])
-
-    if not race_groups:
-        raise HTTPException(400, "No eligible trifecta races found for exotic training")
-
-    total_runners = sum(len(r) for r in race_groups)
-    log.info("[exotic-retrain] %d races, %d runners", len(race_groups), total_runners)
-
-    async def _do_retrain():
-        loop = asyncio.get_event_loop()
+        if not race_groups:
+            log.error("[exotic-retrain] No eligible trifecta races found")
+            return
+        total_runners = sum(len(r) for r in race_groups)
+        log.info("[exotic-retrain] %d races, %d runners", len(race_groups), total_runners)
         m = ExoticModel()
-        # Run CPU-bound training in thread pool so the event loop stays responsive
-        s = await loop.run_in_executor(None, m.train_exotic, race_groups)
+        s = await asyncio.get_event_loop().run_in_executor(None, m.train_exotic, race_groups)
         async with get_session() as sess:
             await save_exotic_model_weights(sess, s["weights"])
-        log.info(
-            "[exotic-retrain] complete — %d races, tri_box=%.3f ff_box=%.3f",
-            len(race_groups), s.get("tri_box_hit_rate", 0), s.get("ff_box_hit_rate", 0),
-        )
+        log.info("[exotic-retrain] complete — %d races, tri_box=%.3f ff_box=%.3f",
+                 len(race_groups), s.get("tri_box_hit_rate", 0), s.get("ff_box_hit_rate", 0))
 
-    asyncio.create_task(_do_retrain())
-    return {
-        "status": "exotic_retrain_started",
-        "eligible_races": len(race_groups),
-        "total_runners": total_runners,
-    }
+    asyncio.create_task(_do_exotic_retrain())
+    return {"status": "exotic_retrain_started", "cutoff": cutoff or "all"}
 
 
 _exotic_backtest_state: dict = {"running": False, "progress": "", "error": None}
