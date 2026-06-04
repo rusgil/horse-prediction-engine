@@ -287,60 +287,51 @@ class RunnerPredictionHistoryRow(Base):
 async def init_db() -> None:
     import logging as _logging
     _log = _logging.getLogger(__name__)
-
-    # Step 1: create any missing tables (fast, no lock contention on existing tables)
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-
-    # Step 2: idempotent column/index migrations — each runs in its own transaction
-    # with a 3-second lock_timeout so a zombie connection from a previous deployment
-    # can never stall startup. All statements use IF NOT EXISTS so skipping is safe.
-    migrations = [
-        "ALTER TABLE runner_predictions ADD COLUMN IF NOT EXISTS cancelled BOOLEAN DEFAULT FALSE",
-        "ALTER TABLE runner_predictions ADD COLUMN IF NOT EXISTS place_model_rank INTEGER",
-        "ALTER TABLE runner_predictions ADD COLUMN IF NOT EXISTS exotic_model_rank INTEGER",
-        "ALTER TABLE runner_predictions ADD COLUMN IF NOT EXISTS scheduled_time TEXT",
-        "ALTER TABLE runner_predictions ADD COLUMN IF NOT EXISTS venue TEXT",
-        "ALTER TABLE runner_predictions ADD COLUMN IF NOT EXISTS state TEXT",
-        "ALTER TABLE runner_predictions ADD COLUMN IF NOT EXISTS race_number INTEGER",
-        "ALTER TABLE runner_predictions ADD COLUMN IF NOT EXISTS race_name TEXT",
-        "ALTER TABLE runner_predictions ADD COLUMN IF NOT EXISTS distance INTEGER",
-        "ALTER TABLE runner_predictions ADD COLUMN IF NOT EXISTS track_condition TEXT",
-        "ALTER TABLE runner_predictions ADD COLUMN IF NOT EXISTS field_size INTEGER",
-        "ALTER TABLE runner_predictions ADD COLUMN IF NOT EXISTS prize_money INTEGER",
-        "ALTER TABLE runner_predictions ADD COLUMN IF NOT EXISTS rail_position TEXT",
-        "ALTER TABLE runner_predictions ADD COLUMN IF NOT EXISTS class_change INTEGER",
-        "ALTER TABLE runner_prediction_history ADD COLUMN IF NOT EXISTS source TEXT DEFAULT 'live'",
-        "CREATE INDEX IF NOT EXISTS ix_runner_pred_race_rank ON runner_predictions (race_id, model_rank)",
-        "CREATE INDEX IF NOT EXISTS ix_runner_pred_hist_race_rank ON runner_prediction_history (race_id, model_rank)",
-        "CREATE INDEX IF NOT EXISTS ix_hist_results_race_winner ON historical_results (race_id, winner)",
-        "CREATE INDEX IF NOT EXISTS ix_hist_results_race_placed ON historical_results (race_id, placed)",
-        "ALTER TABLE historical_results ADD COLUMN IF NOT EXISTS jockey TEXT",
-        "ALTER TABLE historical_results ADD COLUMN IF NOT EXISTS trainer TEXT",
-        "ALTER TABLE historical_results ADD COLUMN IF NOT EXISTS venue TEXT",
-        "ALTER TABLE historical_results ADD COLUMN IF NOT EXISTS state TEXT",
-        "ALTER TABLE historical_results ADD COLUMN IF NOT EXISTS distance INTEGER",
-        "ALTER TABLE historical_results ADD COLUMN IF NOT EXISTS track_condition TEXT",
-        "ALTER TABLE historical_results ADD COLUMN IF NOT EXISTS barrier INTEGER",
-        "ALTER TABLE historical_results ADD COLUMN IF NOT EXISTS tab_number INTEGER",
-        "ALTER TABLE historical_results ADD COLUMN IF NOT EXISTS weight REAL",
-        "ALTER TABLE historical_results ADD COLUMN IF NOT EXISTS age INTEGER",
-        "ALTER TABLE historical_results ADD COLUMN IF NOT EXISTS sex TEXT",
-        "ALTER TABLE historical_results ADD COLUMN IF NOT EXISTS race_class TEXT",
-        "ALTER TABLE historical_results ADD COLUMN IF NOT EXISTS prize_money INTEGER",
-        "ALTER TABLE historical_results ADD COLUMN IF NOT EXISTS field_size INTEGER",
-        "ALTER TABLE historical_results ADD COLUMN IF NOT EXISTS race_number INTEGER",
-        "CREATE INDEX IF NOT EXISTS ix_hist_results_jockey ON historical_results (jockey)",
-        "CREATE INDEX IF NOT EXISTS ix_hist_results_trainer ON historical_results (trainer)",
-        "CREATE INDEX IF NOT EXISTS ix_hist_results_venue ON historical_results (venue)",
-    ]
-    for stmt in migrations:
-        try:
-            async with engine.begin() as conn:
-                await conn.execute(text("SET LOCAL lock_timeout = '3s'"))
-                await conn.execute(text(stmt))
-        except Exception as e:
-            _log.warning("[init_db] migration skipped (will retry next deploy): %s — %s", stmt[:60], e)
+    try:
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+            for col in [
+                "ALTER TABLE runner_predictions ADD COLUMN IF NOT EXISTS cancelled BOOLEAN DEFAULT FALSE",
+                "ALTER TABLE runner_predictions ADD COLUMN IF NOT EXISTS place_model_rank INTEGER",
+                "ALTER TABLE runner_predictions ADD COLUMN IF NOT EXISTS exotic_model_rank INTEGER",
+                "ALTER TABLE runner_predictions ADD COLUMN IF NOT EXISTS scheduled_time TEXT",
+                "ALTER TABLE runner_predictions ADD COLUMN IF NOT EXISTS venue TEXT",
+                "ALTER TABLE runner_predictions ADD COLUMN IF NOT EXISTS state TEXT",
+                "ALTER TABLE runner_predictions ADD COLUMN IF NOT EXISTS race_number INTEGER",
+                "ALTER TABLE runner_predictions ADD COLUMN IF NOT EXISTS race_name TEXT",
+                "ALTER TABLE runner_predictions ADD COLUMN IF NOT EXISTS distance INTEGER",
+                "ALTER TABLE runner_predictions ADD COLUMN IF NOT EXISTS track_condition TEXT",
+                "ALTER TABLE runner_predictions ADD COLUMN IF NOT EXISTS field_size INTEGER",
+                "ALTER TABLE runner_predictions ADD COLUMN IF NOT EXISTS prize_money INTEGER",
+                "ALTER TABLE runner_predictions ADD COLUMN IF NOT EXISTS rail_position TEXT",
+                "ALTER TABLE runner_predictions ADD COLUMN IF NOT EXISTS class_change INTEGER",
+                "ALTER TABLE runner_prediction_history ADD COLUMN IF NOT EXISTS source TEXT DEFAULT 'live'",
+                "CREATE INDEX IF NOT EXISTS ix_runner_pred_race_rank ON runner_predictions (race_id, model_rank)",
+                "CREATE INDEX IF NOT EXISTS ix_runner_pred_hist_race_rank ON runner_prediction_history (race_id, model_rank)",
+                "CREATE INDEX IF NOT EXISTS ix_hist_results_race_winner ON historical_results (race_id, winner)",
+                "CREATE INDEX IF NOT EXISTS ix_hist_results_race_placed ON historical_results (race_id, placed)",
+                "ALTER TABLE historical_results ADD COLUMN IF NOT EXISTS jockey TEXT",
+                "ALTER TABLE historical_results ADD COLUMN IF NOT EXISTS trainer TEXT",
+                "ALTER TABLE historical_results ADD COLUMN IF NOT EXISTS venue TEXT",
+                "ALTER TABLE historical_results ADD COLUMN IF NOT EXISTS state TEXT",
+                "ALTER TABLE historical_results ADD COLUMN IF NOT EXISTS distance INTEGER",
+                "ALTER TABLE historical_results ADD COLUMN IF NOT EXISTS track_condition TEXT",
+                "ALTER TABLE historical_results ADD COLUMN IF NOT EXISTS barrier INTEGER",
+                "ALTER TABLE historical_results ADD COLUMN IF NOT EXISTS tab_number INTEGER",
+                "ALTER TABLE historical_results ADD COLUMN IF NOT EXISTS weight REAL",
+                "ALTER TABLE historical_results ADD COLUMN IF NOT EXISTS age INTEGER",
+                "ALTER TABLE historical_results ADD COLUMN IF NOT EXISTS sex TEXT",
+                "ALTER TABLE historical_results ADD COLUMN IF NOT EXISTS race_class TEXT",
+                "ALTER TABLE historical_results ADD COLUMN IF NOT EXISTS prize_money INTEGER",
+                "ALTER TABLE historical_results ADD COLUMN IF NOT EXISTS field_size INTEGER",
+                "ALTER TABLE historical_results ADD COLUMN IF NOT EXISTS race_number INTEGER",
+                "CREATE INDEX IF NOT EXISTS ix_hist_results_jockey ON historical_results (jockey)",
+                "CREATE INDEX IF NOT EXISTS ix_hist_results_trainer ON historical_results (trainer)",
+                "CREATE INDEX IF NOT EXISTS ix_hist_results_venue ON historical_results (venue)",
+            ]:
+                await conn.execute(text(col))
+    except Exception as e:
+        _log.warning("[init_db] schema migration skipped — will retry next deploy: %s", e)
 
 
 async def backfill_prediction_history(session: AsyncSession) -> int:
