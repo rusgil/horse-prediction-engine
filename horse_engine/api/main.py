@@ -469,6 +469,110 @@ async def _scheduled_pre_race_enrich():
         log.exception("[pre-race] Pre-race enrich failed: %s", e)
 
 
+async def _scheduled_live_odds_refresh():
+    """
+    Refresh OddsPro odds for all runners in races starting within the next 3 hours.
+    Runs every 20 min. Self-limits when no upcoming races are in the window.
+    Updates best_available_odds, overlay, value_rating, market_rank only — no re-enrichment.
+    """
+    from horse_engine.clients.oddspro import OddsProClient
+
+    now_utc = datetime.utcnow()
+    now_aest = datetime.now(_AEST)
+    today = now_aest.date().isoformat()
+    window_end = now_utc + timedelta(hours=3)
+
+    try:
+        async with get_session() as session:
+            result = await session.execute(
+                select(RunnerPredictionRow)
+                .where(RunnerPredictionRow.race_id.like(f"{today}_%"))
+                .where(RunnerPredictionRow.scheduled_time.isnot(None))
+            )
+            all_rows = result.scalars().all()
+
+        upcoming = []
+        for row in all_rows:
+            try:
+                sched = datetime.fromisoformat(row.scheduled_time.replace("Z", "+00:00")).replace(tzinfo=None)
+                if now_utc <= sched <= window_end:
+                    upcoming.append(row)
+            except Exception:
+                continue
+
+        if not upcoming:
+            log.debug("[live-odds] No races within 3-hour window, skipping")
+            return
+
+        log.info("[live-odds] %d runners in next 3 hours across %d races",
+                 len(upcoming), len({r.race_id for r in upcoming}))
+
+        op = OddsProClient()
+        tracks = await op.get_tracks(today)
+
+        by_venue: dict[str, list[RunnerPredictionRow]] = {}
+        for row in upcoming:
+            if row.venue:
+                by_venue.setdefault(row.venue, []).append(row)
+
+        total_updated = 0
+        for venue, rows in by_venue.items():
+            op_track = op.find_matching_track(venue, tracks)
+            if not op_track:
+                log.debug("[live-odds] No OddsPro track match for '%s'", venue)
+                continue
+
+            odds_map = await op.get_track_odds(op_track)
+            if not odds_map:
+                log.debug("[live-odds] Empty odds for track '%s'", op_track)
+                continue
+
+            by_race: dict[int, list[RunnerPredictionRow]] = {}
+            for row in rows:
+                if row.race_number:
+                    by_race.setdefault(row.race_number, []).append(row)
+
+            async with get_session() as session:
+                for race_num, race_rows in by_race.items():
+                    new_odds: dict[int, float] = {}
+                    for row in race_rows:
+                        op_runner = odds_map.get((race_num, row.horse_name.lower()))
+                        if op_runner:
+                            raw = op_runner.get("currentBestOdds")
+                            try:
+                                val = float(raw) if raw else 0.0
+                                if val > 1.0:
+                                    new_odds[row.id] = val
+                            except (TypeError, ValueError):
+                                pass
+
+                    if not new_odds:
+                        continue
+
+                    sorted_ids = sorted(new_odds, key=lambda rid: new_odds[rid])
+                    rank_map = {rid: i + 1 for i, rid in enumerate(sorted_ids)}
+
+                    for row in race_rows:
+                        db_row = await session.get(RunnerPredictionRow, row.id)
+                        if not db_row:
+                            continue
+                        new_o = new_odds.get(row.id)
+                        if new_o:
+                            db_row.best_available_odds = new_o
+                            market_implied = 1.0 / new_o
+                            db_row.overlay = round(db_row.win_probability - market_implied, 4)
+                            db_row.value_rating = _value_rating(db_row.win_probability, new_o, db_row.overlay)
+                            db_row.market_rank = rank_map.get(row.id, db_row.market_rank)
+                            total_updated += 1
+
+                await session.commit()
+
+        log.info("[live-odds] Updated %d runners across %d venues", total_updated, len(by_venue))
+
+    except Exception as e:
+        log.exception("[live-odds] Failed: %s", e)
+
+
 _MIN_JOCKEY_TRAINER_SAMPLES = 10  # require at least this many starts before using computed rate
 _MIN_HORSE_SAMPLES = 5
 
@@ -1254,6 +1358,10 @@ async def lifespan(app: FastAPI):
     scheduler.add_job(
         _scheduled_pre_race_enrich,
         CronTrigger(hour="9-20", minute="0,15,30,45", timezone="Australia/Sydney")
+    )
+    scheduler.add_job(
+        _scheduled_live_odds_refresh,
+        CronTrigger(hour="9-20", minute="0,20,40", timezone="Australia/Sydney")
     )
     scheduler.start()
     log.info("[scheduler] Cron jobs scheduled")
