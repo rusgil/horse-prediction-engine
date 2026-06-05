@@ -4848,12 +4848,13 @@ async def backfill_status():
 _db_backfill: dict = {"running": False, "done": False}
 
 
-async def _run_db_backfill(holdout_from: str = "2026-05-01", batch_size: int = 50, force: bool = False) -> None:
+async def _run_db_backfill(holdout_from: str = "2026-05-01", batch_size: int = 50, force: bool = False,
+                           offset: int = 0, limit: int = 0) -> None:
     """
     Build RunnerPredictionHistoryRow training snapshots directly from historical_results.
     Does not call any external API — works entirely from stored DB data.
     Processes races in chronological order, oldest first.
-    Skips races that already have a history snapshot.
+    offset/limit: process a slice of races (for chunked runs). limit=0 means all.
     """
     global _db_backfill
     from horse_engine.models.race import Race, Runner
@@ -4862,6 +4863,7 @@ async def _run_db_backfill(holdout_from: str = "2026-05-01", batch_size: int = 5
     _db_backfill.update({
         "running": True, "done": False, "races": 0, "runners": 0,
         "skipped": 0, "errors": 0, "started_at": datetime.utcnow().isoformat(),
+        "offset": offset, "limit": limit,
     })
     try:
         async with get_session() as session:
@@ -4876,9 +4878,12 @@ async def _run_db_backfill(holdout_from: str = "2026-05-01", batch_size: int = 5
                 .distinct()
                 .order_by(HistoricalResultRow.race_id)
             )).scalars().all()
-        race_ids = list(rows)
-        _db_backfill["total_races"] = len(race_ids)
-        log.info("[db-backfill] %d eligible races to process", len(race_ids))
+        all_race_ids = list(rows)
+        race_ids = all_race_ids[offset: offset + limit] if limit > 0 else all_race_ids[offset:]
+        _db_backfill["total_races"] = len(all_race_ids)
+        _db_backfill["chunk_races"] = len(race_ids)
+        log.info("[db-backfill] %d total eligible races, processing %d (offset=%d limit=%d)",
+                 len(all_race_ids), len(race_ids), offset, limit)
 
         for race_id in race_ids:
             try:
@@ -5060,20 +5065,22 @@ async def _run_db_backfill(holdout_from: str = "2026-05-01", batch_size: int = 5
 @app.post("/api/admin/backfill/from-db")
 async def start_db_backfill(
     holdout_from: str = Query("2026-05-01", description="Skip races on or after this date"),
-    force: bool = Query(False, description="Overwrite existing backfill rows (regenerates feature_vector_json)"),
+    force: bool = Query(False, description="Overwrite existing enriched_json (refreshes feature vectors)"),
+    offset: int = Query(0, ge=0, description="Skip this many races (for chunked runs)"),
+    limit: int = Query(0, ge=0, description="Process at most this many races (0 = all)"),
     x_cron_secret: Optional[str] = Header(None),
 ):
     """
     Build RunnerPredictionHistoryRow training data directly from historical_results.
-    No external API calls — processes 131K stored race rows using DB-joined stats.
-    SP from historical_results is used as tote_win_odds so market_rank_norm is real.
-    Use force=true to regenerate feature_vector_json for already-processed races.
+    No external API calls — processes stored race rows using DB-joined stats.
+    Use offset+limit to process in chunks (e.g. limit=500 per call) to avoid Railway timeouts.
+    Use force=true to regenerate enriched_json for already-processed races.
     """
     _check_admin(x_cron_secret)
     if _db_backfill.get("running"):
         raise HTTPException(409, "DB backfill already running")
-    asyncio.create_task(_run_db_backfill(holdout_from=holdout_from, force=force))
-    return {"status": "started", "holdout_from": holdout_from,
+    asyncio.create_task(_run_db_backfill(holdout_from=holdout_from, force=force, offset=offset, limit=limit))
+    return {"status": "started", "holdout_from": holdout_from, "offset": offset, "limit": limit,
             "message": "Check /api/admin/backfill/from-db/status for progress"}
 
 
