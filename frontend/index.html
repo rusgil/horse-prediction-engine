@@ -1710,15 +1710,20 @@
           </div>
         </div>
 
+        ${winPct >= 45 ? `<div style="margin:4px 0 2px;font-size:0.72rem;font-weight:700;color:#f97316">🔥 Hot Pick</div>`
+          : winPct >= 35 ? `<div style="margin:4px 0 2px;font-size:0.72rem;font-weight:700;color:#60a5fa">⚡ High Confidence</div>`
+          : winPct >= 30 ? `<div style="margin:4px 0 2px;font-size:0.72rem;font-weight:600;color:var(--text-secondary)">📈 Strong Pick</div>`
+          : ''}
+
         <div class="prob-section">
           <div class="prob-row">
             <span class="prob-label">Win</span>
-            <div class="prob-track"><div class="prob-fill win" style="width:${Math.min(winPct * 2.5, 100)}%"></div></div>
+            <div class="prob-track"><div class="prob-fill win" style="width:${Math.min((winPct / 70) * 100, 100)}%"></div></div>
             <span class="prob-pct win">${winPct}%</span>
           </div>
           <div class="prob-row">
             <span class="prob-label">Place</span>
-            <div class="prob-track"><div class="prob-fill place" style="width:${Math.min(placePct * 1.5, 100)}%"></div></div>
+            <div class="prob-track"><div class="prob-fill place" style="width:${Math.min((placePct / 70) * 100, 100)}%"></div></div>
             <span class="prob-pct place">${placePct}%</span>
           </div>
         </div>
