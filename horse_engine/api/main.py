@@ -1903,6 +1903,24 @@ async def get_edge_picks():
         db_positions = await _seed_race_results_on_demand(finished_race_ids)
         seeded_race_ids: set[str] = {rid for (rid, _) in db_positions}
 
+        # Also fetch SP for finished picks
+        async with get_session() as session:
+            sp_rows = (await session.execute(
+                select(HistoricalResultRow.race_id, HistoricalResultRow.horse_name,
+                       HistoricalResultRow.starting_price)
+                .where(HistoricalResultRow.race_id.in_(finished_race_ids))
+            )).all()
+        db_sp: dict[tuple, float | None] = {(r.race_id, r.horse_name): r.starting_price for r in sp_rows}
+
+        # Annotate main pick with result
+        for p in finished_picks:
+            pos = db_positions.get((p["race_id"], p["horse_name"]))
+            if pos is not None:
+                p["actual_position"] = pos
+                p["won"] = pos == 1
+                p["placed"] = pos <= 3
+                p["sp"] = db_sp.get((p["race_id"], p["horse_name"]))
+
         for p in finished_picks:
             tri = p.get("trifecta")
             if not tri:
