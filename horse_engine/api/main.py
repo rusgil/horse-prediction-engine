@@ -2937,22 +2937,22 @@ async def get_meeting(race_date: str, venue_code: str):
 async def get_race(race_id: str):
     """Return full race prediction for a given race_id."""
     async with get_session() as session:
-        # Prefer immutable history rows so ordering matches model_correct calculation.
-        # Falls back to mutable table for races not yet snapshotted.
-        hist_result = await session.execute(
-            select(RunnerPredictionHistoryRow)
-            .where(RunnerPredictionHistoryRow.race_id == race_id)
-            .order_by(RunnerPredictionHistoryRow.model_rank)
+        # Prefer live mutable rows so race card matches edge picks (current model weights).
+        # Falls back to history snapshot for past races no longer in the live table.
+        mutable_result = await session.execute(
+            select(RunnerPredictionRow)
+            .where(RunnerPredictionRow.race_id == race_id)
+            .order_by(RunnerPredictionRow.model_rank)
         )
-        runners = hist_result.scalars().all()
+        runners = mutable_result.scalars().all()
 
         if not runners:
-            mutable_result = await session.execute(
-                select(RunnerPredictionRow)
-                .where(RunnerPredictionRow.race_id == race_id)
-                .order_by(RunnerPredictionRow.model_rank)
+            hist_result = await session.execute(
+                select(RunnerPredictionHistoryRow)
+                .where(RunnerPredictionHistoryRow.race_id == race_id)
+                .order_by(RunnerPredictionHistoryRow.model_rank)
             )
-            runners = mutable_result.scalars().all()
+            runners = hist_result.scalars().all()
 
     if not runners:
         raise HTTPException(404, f"No predictions for race {race_id}. Trigger /enrich first.")
