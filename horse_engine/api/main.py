@@ -4857,6 +4857,7 @@ async def _run_db_backfill(holdout_from: str = "2026-05-01", batch_size: int = 5
     """
     global _db_backfill
     from horse_engine.models.race import Race, Runner
+    from sqlalchemy import delete as _sa_delete, update as _sa_update
 
     _db_backfill.update({
         "running": True, "done": False, "races": 0, "runners": 0,
@@ -4892,14 +4893,7 @@ async def _run_db_backfill(holdout_from: str = "2026-05-01", batch_size: int = 5
                     if not force:
                         _db_backfill["skipped"] += 1
                         continue
-                    # force=True: delete existing backfill rows so we can regenerate
-                    async with get_session() as session:
-                        await session.execute(
-                            delete(RunnerPredictionHistoryRow)
-                            .where(RunnerPredictionHistoryRow.race_id == race_id)
-                            .where(RunnerPredictionHistoryRow.source == "backfill")
-                        )
-                        await session.commit()
+                    # force=True: fall through — will UPDATE enriched_json on existing rows
 
                 # Load all runners for this race from historical_results
                 async with get_session() as session:
@@ -4980,44 +4974,55 @@ async def _run_db_backfill(holdout_from: str = "2026-05-01", batch_size: int = 5
                     # Write to mutable predictions table
                     await save_race_predictions(session, race_id, db_dicts)
 
-                    # Write immutable history snapshot
-                    now = datetime.utcnow()
-                    for hr, d in zip(hr_rows, db_dicts):
-                        session.add(RunnerPredictionHistoryRow(
-                            race_id=race_id,
-                            horse_name=d["horse_name"],
-                            tab_number=d.get("tab_number"),
-                            barrier=d.get("barrier"),
-                            jockey=d.get("jockey"),
-                            trainer=d.get("trainer"),
-                            weight=d.get("weight"),
-                            win_probability=d["win_probability"],
-                            place_probability=d.get("place_probability"),
-                            model_rank=d["model_rank"],
-                            place_model_rank=d.get("place_model_rank"),
-                            exotic_model_rank=d.get("exotic_model_rank"),
-                            market_rank=d.get("market_rank"),
-                            overlay=d.get("overlay"),
-                            best_available_odds=d.get("best_available_odds"),
-                            value_rating=d.get("value_rating"),
-                            key_flags=d.get("key_flags"),
-                            enriched_json=d.get("enriched_json"),
-                            scheduled_time=d.get("scheduled_time"),
-                            venue=d.get("venue"),
-                            state=d.get("state"),
-                            race_number=d.get("race_number"),
-                            race_name=d.get("race_name"),
-                            distance=d.get("distance"),
-                            track_condition=d.get("track_condition"),
-                            field_size=d.get("field_size"),
-                            prize_money=d.get("prize_money"),
-                            rail_position=d.get("rail_position"),
-                            class_change=d.get("class_change"),
-                            enriched_at=now,
-                            source="backfill",
-                        ))
+                    if exists and force:
+                        # UPDATE enriched_json on existing rows (no duplicates)
+                        for d in db_dicts:
+                            if d.get("enriched_json"):
+                                await session.execute(
+                                    _sa_update(RunnerPredictionHistoryRow)
+                                    .where(RunnerPredictionHistoryRow.race_id == race_id)
+                                    .where(func.lower(RunnerPredictionHistoryRow.horse_name) == func.lower(d["horse_name"]))
+                                    .values(enriched_json=d["enriched_json"])
+                                )
+                    else:
+                        # INSERT new history snapshot rows
+                        now = datetime.utcnow()
+                        for hr, d in zip(hr_rows, db_dicts):
+                            session.add(RunnerPredictionHistoryRow(
+                                race_id=race_id,
+                                horse_name=d["horse_name"],
+                                tab_number=d.get("tab_number"),
+                                barrier=d.get("barrier"),
+                                jockey=d.get("jockey"),
+                                trainer=d.get("trainer"),
+                                weight=d.get("weight"),
+                                win_probability=d["win_probability"],
+                                place_probability=d.get("place_probability"),
+                                model_rank=d["model_rank"],
+                                place_model_rank=d.get("place_model_rank"),
+                                exotic_model_rank=d.get("exotic_model_rank"),
+                                market_rank=d.get("market_rank"),
+                                overlay=d.get("overlay"),
+                                best_available_odds=d.get("best_available_odds"),
+                                value_rating=d.get("value_rating"),
+                                key_flags=d.get("key_flags"),
+                                enriched_json=d.get("enriched_json"),
+                                scheduled_time=d.get("scheduled_time"),
+                                venue=d.get("venue"),
+                                state=d.get("state"),
+                                race_number=d.get("race_number"),
+                                race_name=d.get("race_name"),
+                                distance=d.get("distance"),
+                                track_condition=d.get("track_condition"),
+                                field_size=d.get("field_size"),
+                                prize_money=d.get("prize_money"),
+                                rail_position=d.get("rail_position"),
+                                class_change=d.get("class_change"),
+                                enriched_at=now,
+                                source="backfill",
+                            ))
 
-                    # Update feature_vector_json on historical_results for winners/placed
+                    # Update feature_vector_json on historical_results
                     for hr in hr_rows:
                         d = next((x for x in db_dicts if x["horse_name"] == hr.horse_name), None)
                         if d and d.get("enriched_json"):
