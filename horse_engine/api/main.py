@@ -3463,7 +3463,7 @@ async def retrain_exotic_model(
 
 @app.get("/api/admin/model-weights/status")
 async def model_weights_status(x_cron_secret: Optional[str] = Header(None)):
-    """Return feature count and last-updated timestamp for each model's weight table."""
+    """Return feature count, last-updated timestamp, and training data availability."""
     _check_admin(x_cron_secret)
     from sqlalchemy import text as _text
     results = {}
@@ -3480,6 +3480,10 @@ async def model_weights_status(x_cron_secret: Optional[str] = Header(None)):
                 "feature_count": row[0],
                 "last_updated_utc": row[1].isoformat() if row[1] else None,
             }
+        enriched_count = (await session.execute(
+            _text("SELECT COUNT(*) FROM runner_prediction_history WHERE enriched_json IS NOT NULL")
+        )).scalar()
+        results["training_data"] = {"history_rows_with_enriched_json": enriched_count}
     return results
 
 
