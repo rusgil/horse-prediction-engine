@@ -3401,6 +3401,8 @@
       // If any picks have already jumped, fetch today's results to show outcomes
       const now = Date.now();
       const hasPast = picksData.picks.some(p => p.scheduled_time && new Date(p.scheduled_time).getTime() < now);
+      // Seed resultsMap from picks that already have result data (from /api/edge)
+      _seedResultsMapFromPicks(picksData.picks);
       if (hasPast) {
         try {
           const rr = await fetch(`${API}/api/edge/yesterday?date=${todayStr}`);
@@ -3450,6 +3452,21 @@
     }, waitMs);
   }
 
+  function _seedResultsMapFromPicks(picks) {
+    for (const p of picks) {
+      if (p.won !== undefined || p.actual_position !== undefined) {
+        resultsMap[p.race_id] = {
+          winner: p.won || false,
+          position: p.actual_position,
+          sp: p.sp,
+          placed: p.placed || false,
+          scratched: p.scratched || false,
+          no_result: false,
+        };
+      }
+    }
+  }
+
   async function refreshOdds() {
     try {
       const res = await fetch(`${API}/api/edge/refresh-odds`, { method: 'POST' });
@@ -3457,6 +3474,7 @@
       const res2 = await fetch(`${API}/api/edge`);
       if (!res2.ok) return;
       picksData = await res2.json();
+      _seedResultsMapFromPicks(picksData.picks);
       const stake = parseFloat(document.getElementById('stakeInput').value) || 10;
       renderContent(picksData, stake, resultsMap);
     } catch (e) { /* silent — odds refresh is best-effort */ }
@@ -3468,14 +3486,15 @@
     _resultsRefreshTimer = null;
     const todayStr = new Date().toLocaleDateString('en-CA', { timeZone: 'Australia/Sydney' });
     try {
+      if (picksData) _seedResultsMapFromPicks(picksData.picks);
       const rr = await fetch(`${API}/api/edge/yesterday?date=${todayStr}`);
       if (rr.ok) {
         const rd = await rr.json();
         for (const r of rd.picks) resultsMap[r.race_id] = r;
-        if (picksData) {
-          const stake = parseFloat(document.getElementById('stakeInput').value) || 10;
-          renderContent(picksData, stake, resultsMap);
-        }
+      }
+      if (picksData) {
+        const stake = parseFloat(document.getElementById('stakeInput').value) || 10;
+        renderContent(picksData, stake, resultsMap);
       }
     } catch (e) { /* silent */ }
   }
@@ -3516,14 +3535,15 @@
       if (data.cached) return; // server rate-limited — no new data
       // Re-fetch results map and re-render if anything was seeded
       const todayStr = new Date().toLocaleDateString('en-CA', { timeZone: 'Australia/Sydney' });
+      if (picksData) _seedResultsMapFromPicks(picksData.picks);
       const rr = await fetch(`${API}/api/edge/yesterday?date=${todayStr}`);
       if (rr.ok) {
         const rd = await rr.json();
         for (const r of rd.picks) resultsMap[r.race_id] = r;
-        if (picksData) {
-          const stake = parseFloat(document.getElementById('stakeInput').value) || 10;
-          renderContent(picksData, stake, resultsMap);
-        }
+      }
+      if (picksData) {
+        const stake = parseFloat(document.getElementById('stakeInput').value) || 10;
+        renderContent(picksData, stake, resultsMap);
       }
     } catch (e) { /* silent — results refresh is best-effort */ }
   }
