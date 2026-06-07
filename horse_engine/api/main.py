@@ -5396,6 +5396,7 @@ async def patch_betfair_bsp(
     Idempotent: skips rows that already have starting_price set; skips snapshots
     that already exist within 2 minutes of the stored time.
     """
+    from sqlalchemy import text
     _check_admin(x_cron_secret)
     races = payload.get("races") or []
     bsp_patched = bsp_skipped = pred_patched = snap_inserted = 0
