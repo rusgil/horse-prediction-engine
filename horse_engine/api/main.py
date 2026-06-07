@@ -5442,24 +5442,20 @@ async def patch_betfair_bsp(
                             snap_dt = snap_dt.replace(tzinfo=None)
                         except Exception:
                             continue
-                        dup = (await session.execute(
-                            select(OddsSnapshotRow.id)
-                            .where(OddsSnapshotRow.race_id == race_id)
-                            .where(func.lower(OddsSnapshotRow.horse_name) == name.lower())
-                            .where(OddsSnapshotRow.minutes_to_jump >= mtj - 2)
-                            .where(OddsSnapshotRow.minutes_to_jump <= mtj + 2)
-                            .limit(1)
-                        )).fetchone()
+                        # Use raw SQL to avoid ORM autoflush on subsequent SELECT
+                        dup = (await session.execute(text(
+                            "SELECT 1 FROM odds_snapshots "
+                            "WHERE race_id = :rid AND LOWER(horse_name) = LOWER(:name) "
+                            "AND minutes_to_jump BETWEEN :lo AND :hi LIMIT 1"
+                        ), {"rid": race_id, "name": name, "lo": mtj - 2, "hi": mtj + 2})).fetchone()
                         if dup:
                             continue
-                        session.add(OddsSnapshotRow(
-                            race_id=race_id,
-                            horse_name=name,
-                            snapshotted_at=snap_dt,
-                            minutes_to_jump=mtj,
-                            win_odds=float(win_odds_val),
-                            source="betfair_ltp",
-                        ))
+                        await session.execute(text(
+                            "INSERT INTO odds_snapshots "
+                            "(race_id, horse_name, snapshotted_at, minutes_to_jump, win_odds, source) "
+                            "VALUES (:rid, :name, :snap_dt, :mtj, :odds, 'betfair_ltp')"
+                        ), {"rid": race_id, "name": name, "snap_dt": snap_dt,
+                            "mtj": mtj, "odds": float(win_odds_val)})
                         snap_inserted += 1
                 except Exception as _snap_err:
                     _debug_err = repr(_snap_err)
