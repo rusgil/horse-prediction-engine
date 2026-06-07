@@ -5437,6 +5437,8 @@ async def patch_betfair_bsp(
                         continue
                     try:
                         snap_dt = datetime.fromisoformat(snap_at_str.replace("Z", "+00:00"))
+                        # DateTime column has no timezone; strip tzinfo (UTC naive)
+                        snap_dt = snap_dt.replace(tzinfo=None)
                     except Exception:
                         continue
                     # Check for near-duplicate using ORM to avoid raw SQL type issues
