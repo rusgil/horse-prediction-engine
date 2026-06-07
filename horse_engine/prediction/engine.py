@@ -279,6 +279,12 @@ def enrich_runner(
         first_up_win_rate=wr_first_up,
         second_up_win_rate=wr_second_up,
         career_place_rate=career_place_rate,
+        # Live stream signals — passed through directly if populated
+        steam_60=runner.steam_60,
+        steam_30=runner.steam_30,
+        late_money=runner.late_money,
+        drift_flag=runner.drift_flag,
+        odds_velocity=runner.odds_velocity,
     )
 
 

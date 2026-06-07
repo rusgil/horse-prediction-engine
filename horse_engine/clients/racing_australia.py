@@ -26,6 +26,7 @@ from horse_engine.pedigree.sire_profiles import SIRE_PROFILES
 log = logging.getLogger(__name__)
 
 _BASE = "https://www.racingaustralia.horse/FreeFields"
+_IF_BASE = "https://www.racingaustralia.horse/InteractiveForm"
 _AU_STATES = ["NSW", "VIC", "QLD", "SA", "WA", "TAS", "NT", "ACT"]
 _MONTH_NAMES = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"]
 
@@ -156,6 +157,225 @@ def _parse_form_string(form: str) -> list[FormStart]:
     return list(reversed(starts))
 
 
+# ── InteractiveForm parsers ───────────────────────────────────────────────────
+
+def _going_category(track_condition: str) -> str:
+    tc = track_condition.lower()
+    if "heavy" in tc:
+        return "heavy"
+    if "soft" in tc or "yield" in tc:
+        return "soft"
+    if "firm" in tc:
+        return "firm"
+    return "good"
+
+
+def _parse_stat(text: str, label: str) -> tuple[int, int, int]:
+    """Parse 'Label: N:W-P-T' → (starts, wins, places). Returns (0,0,0) if not found."""
+    m = re.search(rf"{re.escape(label)}:\s*(\d+):(\d+)-(\d+)-(\d+)", text)
+    if m:
+        return int(m.group(1)), int(m.group(2)), int(m.group(3))
+    return 0, 0, 0
+
+
+def _parse_horse_form_page(html: str) -> dict:
+    """
+    Parse HorseFullForm.aspx into a dict of career stats and recent run history.
+    The 'Track' and 'Dist' stats are context-specific to the race entry (raceentry param).
+    """
+    soup = BeautifulSoup(html, "html.parser")
+    result: dict = {}
+
+    # Find the Career row in the horse-search-details table
+    for table in soup.find_all("table", class_="horse-search-details"):
+        for row in table.find_all("tr"):
+            th = row.find("th")
+            td = row.find("td")
+            if not th or not td:
+                continue
+            if "Career" not in th.get_text():
+                continue
+
+            text = td.get_text(" ", strip=True)
+
+            # Summary: "25-1:5:5" → starts-wins:places:thirds
+            m = re.search(r"Summary:\s*(\d+)-(\d+):(\d+):(\d+)", text)
+            if m:
+                result["career_starts"] = int(m.group(1))
+                result["career_wins"] = int(m.group(2))
+                result["career_places"] = int(m.group(3))
+
+            # Track / Dist / Track/Dist — context-aware via raceentry
+            for label, key in [
+                ("Track/Dist", "track_dist"),
+                ("Track", "track"),
+                ("Dist", "dist"),
+            ]:
+                s, w, p = _parse_stat(text, label)
+                result[f"{key}_starts"] = s
+                result[f"{key}_wins"] = w
+                result[f"{key}_places"] = p
+
+            # Preparation stats
+            for label, key in [("1st Up", "first_up"), ("2nd Up", "second_up")]:
+                s, w, _ = _parse_stat(text, label)
+                result[f"{key}_starts"] = s
+                result[f"{key}_wins"] = w
+
+            # Going categories
+            for cond in ["Firm", "Good", "Soft", "Heavy"]:
+                s, w, _ = _parse_stat(text, cond)
+                result[f"{cond.lower()}_starts"] = s
+                result[f"{cond.lower()}_wins"] = w
+            break
+
+    # Parse recent run history from interactive-race-fields table
+    form_starts: list[FormStart] = []
+    table = soup.find("table", class_="interactive-race-fields")
+    if table:
+        for row in table.find_all("tr"):
+            if "OddRow" not in (row.get("class") or []) and "EvenRow" not in (row.get("class") or []):
+                continue
+            pos_td = row.find("td", class_="Pos")
+            remain_td = row.find("td", class_="remain")
+            if not pos_td or not remain_td:
+                continue
+
+            pos_text = pos_td.get_text(strip=True)
+            remain_text = remain_td.get_text(" ", strip=True)
+
+            pos_m = re.match(r"(\d+)(?:st|nd|rd|th)\s+of\s+(\d+)", pos_text)
+            if not pos_m:
+                continue
+            pos = int(pos_m.group(1))
+            finishers = int(pos_m.group(2))
+
+            # Date: "26Sep25" → "2025-09-26"
+            run_date = ""
+            date_m = re.search(r"\b(\d{1,2})(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)(\d{2})\b", remain_text)
+            if date_m:
+                day, mon, yr = int(date_m.group(1)), date_m.group(2), date_m.group(3)
+                month_num = _MONTH_NAMES.index(mon) + 1
+                run_date = f"20{yr}-{month_num:02d}-{day:02d}"
+
+            # Track code: first word(s) before date
+            track = ""
+            track_m = re.match(r"^([A-Z][A-Z\s]+?)\s+\d{1,2}[A-Z]", remain_text)
+            if track_m:
+                track = track_m.group(1).strip()
+
+            # Distance
+            distance = 0
+            dist_m = re.search(r"\b(\d{3,4})m\b", remain_text)
+            if dist_m:
+                distance = int(dist_m.group(1))
+
+            # Going (e.g. "Good4", "Soft5", "Heavy8")
+            going = "Good"
+            going_m = re.search(r"\b(Firm|Good|Soft|Heavy|Synthetic)(\d?)\b", remain_text)
+            if going_m:
+                going = f"{going_m.group(1)} {going_m.group(2)}".strip()
+
+            # Beaten margin — winner has 0.0, others have NL pattern like "9.51L,"
+            margin = 0.0
+            if pos > 1:
+                margin_m = re.search(r"[\s,]([\d.]+)L,", remain_text)
+                if margin_m:
+                    margin = float(margin_m.group(1))
+                else:
+                    margin = 5.0  # unknown, assume beaten
+
+            # Weight (first kg value — should be this horse's weight)
+            weight = 0.0
+            weight_m = re.search(r"([\d.]+)kg", remain_text)
+            if weight_m:
+                weight = float(weight_m.group(1))
+
+            # Barrier
+            barrier = 0
+            barrier_m = re.search(r"Barrier\s+(\d+)", remain_text)
+            if barrier_m:
+                barrier = int(barrier_m.group(1))
+
+            # Race class
+            race_class = ""
+            class_m = re.search(
+                r"\b(MDN|Maiden|CL\d|Class\s*\d|BM\d+|G[1-3]|Listed|Highway|CTRY|F&M|2YO|3YO)\b",
+                remain_text, re.IGNORECASE,
+            )
+            if class_m:
+                race_class = class_m.group(1).upper()
+
+            # Prize
+            prize = 0
+            prize_m = re.search(r"\$([\d,]+)\b", remain_text)
+            if prize_m:
+                prize = int(prize_m.group(1).replace(",", ""))
+
+            # Jockey
+            jockey_link = remain_td.find("a", href=re.compile(r"JockeyLastRuns"))
+            jockey = jockey_link.get_text(strip=True) if jockey_link else ""
+
+            form_starts.append(FormStart(
+                date=run_date,
+                track=track,
+                distance=distance,
+                track_condition=going,
+                barrier=barrier,
+                weight=weight,
+                jockey=jockey,
+                position=pos,
+                finishers=finishers,
+                beaten_margin=margin,
+                race_class=race_class,
+                prize_money=prize,
+            ))
+
+    result["form_starts"] = form_starts
+    return result
+
+
+def _parse_person_form_page(html: str) -> dict:
+    """
+    Parse JockeyLastRuns.aspx or TrainerLastRuns.aspx.
+    Returns overall win rate, wet track win rate, and run count.
+    """
+    soup = BeautifulSoup(html, "html.parser")
+
+    total = wins = wet_total = wet_wins = 0
+
+    table = soup.find("table", class_="interactive-race-fields")
+    if table:
+        for row in table.find_all("tr"):
+            if "OddRow" not in (row.get("class") or []) and "EvenRow" not in (row.get("class") or []):
+                continue
+            pos_td = row.find("td", class_="Pos")
+            remain_td = row.find("td", class_="remain")
+            if not pos_td or not remain_td:
+                continue
+
+            pos_m = re.match(r"(\d+)(?:st|nd|rd|th)\s+of\s+(\d+)", pos_td.get_text(strip=True))
+            if not pos_m:
+                continue
+
+            pos = int(pos_m.group(1))
+            total += 1
+            if pos == 1:
+                wins += 1
+
+            remain_text = remain_td.get_text(" ", strip=True)
+            going_m = re.search(r"\b(Soft|Heavy)\d?\b", remain_text, re.IGNORECASE)
+            if going_m:
+                wet_total += 1
+                if pos == 1:
+                    wet_wins += 1
+
+    win_rate = round(wins / total * 100, 2) if total > 0 else 10.0
+    wet_rate = round(wet_wins / wet_total * 100, 2) if wet_total > 0 else win_rate
+
+    return {"win_rate": win_rate, "wet_rate": wet_rate, "total_runs": total}
+
+
 # ── Parser ────────────────────────────────────────────────────────────────────
 
 def _parse_acceptances_page(html: str, ra_key: str, race_date: str, state: str) -> dict:
@@ -223,6 +443,24 @@ def _parse_acceptances_page(html: str, ra_key: str, race_date: str, state: str) 
             except ValueError:
                 barrier = 0
 
+            # Extract InteractiveForm codes from href attributes
+            horsecode = raceentry = jockeycode = trainercode = ""
+            horse_link = cells[2].find("a", href=True)
+            if horse_link:
+                href = horse_link.get("href", "")
+                hm = re.search(r"horsecode=([^&\"]+)", href)
+                rem = re.search(r"raceentry=([^&\"]+)", href)
+                horsecode = hm.group(1) if hm else ""
+                raceentry = rem.group(1) if rem else ""
+            trainer_link = cells[3].find("a", href=True)
+            if trainer_link:
+                tm = re.search(r"trainercode=([^&\"]+)", trainer_link.get("href", ""))
+                trainercode = tm.group(1) if tm else ""
+            jockey_link = cells[4].find("a", href=True)
+            if jockey_link:
+                jm = re.search(r"jockeycode=([^&\"]+)", jockey_link.get("href", ""))
+                jockeycode = jm.group(1) if jm else ""
+
             current_race["selections"].append({
                 "competitorNumber": int(tab_num_raw),
                 "barrierNumber": barrier,
@@ -240,6 +478,10 @@ def _parse_acceptances_page(html: str, ra_key: str, race_date: str, state: str) 
                 "officialTime": None,
                 "status": "",
                 "form_string": form_str,
+                "horsecode": horsecode,
+                "raceentry": raceentry,
+                "jockeycode": jockeycode,
+                "trainercode": trainercode,
                 "competitor": {
                     "id": "",
                     "name": horse,
@@ -373,6 +615,12 @@ class RacingAustraliaClient:
         self._results_cache: dict[str, tuple[datetime, dict]] = {}
         # slug → ra_key
         self._slug_to_key: dict[str, str] = {}
+        # horsecode → (ts, parsed form dict)  — 1 hour TTL
+        self._horse_form_cache: dict[str, tuple[datetime, dict]] = {}
+        # jockeycode → (ts, parsed form dict)
+        self._jockey_form_cache: dict[str, tuple[datetime, dict]] = {}
+        # trainercode → (ts, parsed form dict)
+        self._trainer_form_cache: dict[str, tuple[datetime, dict]] = {}
         # rate-limit: one request at a time
         self._sem: asyncio.Semaphore | None = None
 
@@ -388,6 +636,93 @@ class RacingAustraliaClient:
                 resp = await client.get(url)
                 resp.raise_for_status()
                 return resp.text
+
+    async def _get_form(self, url: str) -> str:
+        async with self._get_sem():
+            await asyncio.sleep(0.3)
+            async with httpx.AsyncClient(headers=_HEADERS, timeout=10.0, follow_redirects=True) as client:
+                resp = await client.get(url)
+                resp.raise_for_status()
+                return resp.text
+
+    # ── InteractiveForm fetchers ──────────────────────────────────────────────
+
+    async def _fetch_horse_form(self, horsecode: str, raceentry: str) -> dict:
+        if not horsecode:
+            return {}
+        cached = self._horse_form_cache.get(horsecode)
+        if cached and (datetime.utcnow() - cached[0]).total_seconds() < 3600:
+            return cached[1]
+        url = f"{_IF_BASE}/HorseFullForm.aspx?horsecode={horsecode}&src=horseform&raceentry={raceentry}"
+        try:
+            html = await self._get_form(url)
+            data = _parse_horse_form_page(html)
+        except Exception as e:
+            log.debug("Horse form fetch failed %s: %s", horsecode, e)
+            data = {}
+        self._horse_form_cache[horsecode] = (datetime.utcnow(), data)
+        return data
+
+    async def _fetch_person_form(self, code: str, kind: str) -> dict:
+        if not code:
+            return {}
+        cache = self._jockey_form_cache if kind == "jockey" else self._trainer_form_cache
+        cached = cache.get(code)
+        if cached and (datetime.utcnow() - cached[0]).total_seconds() < 3600:
+            return cached[1]
+        if kind == "jockey":
+            url = f"{_IF_BASE}/JockeyLastRuns.aspx?jockeycode={code}"
+        else:
+            url = f"{_IF_BASE}/TrainerLastRuns.aspx?trainercode={code}"
+        try:
+            html = await self._get_form(url)
+            data = _parse_person_form_page(html)
+        except Exception as e:
+            log.debug("Person form fetch failed %s %s: %s", kind, code, e)
+            data = {}
+        cache[code] = (datetime.utcnow(), data)
+        return data
+
+    async def _batch_fetch_runner_forms(self, selections: list[dict]) -> dict:
+        """Fetch horse/jockey/trainer forms for all selections in parallel."""
+        task_keys: list[str] = []
+        coros: list = []
+        seen: set[str] = set()
+
+        for sel in selections:
+            horsecode = sel.get("horsecode", "")
+            raceentry = sel.get("raceentry", "")
+            jockeycode = sel.get("jockeycode", "")
+            trainercode = sel.get("trainercode", "")
+
+            key = f"h:{horsecode}"
+            if horsecode and key not in seen:
+                seen.add(key)
+                task_keys.append(key)
+                coros.append(self._fetch_horse_form(horsecode, raceentry))
+
+            key = f"j:{jockeycode}"
+            if jockeycode and key not in seen:
+                seen.add(key)
+                task_keys.append(key)
+                coros.append(self._fetch_person_form(jockeycode, "jockey"))
+
+            key = f"t:{trainercode}"
+            if trainercode and key not in seen:
+                seen.add(key)
+                task_keys.append(key)
+                coros.append(self._fetch_person_form(trainercode, "trainer"))
+
+        if not coros:
+            return {}
+
+        results = await asyncio.gather(*coros, return_exceptions=True)
+        form_map: dict[str, dict] = {}
+        for key, result in zip(task_keys, results):
+            form_map[key] = result if isinstance(result, dict) else {}
+
+        log.debug("Batch form fetch: %d requests for %d selections", len(coros), len(selections))
+        return form_map
 
     # ── Calendar ──────────────────────────────────────────────────────────────
 
@@ -584,6 +919,9 @@ class RacingAustraliaClient:
         tc = raw_event.get("trackCondition") or {}
         track_condition = f"{tc.get('overall', 'Good')} {tc.get('rating', '4')}".strip()
 
+        selections = raw_event.get("selections") or []
+        form_map = await self._batch_fetch_runner_forms(selections)
+
         return Race(
             race_id=f"{race_date}_{venue_slug}_R{race_num}",
             date=race_date,
@@ -598,23 +936,41 @@ class RacingAustraliaClient:
             prize_money=int(raw_event.get("prize_money") or 0),
             scheduled_time=raw_event.get("startTime", ""),
             race_type="R",
-            runners=self._parse_runners(raw_event.get("selections") or [], track_condition),
+            runners=self._parse_runners(selections, track_condition, form_map),
         )
 
-    def _parse_runners(self, selections: list[dict], track_condition: str = "Good 4") -> list[Runner]:
+    def _parse_runners(
+        self,
+        selections: list[dict],
+        track_condition: str = "Good 4",
+        form_map: dict | None = None,
+    ) -> list[Runner]:
         runners = []
         for sel in selections:
             if (sel.get("status") or "").upper() == "SCRATCHED":
                 continue
             try:
-                r = self._parse_runner(sel, track_condition)
+                horsecode = sel.get("horsecode", "")
+                jockeycode = sel.get("jockeycode", "")
+                trainercode = sel.get("trainercode", "")
+                horse_form = (form_map or {}).get(f"h:{horsecode}", {})
+                jockey_form = (form_map or {}).get(f"j:{jockeycode}", {})
+                trainer_form = (form_map or {}).get(f"t:{trainercode}", {})
+                r = self._parse_runner(sel, track_condition, horse_form, jockey_form, trainer_form)
                 if r:
                     runners.append(r)
             except Exception as e:
                 log.debug("Runner parse error: %s", e)
         return runners
 
-    def _parse_runner(self, sel: dict, track_condition: str = "Good 4") -> Runner | None:
+    def _parse_runner(
+        self,
+        sel: dict,
+        track_condition: str = "Good 4",
+        horse_form: dict | None = None,
+        jockey_form: dict | None = None,
+        trainer_form: dict | None = None,
+    ) -> Runner | None:
         comp = sel.get("competitor") or {}
         jock = sel.get("jockey") or {}
         trnr = sel.get("trainer") or {}
@@ -638,9 +994,27 @@ class RacingAustraliaClient:
             brilliance_index=float(profile.get("brilliance", 5)),
         )
 
-        last_10 = _parse_form_string(sel.get("form_string") or "")
+        hf = horse_form or {}
+        jf = jockey_form or {}
+        tf = trainer_form or {}
+
+        # Use scraped form history if available, else fall back to form string
+        form_starts_raw: list[FormStart] | None = hf.get("form_starts")
+        last_10: list[FormStart] = form_starts_raw[:10] if form_starts_raw else _parse_form_string(
+            sel.get("form_string") or ""
+        )
+
+        # Map today's going to a condition category for condition_starts lookup
+        cond = _going_category(track_condition)
+        condition_starts = hf.get(f"{cond}_starts", 0)
+        condition_wins = hf.get(f"{cond}_wins", 0)
+
         j_name = jock.get("name") or ""
         t_name = trnr.get("name") or ""
+
+        jockey_rate = jf.get("win_rate", 10.0)
+        trainer_rate = tf.get("win_rate", 10.0)
+        trainer_wet_rate = tf.get("wet_rate", trainer_rate)
 
         return Runner(
             barrier=int(sel.get("barrierNumber") or 0),
@@ -653,23 +1027,49 @@ class RacingAustraliaClient:
             jockey=j_name,
             trainer=t_name,
             country=comp.get("country") or "AUS",
-            career_starts=0, career_wins=0, career_places=0,
+            career_starts=hf.get("career_starts", 0),
+            career_wins=hf.get("career_wins", 0),
+            career_places=hf.get("career_places", 0),
+            track_starts=hf.get("track_starts", 0),
+            track_wins=hf.get("track_wins", 0),
+            distance_starts=hf.get("dist_starts", 0),
+            distance_wins=hf.get("dist_wins", 0),
+            track_distance_starts=hf.get("track_dist_starts", 0),
+            track_distance_wins=hf.get("track_dist_wins", 0),
+            condition_starts=condition_starts,
+            condition_wins=condition_wins,
+            first_up_starts=hf.get("first_up_starts", 0),
+            first_up_wins=hf.get("first_up_wins", 0),
+            second_up_starts=hf.get("second_up_starts", 0),
+            second_up_wins=hf.get("second_up_wins", 0),
             last_10_starts=last_10,
             pedigree=pedigree,
             tote_win_odds=sel.get("topToteWin"),
             best_available_odds=sel.get("topToteWin"),
             jockey_stats=JockeyStats(
-                name=j_name, win_rate_overall=10.0, win_rate_track=10.0,
-                win_rate_distance=10.0, win_rate_barrier_low=10.0,
-                win_rate_barrier_mid=10.0, win_rate_barrier_wide=10.0,
-                wins_today=0, prizemoney_season=0, wins_season=0,
-                trainer_jockey_combo_rate=10.0,
+                name=j_name,
+                win_rate_overall=jockey_rate,
+                win_rate_track=jockey_rate,
+                win_rate_distance=jockey_rate,
+                win_rate_barrier_low=jockey_rate,
+                win_rate_barrier_mid=jockey_rate,
+                win_rate_barrier_wide=jockey_rate,
+                wins_today=0,
+                prizemoney_season=0,
+                wins_season=0,
+                trainer_jockey_combo_rate=jockey_rate,
             ) if j_name else None,
             trainer_stats=TrainerStats(
-                name=t_name, win_rate_overall=10.0, win_rate_track=10.0,
-                win_rate_distance=10.0, win_rate_first_up=10.0,
-                win_rate_second_up=10.0, win_rate_wet=10.0,
-                prizemoney_season=0, runners_season=0, wins_season=0,
+                name=t_name,
+                win_rate_overall=trainer_rate,
+                win_rate_track=trainer_rate,
+                win_rate_distance=trainer_rate,
+                win_rate_first_up=trainer_rate,
+                win_rate_second_up=trainer_rate,
+                win_rate_wet=trainer_wet_rate,
+                prizemoney_season=0,
+                runners_season=0,
+                wins_season=0,
             ) if t_name else None,
         )
 

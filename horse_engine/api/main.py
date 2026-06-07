@@ -5364,6 +5364,103 @@ async def backfill_odds_from_sp(x_cron_secret: Optional[str] = Header(None)):
     return {"status": "ok", "updated_live": updated_live, "updated_history": updated_hist}
 
 
+@app.post("/api/admin/patch-betfair-bsp")
+async def patch_betfair_bsp(
+    payload: dict,
+    x_cron_secret: Optional[str] = Header(None),
+):
+    """
+    Accept a batch of Betfair BSP + LTP snapshot data and patch the DB.
+
+    Payload:
+        {
+          "races": [
+            {
+              "race_id": "2026-05-15_warwick-farm_R3",
+              "runners": [
+                {
+                  "name": "Dark Fox",
+                  "bsp": 4.2,
+                  "snapshots": [
+                    {"minutes_to_jump": 62.1, "snapshotted_at": "2026-05-15T02:00:00Z", "win_odds": 5.5},
+                    ...
+                  ]
+                },
+                ...
+              ]
+            },
+            ...
+          ]
+        }
+
+    Idempotent: skips rows that already have starting_price set; skips snapshots
+    that already exist within 2 minutes of the stored time.
+    """
+    _check_admin(x_cron_secret)
+    races = payload.get("races") or []
+    bsp_patched = bsp_skipped = pred_patched = snap_inserted = 0
+
+    async with get_session() as session:
+        for race in races:
+            race_id = race.get("race_id", "")
+            for runner in race.get("runners") or []:
+                name = runner.get("name", "")
+                bsp = runner.get("bsp")
+                snapshots = runner.get("snapshots") or []
+
+                if bsp:
+                    # Patch historical_results.starting_price
+                    res = await session.execute(text(
+                        "UPDATE historical_results SET starting_price = :bsp "
+                        "WHERE race_id = :rid AND LOWER(horse_name) = LOWER(:name) "
+                        "AND (starting_price IS NULL OR starting_price = 0)"
+                    ), {"bsp": bsp, "rid": race_id, "name": name})
+                    if res.rowcount:
+                        bsp_patched += res.rowcount
+                    else:
+                        bsp_skipped += 1
+
+                    # Patch runner_prediction_history.best_available_odds
+                    res2 = await session.execute(text(
+                        "UPDATE runner_prediction_history SET best_available_odds = :bsp "
+                        "WHERE race_id = :rid AND LOWER(horse_name) = LOWER(:name) "
+                        "AND (best_available_odds IS NULL OR best_available_odds = 0)"
+                    ), {"bsp": bsp, "rid": race_id, "name": name})
+                    pred_patched += res2.rowcount
+
+                for snap in snapshots:
+                    mtj = snap.get("minutes_to_jump", 0)
+                    snap_at = snap.get("snapshotted_at")
+                    win_odds = snap.get("win_odds")
+                    if not (snap_at and win_odds):
+                        continue
+                    existing = (await session.execute(text(
+                        "SELECT id FROM odds_snapshots WHERE race_id = :rid "
+                        "AND LOWER(horse_name) = LOWER(:name) "
+                        "AND ABS(minutes_to_jump - :mtj) < 2 LIMIT 1"
+                    ), {"rid": race_id, "name": name, "mtj": mtj})).fetchone()
+                    if existing:
+                        continue
+                    await session.execute(text(
+                        "INSERT INTO odds_snapshots "
+                        "(race_id, horse_name, snapshotted_at, minutes_to_jump, win_odds, place_odds, source) "
+                        "VALUES (:rid, :name, :ts, :mtj, :odds, NULL, 'betfair_ltp')"
+                    ), {"rid": race_id, "name": name, "ts": snap_at, "mtj": mtj, "odds": win_odds})
+                    snap_inserted += 1
+
+        await session.commit()
+
+    log.info("[patch-betfair-bsp] bsp=%d skipped=%d pred=%d snaps=%d",
+             bsp_patched, bsp_skipped, pred_patched, snap_inserted)
+    return {
+        "status": "ok",
+        "bsp_patched": bsp_patched,
+        "bsp_skipped": bsp_skipped,
+        "pred_patched": pred_patched,
+        "snap_inserted": snap_inserted,
+    }
+
+
 _validation_bt_state: dict = {"running": False, "status": "idle", "result": None}
 
 

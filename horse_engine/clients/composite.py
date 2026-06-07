@@ -1,10 +1,13 @@
 """
 Composite racing client: Racing Australia (race cards + results) + OddsPro (odds).
 
-Optional: BetfairClient enriches runner metadata (sire, dam, age, sex) and
-provides exchange odds as a fallback when OddsPro has no price.
-Betfair is activated only when BETFAIR_APP_KEY / BETFAIR_USERNAME / BETFAIR_PASSWORD
-are set in the environment.
+Optional enrichment layers (all activated by Betfair credentials):
+  BetfairClient       — REST catalogue for runner metadata (sire, dam, age, sex)
+  BetfairStreamClient — live streaming odds; replaces REST polling and provides
+                        steam_60 / steam_30 / late_money / drift_flag / odds_velocity
+
+Betfair layers activate only when BETFAIR_APP_KEY / BETFAIR_USERNAME /
+BETFAIR_PASSWORD are set in the environment.
 """
 from __future__ import annotations
 
@@ -37,7 +40,8 @@ class CompositeClient:
     def __init__(self) -> None:
         self._ra = RacingAustraliaClient()
         self._odds = OddsProClient()
-        self._bf = None      # BetfairClient — lazy init only if credentials set
+        self._bf = None       # BetfairClient (REST) — lazy init
+        self._stream = None   # BetfairStreamClient — lazy init + started once
         self._punters = None  # PuntersClient — lazy init only if proxy URL set
 
     def _get_betfair(self):
@@ -51,6 +55,24 @@ class CompositeClient:
             except Exception as e:
                 log.debug("BetfairClient init skipped: %s", e)
         return self._bf
+
+    async def _get_stream(self):
+        """Return BetfairStreamClient, starting it once if credentials are present."""
+        if self._stream is None:
+            try:
+                from horse_engine.config import settings
+                if settings.betfair_app_key and settings.betfair_username and settings.betfair_password:
+                    from horse_engine.clients.betfair_stream import BetfairStreamClient
+                    self._stream = BetfairStreamClient(
+                        app_key=settings.betfair_app_key,
+                        username=settings.betfair_username,
+                        password=settings.betfair_password,
+                    )
+                    await self._stream.start()
+                    log.info("BetfairStreamClient started — live AU odds active")
+            except Exception as e:
+                log.debug("BetfairStreamClient init skipped: %s", e)
+        return self._stream
 
     def _get_punters(self):
         if self._punters is None:
@@ -87,9 +109,10 @@ class CompositeClient:
         ra_key = meeting.get("id", "")
         race_date = meeting.get("date") or meeting.get("meetingDateLocal") or date.today().isoformat()
 
-        # Find OddsPro track and start Betfair + Punters fetches in parallel
+        # Kick off all parallel fetches — stream client is started lazily here
         bf = self._get_betfair()
         punters = self._get_punters()
+        stream = await self._get_stream()
         tracks = await self._odds.get_tracks(race_date)
         op_track = self._odds.find_matching_track(venue, tracks)
         if not op_track:
@@ -102,9 +125,11 @@ class CompositeClient:
             punters.get_race(slug, race_number) if punters else _none(),
         )
 
-        # Build Betfair selection lookup keyed by normalized horse name
+        # Build Betfair REST selection lookup keyed by normalized horse name
         bf_by_name: dict[str, dict] = {}
+        bf_market_id: str = ""
         if bf_race:
+            bf_market_id = bf_race.get("id", "")
             for bf_sel in (bf_race.get("selections") or []):
                 bf_name = _normalize((bf_sel.get("competitor") or {}).get("name", ""))
                 if bf_name:
@@ -120,12 +145,21 @@ class CompositeClient:
             ra = race_results.get(name, {})
             bf_sel = bf_by_name.get(norm) or bf_by_name.get(name)
 
-            # Odds: OddsPro first, Betfair exchange as fallback
-            if op:
-                sel["topToteWin"] = op.get("currentBestOdds")
-                sel["_odds_opening"] = op.get("firstPrice")
-            elif bf_sel and bf_sel.get("topToteWin"):
-                sel["topToteWin"] = bf_sel["topToteWin"]
+            # ── Odds priority: stream LTP > OddsPro > Betfair REST ──────────
+            stream_features: dict = {}
+            if stream and bf_market_id:
+                stream_features = stream.get_odds_features(bf_market_id, name_raw)
+                if stream_features.get("current_ltp"):
+                    sel["topToteWin"] = stream_features["current_ltp"]
+                    # steam/drift signals stored for parse_race to pick up
+                    sel["_stream"] = stream_features
+
+            if not sel.get("topToteWin"):
+                if op:
+                    sel["topToteWin"] = op.get("currentBestOdds")
+                    sel["_odds_opening"] = op.get("firstPrice")
+                elif bf_sel and bf_sel.get("topToteWin"):
+                    sel["topToteWin"] = bf_sel["topToteWin"]
 
             # Betfair metadata: sire, dam, age, sex, colour
             if bf_sel:
@@ -175,8 +209,24 @@ class CompositeClient:
         }
         for runner in race.runners:
             sel = sel_map.get(_normalize(runner.horse_name))
-            if sel:
-                runner.odds_opening = sel.get("_odds_opening")
+            if not sel:
+                continue
+            if sel.get("_odds_opening"):
+                runner.odds_opening = sel["_odds_opening"]
+            # Apply live stream signals if available
+            sf = sel.get("_stream") or {}
+            if sf:
+                if sf.get("current_ltp"):
+                    runner.best_available_odds = sf["current_ltp"]
+                    runner.tote_win_odds = sf["current_ltp"]
+                runner.odds_movement = sf.get("steam_60", 0.0)
+                runner.is_steamed = sf.get("steam_60", 0.0) > 0.5
+                runner.is_drifted = sf.get("drift_flag", 0.0) > 0.0
+                runner.steam_60 = sf.get("steam_60", 0.0)
+                runner.steam_30 = sf.get("steam_30", 0.0)
+                runner.late_money = sf.get("late_money", 0.0)
+                runner.drift_flag = sf.get("drift_flag", 0.0)
+                runner.odds_velocity = sf.get("odds_velocity", 0.0)
 
         punters_sels = raw_event.get("_punters_sels") or []
         if punters_sels:

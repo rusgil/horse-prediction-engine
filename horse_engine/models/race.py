@@ -113,7 +113,17 @@ class Runner(BaseModel):
     ladbrokes_odds: Optional[float] = None
     best_available_odds: Optional[float] = None
     odds_opening: Optional[float] = None
+    odds_movement: float = 0.0       # morning_price - current (positive = shortened)
     market_rank: Optional[int] = None  # 1 = favourite
+    is_steamed: bool = False
+    is_drifted: bool = False
+
+    # Live stream signals (from Betfair streaming)
+    steam_60: float = 0.0            # odds change T-60min → T-5min
+    steam_30: float = 0.0            # odds change T-30min → T-5min
+    late_money: float = 0.0          # odds drop in final 15 min
+    drift_flag: float = 0.0          # 1.0 if opened short and now longer
+    odds_velocity: float = 0.0       # avg rate of change per minute (last 60 min)
 
 
 class Race(BaseModel):
