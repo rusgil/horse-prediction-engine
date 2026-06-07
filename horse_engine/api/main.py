@@ -5401,6 +5401,7 @@ async def patch_betfair_bsp(
     races = payload.get("races") or []
     bsp_patched = bsp_skipped = pred_patched = snap_inserted = 0
 
+    _debug_err = None
     async with get_session() as session:
         for race in races:
             race_id = race.get("race_id", "")
@@ -5429,38 +5430,40 @@ async def patch_betfair_bsp(
                     ), {"bsp": bsp, "rid": race_id, "name": name})
                     pred_patched += res2.rowcount
 
-                for snap in snapshots:
-                    mtj = int(round(float(snap.get("minutes_to_jump") or 0)))
-                    snap_at_str = snap.get("snapshotted_at", "")
-                    win_odds_val = snap.get("win_odds")
-                    if not (snap_at_str and win_odds_val):
-                        continue
-                    try:
-                        snap_dt = datetime.fromisoformat(snap_at_str.replace("Z", "+00:00"))
-                        # DateTime column has no timezone; strip tzinfo (UTC naive)
-                        snap_dt = snap_dt.replace(tzinfo=None)
-                    except Exception:
-                        continue
-                    # Check for near-duplicate using ORM to avoid raw SQL type issues
-                    dup = (await session.execute(
-                        select(OddsSnapshotRow.id)
-                        .where(OddsSnapshotRow.race_id == race_id)
-                        .where(func.lower(OddsSnapshotRow.horse_name) == name.lower())
-                        .where(OddsSnapshotRow.minutes_to_jump >= mtj - 2)
-                        .where(OddsSnapshotRow.minutes_to_jump <= mtj + 2)
-                        .limit(1)
-                    )).fetchone()
-                    if dup:
-                        continue
-                    session.add(OddsSnapshotRow(
-                        race_id=race_id,
-                        horse_name=name,
-                        snapshotted_at=snap_dt,
-                        minutes_to_jump=mtj,
-                        win_odds=float(win_odds_val),
-                        source="betfair_ltp",
-                    ))
-                    snap_inserted += 1
+                try:
+                    for snap in snapshots:
+                        mtj = int(round(float(snap.get("minutes_to_jump") or 0)))
+                        snap_at_str = snap.get("snapshotted_at", "")
+                        win_odds_val = snap.get("win_odds")
+                        if not (snap_at_str and win_odds_val):
+                            continue
+                        try:
+                            snap_dt = datetime.fromisoformat(snap_at_str.replace("Z", "+00:00"))
+                            snap_dt = snap_dt.replace(tzinfo=None)
+                        except Exception:
+                            continue
+                        dup = (await session.execute(
+                            select(OddsSnapshotRow.id)
+                            .where(OddsSnapshotRow.race_id == race_id)
+                            .where(func.lower(OddsSnapshotRow.horse_name) == name.lower())
+                            .where(OddsSnapshotRow.minutes_to_jump >= mtj - 2)
+                            .where(OddsSnapshotRow.minutes_to_jump <= mtj + 2)
+                            .limit(1)
+                        )).fetchone()
+                        if dup:
+                            continue
+                        session.add(OddsSnapshotRow(
+                            race_id=race_id,
+                            horse_name=name,
+                            snapshotted_at=snap_dt,
+                            minutes_to_jump=mtj,
+                            win_odds=float(win_odds_val),
+                            source="betfair_ltp",
+                        ))
+                        snap_inserted += 1
+                except Exception as _snap_err:
+                    _debug_err = repr(_snap_err)
+                    log.exception("[patch-betfair-bsp] snapshot error: %s", _snap_err)
 
         await session.commit()
 
@@ -5472,6 +5475,7 @@ async def patch_betfair_bsp(
         "bsp_skipped": bsp_skipped,
         "pred_patched": pred_patched,
         "snap_inserted": snap_inserted,
+        "debug_err": _debug_err,
     }
 
 
