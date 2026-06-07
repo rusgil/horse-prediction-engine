@@ -5430,28 +5430,34 @@ async def patch_betfair_bsp(
                     pred_patched += res2.rowcount
 
                 for snap in snapshots:
-                    mtj = snap.get("minutes_to_jump", 0)
-                    snap_at_str = snap.get("snapshotted_at")
-                    win_odds = snap.get("win_odds")
-                    if not (snap_at_str and win_odds):
+                    mtj = float(snap.get("minutes_to_jump") or 0)
+                    snap_at_str = snap.get("snapshotted_at", "")
+                    win_odds_val = snap.get("win_odds")
+                    if not (snap_at_str and win_odds_val):
                         continue
                     try:
                         snap_dt = datetime.fromisoformat(snap_at_str.replace("Z", "+00:00"))
                     except Exception:
                         continue
-                    existing = (await session.execute(text(
-                        "SELECT id FROM odds_snapshots WHERE race_id = :rid "
-                        "AND LOWER(horse_name) = LOWER(:name) "
-                        "AND ABS(minutes_to_jump - :mtj) < 2 LIMIT 1"
-                    ), {"rid": race_id, "name": name, "mtj": float(mtj)})).fetchone()
-                    if existing:
+                    # Check for near-duplicate using ORM to avoid raw SQL type issues
+                    dup = (await session.execute(
+                        select(OddsSnapshotRow.id)
+                        .where(OddsSnapshotRow.race_id == race_id)
+                        .where(func.lower(OddsSnapshotRow.horse_name) == name.lower())
+                        .where(OddsSnapshotRow.minutes_to_jump >= mtj - 2)
+                        .where(OddsSnapshotRow.minutes_to_jump <= mtj + 2)
+                        .limit(1)
+                    )).fetchone()
+                    if dup:
                         continue
-                    await session.execute(text(
-                        "INSERT INTO odds_snapshots "
-                        "(race_id, horse_name, snapshotted_at, minutes_to_jump, win_odds, place_odds, source) "
-                        "VALUES (:rid, :name, :ts, :mtj, :odds, NULL, 'betfair_ltp')"
-                    ), {"rid": race_id, "name": name, "ts": snap_dt,
-                        "mtj": float(mtj), "odds": float(win_odds)})
+                    session.add(OddsSnapshotRow(
+                        race_id=race_id,
+                        horse_name=name,
+                        snapshotted_at=snap_dt,
+                        minutes_to_jump=mtj,
+                        win_odds=float(win_odds_val),
+                        source="betfair_ltp",
+                    ))
                     snap_inserted += 1
 
         await session.commit()
