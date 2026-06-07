@@ -5430,7 +5430,7 @@ async def patch_betfair_bsp(
                     pred_patched += res2.rowcount
 
                 for snap in snapshots:
-                    mtj = float(snap.get("minutes_to_jump") or 0)
+                    mtj = int(round(float(snap.get("minutes_to_jump") or 0)))
                     snap_at_str = snap.get("snapshotted_at", "")
                     win_odds_val = snap.get("win_odds")
                     if not (snap_at_str and win_odds_val):
