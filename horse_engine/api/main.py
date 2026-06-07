@@ -5431,22 +5431,27 @@ async def patch_betfair_bsp(
 
                 for snap in snapshots:
                     mtj = snap.get("minutes_to_jump", 0)
-                    snap_at = snap.get("snapshotted_at")
+                    snap_at_str = snap.get("snapshotted_at")
                     win_odds = snap.get("win_odds")
-                    if not (snap_at and win_odds):
+                    if not (snap_at_str and win_odds):
+                        continue
+                    try:
+                        snap_dt = datetime.fromisoformat(snap_at_str.replace("Z", "+00:00"))
+                    except Exception:
                         continue
                     existing = (await session.execute(text(
                         "SELECT id FROM odds_snapshots WHERE race_id = :rid "
                         "AND LOWER(horse_name) = LOWER(:name) "
                         "AND ABS(minutes_to_jump - :mtj) < 2 LIMIT 1"
-                    ), {"rid": race_id, "name": name, "mtj": mtj})).fetchone()
+                    ), {"rid": race_id, "name": name, "mtj": float(mtj)})).fetchone()
                     if existing:
                         continue
                     await session.execute(text(
                         "INSERT INTO odds_snapshots "
                         "(race_id, horse_name, snapshotted_at, minutes_to_jump, win_odds, place_odds, source) "
                         "VALUES (:rid, :name, :ts, :mtj, :odds, NULL, 'betfair_ltp')"
-                    ), {"rid": race_id, "name": name, "ts": snap_at, "mtj": mtj, "odds": win_odds})
+                    ), {"rid": race_id, "name": name, "ts": snap_dt,
+                        "mtj": float(mtj), "odds": float(win_odds)})
                     snap_inserted += 1
 
         await session.commit()
