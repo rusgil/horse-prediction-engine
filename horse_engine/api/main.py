@@ -4188,6 +4188,85 @@ async def probe_tab(race_id: str = "", date: str = "", x_cron_secret: Optional[s
     }
 
 
+@app.get("/api/admin/probe-ra-results")
+async def probe_ra_results(race_date: str = "", x_cron_secret: Optional[str] = Header(None)):
+    """
+    Diagnostic: for each venue on race_date, show stored venue/state, keys tried, and
+    whether RA returned results. Helps diagnose why seed-ra-results gets 0.
+    """
+    _check_admin(x_cron_secret)
+    from horse_engine.clients.racing_australia import _ra_date as _make_ra_date
+    from urllib.parse import quote
+
+    target = race_date or (_today_aest() - timedelta(days=1)).isoformat()
+    client = get_tab_client()
+    ra = client._ra
+    ra_date_str = _make_ra_date(target)
+    _BASE_RA = "https://www.racingaustralia.horse"
+
+    async with get_session() as session:
+        pred_rows = (await session.execute(
+            select(RunnerPredictionRow.race_id, RunnerPredictionRow.venue, RunnerPredictionRow.state)
+            .where(RunnerPredictionRow.race_id.like(f"{target}_%"))
+            .distinct()
+        )).all()
+        hist_race_ids = set((await session.execute(
+            select(HistoricalResultRow.race_id)
+            .where(HistoricalResultRow.race_id.like(f"{target}_%"))
+            .distinct()
+        )).scalars().all())
+
+    venue_state: dict[tuple[str, str], list[str]] = {}
+    no_venue: list[str] = []
+    for row in pred_rows:
+        v = (row.venue or "").strip()
+        s = (row.state or "").strip().upper()
+        if v and s:
+            venue_state.setdefault((v, s), []).append(row.race_id)
+        else:
+            no_venue.append(row.race_id)
+
+    detail = []
+    prefixes = [""] + [p for p in ra._SPONSOR_PREFIXES]
+    for (venue_name, state), race_ids in venue_state.items():
+        tried = []
+        found_key = None
+        for prefix in prefixes:
+            ra_key = f"{ra_date_str},{state},{prefix}{venue_name}"
+            url = f"{_BASE_RA}/Results.aspx?Key={quote(ra_key, safe='')}"
+            try:
+                html = await ra._get(url)
+                from horse_engine.clients.racing_australia import _parse_results_page
+                parsed = _parse_results_page(html)
+                races_found = len(parsed)
+                runners_found = sum(len(r["runners"]) for r in parsed.values())
+            except Exception as e:
+                races_found = 0
+                runners_found = 0
+                html = str(e)
+            tried.append({"key": ra_key, "url": url, "races": races_found, "runners": runners_found,
+                          "html_snippet": html[:200] if isinstance(html, str) else ""})
+            if races_found > 0:
+                found_key = ra_key
+                break
+
+        already = sum(1 for rid in race_ids if rid in hist_race_ids)
+        detail.append({
+            "venue": venue_name, "state": state,
+            "pred_race_ids": sorted(set(race_ids)),
+            "already_in_historical": already,
+            "found_key": found_key,
+            "tried": tried,
+        })
+
+    return {
+        "date": target,
+        "venues_with_predictions": len(venue_state),
+        "race_ids_missing_venue": no_venue[:10],
+        "detail": detail,
+    }
+
+
 @app.get("/api/admin/data-coverage")
 async def data_coverage(x_cron_secret: Optional[str] = Header(None)):
     """Check how much jockey/trainer/result data we have for building self-accumulated stats."""
