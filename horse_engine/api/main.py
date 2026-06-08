@@ -2715,7 +2715,7 @@ async def get_meeting(race_date: str, venue_code: str):
     """Get all races at a meeting with current predictions if available."""
     _cache_key = f"{race_date}/{venue_code}"
     _cached = _get_meeting_cache.get(_cache_key)
-    if _cached and (datetime.utcnow() - _cached[0]).total_seconds() < 120:
+    if _cached and (datetime.utcnow() - _cached[0]).total_seconds() < 30:
         return _cached[1]
     prefix = f"{_like_safe(race_date)}_{_like_safe(venue_code)}_R"
 
@@ -2880,22 +2880,22 @@ async def get_meeting(race_date: str, venue_code: str):
                 top_picks[p.race_id] = p.horse_name
                 top_win_probs[p.race_id] = p.win_probability
 
-        # Winners and placers per race from historical results
-        hr_result = await session.execute(
+        # Winners and placers per race from historical results — use position
+        # directly rather than the winner/placed boolean flags, which can be
+        # stale when results are re-seeded (old rows with wrong flags persist).
+        hr_all = await session.execute(
             select(HistoricalResultRow)
             .where(HistoricalResultRow.race_id.in_(race_ids))
-            .where(HistoricalResultRow.winner == True)
+            .where(HistoricalResultRow.position != None)  # noqa: E711
+            .order_by(HistoricalResultRow.id)
         )
-        winners = {r.race_id: r.horse_name for r in hr_result.scalars().all()}
-
-        hr_placed = await session.execute(
-            select(HistoricalResultRow)
-            .where(HistoricalResultRow.race_id.in_(race_ids))
-            .where(HistoricalResultRow.placed == True)
-        )
-        placers = {}
-        for r in hr_placed.scalars().all():
-            placers.setdefault(r.race_id, set()).add(r.horse_name)
+        winners: dict[str, str] = {}
+        placers: dict[str, set] = {}
+        for r in hr_all.scalars().all():
+            if r.position == 1:
+                winners[r.race_id] = r.horse_name   # last row with pos=1 wins on dupe
+            if r.position <= 3:
+                placers.setdefault(r.race_id, set()).add(r.horse_name)
 
         # Top place probability per race (reuse model_rank=1 mutable rows already fetched above)
         tp_place_result = await session.execute(
