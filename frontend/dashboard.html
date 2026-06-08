@@ -1314,12 +1314,12 @@
     if (!date) { status.textContent = 'Pick a date first.'; return; }
     status.textContent = `Seeding results for ${date}…`;
     try {
-      const res = await fetch(`${API}/api/admin/seed-ra-results/${date}`, {
+      const res = await fetch(`${API}/api/admin/seed-ra-results/${date}?force=true`, {
         method: 'POST',
         headers: { 'x-cron-secret': adminSecret }
       });
       const data = await res.json();
-      const detail = (data.detail || []).map(d => `${d.venue||''}: ${d.seeded||0} seeded`).join(', ');
+      const detail = (data.detail || []).map(d => `${d.venue||d.ra_key||''}: ${d.seeded||0} seeded`).join(', ');
       status.textContent = `Done — ${data.seeded} total. ${detail}`;
     } catch (e) {
       status.textContent = 'Error: ' + e.message;

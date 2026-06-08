@@ -4431,19 +4431,26 @@ async def seed_results(race_date: str, x_cron_secret: Optional[str] = Header(Non
 
 
 @app.post("/api/admin/seed-ra-results/{race_date}")
-async def seed_ra_results(race_date: str, x_cron_secret: Optional[str] = Header(None)):
+async def seed_ra_results(
+    race_date: str,
+    x_cron_secret: Optional[str] = Header(None),
+    force: bool = Query(False),
+):
     """
     Seed past results directly from Racing Australia Results.aspx, bypassing Calendar.aspx.
     Uses stored venue + state from predictions to construct RA keys — works for past dates
     where Calendar.aspx no longer lists meetings.
+    force=true deletes existing HistoricalResultRow for each race before re-inserting,
+    so stale/wrong rows are replaced with fresh RA data.
     """
     _check_admin(x_cron_secret)
     from horse_engine.clients.racing_australia import _ra_date as _make_ra_date
+    from sqlalchemy import delete as sa_delete
 
     client = get_tab_client()
     ra = client._ra
 
-    # Find all predictions for this date that don't yet have a result
+    # Find all predictions for this date
     async with get_session() as session:
         pred_rows = (await session.execute(
             select(RunnerPredictionRow)
@@ -4483,6 +4490,14 @@ async def seed_ra_results(race_date: str, x_cron_secret: Optional[str] = Header(
                 continue
 
             async with get_session() as session:
+                if force:
+                    # Wipe existing rows for this race so fresh RA data replaces stale ones
+                    await session.execute(
+                        sa_delete(HistoricalResultRow)
+                        .where(HistoricalResultRow.race_id == race_id)
+                    )
+                    await session.commit()
+
                 for name_lower, rd in runners.items():
                     pos = rd.get("position")
                     if not pos or pos <= 0:
@@ -4497,13 +4512,14 @@ async def seed_ra_results(race_date: str, x_cron_secret: Optional[str] = Header(
                         None,
                     )
 
-                    existing_at_pos = (await session.execute(
-                        select(HistoricalResultRow.horse_name)
-                        .where(HistoricalResultRow.race_id == race_id)
-                        .where(HistoricalResultRow.position == pos)
-                    )).scalars().all()
-                    if any(_normalize_horse(h) == _normalize_horse(name_lower) for h in existing_at_pos):
-                        continue
+                    if not force:
+                        existing_at_pos = (await session.execute(
+                            select(HistoricalResultRow.horse_name)
+                            .where(HistoricalResultRow.race_id == race_id)
+                            .where(HistoricalResultRow.position == pos)
+                        )).scalars().all()
+                        if any(_normalize_horse(h) == _normalize_horse(name_lower) for h in existing_at_pos):
+                            continue
 
                     display_name = matched_pred.horse_name if matched_pred else name_lower.title()
                     session.add(HistoricalResultRow(
