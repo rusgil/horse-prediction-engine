@@ -975,13 +975,12 @@ async def _seed_results_for_date(race_date: str) -> int:
                          and _normalize_horse(p.horse_name) == _normalize_horse(name_lower)),
                         None,
                     )
-                    exists = (await session.execute(
-                        select(HistoricalResultRow.id)
+                    existing_at_pos = (await session.execute(
+                        select(HistoricalResultRow.horse_name)
                         .where(HistoricalResultRow.race_id == race_id)
-                        .where(func.lower(HistoricalResultRow.horse_name) == _normalize_horse(name_lower))
-                        .limit(1)
-                    )).scalar()
-                    if exists:
+                        .where(HistoricalResultRow.position == pos)
+                    )).scalars().all()
+                    if any(_normalize_horse(h) == _normalize_horse(name_lower) for h in existing_at_pos):
                         continue
                     display_name = matched.horse_name if matched else name_lower.title()
                     session.add(HistoricalResultRow(
@@ -4393,6 +4392,34 @@ async def purge_venue_rows(venue_code: str, x_cron_secret: Optional[str] = Heade
     return {"dry_run": dry_run, "pred_race_ids": list(pred_ids), "hist_race_ids": list(hist_ids)}
 
 
+@app.delete("/api/admin/purge-results/{race_date}/{venue_code}")
+async def purge_results_for_venue(
+    race_date: str,
+    venue_code: str,
+    x_cron_secret: Optional[str] = Header(None),
+    dry_run: bool = Query(True),
+):
+    """Delete HistoricalResultRow entries for a specific date + venue only (predictions kept)."""
+    _check_admin(x_cron_secret)
+    _validate_date(race_date)
+    _validate_venue(venue_code)
+    from sqlalchemy import delete as sa_delete
+    pattern = f"{race_date}_{venue_code}_R%"
+    async with get_session() as session:
+        hist_ids = (await session.execute(
+            select(HistoricalResultRow.race_id)
+            .where(HistoricalResultRow.race_id.like(pattern))
+            .distinct()
+        )).scalars().all()
+        if not dry_run and hist_ids:
+            await session.execute(
+                sa_delete(HistoricalResultRow)
+                .where(HistoricalResultRow.race_id.like(pattern))
+            )
+            await session.commit()
+    return {"dry_run": dry_run, "deleted_from_race_ids": list(hist_ids)}
+
+
 # ── Admin: seed results ───────────────────────────────────────────────────────
 
 @app.post("/api/admin/results/{race_date}")
@@ -4424,14 +4451,6 @@ async def seed_ra_results(race_date: str, x_cron_secret: Optional[str] = Header(
             .where(RunnerPredictionRow.cancelled.is_(False) | RunnerPredictionRow.cancelled.is_(None))
         )).scalars().all()
 
-        already_seeded = set(
-            (await session.execute(
-                select(HistoricalResultRow.race_id)
-                .where(HistoricalResultRow.race_id.like(f"{race_date}_%"))
-                .distinct()
-            )).scalars().all()
-        )
-
     if not pred_rows:
         return {"status": "ok", "seeded": 0, "detail": "no predictions for this date"}
 
@@ -4459,8 +4478,6 @@ async def seed_ra_results(race_date: str, x_cron_secret: Optional[str] = Header(
 
         for race_num, race_data in results.items():
             race_id = f"{race_date}_{venue_code}_R{race_num}"
-            if race_id in already_seeded:
-                continue
             runners = race_data.get("runners", {})  # {name_lower: {position, margin, sp}}
             if not runners:
                 continue
@@ -4480,13 +4497,12 @@ async def seed_ra_results(race_date: str, x_cron_secret: Optional[str] = Header(
                         None,
                     )
 
-                    exists = (await session.execute(
-                        select(HistoricalResultRow.id)
+                    existing_at_pos = (await session.execute(
+                        select(HistoricalResultRow.horse_name)
                         .where(HistoricalResultRow.race_id == race_id)
-                        .where(func.lower(HistoricalResultRow.horse_name) == _normalize_horse(name_lower))
-                        .limit(1)
-                    )).scalar()
-                    if exists:
+                        .where(HistoricalResultRow.position == pos)
+                    )).scalars().all()
+                    if any(_normalize_horse(h) == _normalize_horse(name_lower) for h in existing_at_pos):
                         continue
 
                     display_name = matched_pred.horse_name if matched_pred else name_lower.title()
@@ -4503,7 +4519,6 @@ async def seed_ra_results(race_date: str, x_cron_secret: Optional[str] = Header(
                     seeded_here += 1
                 await session.commit()
 
-        already_seeded.update(f"{race_date}_{venue_code}_R{n}" for n in results)
         seeded_total += seeded_here
         detail.append({"venue": venue_name, "state": state, "ra_key": ra_key, "races_found": len(results), "seeded": seeded_here})
 

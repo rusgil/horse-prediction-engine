@@ -614,6 +614,12 @@
         <button class="btn primary" id="retrainBtn" onclick="triggerRetrain()">Run Calibration Now</button>
         <span class="btn-status" id="winStatus"></span>
       </div>
+      <div class="action-bar" style="margin-top:10px;align-items:center;gap:8px">
+        <label style="font-size:13px;color:var(--text-muted)">Reseed results for date:</label>
+        <input type="date" id="reseedDate" style="background:var(--bg-card);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:5px 8px;font-size:13px" />
+        <button class="btn" onclick="triggerReseedResults()">Reseed Results</button>
+        <span class="btn-status" id="reseedStatus"></span>
+      </div>
       <div class="action-explainers">
         <div class="action-explain">
           <strong>Refresh Dashboard</strong>
@@ -626,6 +632,10 @@
         <div class="action-explain">
           <strong>Run Calibration Now</strong>
           <span>Retrains the model weights using all stored historical results. <strong>No external API calls</strong> — reads only from the local database. Takes 10–30 seconds. Normally runs automatically at 2am AEST nightly. Use this after seeding a batch of new results if you want the model to update immediately rather than waiting overnight. Avoid running multiple times in quick succession — each run overwrites the previous weights.</span>
+        </div>
+        <div class="action-explain">
+          <strong>Reseed Results</strong>
+          <span>Re-fetches race results from Racing Australia for a past date and stores them in the database. Use this to fix wrong win/place indicators for a past meeting — the per-runner duplicate check means it won't double-insert correct rows. Pick yesterday's date and click Reseed if labels look wrong.</span>
         </div>
       </div>`;
 
@@ -1294,6 +1304,25 @@
       status.textContent = 'Error: ' + e.message;
     } finally {
       btn.disabled = false;
+    }
+  }
+
+  async function triggerReseedResults() {
+    const dateEl = document.getElementById('reseedDate');
+    const status = document.getElementById('reseedStatus');
+    const date = dateEl.value;
+    if (!date) { status.textContent = 'Pick a date first.'; return; }
+    status.textContent = `Seeding results for ${date}…`;
+    try {
+      const res = await fetch(`${API}/api/admin/seed-ra-results/${date}`, {
+        method: 'POST',
+        headers: { 'x-cron-secret': adminSecret }
+      });
+      const data = await res.json();
+      const detail = (data.detail || []).map(d => `${d.venue||''}: ${d.seeded||0} seeded`).join(', ');
+      status.textContent = `Done — ${data.seeded} total. ${detail}`;
+    } catch (e) {
+      status.textContent = 'Error: ' + e.message;
     }
   }
 
