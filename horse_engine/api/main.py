@@ -2896,6 +2896,7 @@ async def get_meeting(race_date: str, venue_code: str):
                 winners[r.race_id] = r.horse_name   # last row with pos=1 wins on dupe
             if r.position <= 3:
                 placers.setdefault(r.race_id, set()).add(r.horse_name)
+        log.info("[get_meeting] position-based winners for %s/%s: %s", venue_code, race_date, winners)
 
         # Top place probability per race (reuse model_rank=1 mutable rows already fetched above)
         tp_place_result = await session.execute(
