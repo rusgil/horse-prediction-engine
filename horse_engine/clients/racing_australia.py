@@ -741,13 +741,13 @@ class RacingAustraliaClient:
 
         soup = BeautifulSoup(html, "html.parser")
         meetings = []
-        for link in soup.find_all("a", href=re.compile("Acceptances")):
+        from urllib.parse import unquote
+        # Capture both Acceptances links (today/future) and Results links (past meetings)
+        for link in soup.find_all("a", href=re.compile(r"(Acceptances|Results\.aspx)")):
             href = link.get("href", "")
-            # Extract key from href like /FreeFields/Acceptances.aspx?Key=2026May31%2CNSW%2CVenue
             m = re.search(r"Key=([^&\"]+)", href)
             if not m:
                 continue
-            from urllib.parse import unquote
             ra_key = unquote(m.group(1))
             if not ra_key.startswith(ra_date):
                 continue
@@ -761,6 +761,8 @@ class RacingAustraliaClient:
             venue = _clean_venue(raw_venue)
             slug = _make_slug(raw_venue, race_date)
             self._slug_to_key[slug] = ra_key
+            # Also map cleaned venue name → raw key so reseed can look up by stored venue
+            self._slug_to_key[f"{race_date}:{state}:{venue}"] = ra_key
             meetings.append({
                 "id": ra_key,
                 "name": venue,
@@ -905,6 +907,42 @@ class RacingAustraliaClient:
         total_runners = sum(len(r["runners"]) for r in parsed.values())
         log.debug("RA results: %d races, %d runners for %s", len(parsed), total_runners, ra_key)
         return parsed
+
+    _SPONSOR_PREFIXES = ["TAB ", "Sportsbet ", "Ladbrokes ", "Palmerbet ", "Neds ", "Ubet "]
+
+    async def find_results(self, race_date: str, state: str, clean_venue: str) -> tuple[str, dict[int, dict]]:
+        """
+        Try to find RA results for a venue whose stored name has had the sponsor prefix stripped.
+        Checks the Calendar.aspx-derived slug→key cache first, then tries common sponsor prefixes.
+        Returns (ra_key_used, results_dict) — ra_key_used is "" if nothing found.
+        """
+        ra_date_str = _ra_date(race_date)
+        # 1. Check if Calendar.aspx already populated a key for this venue
+        cache_key = f"{race_date}:{state}:{clean_venue}"
+        if cache_key in self._slug_to_key:
+            ra_key = self._slug_to_key[cache_key]
+            results = await self.get_results(ra_key)
+            if results:
+                return ra_key, results
+
+        # 2. Try cleaned name directly (may work if RA has no sponsor prefix)
+        base_key = f"{ra_date_str},{state},{clean_venue}"
+        results = await self.get_results(base_key)
+        if results:
+            return base_key, results
+
+        # 3. Try common sponsor-prefixed variations
+        for prefix in self._SPONSOR_PREFIXES:
+            ra_key = f"{ra_date_str},{state},{prefix}{clean_venue}"
+            results = await self.get_results(ra_key)
+            if results:
+                log.info("RA results found with prefix '%s' for %s/%s", prefix, state, clean_venue)
+                self._slug_to_key[cache_key] = ra_key  # cache for future calls
+                return ra_key, results
+
+        log.warning("RA results not found for %s/%s/%s (tried %d key variants)",
+                    race_date, state, clean_venue, 2 + len(self._SPONSOR_PREFIXES))
+        return "", {}
 
     async def parse_race(self, raw_event: dict, race_date: str, venue: str, state: str) -> Race:
         meeting = raw_event.get("_meeting") or {}

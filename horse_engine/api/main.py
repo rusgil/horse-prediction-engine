@@ -919,12 +919,8 @@ async def _seed_results_for_date(race_date: str) -> int:
     """Fetch settled results for race_date and store as training data. Returns count seeded."""
     client = get_tab_client()
 
-    # Fast path for past dates: use direct RA key construction from stored predictions.
-    # RA Calendar.aspx only lists future/current meetings — it doesn't return yesterday.
-    # Build RA key directly from venue+state stored in RunnerPredictionRow, then hit
-    # Results.aspx directly. This is the reliable approach for seeding past results.
-    from horse_engine.clients.racing_australia import _ra_date as _make_ra_date
-    ra_date_str = _make_ra_date(race_date)
+    # Fast path for past dates: use stored venue+state to find RA results directly.
+    # RA Calendar.aspx only lists future/current meetings — it can't resolve yesterday.
     async with get_session() as session:
         pred_rows_for_date = (await session.execute(
             select(RunnerPredictionRow)
@@ -947,9 +943,8 @@ async def _seed_results_for_date(race_date: str) -> int:
     ra_seeded_total = 0
     ra = client._ra
     for (venue_name, state), race_ids in venue_state_map_ra.items():
-        ra_key = f"{ra_date_str},{state},{venue_name}"
         try:
-            results = await ra.get_results(ra_key)
+            _, results = await ra.find_results(race_date, state, venue_name)
         except Exception:
             results = {}
         if not results:
@@ -4444,7 +4439,6 @@ async def seed_ra_results(
     so stale/wrong rows are replaced with fresh RA data.
     """
     _check_admin(x_cron_secret)
-    from horse_engine.clients.racing_australia import _ra_date as _make_ra_date
     from sqlalchemy import delete as sa_delete
 
     client = get_tab_client()
@@ -4469,15 +4463,13 @@ async def seed_ra_results(
         if v and s:
             venue_state_map.setdefault((v, s), set()).add(row.race_id)
 
-    ra_date_str = _make_ra_date(race_date)
     seeded_total = 0
     detail: list[dict] = []
 
     for (venue_name, state), race_ids in venue_state_map.items():
-        ra_key = f"{ra_date_str},{state},{venue_name}"
-        results = await ra.get_results(ra_key)
+        ra_key, results = await ra.find_results(race_date, state, venue_name)
         if not results:
-            detail.append({"venue": venue_name, "state": state, "ra_key": ra_key, "races_found": 0})
+            detail.append({"venue": venue_name, "state": state, "races_found": 0})
             continue
 
         venue_code = _parse_race_id(list(race_ids)[0])[1]
