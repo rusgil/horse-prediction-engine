@@ -1407,6 +1407,17 @@
       });
       renderRacePills();
 
+      // Recount wins directly from S.races and update the pill-stat
+      const key = m.venue_code;
+      const settled = S.races.filter(r => r.model_correct !== null && r.model_correct !== undefined);
+      const wins = settled.filter(r => r.model_correct === true).length;
+      const placed = S.races.filter(r => r.model_placed === true).length;
+      S.meetingStats[key] = { ...(S.meetingStats[key] || {}), wins, placed, total: settled.length };
+      const statEl = document.getElementById(`pill-stat-${key}`);
+      if (statEl && settled.length) {
+        statEl.innerHTML = `<span style="color:#10b981">${wins}/${settled.length} wins</span>${placed > wins ? ` <span style="color:#60a5fa;font-size:0.72rem">· ${placed} placed</span>` : ''}`;
+      }
+
       // Render results summary section
       renderResultsSection(completed, m);
     } catch (_) {}

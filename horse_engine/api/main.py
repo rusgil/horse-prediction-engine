@@ -2843,9 +2843,19 @@ async def get_meeting(race_date: str, venue_code: str):
                 log.info("[get_meeting] Back-filled scheduled_time for %d races at %s/%s",
                          len(missing_time_ids), venue_code, race_date)
 
-        # Top pick per race — prefer immutable history (stable across nightly retrains)
+        # Top pick per race — use latest enrichment batch per race to avoid stale
+        # rank-1 rows from re-enrichments after intra-day retrains.
         top_picks = {race_id: None for race_id in race_ids}
         top_win_probs = {race_id: None for race_id in race_ids}
+
+        # Get max enriched_at per race from history
+        max_at_result = await session.execute(
+            select(RunnerPredictionHistoryRow.race_id,
+                   func.max(RunnerPredictionHistoryRow.enriched_at).label("max_at"))
+            .where(RunnerPredictionHistoryRow.race_id.in_(race_ids))
+            .group_by(RunnerPredictionHistoryRow.race_id)
+        )
+        max_at_by_race = {row.race_id: row.max_at for row in max_at_result}
 
         hist_tp_result = await session.execute(
             select(RunnerPredictionHistoryRow)
@@ -2853,8 +2863,10 @@ async def get_meeting(race_date: str, venue_code: str):
             .where(RunnerPredictionHistoryRow.model_rank == 1)
         )
         for p in hist_tp_result.scalars().all():
-            top_picks[p.race_id] = p.horse_name
-            top_win_probs[p.race_id] = p.win_probability
+            # Only use this row if it's from the latest enrichment batch for this race
+            if p.enriched_at == max_at_by_race.get(p.race_id):
+                top_picks[p.race_id] = p.horse_name
+                top_win_probs[p.race_id] = p.win_probability
 
         # Fall back to mutable table for races not yet in history
         races_without_history = [rid for rid in race_ids if top_picks[rid] is None]
