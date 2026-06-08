@@ -5410,56 +5410,57 @@ async def patch_betfair_bsp(
                 bsp = runner.get("bsp")
                 snapshots = runner.get("snapshots") or []
 
-                if bsp:
-                    # Patch historical_results.starting_price
-                    res = await session.execute(text(
-                        "UPDATE historical_results SET starting_price = :bsp "
-                        "WHERE race_id = :rid AND LOWER(horse_name) = LOWER(:name) "
-                        "AND (starting_price IS NULL OR starting_price = 0)"
-                    ), {"bsp": bsp, "rid": race_id, "name": name})
-                    if res.rowcount:
-                        bsp_patched += res.rowcount
-                    else:
-                        bsp_skipped += 1
-
-                    # Patch runner_prediction_history.best_available_odds
-                    res2 = await session.execute(text(
-                        "UPDATE runner_prediction_history SET best_available_odds = :bsp "
-                        "WHERE race_id = :rid AND LOWER(horse_name) = LOWER(:name) "
-                        "AND (best_available_odds IS NULL OR best_available_odds = 0)"
-                    ), {"bsp": bsp, "rid": race_id, "name": name})
-                    pred_patched += res2.rowcount
-
+                # Wrap each runner in a savepoint so an error only rolls back that runner
                 try:
-                    for snap in snapshots:
-                        mtj = int(round(float(snap.get("minutes_to_jump") or 0)))
-                        snap_at_str = snap.get("snapshotted_at", "")
-                        win_odds_val = snap.get("win_odds")
-                        if not (snap_at_str and win_odds_val):
-                            continue
-                        try:
-                            snap_dt = datetime.fromisoformat(snap_at_str.replace("Z", "+00:00"))
-                            snap_dt = snap_dt.replace(tzinfo=None)
-                        except Exception:
-                            continue
-                        # Use raw SQL to avoid ORM autoflush on subsequent SELECT
-                        dup = (await session.execute(text(
-                            "SELECT 1 FROM odds_snapshots "
-                            "WHERE race_id = :rid AND LOWER(horse_name) = LOWER(:name) "
-                            "AND minutes_to_jump BETWEEN :lo AND :hi LIMIT 1"
-                        ), {"rid": race_id, "name": name, "lo": mtj - 2, "hi": mtj + 2})).fetchone()
-                        if dup:
-                            continue
-                        await session.execute(text(
-                            "INSERT INTO odds_snapshots "
-                            "(race_id, horse_name, snapshotted_at, minutes_to_jump, win_odds, source) "
-                            "VALUES (:rid, :name, :snap_dt, :mtj, :odds, 'betfair_ltp')"
-                        ), {"rid": race_id, "name": name, "snap_dt": snap_dt,
-                            "mtj": mtj, "odds": float(win_odds_val)})
-                        snap_inserted += 1
-                except Exception as _snap_err:
-                    _debug_err = repr(_snap_err)
-                    log.exception("[patch-betfair-bsp] snapshot error: %s", _snap_err)
+                    async with session.begin_nested():
+                        if bsp:
+                            # Patch historical_results.starting_price
+                            res = await session.execute(text(
+                                "UPDATE historical_results SET starting_price = :bsp "
+                                "WHERE race_id = :rid AND LOWER(horse_name) = LOWER(:name) "
+                                "AND (starting_price IS NULL OR starting_price = 0)"
+                            ), {"bsp": float(bsp), "rid": race_id, "name": name})
+                            if res.rowcount:
+                                bsp_patched += res.rowcount
+                            else:
+                                bsp_skipped += 1
+
+                            # Patch runner_prediction_history.best_available_odds
+                            res2 = await session.execute(text(
+                                "UPDATE runner_prediction_history SET best_available_odds = :bsp "
+                                "WHERE race_id = :rid AND LOWER(horse_name) = LOWER(:name) "
+                                "AND (best_available_odds IS NULL OR best_available_odds = 0)"
+                            ), {"bsp": float(bsp), "rid": race_id, "name": name})
+                            pred_patched += res2.rowcount
+
+                        for snap in snapshots:
+                            mtj = int(round(float(snap.get("minutes_to_jump") or 0)))
+                            snap_at_str = snap.get("snapshotted_at", "")
+                            win_odds_val = snap.get("win_odds")
+                            if not (snap_at_str and win_odds_val):
+                                continue
+                            try:
+                                snap_dt = datetime.fromisoformat(snap_at_str.replace("Z", "+00:00"))
+                                snap_dt = snap_dt.replace(tzinfo=None)
+                            except Exception:
+                                continue
+                            dup = (await session.execute(text(
+                                "SELECT 1 FROM odds_snapshots "
+                                "WHERE race_id = :rid AND LOWER(horse_name) = LOWER(:name) "
+                                "AND minutes_to_jump BETWEEN :lo AND :hi LIMIT 1"
+                            ), {"rid": race_id, "name": name, "lo": mtj - 2, "hi": mtj + 2})).fetchone()
+                            if dup:
+                                continue
+                            await session.execute(text(
+                                "INSERT INTO odds_snapshots "
+                                "(race_id, horse_name, snapshotted_at, minutes_to_jump, win_odds, source) "
+                                "VALUES (:rid, :name, :snap_dt, :mtj, :odds, 'betfair_ltp')"
+                            ), {"rid": race_id, "name": name, "snap_dt": snap_dt,
+                                "mtj": mtj, "odds": float(win_odds_val)})
+                            snap_inserted += 1
+                except Exception as _runner_err:
+                    _debug_err = repr(_runner_err)
+                    log.warning("[patch-betfair-bsp] runner error (savepoint rolled back): %s", _runner_err)
 
         await session.commit()
 
