@@ -4188,6 +4188,39 @@ async def probe_tab(race_id: str = "", date: str = "", x_cron_secret: Optional[s
     }
 
 
+@app.get("/api/admin/test-ra-fetch")
+async def test_ra_fetch(ra_key: str = "2026Jun08,NSW,Canterbury Park",
+                        x_cron_secret: Optional[str] = Header(None)):
+    """Directly call ra.get_results() with a key and return raw parse output."""
+    _check_admin(x_cron_secret)
+    client = get_tab_client()
+    ra = client._ra
+    from urllib.parse import quote
+    url = f"https://www.racingaustralia.horse/FreeFields/Results.aspx?Key={quote(ra_key, safe='')}"
+    try:
+        html = await ra._get(url)
+        http_ok = True
+        html_len = len(html)
+        snippet = html[:500]
+    except Exception as e:
+        return {"error": str(e), "url": url}
+    from horse_engine.clients.racing_australia import _parse_results_page
+    parsed = _parse_results_page(html)
+    races_found = len(parsed)
+    sample = {}
+    for rn, rd in list(parsed.items())[:3]:
+        w = [(k, v["position"]) for k, v in rd["runners"].items() if v.get("position") == 1]
+        sample[rn] = {"runners": len(rd["runners"]), "winner": w}
+    return {
+        "url": url,
+        "ra_key": ra_key,
+        "html_len": html_len,
+        "html_snippet": snippet,
+        "races_found": races_found,
+        "sample": sample,
+    }
+
+
 @app.get("/api/admin/probe-ra-results")
 async def probe_ra_results(race_date: str = "", x_cron_secret: Optional[str] = Header(None)):
     """
