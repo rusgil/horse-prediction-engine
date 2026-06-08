@@ -2886,7 +2886,7 @@ async def get_meeting(race_date: str, venue_code: str):
         hr_all = await session.execute(
             select(HistoricalResultRow)
             .where(HistoricalResultRow.race_id.in_(race_ids))
-            .where(HistoricalResultRow.position != None)  # noqa: E711
+            .where(HistoricalResultRow.position.isnot(None))
             .order_by(HistoricalResultRow.id)
         )
         winners: dict[str, str] = {}
