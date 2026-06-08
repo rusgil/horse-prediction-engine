@@ -1289,7 +1289,7 @@
         headers: { 'x-cron-secret': adminSecret }
       });
       const data = await res.json();
-      status.textContent = `Re-enriched ${data.meetings ?? '?'} meetings for ${data.date}.`;
+      status.textContent = `Re-enrich started for ${data.date} — running in background.`;
     } catch (e) {
       status.textContent = 'Error: ' + e.message;
     } finally {
