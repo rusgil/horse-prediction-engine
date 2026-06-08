@@ -2980,7 +2980,8 @@ async def live_odds(race_id: str):
     except ValueError:
         raise HTTPException(400, "Invalid race number in race_id")
 
-    # Load model predictions — prefer immutable history (stable across nightly retrains)
+    # Load model predictions — use current row for top_model_pick (matches race card),
+    # fall back to history for probs/odds if current is absent.
     async with get_session() as session:
         hist_result = await session.execute(
             select(RunnerPredictionHistoryRow)
@@ -2989,23 +2990,25 @@ async def live_odds(race_id: str):
         )
         hist_stored = hist_result.scalars().all()
 
-        if not hist_stored:
-            mutable_result = await session.execute(
-                select(RunnerPredictionRow)
-                .where(RunnerPredictionRow.race_id == race_id)
-                .order_by(RunnerPredictionRow.model_rank)
-            )
-            stored = mutable_result.scalars().all()
-        else:
-            stored = hist_stored
+        mutable_result = await session.execute(
+            select(RunnerPredictionRow)
+            .where(RunnerPredictionRow.race_id == race_id)
+            .order_by(RunnerPredictionRow.model_rank)
+        )
+        mut_stored = mutable_result.scalars().all()
 
-    if not stored:
+    if not hist_stored and not mut_stored:
         raise HTTPException(404, f"No predictions for {race_id} — enrich first")
+
+    # Current mutable row is what the user sees on the race card — use its rank 1 as top pick.
+    # History is used for probs/odds when current is absent (past races).
+    stored = mut_stored or hist_stored
+    top_model_pick = (mut_stored[0].horse_name if mut_stored else
+                      hist_stored[0].horse_name if hist_stored else None)
 
     model_probs = {r.horse_name: r.win_probability or 0.0 for r in stored}
     stored_odds = {r.horse_name: r.best_available_odds for r in stored}
     stored_overlay = {r.horse_name: r.overlay or 0.0 for r in stored}
-    top_model_pick = stored[0].horse_name if stored else None
 
     # ── Step 1: load settled results from DB (HistoricalResultRow) ───────────
     async with get_session() as session:
