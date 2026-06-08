@@ -6828,28 +6828,24 @@ async def performance_summary(days: int = Query(5, ge=1, le=365)):
             return {"days": days, "summary": [], "overall_win_rate": None}
 
         race_ids = list({r.race_id for r in hr_rows})
+
+        # Primary: mutable table (updated by retrains, consistent with get_meeting)
         pred_result = await session.execute(
-            select(RunnerPredictionHistoryRow)
-            .where(RunnerPredictionHistoryRow.race_id.in_(race_ids))
-            .where(RunnerPredictionHistoryRow.model_rank == 1)
+            select(RunnerPredictionRow)
+            .where(RunnerPredictionRow.race_id.in_(race_ids))
+            .where(RunnerPredictionRow.model_rank == 1)
+            .where(RunnerPredictionRow.cancelled.is_(False) | RunnerPredictionRow.cancelled.is_(None))
         )
-        top_picks: dict[str, RunnerPredictionHistoryRow] = {
+        top_picks: dict[str, RunnerPredictionRow] = {
             p.race_id: p for p in pred_result.scalars().all()
         }
 
-        # Count races we predicted that ALSO have settled results — the intersection
-        # is the only meaningful denominator: races we tried to predict AND ran.
-        # Races predicted but unsettled, or settled but never predicted, don't count.
-        predicted_ids_result = await session.execute(
-            select(RunnerPredictionRow.race_id)
-            .where(RunnerPredictionRow.race_id >= cutoff)
-            .where(RunnerPredictionRow.model_rank == 1)
-            .where(RunnerPredictionRow.cancelled.is_(False) | RunnerPredictionRow.cancelled.is_(None))
-            .distinct()
-        )
-        predicted_id_set = {rid for (rid,) in predicted_ids_result.all()}
-
+    # Winner per race (position==1) — used for accurate act_won comparison
+    winners: dict[str, str] = {}
     result_by_key = {(r.race_id, _normalize_horse(r.horse_name)): r for r in hr_rows}
+    for r in hr_rows:
+        if r.position == 1:
+            winners[r.race_id] = r.horse_name
 
     # result races per date (for display — total_races_ran field)
     result_race_ids_by_date: dict[str, set] = {}
@@ -6860,7 +6856,7 @@ async def performance_summary(days: int = Query(5, ge=1, le=365)):
     # predicted+settled intersection — correct denominator for data_complete
     result_race_id_flat: set[str] = {rid for ids in result_race_ids_by_date.values() for rid in ids}
     predicted_settled_by_date: dict[str, int] = {}
-    for rid in predicted_id_set:
+    for rid in top_picks:
         if rid in result_race_id_flat:
             d = rid[:10]
             predicted_settled_by_date[d] = predicted_settled_by_date.get(d, 0) + 1
@@ -6869,21 +6865,23 @@ async def performance_summary(days: int = Query(5, ge=1, le=365)):
     by_date: dict[str, dict] = {}
     for race_id, pick in top_picks.items():
         race_date = race_id[:10]
-        actual = result_by_key.get((race_id, _normalize_horse(pick.horse_name)))
-        if not actual:
-            continue
+        winner = winners.get(race_id)
+        if not winner:
+            continue  # race has no known winner yet
         d = by_date.setdefault(race_date, {
             "races": 0, "wins": 0, "places": 0, "value_pnl": 0.0, "value_bets": 0,
             "tier_premium": 0, "tier_hot": 0, "tier_high": 0, "tier_strong": 0,
         })
         d["races"] += 1
-        act_won = actual.position == 1
-        act_placed = bool(actual.position and actual.position <= 3)
+        act_won = _normalize_horse(pick.horse_name) == _normalize_horse(winner)
+        # Look up pick horse for SP and place check (may be absent if scratched)
+        actual = result_by_key.get((race_id, _normalize_horse(pick.horse_name)))
+        act_placed = bool(actual and actual.position and actual.position <= 3) or act_won
         if act_won:
             d["wins"] += 1
         if act_placed:
             d["places"] += 1
-        sp = actual.starting_price or 0.0
+        sp = (actual.starting_price if actual else None) or 0.0
         overlay = pick.overlay or 0.0
         model_pct = round((pick.win_probability or 0) * 100, 1)
         if overlay > 0.05 and sp >= 3.0:
