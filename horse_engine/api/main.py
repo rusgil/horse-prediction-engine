@@ -4221,6 +4221,86 @@ async def test_ra_fetch(ra_key: str = "2026Jun08,NSW,Canterbury Park",
     }
 
 
+@app.get("/api/admin/debug-meeting-picks/{race_date}/{venue_code}")
+async def debug_meeting_picks(
+    race_date: str,
+    venue_code: str,
+    x_cron_secret: Optional[str] = Header(None),
+):
+    """Dump raw top_picks vs winners for every race in a meeting to diagnose model_correct=False."""
+    _check_admin(x_cron_secret)
+    async with get_session() as session:
+        pred_rows = (await session.execute(
+            select(RunnerPredictionRow.race_id)
+            .where(RunnerPredictionRow.race_id.like(f"{race_date}_{venue_code}_%"))
+            .distinct()
+        )).scalars().all()
+        race_ids = sorted(set(pred_rows))
+
+        # top picks from history
+        max_at_result = await session.execute(
+            select(RunnerPredictionHistoryRow.race_id,
+                   func.max(RunnerPredictionHistoryRow.enriched_at).label("max_at"))
+            .where(RunnerPredictionHistoryRow.race_id.in_(race_ids))
+            .group_by(RunnerPredictionHistoryRow.race_id)
+        )
+        max_at_by_race = {row.race_id: row.max_at for row in max_at_result}
+
+        hist_rows = (await session.execute(
+            select(RunnerPredictionHistoryRow)
+            .where(RunnerPredictionHistoryRow.race_id.in_(race_ids))
+            .where(RunnerPredictionHistoryRow.model_rank == 1)
+        )).scalars().all()
+        top_picks_hist = {}
+        for p in hist_rows:
+            if p.enriched_at == max_at_by_race.get(p.race_id):
+                top_picks_hist[p.race_id] = p.horse_name
+
+        mut_rows = (await session.execute(
+            select(RunnerPredictionRow)
+            .where(RunnerPredictionRow.race_id.in_(race_ids))
+            .where(RunnerPredictionRow.model_rank == 1)
+        )).scalars().all()
+        top_picks_mut = {p.race_id: p.horse_name for p in mut_rows}
+
+        hist_results = (await session.execute(
+            select(HistoricalResultRow)
+            .where(HistoricalResultRow.race_id.in_(race_ids))
+            .order_by(HistoricalResultRow.position)
+        )).scalars().all()
+        winners_raw = {}
+        all_results = {}
+        for r in hist_results:
+            all_results.setdefault(r.race_id, []).append(
+                {"horse_name": r.horse_name, "position": r.position}
+            )
+            if r.position == 1:
+                winners_raw[r.race_id] = r.horse_name
+
+    out = []
+    for rid in race_ids:
+        pick_hist = top_picks_hist.get(rid)
+        pick_mut = top_picks_mut.get(rid)
+        pick = pick_hist or pick_mut
+        winner = winners_raw.get(rid)
+        match = (
+            _normalize_horse(pick) == _normalize_horse(winner)
+            if pick and winner else None
+        )
+        out.append({
+            "race_id": rid,
+            "top_pick_history": pick_hist,
+            "top_pick_mutable": pick_mut,
+            "effective_pick": pick,
+            "normalized_pick": _normalize_horse(pick) if pick else None,
+            "winner_raw": winner,
+            "normalized_winner": _normalize_horse(winner) if winner else None,
+            "model_correct": match,
+            "all_results": all_results.get(rid, []),
+        })
+    return {"race_date": race_date, "venue_code": venue_code, "races": out}
+
+
 @app.get("/api/admin/probe-ra-results")
 async def probe_ra_results(race_date: str = "", x_cron_secret: Optional[str] = Header(None)):
     """
