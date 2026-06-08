@@ -919,6 +919,87 @@ async def _seed_results_for_date(race_date: str) -> int:
     """Fetch settled results for race_date and store as training data. Returns count seeded."""
     client = get_tab_client()
 
+    # Fast path for past dates: use direct RA key construction from stored predictions.
+    # RA Calendar.aspx only lists future/current meetings — it doesn't return yesterday.
+    # Build RA key directly from venue+state stored in RunnerPredictionRow, then hit
+    # Results.aspx directly. This is the reliable approach for seeding past results.
+    from horse_engine.clients.racing_australia import _ra_date as _make_ra_date
+    ra_date_str = _make_ra_date(race_date)
+    async with get_session() as session:
+        pred_rows_for_date = (await session.execute(
+            select(RunnerPredictionRow)
+            .where(RunnerPredictionRow.race_id.like(f"{race_date}_%"))
+            .where(RunnerPredictionRow.cancelled.is_(False) | RunnerPredictionRow.cancelled.is_(None))
+        )).scalars().all()
+        already_seeded_ra = set(
+            (await session.execute(
+                select(HistoricalResultRow.race_id)
+                .where(HistoricalResultRow.race_id.like(f"{race_date}_%"))
+                .distinct()
+            )).scalars().all()
+        )
+    venue_state_map_ra: dict[tuple[str, str], set[str]] = {}
+    for row in pred_rows_for_date:
+        v = (row.venue or "").strip()
+        s = (row.state or "").strip().upper()
+        if v and s:
+            venue_state_map_ra.setdefault((v, s), set()).add(row.race_id)
+    ra_seeded_total = 0
+    ra = client._ra
+    for (venue_name, state), race_ids in venue_state_map_ra.items():
+        ra_key = f"{ra_date_str},{state},{venue_name}"
+        try:
+            results = await ra.get_results(ra_key)
+        except Exception:
+            results = {}
+        if not results:
+            continue
+        venue_code = _parse_race_id(list(race_ids)[0])[1]
+        matched_preds = {p.race_id: p for p in pred_rows_for_date
+                        if _parse_race_id(p.race_id)[1] == venue_code}
+        async with get_session() as session:
+            for race_num, race_data in results.items():
+                race_id = f"{race_date}_{venue_code}_R{race_num}"
+                if race_id in already_seeded_ra:
+                    continue
+                runners_data = race_data.get("runners", {})
+                if not runners_data:
+                    continue
+                for name_lower, rd in runners_data.items():
+                    pos = rd.get("position")
+                    if not pos or pos <= 0:
+                        continue
+                    matched = next(
+                        (p for p in matched_preds.values()
+                         if p.race_id == race_id
+                         and _normalize_horse(p.horse_name) == _normalize_horse(name_lower)),
+                        None,
+                    )
+                    exists = (await session.execute(
+                        select(HistoricalResultRow.id)
+                        .where(HistoricalResultRow.race_id == race_id)
+                        .where(func.lower(HistoricalResultRow.horse_name) == _normalize_horse(name_lower))
+                        .limit(1)
+                    )).scalar()
+                    if exists:
+                        continue
+                    display_name = matched.horse_name if matched else name_lower.title()
+                    session.add(HistoricalResultRow(
+                        race_id=race_id,
+                        horse_name=display_name,
+                        position=pos,
+                        beaten_margin=float(rd.get("margin") or 0),
+                        winner=pos == 1,
+                        placed=pos <= 3,
+                        starting_price=rd.get("sp"),
+                        feature_vector_json=matched.enriched_json if matched else None,
+                    ))
+                    ra_seeded_total += 1
+                already_seeded_ra.add(race_id)
+            await session.commit()
+    if ra_seeded_total:
+        log.info("[seed-results] RA direct-key seeded %d entries for %s", ra_seeded_total, race_date)
+
     # Primary source: meetings from Punters (works reliably for today/upcoming)
     meetings = await client.get_meetings(race_date)
     date_sfx = f"-{race_date.replace('-', '')}"
@@ -1095,7 +1176,7 @@ async def _seed_results_for_date(race_date: str) -> int:
                     .values(cancelled=False)
                 )
                 await session.commit()
-    return seeded
+    return seeded + ra_seeded_total
 
 
 async def _seed_race_results_on_demand(race_ids: list[str]) -> dict[tuple, int]:
@@ -2123,11 +2204,12 @@ async def get_edge_yesterday(for_date: Optional[str] = Query(None, alias="date")
     seeded_race_ids: set[str] = {hr.race_id for hr in hr_rows}
     for hr in hr_rows:
         _, venue_code, race_num = _parse_race_id(hr.race_id)
+        pos = hr.position
         all_results[(venue_code, race_num, _normalize_horse(hr.horse_name))] = {
-            "position": hr.position,
+            "position": pos,
             "sp": hr.starting_price,
-            "winner": bool(hr.winner),
-            "placed": bool(hr.placed),
+            "winner": pos == 1,
+            "placed": bool(pos and pos <= 3),
             "scratched": False,
         }
 
@@ -2493,7 +2575,7 @@ async def get_track_record():
             if hr:
                 all_rows.append({
                     "win_prob": r.win_probability,
-                    "winner": bool(hr.winner),
+                    "winner": hr.position == 1,
                 })
 
     tiers = [
@@ -3300,9 +3382,11 @@ async def retrain_model(
                 hr_query = hr_query.where(HistoricalResultRow.race_id >= cutoff)
             hr_rows = (await session.execute(hr_query)).scalars().all()
 
-        winners: dict[str, str] = {
-            r.race_id: _normalize_horse(r.horse_name) for r in hr_rows if r.winner
-        }
+        # Use position == 1 directly — winner boolean can be stale from re-seedings
+        winners: dict[str, str] = {}
+        for r in hr_rows:
+            if r.position == 1:
+                winners[r.race_id] = _normalize_horse(r.horse_name)
         by_race: dict[str, list] = _defaultdict(list)
         for row in hist_rows:
             if not row.cancelled:
@@ -3396,8 +3480,10 @@ async def retrain_place_model(
                 hr_query = hr_query.where(HistoricalResultRow.race_id >= cutoff)
             hr_rows = (await session.execute(hr_query)).scalars().all()
 
+        # Use position <= 3 directly — placed boolean can be stale from re-seedings
         placed_lookup = {
-            (r.race_id, _normalize_horse(r.horse_name)): bool(r.placed) for r in hr_rows
+            (r.race_id, _normalize_horse(r.horse_name)): (r.position is not None and r.position <= 3)
+            for r in hr_rows if r.position is not None
         }
         training_data = []
         place_sample_weights = []
@@ -4538,21 +4624,25 @@ async def get_meeting_results(race_date: str, venue_code: str):
             position = rd.get("position")
             if not position or position <= 0:
                 continue
-            # Horse name from RA results is already uppercase — look it up as stored
+            # RA result names may include country codes (NZ, FR, IRE) — match on both
+            # exact name and normalized (country-code-stripped) name to avoid duplicates
+            norm_name = _normalize_horse(name_lower)
             async with get_session() as session:
-                existing = await session.execute(
-                    select(HistoricalResultRow)
+                existing_rows = (await session.execute(
+                    select(HistoricalResultRow.horse_name)
                     .where(HistoricalResultRow.race_id == race_id)
-                    .where(func.lower(HistoricalResultRow.horse_name) == name_lower)
-                    .limit(1)
+                    .where(HistoricalResultRow.position == position)
+                )).scalars().all()
+                already_exists = any(
+                    _normalize_horse(h) == norm_name for h in existing_rows
                 )
-                if existing.scalars().first():
+                if already_exists:
                     races_with_results.add(race_id)
                     continue
                 fv_result = await session.execute(
                     select(RunnerPredictionRow)
                     .where(RunnerPredictionRow.race_id == race_id)
-                    .where(func.lower(RunnerPredictionRow.horse_name) == name_lower)
+                    .where(func.lower(RunnerPredictionRow.horse_name).in_([name_lower, norm_name]))
                     .limit(1)
                 )
                 fv_row = fv_result.scalars().first()
@@ -4607,9 +4697,11 @@ async def get_meeting_results(race_date: str, venue_code: str):
             key=lambda x: x[1]["position"],
         )
         winner = runners_sorted[0][0] if runners_sorted else None
-        top_pick = (top_picks.get(race_id) or "").lower()
-        model_correct = (top_pick == winner) if (top_pick and winner) else None
-        model_placed = (top_pick in {n for n, rd in runners_sorted if rd["position"] <= 3}) if top_pick else None
+        top_pick = top_picks.get(race_id) or ""
+        # Normalize both sides to strip country codes (NZ, FR, IRE etc.) before comparing
+        norm_pick = _normalize_horse(top_pick)
+        model_correct = (_normalize_horse(norm_pick) == _normalize_horse(winner)) if (norm_pick and winner) else None
+        model_placed = (norm_pick in {_normalize_horse(n) for n, rd in runners_sorted if rd["position"] <= 3}) if norm_pick else None
 
         races_out.append({
             "race_number": race_num,
@@ -5782,8 +5874,8 @@ async def backtest_report(
         if not actual:
             continue
 
-        won = actual.winner
-        placed = actual.placed
+        won = actual.position == 1
+        placed = bool(actual.position and actual.position <= 3)
         sp = actual.starting_price or 0.0
         overlay = pick.overlay or 0.0
 
@@ -6556,16 +6648,18 @@ async def performance_summary(days: int = Query(5, ge=1, le=365)):
             "tier_premium": 0, "tier_hot": 0, "tier_high": 0, "tier_strong": 0,
         })
         d["races"] += 1
-        if actual.winner:
+        act_won = actual.position == 1
+        act_placed = bool(actual.position and actual.position <= 3)
+        if act_won:
             d["wins"] += 1
-        if actual.placed:
+        if act_placed:
             d["places"] += 1
         sp = actual.starting_price or 0.0
         overlay = pick.overlay or 0.0
         model_pct = round((pick.win_probability or 0) * 100, 1)
         if overlay > 0.05 and sp >= 3.0:
             d["value_bets"] += 1
-            d["value_pnl"] += (sp - 1) if actual.winner else -1.0
+            d["value_pnl"] += (sp - 1) if act_won else -1.0
             if model_pct >= 50:
                 d["tier_premium"] += 1
             elif model_pct >= 45:

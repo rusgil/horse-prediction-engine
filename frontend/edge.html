@@ -1985,14 +1985,18 @@
     if (isPast && result) {
       if (result.scratched) {
         payoutHtml = `<div class="no-odds">Scratched — no bet</div>`;
-      } else if (result.winner && pay) {
-        payoutHtml = `
-          <div class="payout-box">
-            <div class="payout-profit-label">$${stake} profit</div>
-            <div class="payout-profit">+$${pay.profit.toFixed(2)}</div>
-            <div class="payout-return">Return: <span class="return-amt">$${pay.gross.toFixed(2)}</span></div>
-            <div class="payout-stake">Stake: $${stake}</div>
-          </div>`;
+      } else if (result.winner) {
+        if (pay) {
+          payoutHtml = `
+            <div class="payout-box">
+              <div class="payout-profit-label">$${stake} profit</div>
+              <div class="payout-profit">+$${pay.profit.toFixed(2)}</div>
+              <div class="payout-return">Return: <span class="return-amt">$${pay.gross.toFixed(2)}</span></div>
+              <div class="payout-stake">Stake: $${stake}</div>
+            </div>`;
+        } else {
+          payoutHtml = `<div class="payout-box"><div class="payout-profit-label">Won</div><div class="payout-profit" style="color:var(--green)">SP not captured</div></div>`;
+        }
       } else {
         payoutHtml = `
           <div class="payout-box" style="background:rgba(239,68,68,0.08);border-color:rgba(239,68,68,0.2);">
@@ -2001,6 +2005,8 @@
             <div class="payout-stake">Stake: $${stake}</div>
           </div>`;
       }
+    } else if (isPast) {
+      payoutHtml = `<div class="no-odds">Result pending</div>`;
     } else if (pay) {
       payoutHtml = `
         <div class="payout-box">
