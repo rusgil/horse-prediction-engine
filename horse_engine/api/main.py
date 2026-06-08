@@ -2067,7 +2067,7 @@ async def refresh_edge_odds():
         for slug, slug_picks in slugs.items():
             try:
                 events = await asyncio.wait_for(client.get_meeting_races(slug), timeout=30)
-                # Build horse → odds map from all selections across all events
+                # Build normalised horse → odds map (uppercase key for case-insensitive match)
                 horse_odds: dict[str, float] = {}
                 for event in events:
                     for sel in event.get("selections") or []:
@@ -2082,12 +2082,12 @@ async def refresh_edge_odds():
                                 float(flucs["open"]) if flucs.get("open") else
                                 float(sp) if sp else 0.0)
                         if best:
-                            horse_odds[name] = best
+                            horse_odds[name.upper()] = best
 
                 # Update DB rows that have a fresh odds value or stale value_rating
                 async with get_session() as session:
                     for pick in slug_picks:
-                        new_odds = horse_odds.get(pick.horse_name)
+                        new_odds = horse_odds.get(pick.horse_name.upper())
                         odds_changed = new_odds and new_odds != pick.best_available_odds
                         stale_rating = pick.best_available_odds and (not pick.value_rating)
                         if odds_changed or stale_rating:
