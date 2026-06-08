@@ -4586,22 +4586,28 @@ async def seed_ra_results(
 
         venue_code = _parse_race_id(list(race_ids)[0])[1]
         seeded_here = 0
+        races_detail = []
 
         for race_num, race_data in results.items():
             race_id = f"{race_date}_{venue_code}_R{race_num}"
             runners = race_data.get("runners", {})  # {name_lower: {position, margin, sp}}
+            runners_with_pos = [(n, rd["position"]) for n, rd in runners.items() if rd.get("position") and rd["position"] > 0]
             if not runners:
+                races_detail.append({"race_id": race_id, "skip": "no runners"})
                 continue
 
+            deleted = 0
             async with get_session() as session:
                 if force:
                     # Wipe existing rows for this race so fresh RA data replaces stale ones
-                    await session.execute(
+                    res = await session.execute(
                         sa_delete(HistoricalResultRow)
                         .where(HistoricalResultRow.race_id == race_id)
                     )
+                    deleted = res.rowcount
                     await session.commit()
 
+                race_seeded = 0
                 for name_lower, rd in runners.items():
                     pos = rd.get("position")
                     if not pos or pos <= 0:
@@ -4609,7 +4615,6 @@ async def seed_ra_results(
                     sp = rd.get("sp")
                     margin = float(rd.get("margin") or 0)
 
-                    # Match against stored prediction horse name (case-insensitive, strip country code)
                     matched_pred = next(
                         (p for p in pred_rows if p.race_id == race_id
                          and _normalize_horse(p.horse_name) == _normalize_horse(name_lower)),
@@ -4636,11 +4641,22 @@ async def seed_ra_results(
                         starting_price=sp,
                         feature_vector_json=matched_pred.enriched_json if matched_pred else None,
                     ))
-                    seeded_here += 1
+                    race_seeded += 1
                 await session.commit()
 
+            seeded_here += race_seeded
+            races_detail.append({
+                "race_id": race_id,
+                "runners_total": len(runners),
+                "runners_with_pos": len(runners_with_pos),
+                "deleted": deleted,
+                "seeded": race_seeded,
+                "winner_from_ra": runners_with_pos[0] if runners_with_pos else None,
+            })
+
         seeded_total += seeded_here
-        detail.append({"venue": venue_name, "state": state, "ra_key": ra_key, "races_found": len(results), "seeded": seeded_here})
+        detail.append({"venue": venue_name, "state": state, "ra_key": ra_key,
+                       "races_found": len(results), "seeded": seeded_here, "races": races_detail})
 
     return {"status": "ok", "seeded": seeded_total, "detail": detail}
 
