@@ -439,10 +439,11 @@ async def save_race_predictions(session: AsyncSession, race_id: str, predictions
         rows.append(row)
     await session.commit()
 
-    # Auto-cancel duplicates in EARLIER races only.
-    # Horses move to later races in nominations, so the higher race number wins.
-    # Cancelling later races would cause the wrong entry to survive when races
-    # are enriched in ascending order (R2 after R5 → R2 cancels R5 incorrectly).
+    # Auto-cancel duplicates — bidirectional.
+    # A horse should only appear in the HIGHEST-numbered race it's nominated in.
+    # Cancel earlier race entries when this race is saved, and cancel THIS race's entry
+    # if the horse already has an uncancelled entry in a later race (handles re-enrichment
+    # of an earlier race after the later race was already saved).
     date_venue = race_id.rsplit("_R", 1)[0]  # e.g. "2026-06-09_scone"
     horse_names = [p.get("horse_name") for p in predictions if p.get("horse_name")]
     try:
@@ -451,6 +452,7 @@ async def save_race_predictions(session: AsyncSession, race_id: str, predictions
         current_race_num = 0
     if horse_names and date_venue:
         from sqlalchemy import update as sa_update
+        # 1. Cancel same horses in any EARLIER race
         await session.execute(
             sa_update(RunnerPredictionRow)
             .where(RunnerPredictionRow.race_id.like(f"{date_venue}_R%"))
@@ -459,6 +461,27 @@ async def save_race_predictions(session: AsyncSession, race_id: str, predictions
             .where(RunnerPredictionRow.race_number < current_race_num)
             .values(cancelled=True)
         )
+        # 2. If any of these horses already exist uncancelled in a LATER race,
+        #    cancel them in THIS race (re-enrichment of an earlier race must not
+        #    resurrect a horse that was correctly moved to a higher race number).
+        in_later = (await session.execute(
+            select(RunnerPredictionRow.horse_name)
+            .where(RunnerPredictionRow.race_id.like(f"{date_venue}_R%"))
+            .where(RunnerPredictionRow.race_id != race_id)
+            .where(RunnerPredictionRow.horse_name.in_(horse_names))
+            .where(RunnerPredictionRow.race_number > current_race_num)
+            .where(
+                RunnerPredictionRow.cancelled.is_(False)
+                | RunnerPredictionRow.cancelled.is_(None)
+            )
+        )).scalars().all()
+        if in_later:
+            await session.execute(
+                sa_update(RunnerPredictionRow)
+                .where(RunnerPredictionRow.race_id == race_id)
+                .where(RunnerPredictionRow.horse_name.in_(in_later))
+                .values(cancelled=True)
+            )
         await session.commit()
 
     # Push to immutable history if this is a pre-race prediction and not already recorded

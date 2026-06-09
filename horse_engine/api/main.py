@@ -525,21 +525,35 @@ async def _check_scratches_today() -> int:
                     if not full_event:
                         continue
 
-                    scratched_names = {
-                        (sel.get("competitor") or {}).get("name", "")
+                    # RA returns status="" for all runners (active and scratched alike),
+                    # so status-based detection never fires. Instead: compare the current
+                    # RA field against DB predictions — any runner absent from RA is scratched.
+                    current_field = {
+                        (sel.get("competitor") or {}).get("name", "").strip()
                         for sel in full_event.get("selections", [])
-                        if (sel.get("status") or "").upper() == "SCRATCHED"
-                        and (sel.get("competitor") or {}).get("name")
+                        if (sel.get("competitor") or {}).get("name", "").strip()
                     }
-                    if not scratched_names:
-                        continue
+                    if not current_field:
+                        continue  # empty field = bad data, skip
 
                     async with get_session() as session:
+                        db_runners = (await session.execute(
+                            select(RunnerPredictionRow.horse_name)
+                            .where(RunnerPredictionRow.race_id == race_id)
+                            .where(
+                                RunnerPredictionRow.cancelled.is_(False)
+                                | RunnerPredictionRow.cancelled.is_(None)
+                            )
+                        )).scalars().all()
+
+                        scratched_names = {n for n in db_runners if n not in current_field}
+                        if not scratched_names:
+                            continue
+
                         result = await session.execute(
                             sa_update(RunnerPredictionRow)
                             .where(RunnerPredictionRow.race_id == race_id)
                             .where(RunnerPredictionRow.horse_name.in_(scratched_names))
-                            .where(RunnerPredictionRow.cancelled.is_(False) | RunnerPredictionRow.cancelled.is_(None))
                             .values(cancelled=True)
                         )
                         if result.rowcount:
@@ -630,18 +644,41 @@ async def _scheduled_live_odds_refresh():
             async with get_session() as session:
                 for race_num, race_rows in by_race.items():
                     new_odds: dict[int, float] = {}
+                    steam_map: dict[int, dict] = {}  # row.id → steam features
                     for row in race_rows:
-                        op_runner = odds_map.get((race_num, row.horse_name.lower()))
-                        if op_runner:
-                            raw = op_runner.get("currentBestOdds")
-                            try:
-                                val = float(raw) if raw else 0.0
-                                if val > 1.0:
-                                    new_odds[row.id] = val
-                            except (TypeError, ValueError):
-                                pass
+                        name_lower = row.horse_name.lower()
+                        norm_name = _normalize_horse(row.horse_name)
+                        op_runner = odds_map.get((race_num, name_lower)) or odds_map.get((race_num, norm_name))
+                        if not op_runner:
+                            continue
+                        raw = op_runner.get("currentBestOdds")
+                        try:
+                            val = float(raw) if raw else 0.0
+                            if val > 1.0:
+                                new_odds[row.id] = val
+                        except (TypeError, ValueError):
+                            pass
+                        # Compute steam/drift from firstPrice vs currentBestOdds
+                        try:
+                            first = float(op_runner.get("firstPrice") or 0)
+                            current = float(op_runner.get("currentBestOdds") or 0)
+                            pct = float(op_runner.get("movementPercentage") or 0)
+                            if first > 1.0 and current > 1.0:
+                                price_move = round(first - current, 2)  # +ve = steamed in
+                                drift = 1.0 if (current - first) > 1.5 else 0.0
+                                # odds_velocity: positive = steaming, negative = drifting
+                                ov = round(pct / 100 * (1 if price_move >= 0 else -1), 4)
+                                steam_map[row.id] = {
+                                    "steam_60": price_move,
+                                    "steam_30": price_move,
+                                    "late_money": price_move,
+                                    "drift_flag": drift,
+                                    "odds_velocity": ov,
+                                }
+                        except (TypeError, ValueError):
+                            pass
 
-                    if not new_odds:
+                    if not new_odds and not steam_map:
                         continue
 
                     sorted_ids = sorted(new_odds, key=lambda rid: new_odds[rid])
@@ -659,6 +696,14 @@ async def _scheduled_live_odds_refresh():
                             db_row.value_rating = _value_rating(db_row.win_probability, new_o, db_row.overlay)
                             db_row.market_rank = rank_map.get(row.id, db_row.market_rank)
                             total_updated += 1
+                        steam = steam_map.get(row.id)
+                        if steam and db_row.enriched_json:
+                            try:
+                                er = json.loads(db_row.enriched_json)
+                                er.update(steam)
+                                db_row.enriched_json = json.dumps(er)
+                            except Exception:
+                                pass
 
                 await session.commit()
 
@@ -2496,7 +2541,7 @@ async def get_edge_yesterday(for_date: Optional[str] = Query(None, alias="date")
         no_result = bool(p.race_id not in seeded_race_ids and not r)
         model_pct = round(p.win_probability * 100, 1)
         payout = round(sp * stake, 2) if winner and sp else 0
-        profit = 0 if scratched else (round(payout - stake, 2) if winner and sp else -stake)
+        profit = 0 if (scratched or no_result) else (round(payout - stake, 2) if winner and sp else -stake)
 
         placed = r.get("placed", False) or bool(position and position <= 3 and not scratched)
 
