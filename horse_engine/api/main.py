@@ -398,8 +398,11 @@ async def _scheduled_enrich():
 
         for i in range(3):
             race_date = (_today_aest() + timedelta(days=i)).isoformat()
-            log.info("[scheduler] Enriching %s", race_date)
-            await _enrich_date(race_date, client, model)
+            log.info("[scheduler] Enriching %s (force=%s)", race_date, i == 0)
+            # Force today's races to always re-enrich so stale pre-enrichments
+            # (from days-out bulk runs with no market data) get replaced with
+            # fresh odds and features each morning.
+            await _enrich_date(race_date, client, model, force=(i == 0))
         # Check for abandoned meetings after enrichment
         await _cancel_abandoned_meetings(client, _today_aest().isoformat())
         # Snapshot BEFORE seeding results — captures predictions before result
