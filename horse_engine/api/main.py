@@ -3255,48 +3255,8 @@ async def get_meeting(race_date: str, venue_code: str):
                 log.info("[get_meeting] Back-filled scheduled_time for %d races at %s/%s",
                          len(missing_time_ids), venue_code, race_date)
 
-        # Top pick per race — mutable table primary for UPCOMING races (reflects
-        # latest retrain/enrichment). For races that have already run (have history
-        # entries), history is preferred so that post-race re-enrichments don't
-        # corrupt the model_correct assessment. History snapshot job skips races
-        # already snapshotted, so history always holds the pre-race prediction.
-        top_picks = {race_id: None for race_id in race_ids}
-        top_win_probs = {race_id: None for race_id in race_ids}
-
-        # Load history picks for all races (only written once, before race runs)
-        max_at_result = await session.execute(
-            select(RunnerPredictionHistoryRow.race_id,
-                   func.max(RunnerPredictionHistoryRow.enriched_at).label("max_at"))
-            .where(RunnerPredictionHistoryRow.race_id.in_(race_ids))
-            .group_by(RunnerPredictionHistoryRow.race_id)
-        )
-        max_at_by_race = {row.race_id: row.max_at for row in max_at_result}
-        hist_tp_result = await session.execute(
-            select(RunnerPredictionHistoryRow)
-            .where(RunnerPredictionHistoryRow.race_id.in_(race_ids))
-            .where(RunnerPredictionHistoryRow.model_rank == 1)
-        )
-        for p in hist_tp_result.scalars().all():
-            if p.enriched_at == max_at_by_race.get(p.race_id):
-                top_picks[p.race_id] = p.horse_name
-                top_win_probs[p.race_id] = p.win_probability
-
-        # For races with no history yet (enriched but not snapshotted), use mutable
-        races_without_hist = [rid for rid in race_ids if top_picks[rid] is None]
-        if races_without_hist:
-            tp_result = await session.execute(
-                select(RunnerPredictionRow)
-                .where(RunnerPredictionRow.race_id.in_(races_without_hist))
-                .where(RunnerPredictionRow.model_rank == 1)
-                .where(RunnerPredictionRow.cancelled.is_(False) | RunnerPredictionRow.cancelled.is_(None))
-            )
-            for p in tp_result.scalars().all():
-                top_picks[p.race_id] = p.horse_name
-                top_win_probs[p.race_id] = p.win_probability
-
-        # Winners and placers per race from historical results — use position
-        # directly rather than the winner/placed boolean flags, which can be
-        # stale when results are re-seeded (old rows with wrong flags persist).
+        # Winners and placers — loaded first so completed races are known before
+        # we decide which prediction table to consult.
         hr_all = await session.execute(
             select(HistoricalResultRow)
             .where(HistoricalResultRow.race_id.in_(race_ids))
@@ -3307,10 +3267,49 @@ async def get_meeting(race_date: str, venue_code: str):
         placers: dict[str, set] = {}
         for r in hr_all.scalars().all():
             if r.position == 1:
-                winners[r.race_id] = r.horse_name   # last row with pos=1 wins on dupe
+                winners[r.race_id] = r.horse_name
             if r.position <= 3:
                 placers.setdefault(r.race_id, set()).add(r.horse_name)
         log.info("[get_meeting] position-based winners for %s/%s: %s", venue_code, race_date, winners)
+
+        completed_ids = set(winners.keys())
+
+        # Top pick per race:
+        # - Completed races → history table only (written once pre-race; re-enrichments
+        #   never overwrite it, so it always holds the genuine pre-race prediction).
+        # - Upcoming races  → mutable table (reflects latest retrain/enrichment).
+        top_picks = {race_id: None for race_id in race_ids}
+        top_win_probs = {race_id: None for race_id in race_ids}
+
+        if completed_ids:
+            max_at_result = await session.execute(
+                select(RunnerPredictionHistoryRow.race_id,
+                       func.max(RunnerPredictionHistoryRow.enriched_at).label("max_at"))
+                .where(RunnerPredictionHistoryRow.race_id.in_(completed_ids))
+                .group_by(RunnerPredictionHistoryRow.race_id)
+            )
+            max_at_by_race = {row.race_id: row.max_at for row in max_at_result}
+            hist_tp_result = await session.execute(
+                select(RunnerPredictionHistoryRow)
+                .where(RunnerPredictionHistoryRow.race_id.in_(completed_ids))
+                .where(RunnerPredictionHistoryRow.model_rank == 1)
+            )
+            for p in hist_tp_result.scalars().all():
+                if p.enriched_at == max_at_by_race.get(p.race_id):
+                    top_picks[p.race_id] = p.horse_name
+                    top_win_probs[p.race_id] = p.win_probability
+
+        upcoming_ids = [rid for rid in race_ids if rid not in completed_ids]
+        if upcoming_ids:
+            tp_result = await session.execute(
+                select(RunnerPredictionRow)
+                .where(RunnerPredictionRow.race_id.in_(upcoming_ids))
+                .where(RunnerPredictionRow.model_rank == 1)
+                .where(RunnerPredictionRow.cancelled.is_(False) | RunnerPredictionRow.cancelled.is_(None))
+            )
+            for p in tp_result.scalars().all():
+                top_picks[p.race_id] = p.horse_name
+                top_win_probs[p.race_id] = p.win_probability
 
         # Top place probability per race (reuse model_rank=1 mutable rows already fetched above)
         tp_place_result = await session.execute(
