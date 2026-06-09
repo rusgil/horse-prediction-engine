@@ -4555,6 +4555,26 @@ async def purge_trial_rows(x_cron_secret: Optional[str] = Header(None), dry_run:
     return {"dry_run": False, "deleted_pred_race_ids": trial_pred_ids, "deleted_snap_race_ids": trial_snap_ids, "deleted_hist_race_ids": trial_hist_ids}
 
 
+@app.post("/api/admin/cancel-runner")
+async def cancel_runner(
+    race_id: str = Query(...),
+    horse_name: str = Query(...),
+    x_cron_secret: Optional[str] = Header(None),
+):
+    """Mark a specific runner as cancelled (e.g. scratched or entered in wrong race)."""
+    _check_admin(x_cron_secret)
+    from sqlalchemy import update as sa_update
+    async with get_session() as session:
+        result = await session.execute(
+            sa_update(RunnerPredictionRow)
+            .where(RunnerPredictionRow.race_id == race_id)
+            .where(RunnerPredictionRow.horse_name == horse_name)
+            .values(cancelled=True)
+        )
+        await session.commit()
+        return {"updated": result.rowcount, "race_id": race_id, "horse_name": horse_name}
+
+
 @app.delete("/api/admin/purge-venue/{venue_code}")
 async def purge_venue_rows(venue_code: str, x_cron_secret: Optional[str] = Header(None), dry_run: bool = Query(True)):
     """Delete all RunnerPredictionRow + HistoricalResultRow entries for a venue_code slug."""
