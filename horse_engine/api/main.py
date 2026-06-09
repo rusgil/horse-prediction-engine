@@ -4233,6 +4233,51 @@ async def cancel_runner(
     return {"updated": result.rowcount, "race_id": race_id, "horse_name": horse_name}
 
 
+@app.get("/api/admin/debug-odds")
+async def debug_odds(venue: str = "", date: str = "", x_cron_secret: Optional[str] = Header(None)):
+    """Probe OddsPro + Betfair for a venue. Returns raw odds data for diagnosis."""
+    _check_admin(x_cron_secret)
+    from horse_engine.clients.oddspro import OddsProClient
+    target_date = date or _today_aest().isoformat()
+
+    op = OddsProClient()
+    result: dict = {"date": target_date, "venue_query": venue}
+
+    # OddsPro
+    try:
+        tracks = await op.get_tracks(target_date)
+        result["op_tracks"] = tracks
+        op_track = op.find_matching_track(venue, tracks) if venue else None
+        result["op_track_matched"] = op_track
+        if op_track:
+            odds_map = await op.get_track_odds(op_track)
+            sample = [
+                {"race": k[0], "runner": k[1], "currentBestOdds": v.get("currentBestOdds")}
+                for k, v in list(odds_map.items())[:20]
+            ]
+            result["op_runners_total"] = len(odds_map)
+            result["op_sample"] = sample
+    except Exception as e:
+        result["op_error"] = str(e)
+
+    # Betfair
+    try:
+        from horse_engine.config import settings
+        result["bf_credentials"] = bool(settings.betfair_app_key and settings.betfair_username and settings.betfair_password)
+        if result["bf_credentials"]:
+            from horse_engine.clients.betfair import BetfairClient
+            bf = BetfairClient()
+            login_ok = await bf._login()
+            result["bf_login"] = login_ok
+            if login_ok:
+                meetings = await bf.get_meetings(target_date)
+                result["bf_meetings"] = [{"slug": m["slug"], "name": m["name"]} for m in meetings]
+    except Exception as e:
+        result["bf_error"] = str(e)
+
+    return result
+
+
 @app.get("/api/admin/debug-betfair")
 async def debug_betfair(date: str = "", x_cron_secret: Optional[str] = Header(None)):
     """Test Betfair connection: credentials, auth, market count, and meeting slugs."""
