@@ -2057,8 +2057,9 @@ async def _update_odds_from_oddspro(
 
     by_venue: dict[str, list] = {}
     for row in all_picks:
-        if row.venue:
-            by_venue.setdefault(row.venue, []).append(row)
+        venue_key = row.venue or _parse_race_id(row.race_id)[1]  # slug fallback if venue not stored
+        if venue_key:
+            by_venue.setdefault(venue_key, []).append(row)
 
     for venue, rows in by_venue.items():
         op_track = op.find_matching_track(venue, tracks)
@@ -4226,7 +4227,10 @@ async def cancel_runner(
             .values(cancelled=True)
         )
         await session.commit()
-        return {"updated": result.rowcount, "race_id": race_id, "horse_name": horse_name}
+    # Clear meeting cache so the change is immediately visible
+    date_part, venue_part, _ = _parse_race_id(race_id)
+    _get_meeting_cache.pop(f"{date_part}/{venue_part}", None)
+    return {"updated": result.rowcount, "race_id": race_id, "horse_name": horse_name}
 
 
 @app.get("/api/admin/debug-betfair")
