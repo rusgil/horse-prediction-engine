@@ -4499,12 +4499,25 @@ async def debug_betfair(date: str = "", x_cron_secret: Optional[str] = Header(No
         return info
 
     try:
+        import httpx as _httpx
+        from horse_engine.config import settings as _s
+        async with _httpx.AsyncClient(timeout=15.0) as _c:
+            _r = await _c.post(
+                "https://identitysso.betfair.com.au/api/login",
+                data={"username": _s.betfair_username, "password": _s.betfair_password},
+                headers={"X-Application": _s.betfair_app_key, "Accept": "application/json",
+                         "Content-Type": "application/x-www-form-urlencoded"},
+            )
+            _body = _r.json()
+            info["login_status"] = _body.get("status")
+            info["login_error"] = _body.get("error")
+            info["login_ok"] = _body.get("status") == "SUCCESS"
+        if not info["login_ok"]:
+            return info
         from horse_engine.clients.betfair import BetfairClient
         bf = BetfairClient()
-        login_ok = await bf._login()
-        info["login_ok"] = login_ok
-        if not login_ok:
-            return info
+        bf._session_token = _body.get("token")
+        login_ok = True
 
         markets = await bf._load_catalogue(target_date)
         info["market_count"] = len(markets)
