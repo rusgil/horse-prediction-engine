@@ -2176,16 +2176,16 @@ async def _update_odds_from_tab(
 
 
 @app.post("/api/edge/refresh-odds")
-async def refresh_edge_odds():
+async def refresh_edge_odds(force: bool = False):
     """
     Fetch odds for all upcoming edge picks — today + next 3 days.
     Primary: OddsPro movers. Fallback: TAB API (all runners, no auth).
-    Rate-limited to once per 2 minutes globally.
+    Rate-limited to once per 2 minutes globally. Pass force=true to bypass.
     """
     from horse_engine.clients.oddspro import OddsProClient
     global _odds_refresh_last
     now = datetime.utcnow()
-    if _odds_refresh_last and (now - _odds_refresh_last).total_seconds() < _ODDS_REFRESH_COOLDOWN:
+    if not force and _odds_refresh_last and (now - _odds_refresh_last).total_seconds() < _ODDS_REFRESH_COOLDOWN:
         return {"updated": {}, "count": 0, "cached": True}
 
     threshold = 0.295
