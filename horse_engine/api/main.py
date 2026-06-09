@@ -2119,60 +2119,101 @@ async def _update_odds_from_tab(
     diag: list,
 ) -> None:
     """
-    Fallback: fetch TAB fixed-win odds for picks not covered by OddsPro.
-    TAB returns odds for ALL runners (no auth required).
+    Fallback: fetch TAB fixed-win odds directly for picks not covered by OddsPro.
+    Bypasses TABClient slug resolution — fetches meetings API per jurisdiction,
+    matches venue by name, then fetches each race with the correct meetingCode.
     """
-    from horse_engine.clients.tab import TABClient
+    import httpx as _httpx
+    _TAB = "https://api.tab.com.au/v1/tab-info-service"
+    _JURS = ["NSW", "VIC", "QLD", "SA", "WA", "TAS", "NT", "ACT"]
+    _HDR = {"Accept": "application/json", "User-Agent": "Mozilla/5.0"}
+
     picks = [p for p in all_picks if p.race_id not in skip_race_ids]
     if not picks:
         return
 
-    tab = TABClient()
-    by_race: dict[tuple[str, int], list] = {}
+    # Step 1: build venue_name_lower → {code, jur} from all jurisdictions
+    meeting_map: dict[str, dict] = {}
+    try:
+        async with _httpx.AsyncClient(headers=_HDR, timeout=15) as client:
+            tasks = [
+                client.get(f"{_TAB}/racing/dates/{target_date}/meetings", params={"jurisdiction": j})
+                for j in _JURS
+            ]
+            responses = await asyncio.gather(*tasks, return_exceptions=True)
+        for jur, resp in zip(_JURS, responses):
+            if isinstance(resp, Exception) or resp.status_code != 200:
+                continue
+            for m in resp.json().get("meetings", []):
+                if m.get("raceType") == "R" and m.get("meetingCode"):
+                    name = (m.get("venueName") or "").lower().strip()
+                    if name and name not in meeting_map:
+                        meeting_map[name] = {"code": m["meetingCode"], "jur": jur}
+    except Exception as e:
+        diag.append({"date": target_date, "source": "tab", "error": f"meetings fetch: {e}"})
+        return
+
+    # Step 2: group picks by (meetingCode, jur, race_num)
+    by_race: dict[tuple[str, str, int], list] = {}
     for row in picks:
         _, venue_code, race_num = _parse_race_id(row.race_id)
-        slug = _meeting_slug(venue_code, target_date)
-        if race_num:
-            by_race.setdefault((slug, race_num), []).append(row)
+        if not race_num:
+            continue
+        venue_key = (row.venue or venue_code).lower().strip()
+        meeting = meeting_map.get(venue_key)
+        if not meeting:
+            for k, v in meeting_map.items():
+                if venue_code in k or k in venue_code:
+                    meeting = v
+                    break
+        if not meeting:
+            diag.append({"date": target_date, "venue": venue_key, "source": "tab", "error": "no meeting match"})
+            continue
+        by_race.setdefault((meeting["code"], meeting["jur"], race_num), []).append(row)
 
-    for (slug, race_num), race_rows in by_race.items():
-        tab_diag: dict = {"date": target_date, "slug": slug, "race": race_num, "source": "tab"}
-        try:
-            raw = await asyncio.wait_for(tab.get_race(slug, race_num), timeout=20)
-            if not raw:
-                tab_diag["error"] = "no data"
-                diag.append(tab_diag)
-                continue
-            horse_odds: dict[str, float] = {}
-            for runner in raw.get("runners", []):
-                name = (runner.get("runnerName") or "").upper()
-                if not name:
+    # Step 3: fetch each race and update odds
+    async with _httpx.AsyncClient(headers=_HDR, timeout=15) as client:
+        for (code, jur, race_num), race_rows in by_race.items():
+            tab_diag: dict = {"date": target_date, "code": code, "race": race_num, "source": "tab", "jur": jur}
+            try:
+                resp = await client.get(
+                    f"{_TAB}/racing/dates/{target_date}/meetings/{code}/R/races/{race_num}",
+                    params={"jurisdiction": jur},
+                )
+                if resp.status_code != 200:
+                    tab_diag["error"] = f"HTTP {resp.status_code}"
+                    diag.append(tab_diag)
                     continue
-                for p in runner.get("prices", []):
-                    pt = p.get("priceType", "")
-                    if pt in ("FixedWin", "Win"):
-                        val = float(p.get("winPrice") or 0)
-                        if val > 1.0 and name not in horse_odds:
-                            horse_odds[name] = val
-            tab_diag["runners_with_odds"] = len(horse_odds)
-            async with get_session() as session:
-                for row in race_rows:
-                    new_o = horse_odds.get(row.horse_name.upper())
-                    if not new_o:
+                raw = resp.json()
+                horse_odds: dict[str, float] = {}
+                for runner in raw.get("runners", []):
+                    name = (runner.get("runnerName") or "").upper()
+                    if not name:
                         continue
-                    db_row = await session.get(RunnerPredictionRow, row.id)
-                    if not db_row:
-                        continue
-                    db_row.best_available_odds = new_o
-                    market_implied = 1.0 / new_o
-                    db_row.overlay = round(db_row.win_probability - market_implied, 4)
-                    db_row.value_rating = _value_rating(db_row.win_probability, new_o, db_row.overlay)
-                    updated[row.race_id] = new_o
-                await session.commit()
-        except Exception as e:
-            tab_diag["error"] = str(e)
-            log.warning("TAB odds failed for %s R%s: %s", slug, race_num, e)
-        diag.append(tab_diag)
+                    for p in runner.get("prices", []):
+                        if p.get("priceType") in ("FixedWin", "Win"):
+                            val = float(p.get("winPrice") or 0)
+                            if val > 1.0 and name not in horse_odds:
+                                horse_odds[name] = val
+                tab_diag["runners_with_odds"] = len(horse_odds)
+                async with get_session() as session:
+                    for row in race_rows:
+                        new_o = horse_odds.get(row.horse_name.upper())
+                        if not new_o:
+                            continue
+                        db_row = await session.get(RunnerPredictionRow, row.id)
+                        if not db_row:
+                            continue
+                        db_row.best_available_odds = new_o
+                        market_implied = 1.0 / new_o
+                        db_row.overlay = round(db_row.win_probability - market_implied, 4)
+                        db_row.value_rating = _value_rating(db_row.win_probability, new_o, db_row.overlay)
+                        updated[row.race_id] = new_o
+                    await session.commit()
+            except Exception as e:
+                tab_diag["error"] = str(e)
+                log.warning("TAB odds failed for %s/%s R%s: %s", code, target_date, race_num, e)
+            diag.append(tab_diag)
 
 
 @app.post("/api/edge/refresh-odds")
