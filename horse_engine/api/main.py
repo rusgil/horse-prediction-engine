@@ -2065,22 +2065,30 @@ async def refresh_edge_odds():
             if race_num:
                 race_groups.setdefault((slug, race_num), []).append(p)
 
+        race_diag: list[dict] = []
         for (slug, race_num), race_picks in race_groups.items():
+            diag: dict = {"slug": slug, "race": race_num, "picks": [p.horse_name for p in race_picks]}
             try:
                 raw = await asyncio.wait_for(client.get_race(slug, race_num), timeout=30)
                 if not raw:
+                    diag["error"] = "get_race returned None"
+                    race_diag.append(diag)
                     continue
                 horse_odds: dict[str, float] = {}
+                tote_raw: dict[str, float | None] = {}
                 for sel in raw.get("selections", []):
                     name = (sel.get("competitor") or {}).get("name", "")
                     if not name:
                         continue
                     tote = sel.get("topToteWin")
+                    tote_raw[name] = tote
                     if tote:
                         try:
                             horse_odds[name.upper()] = float(tote)
                         except (TypeError, ValueError):
                             pass
+                diag["topToteWin"] = tote_raw
+                diag["horse_odds"] = horse_odds
 
                 async with get_session() as session:
                     for pick in race_picks:
@@ -2100,10 +2108,12 @@ async def refresh_edge_odds():
                                 updated[pick.race_id] = new_odds
                     await session.commit()
             except Exception as e:
+                diag["error"] = str(e)
                 log.warning("refresh-odds failed for %s R%s: %s", slug, race_num, e)
+            race_diag.append(diag)
 
     _odds_refresh_last = now
-    return {"updated": updated, "count": len(updated)}
+    return {"updated": updated, "count": len(updated), "debug": race_diag}
 
 
 _results_refresh_last: datetime | None = None
