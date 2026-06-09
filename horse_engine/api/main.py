@@ -1169,16 +1169,29 @@ async def _seed_results_for_date(race_date: str) -> int:
                     seeded += 1
                     races_with_results.add(race_id)
 
-        # Clear stale cancelled flags — if we have results the race ran
+        # Clear stale cancelled flags only for mass-cancelled races (all runners cancelled).
+        # Never clear individual dedup cancellations — only restore when the whole race
+        # was mass-cancelled by _cancel_abandoned_meetings due to a Punters block.
         if races_with_results:
             from sqlalchemy import update as sa_update
             async with get_session() as session:
-                await session.execute(
-                    sa_update(RunnerPredictionRow)
-                    .where(RunnerPredictionRow.race_id.in_(list(races_with_results)))
-                    .where(RunnerPredictionRow.cancelled.is_(True))
-                    .values(cancelled=False)
-                )
+                for rid in list(races_with_results):
+                    total = (await session.execute(
+                        select(func.count()).select_from(RunnerPredictionRow)
+                        .where(RunnerPredictionRow.race_id == rid)
+                    )).scalar_one()
+                    n_cancelled = (await session.execute(
+                        select(func.count()).select_from(RunnerPredictionRow)
+                        .where(RunnerPredictionRow.race_id == rid)
+                        .where(RunnerPredictionRow.cancelled.is_(True))
+                    )).scalar_one()
+                    if total > 0 and n_cancelled == total:
+                        await session.execute(
+                            sa_update(RunnerPredictionRow)
+                            .where(RunnerPredictionRow.race_id == rid)
+                            .where(RunnerPredictionRow.cancelled.is_(True))
+                            .values(cancelled=False)
+                        )
                 await session.commit()
     return seeded + ra_seeded_total
 
