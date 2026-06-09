@@ -479,6 +479,91 @@ async def _scheduled_pre_race_enrich():
         log.exception("[pre-race] Pre-race enrich failed: %s", e)
 
 
+async def _check_scratches_today() -> int:
+    """
+    Lightweight scratch detection — no ML inference.
+    Fetches current RA runner statuses and cancels scratched runners in the DB.
+    Returns count of newly cancelled runners.
+    """
+    from sqlalchemy import update as sa_update
+    now_utc = datetime.utcnow().replace(tzinfo=timezone.utc)
+    horizon = now_utc + timedelta(hours=4)
+    today = _today_aest().isoformat()
+    date_sfx = f"-{today.replace('-', '')}"
+    total_cancelled = 0
+
+    try:
+        client = get_tab_client()
+        # Clear RA meeting cache so we always see fresh runner statuses
+        if hasattr(client, "_ra") and hasattr(client._ra, "_meeting_cache"):
+            client._ra._meeting_cache.clear()
+
+        meetings = await client.get_meetings(today)
+
+        for m in meetings:
+            slug = m.get("slug", "")
+            if not slug:
+                continue
+            venue_code = slug[:-len(date_sfx)] if slug.endswith(date_sfx) else slug.split("-")[0]
+            try:
+                raw_events = await client.get_meeting_races(slug)
+                for raw_event in raw_events:
+                    start_raw = raw_event.get("startTime")
+                    if not start_raw:
+                        continue
+                    try:
+                        jump = datetime.fromisoformat(start_raw.replace("Z", "+00:00"))
+                    except ValueError:
+                        continue
+                    # Only check races that haven't jumped yet (or jumped <30 min ago)
+                    if jump > horizon or jump < now_utc - timedelta(minutes=30):
+                        continue
+                    race_num = raw_event.get("eventNumber")
+                    race_id = f"{today}_{venue_code}_R{race_num}"
+
+                    full_event = await client.get_race(slug, race_num)
+                    if not full_event:
+                        continue
+
+                    scratched_names = {
+                        (sel.get("competitor") or {}).get("name", "")
+                        for sel in full_event.get("selections", [])
+                        if (sel.get("status") or "").upper() == "SCRATCHED"
+                        and (sel.get("competitor") or {}).get("name")
+                    }
+                    if not scratched_names:
+                        continue
+
+                    async with get_session() as session:
+                        result = await session.execute(
+                            sa_update(RunnerPredictionRow)
+                            .where(RunnerPredictionRow.race_id == race_id)
+                            .where(RunnerPredictionRow.horse_name.in_(scratched_names))
+                            .where(RunnerPredictionRow.cancelled.is_(False) | RunnerPredictionRow.cancelled.is_(None))
+                            .values(cancelled=True)
+                        )
+                        if result.rowcount:
+                            await session.commit()
+                            log.info("[scratch-check] %s: cancelled %d runner(s): %s",
+                                     race_id, result.rowcount, scratched_names)
+                            total_cancelled += result.rowcount
+            except Exception as e:
+                log.debug("[scratch-check] Failed for %s: %s", slug, e)
+    except Exception as e:
+        log.exception("[scratch-check] Failed: %s", e)
+
+    return total_cancelled
+
+
+async def _scheduled_check_scratches():
+    try:
+        n = await _check_scratches_today()
+        if n:
+            log.info("[scheduler] Scratch check: cancelled %d runner(s)", n)
+    except Exception as e:
+        log.exception("[scheduler] Scratch check failed: %s", e)
+
+
 async def _scheduled_live_odds_refresh():
     """
     Refresh OddsPro odds for all runners in races starting within the next 3 hours.
@@ -1538,6 +1623,10 @@ async def lifespan(app: FastAPI):
         _scheduled_live_odds_refresh,
         CronTrigger(hour="9-20", minute="0,20,40", timezone="Australia/Sydney")
     )
+    scheduler.add_job(
+        _scheduled_check_scratches,
+        CronTrigger(hour="9-20", minute="0,5,10,15,20,25,30,35,40,45,50,55", timezone="Australia/Sydney")
+    )
     scheduler.start()
     log.info("[scheduler] Cron jobs scheduled")
 
@@ -2407,7 +2496,7 @@ async def get_edge_yesterday(for_date: Optional[str] = Query(None, alias="date")
         no_result = bool(p.race_id not in seeded_race_ids and not r)
         model_pct = round(p.win_probability * 100, 1)
         payout = round(sp * stake, 2) if winner and sp else 0
-        profit = round(payout - stake, 2) if winner and sp else -stake
+        profit = 0 if scratched else (round(payout - stake, 2) if winner and sp else -stake)
 
         placed = r.get("placed", False) or bool(position and position <= 3 and not scratched)
 
