@@ -3052,6 +3052,7 @@ async def get_meeting(race_date: str, venue_code: str):
             select(RunnerPredictionRow)
             .where(RunnerPredictionRow.race_id.in_(race_ids))
             .where(RunnerPredictionRow.model_rank == 1)
+            .where(RunnerPredictionRow.cancelled.is_(False) | RunnerPredictionRow.cancelled.is_(None))
         )
         for p in tp_result.scalars().all():
             top_picks[p.race_id] = p.horse_name
@@ -3152,6 +3153,7 @@ async def get_race(race_id: str):
         mutable_result = await session.execute(
             select(RunnerPredictionRow)
             .where(RunnerPredictionRow.race_id == race_id)
+            .where(RunnerPredictionRow.cancelled.is_(False) | RunnerPredictionRow.cancelled.is_(None))
             .order_by(RunnerPredictionRow.model_rank)
         )
         runners = mutable_result.scalars().all()
