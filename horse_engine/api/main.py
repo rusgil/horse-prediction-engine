@@ -3365,6 +3365,7 @@ async def get_meeting(race_date: str, venue_code: str):
         # - Upcoming races  → mutable table (reflects latest retrain/enrichment).
         top_picks = {race_id: None for race_id in race_ids}
         top_win_probs = {race_id: None for race_id in race_ids}
+        top_place_probs = {race_id: None for race_id in race_ids}
 
         if completed_ids:
             max_at_result = await session.execute(
@@ -3383,6 +3384,7 @@ async def get_meeting(race_date: str, venue_code: str):
                 if p.enriched_at == max_at_by_race.get(p.race_id):
                     top_picks[p.race_id] = p.horse_name
                     top_win_probs[p.race_id] = p.win_probability
+                    top_place_probs[p.race_id] = p.place_probability
 
         upcoming_ids = [rid for rid in race_ids if rid not in completed_ids]
         if upcoming_ids:
@@ -3395,14 +3397,7 @@ async def get_meeting(race_date: str, venue_code: str):
             for p in tp_result.scalars().all():
                 top_picks[p.race_id] = p.horse_name
                 top_win_probs[p.race_id] = p.win_probability
-
-        # Top place probability per race (reuse model_rank=1 mutable rows already fetched above)
-        tp_place_result = await session.execute(
-            select(RunnerPredictionRow.race_id, RunnerPredictionRow.place_probability)
-            .where(RunnerPredictionRow.race_id.in_(race_ids))
-            .where(RunnerPredictionRow.model_rank == 1)
-        )
-        top_place_probs = {row.race_id: row.place_probability for row in tp_place_result}
+                top_place_probs[p.race_id] = p.place_probability
 
     enriched = bool(enriched_rows)
 
@@ -3550,16 +3545,13 @@ async def live_odds(race_id: str):
     if not hist_stored and not mut_stored:
         raise HTTPException(404, f"No predictions for {race_id} — enrich first")
 
-    # For model_correct: history is ground truth for completed races.
-    # For display (probs, odds): mutable reflects latest enrichment.
     stored = mut_stored or hist_stored
-    # top_model_pick resolved after we know if race is settled (see below)
     top_model_pick_hist = hist_stored[0].horse_name if hist_stored else (stored[0].horse_name if stored else None)
     top_model_pick_mut = mut_stored[0].horse_name if mut_stored else top_model_pick_hist
 
-    model_probs = {r.horse_name: r.win_probability or 0.0 for r in stored}
     stored_odds = {r.horse_name: r.best_available_odds for r in stored}
     stored_overlay = {r.horse_name: r.overlay or 0.0 for r in stored}
+    # model_probs deferred — assigned after db_settled is known so settled races use history
 
     # ── Step 1: load settled results from DB (HistoricalResultRow) ───────────
     async with get_session() as session:
@@ -3569,6 +3561,10 @@ async def live_odds(race_id: str):
         )).scalars().all()
     db_results = {r.horse_name: r for r in hr_rows}
     db_settled = bool(db_results)
+
+    # For settled races use pre-race history probs so overlay isn't contaminated by re-enrichment
+    model_probs_src = hist_stored if (db_settled and hist_stored) else stored
+    model_probs = {r.horse_name: r.win_probability or 0.0 for r in model_probs_src}
 
     # ── Step 2: try TAB for live odds + any missing positions ────────────────
     punters_tote: dict[str, tuple] = {}   # horse → (current_odds, actual_position)
