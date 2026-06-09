@@ -8212,9 +8212,10 @@ async def _run_calibration_sweep(holdout_days: int = 14) -> dict:
         # All historical results
         hr_result = await session.execute(select(HistoricalResultRow))
         all_hr = hr_result.scalars().all()
-        # All predictions with enriched data
+        # History table only — written once pre-race, never overwritten by re-enrichments,
+        # so enriched_json always reflects the genuine pre-race feature vector.
         pred_result = await session.execute(
-            select(RunnerPredictionRow).where(RunnerPredictionRow.enriched_json.isnot(None))
+            select(RunnerPredictionHistoryRow).where(RunnerPredictionHistoryRow.enriched_json.isnot(None))
         )
         all_pred = pred_result.scalars().all()
 
@@ -8508,8 +8509,9 @@ async def _run_place_calibration_sweep(holdout_days: int = 14) -> dict:
     async with get_session() as session:
         hr_result = await session.execute(select(HistoricalResultRow))
         all_hr = hr_result.scalars().all()
+        # History table only — written once pre-race, never overwritten by re-enrichments.
         pred_result = await session.execute(
-            select(RunnerPredictionRow).where(RunnerPredictionRow.enriched_json.isnot(None))
+            select(RunnerPredictionHistoryRow).where(RunnerPredictionHistoryRow.enriched_json.isnot(None))
         )
         all_pred = pred_result.scalars().all()
 
@@ -8694,8 +8696,9 @@ async def _run_exotic_calibration_sweep(holdout_days: int = 14) -> dict:
             select(HistoricalResultRow).where(HistoricalResultRow.position.isnot(None))
         )
         all_hr = hr_result.scalars().all()
+        # History table only — written once pre-race, never overwritten by re-enrichments.
         pred_result = await session.execute(
-            select(RunnerPredictionRow).where(RunnerPredictionRow.enriched_json.isnot(None))
+            select(RunnerPredictionHistoryRow).where(RunnerPredictionHistoryRow.enriched_json.isnot(None))
         )
         all_pred = pred_result.scalars().all()
 
