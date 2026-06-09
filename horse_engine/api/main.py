@@ -2059,27 +2059,43 @@ async def _update_odds_from_oddspro(
     """
     covered: set[str] = set()
     try:
-        tracks = await op.get_tracks(target_date)
+        # One call gets all AU meetings with full odds (not just movers)
+        meeting_odds = await op.get_meeting_odds(target_date)
     except Exception as e:
-        diag.append({"date": target_date, "source": "oddspro", "error": f"get_tracks: {e}"})
+        diag.append({"date": target_date, "source": "oddspro", "error": f"get_meeting_odds: {e}"})
         return covered
+
+    diag.append({"date": target_date, "source": "oddspro", "tracks_with_odds": list(meeting_odds.keys())})
 
     by_venue: dict[str, list] = {}
     for row in all_picks:
-        venue_key = row.venue or _parse_race_id(row.race_id)[1]  # slug fallback if venue not stored
+        venue_key = row.venue or _parse_race_id(row.race_id)[1]
         if venue_key:
             by_venue.setdefault(venue_key, []).append(row)
 
     for venue, rows in by_venue.items():
-        search_venue = _VENUE_ALIASES.get(venue.lower(), venue)
-        op_track = op.find_matching_track(search_venue, tracks)
-        venue_diag: dict = {"date": target_date, "venue": venue, "source": "oddspro", "op_track": op_track}
-        if not op_track:
+        venue_lower = venue.lower()
+        alias_lower = _VENUE_ALIASES.get(venue_lower, venue_lower)
+        # Match against OddsPro track keys (try exact, alias, then partial)
+        track_key = None
+        if venue_lower in meeting_odds:
+            track_key = venue_lower
+        elif alias_lower in meeting_odds:
+            track_key = alias_lower
+        else:
+            for k in meeting_odds:
+                if venue_lower in k or k in venue_lower or alias_lower in k or k in alias_lower:
+                    track_key = k
+                    break
+
+        venue_diag: dict = {"date": target_date, "venue": venue, "source": "oddspro", "op_track": track_key}
+        if not track_key:
             diag.append(venue_diag)
             continue
+
+        odds_map = meeting_odds[track_key]
+        venue_diag["runners_in_odds"] = len(odds_map)
         try:
-            odds_map = await op.get_track_odds(op_track)
-            venue_diag["runners_in_odds"] = len(odds_map)
             by_race: dict[int, list] = {}
             for row in rows:
                 if row.race_number:
@@ -2088,15 +2104,9 @@ async def _update_odds_from_oddspro(
                 for race_num, race_rows in by_race.items():
                     new_odds_map: dict[int, float] = {}
                     for row in race_rows:
-                        op_runner = odds_map.get((race_num, row.horse_name.lower()))
-                        if op_runner:
-                            raw_val = op_runner.get("currentBestOdds")
-                            try:
-                                val = float(raw_val) if raw_val else 0.0
-                                if val > 1.0:
-                                    new_odds_map[row.id] = val
-                            except (TypeError, ValueError):
-                                pass
+                        val = odds_map.get((race_num, row.horse_name.lower()))
+                        if val and val > 1.0:
+                            new_odds_map[row.id] = val
                     sorted_ids = sorted(new_odds_map, key=lambda rid: new_odds_map[rid])
                     for row in race_rows:
                         new_o = new_odds_map.get(row.id)
@@ -4281,20 +4291,31 @@ async def debug_odds(venue: str = "", date: str = "", x_cron_secret: Optional[st
     op = OddsProClient()
     result: dict = {"date": target_date, "venue_query": venue}
 
-    # OddsPro
+    # OddsPro — full meeting odds (not just movers)
     try:
-        tracks = await op.get_tracks(target_date)
-        result["op_tracks"] = tracks
-        op_track = op.find_matching_track(venue, tracks) if venue else None
-        result["op_track_matched"] = op_track
-        if op_track:
-            odds_map = await op.get_track_odds(op_track)
-            sample = [
-                {"race": k[0], "runner": k[1], "currentBestOdds": v.get("currentBestOdds")}
+        meeting_odds = await op.get_meeting_odds(target_date)
+        result["op_tracks"] = list(meeting_odds.keys())
+        # Find matching track
+        venue_lower = (venue or "").lower()
+        alias_lower = _VENUE_ALIASES.get(venue_lower, venue_lower)
+        track_key = None
+        if venue_lower in meeting_odds:
+            track_key = venue_lower
+        elif alias_lower in meeting_odds:
+            track_key = alias_lower
+        else:
+            for k in meeting_odds:
+                if venue_lower in k or k in venue_lower or alias_lower in k or k in alias_lower:
+                    track_key = k
+                    break
+        result["op_track_matched"] = track_key
+        if track_key:
+            odds_map = meeting_odds[track_key]
+            result["op_runners_total"] = len(odds_map)
+            result["op_sample"] = [
+                {"race": k[0], "runner": k[1], "best_price": v}
                 for k, v in list(odds_map.items())[:20]
             ]
-            result["op_runners_total"] = len(odds_map)
-            result["op_sample"] = sample
     except Exception as e:
         result["op_error"] = str(e)
 

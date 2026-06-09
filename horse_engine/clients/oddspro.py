@@ -16,6 +16,8 @@ import httpx
 log = logging.getLogger(__name__)
 
 _BASE = "https://oddspro.com.au/api/external"
+_MEETINGS_BASE = "https://oddspro.com.au/api/meetings"
+_AU_STATES = {"NSW", "VIC", "QLD", "SA", "WA", "TAS", "NT", "ACT"}
 
 
 class OddsProClient:
@@ -24,6 +26,8 @@ class OddsProClient:
         self._tracks_cache: dict[str, tuple[datetime, list[str]]] = {}
         # track → (ts, {(race_num, runner_name_lower): runner_dict})
         self._track_cache: dict[str, tuple[datetime, dict]] = {}
+        # date → (ts, {track_lower: {(race_num, runner_lower): best_price}})
+        self._meetings_cache: dict[str, tuple[datetime, dict]] = {}
         self._sem: asyncio.Semaphore | None = None
 
     def _get_sem(self) -> asyncio.Semaphore:
@@ -74,6 +78,57 @@ class OddsProClient:
         except Exception as e:
             log.debug("OddsPro track odds failed for %s: %s", track, e)
             return {}
+
+    async def get_meeting_odds(self, date: str) -> dict[str, dict[tuple[int, str], float]]:
+        """
+        Fetch full fixed-win odds for all AU domestic thoroughbred meetings on date.
+        Returns {track_lower: {(race_num, runner_name_lower): best_fixed_win_price}}
+        One API call covers all venues — much better than movers/track per venue.
+        Cached 2 minutes.
+        """
+        cached = self._meetings_cache.get(date)
+        if cached and (datetime.utcnow() - cached[0]).total_seconds() < 120:
+            return cached[1]
+        try:
+            data = await self._get(f"{_MEETINGS_BASE}?date={date}")
+            if not isinstance(data, list):
+                data = []
+        except Exception as e:
+            log.debug("OddsPro meetings failed for %s: %s", date, e)
+            return {}
+
+        result: dict[str, dict[tuple[int, str], float]] = {}
+        for meeting in data:
+            if meeting.get("location") not in _AU_STATES or meeting.get("type") != "T":
+                continue
+            track_lower = (meeting.get("track") or "").lower()
+            if not track_lower:
+                continue
+            track_odds: dict[tuple[int, str], float] = {}
+            for race in meeting.get("races", []):
+                race_num = race.get("number")
+                if not race_num:
+                    continue
+                for runner in race.get("runners", []):
+                    if (runner.get("status") or "").upper() == "SCRATCHED":
+                        continue
+                    name_lower = (runner.get("name") or "").lower().strip()
+                    if not name_lower:
+                        continue
+                    markets = runner.get("bookmakerMarkets", [])
+                    prices = [
+                        bm["fixedWin"]["price"]
+                        for bm in markets
+                        if bm.get("fixedWin") and (bm["fixedWin"].get("price") or 0) > 1.0
+                    ]
+                    if prices:
+                        track_odds[(race_num, name_lower)] = max(prices)
+            result[track_lower] = track_odds
+            log.debug("OddsPro meetings: %s %d runners", track_lower, len(track_odds))
+
+        self._meetings_cache[date] = (datetime.utcnow(), result)
+        log.info("OddsPro meetings: %d AU tracks on %s", len(result), date)
+        return result
 
     def find_matching_track(self, venue: str, tracks: list[str]) -> Optional[str]:
         """
