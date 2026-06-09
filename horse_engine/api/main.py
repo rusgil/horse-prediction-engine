@@ -3013,26 +3013,13 @@ async def get_meeting(race_date: str, venue_code: str):
             rnum = int(race_id.split("_R")[-1])
         except ValueError:
             continue
-        # rp is either a RacePredictionRow object, a runner row tuple
-        # (race_id, scheduled_time, race_name, distance, track_condition), or None
-        if rp is None:
-            sched = race_name = dist = tc = None
-            field_size = prize_money = None
-        elif hasattr(rp, "scheduled_time"):
-            # RacePredictionRow ORM object
-            sched = rp.scheduled_time
-            race_name = rp.race_name
-            dist = rp.distance
-            tc = rp.track_condition
-            field_size = rp.field_size
-            prize_money = rp.prize_money
-        else:
-            # Row tuple from RunnerPredictionRow fallback
-            sched = rp[1]        # scheduled_time
-            race_name = rp[2]    # race_name
-            dist = rp[3]         # distance
-            tc = rp[4]           # track_condition
-            field_size = prize_money = None
+        # rp is a RacePredictionRow ORM object, a RunnerPredictionRow Row tuple, or None
+        sched      = getattr(rp, "scheduled_time", None) if rp is not None else None
+        race_name  = getattr(rp, "race_name", None)      if rp is not None else None
+        dist       = getattr(rp, "distance", None)       if rp is not None else None
+        tc         = getattr(rp, "track_condition", None) if rp is not None else None
+        field_size = getattr(rp, "field_size", None)     if rp is not None else None
+        prize_money = getattr(rp, "prize_money", None)   if rp is not None else None
         race_list.append({
             "race_id": race_id,
             "race_number": rnum,
