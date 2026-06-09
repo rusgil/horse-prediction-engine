@@ -6091,6 +6091,43 @@ async def snapshot_backfill(
     }
 
 
+@app.post("/api/admin/history/clear-stale")
+async def clear_stale_history(
+    date: str = Query(..., description="Date to clear stale history for (YYYY-MM-DD)"),
+    before_date: str = Query(..., description="Delete history rows with enriched_at before this date (YYYY-MM-DD), e.g. today's date to remove rows written before today"),
+    x_cron_secret: Optional[str] = Header(None),
+):
+    """
+    Delete history rows for a given race date where enriched_at predates before_date.
+    Used to clear stale pre-enriched snapshots (e.g., races enriched 2 days early with
+    null odds/features) so fresh pre-race snapshots can be written in their place.
+    Only deletes rows for unsettled races (no HistoricalResultRow).
+    """
+    _check_admin(x_cron_secret)
+    from sqlalchemy import delete as sa_delete
+
+    cutoff_dt = datetime.fromisoformat(before_date)
+
+    async with get_session() as session:
+        # Safety: only delete rows for races with no result yet
+        settled = {r for r, in (await session.execute(
+            select(HistoricalResultRow.race_id)
+            .where(HistoricalResultRow.race_id.like(f"{date}_%"))
+            .distinct()
+        )).all()}
+
+        result = await session.execute(
+            sa_delete(RunnerPredictionHistoryRow)
+            .where(RunnerPredictionHistoryRow.race_id.like(f"{date}_%"))
+            .where(RunnerPredictionHistoryRow.enriched_at < cutoff_dt)
+            .where(RunnerPredictionHistoryRow.race_id.notin_(settled))
+        )
+        await session.commit()
+        deleted = result.rowcount
+
+    return {"status": "ok", "date": date, "deleted_rows": deleted, "protected_settled": len(settled)}
+
+
 @app.post("/api/admin/history/patch-nulls")
 async def patch_history_nulls(x_cron_secret: Optional[str] = Header(None)):
     """
