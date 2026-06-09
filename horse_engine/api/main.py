@@ -4111,6 +4111,39 @@ async def cancel_runner(
         return {"updated": result.rowcount, "race_id": race_id, "horse_name": horse_name}
 
 
+@app.get("/api/admin/debug-betfair")
+async def debug_betfair(date: str = "", x_cron_secret: Optional[str] = Header(None)):
+    """Test Betfair connection: credentials, auth, market count, and meeting slugs."""
+    _check_admin(x_cron_secret)
+    from horse_engine.config import settings
+    target_date = date or _today_aest().isoformat()
+
+    info: dict = {
+        "date": target_date,
+        "credentials_set": bool(settings.betfair_app_key and settings.betfair_username and settings.betfair_password),
+        "app_key_prefix": settings.betfair_app_key[:4] + "..." if settings.betfair_app_key else None,
+    }
+    if not info["credentials_set"]:
+        return info
+
+    try:
+        from horse_engine.clients.betfair import BetfairClient
+        bf = BetfairClient()
+        login_ok = await bf._login()
+        info["login_ok"] = login_ok
+        if not login_ok:
+            return info
+
+        markets = await bf._load_catalogue(target_date)
+        info["market_count"] = len(markets)
+        meetings = await bf.get_meetings(target_date)
+        info["meetings"] = [{"slug": m["slug"], "name": m["name"], "state": m["state"]} for m in meetings]
+    except Exception as e:
+        info["error"] = str(e)
+
+    return info
+
+
 @app.get("/api/admin/probe-tab")
 async def probe_tab(race_id: str = "", date: str = "", x_cron_secret: Optional[str] = Header(None)):
     """Probe the TAB API. Pass race_id=YYYY-MM-DD_venue_RN for race data, or date=YYYY-MM-DD to list meetings."""
