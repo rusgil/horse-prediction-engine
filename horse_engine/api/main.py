@@ -2135,6 +2135,33 @@ async def get_edge_picks():
         db_positions = await _seed_race_results_on_demand(finished_race_ids)
         seeded_race_ids: set[str] = {rid for (rid, _) in db_positions}
 
+        # For completed races, the history table holds the genuine pre-race pick.
+        # Swap out any mutable rank-1 horse that differs from history so that
+        # result annotation and stats reflect what was actually predicted.
+        async with get_session() as session:
+            max_at_rows = (await session.execute(
+                select(RunnerPredictionHistoryRow.race_id,
+                       func.max(RunnerPredictionHistoryRow.enriched_at).label("max_at"))
+                .where(RunnerPredictionHistoryRow.race_id.in_(finished_race_ids))
+                .group_by(RunnerPredictionHistoryRow.race_id)
+            )).all()
+            max_at_hist = {r.race_id: r.max_at for r in max_at_rows}
+            hist_rank1_rows = (await session.execute(
+                select(RunnerPredictionHistoryRow.race_id, RunnerPredictionHistoryRow.horse_name,
+                       RunnerPredictionHistoryRow.enriched_at)
+                .where(RunnerPredictionHistoryRow.race_id.in_(finished_race_ids))
+                .where(RunnerPredictionHistoryRow.model_rank == 1)
+            )).all()
+        hist_pick: dict[str, str] = {
+            r.race_id: r.horse_name
+            for r in hist_rank1_rows
+            if r.enriched_at == max_at_hist.get(r.race_id)
+        }
+        for p in finished_picks:
+            canonical = hist_pick.get(p["race_id"])
+            if canonical:
+                p["horse_name"] = canonical
+
         # Also fetch SP for finished picks
         async with get_session() as session:
             sp_rows = (await session.execute(
@@ -3443,9 +3470,12 @@ async def live_odds(race_id: str):
     if not hist_stored and not mut_stored:
         raise HTTPException(404, f"No predictions for {race_id} — enrich first")
 
-    # Use latest mutable row first (matches race card), fall back to latest history batch
+    # For model_correct: history is ground truth for completed races.
+    # For display (probs, odds): mutable reflects latest enrichment.
     stored = mut_stored or hist_stored
-    top_model_pick = stored[0].horse_name if stored else None
+    # top_model_pick resolved after we know if race is settled (see below)
+    top_model_pick_hist = hist_stored[0].horse_name if hist_stored else (stored[0].horse_name if stored else None)
+    top_model_pick_mut = mut_stored[0].horse_name if mut_stored else top_model_pick_hist
 
     model_probs = {r.horse_name: r.win_probability or 0.0 for r in stored}
     stored_odds = {r.horse_name: r.best_available_odds for r in stored}
@@ -3502,6 +3532,9 @@ async def live_odds(race_id: str):
     winner_name = next((h for h, _, pos in all_tote if pos == 1), None)
     placed_names = {h for h, _, pos in all_tote if pos and pos <= 3}
     settled = bool(winner_name) or db_settled
+    # Completed races: history rank 1 is the genuine pre-race pick.
+    # Upcoming races: use mutable (latest enrichment).
+    top_model_pick = top_model_pick_hist if settled else top_model_pick_mut
     model_correct = (winner_name == top_model_pick) if winner_name else None
     model_placed = (top_model_pick in placed_names) if (placed_names and top_model_pick) else None
 
