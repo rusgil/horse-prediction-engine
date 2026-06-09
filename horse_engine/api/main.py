@@ -7358,15 +7358,26 @@ async def performance_summary(days: int = Query(5, ge=1, le=365)):
 
         race_ids = list({r.race_id for r in hr_rows})
 
-        # Primary: mutable table (updated by retrains, consistent with get_meeting)
-        pred_result = await session.execute(
-            select(RunnerPredictionRow)
-            .where(RunnerPredictionRow.race_id.in_(race_ids))
-            .where(RunnerPredictionRow.model_rank == 1)
-            .where(RunnerPredictionRow.cancelled.is_(False) | RunnerPredictionRow.cancelled.is_(None))
+        # History table — pre-race snapshot, unaffected by post-race re-enrichments.
+        # Use max(enriched_at) per race to pick the latest pre-race batch.
+        max_at_result = await session.execute(
+            select(RunnerPredictionHistoryRow.race_id,
+                   func.max(RunnerPredictionHistoryRow.enriched_at).label("max_at"))
+            .where(RunnerPredictionHistoryRow.race_id.in_(race_ids))
+            .group_by(RunnerPredictionHistoryRow.race_id)
         )
-        top_picks: dict[str, RunnerPredictionRow] = {
-            p.race_id: p for p in pred_result.scalars().all()
+        max_at_by_race = {row.race_id: row.max_at for row in max_at_result}
+
+        hist_pred_result = await session.execute(
+            select(RunnerPredictionHistoryRow)
+            .where(RunnerPredictionHistoryRow.race_id.in_(race_ids))
+            .where(RunnerPredictionHistoryRow.model_rank == 1)
+            .where(RunnerPredictionHistoryRow.cancelled.is_(False) | RunnerPredictionHistoryRow.cancelled.is_(None))
+        )
+        top_picks: dict[str, RunnerPredictionHistoryRow] = {
+            p.race_id: p
+            for p in hist_pred_result.scalars().all()
+            if p.enriched_at == max_at_by_race.get(p.race_id)
         }
 
     # Winner per race (position==1) — used for accurate act_won comparison
