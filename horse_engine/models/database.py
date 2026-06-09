@@ -439,10 +439,16 @@ async def save_race_predictions(session: AsyncSession, race_id: str, predictions
         rows.append(row)
     await session.commit()
 
-    # Auto-cancel this horse in other races at the same venue/date.
-    # Handles late scratchings that move a horse to a different race number.
+    # Auto-cancel duplicates in EARLIER races only.
+    # Horses move to later races in nominations, so the higher race number wins.
+    # Cancelling later races would cause the wrong entry to survive when races
+    # are enriched in ascending order (R2 after R5 → R2 cancels R5 incorrectly).
     date_venue = race_id.rsplit("_R", 1)[0]  # e.g. "2026-06-09_scone"
     horse_names = [p.get("horse_name") for p in predictions if p.get("horse_name")]
+    try:
+        current_race_num = int(race_id.rsplit("_R", 1)[1])
+    except (IndexError, ValueError):
+        current_race_num = 0
     if horse_names and date_venue:
         from sqlalchemy import update as sa_update
         await session.execute(
@@ -450,6 +456,7 @@ async def save_race_predictions(session: AsyncSession, race_id: str, predictions
             .where(RunnerPredictionRow.race_id.like(f"{date_venue}_R%"))
             .where(RunnerPredictionRow.race_id != race_id)
             .where(RunnerPredictionRow.horse_name.in_(horse_names))
+            .where(RunnerPredictionRow.race_number < current_race_num)
             .values(cancelled=True)
         )
         await session.commit()
