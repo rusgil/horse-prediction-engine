@@ -2117,7 +2117,9 @@ async def _update_odds_from_oddspro(
                 for race_num, race_rows in by_race.items():
                     new_odds_map: dict[int, float] = {}
                     for row in race_rows:
-                        val = odds_map.get((race_num, row.horse_name.lower()))
+                        name_lower = row.horse_name.lower()
+                        norm_name = _normalize_horse(row.horse_name)
+                        val = odds_map.get((race_num, name_lower)) or odds_map.get((race_num, norm_name))
                         if val and val > 1.0:
                             new_odds_map[row.id] = val
                     sorted_ids = sorted(new_odds_map, key=lambda rid: new_odds_map[rid])
