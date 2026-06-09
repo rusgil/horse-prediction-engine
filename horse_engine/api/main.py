@@ -1957,7 +1957,7 @@ async def get_edge_picks():
                 "race_name": None,
                 "distance": None,
                 "track_condition": None,
-                "scheduled_time": race_times.get(runner_row.race_id),
+                "scheduled_time": race_times.get(runner_row.race_id) or runner_row.scheduled_time,
                 "horse_name": runner_row.horse_name,
                 "jockey": runner_row.jockey,
                 "trainer": runner_row.trainer,
@@ -2979,12 +2979,19 @@ async def get_meeting(race_date: str, venue_code: str):
         # Fall back to RunnerPredictionRow race_ids if RacePredictionRow is empty
         if not rp_rows:
             db_result = await session.execute(
-                select(RunnerPredictionRow.race_id)
+                select(
+                    RunnerPredictionRow.race_id,
+                    RunnerPredictionRow.scheduled_time,
+                    RunnerPredictionRow.race_name,
+                    RunnerPredictionRow.distance,
+                    RunnerPredictionRow.track_condition,
+                )
                 .where(RunnerPredictionRow.race_id.like(f"{prefix}%"))
                 .where(RunnerPredictionRow.model_rank == 1)
                 .order_by(RunnerPredictionRow.race_id)
             )
-            fallback_ids = [row[0] for row in db_result]
+            fallback_rows = {row[0]: row for row in db_result}
+            fallback_ids = list(fallback_rows.keys())
             if not fallback_ids:
                 hr_result = await session.execute(
                     select(HistoricalResultRow.race_id)
@@ -2992,12 +2999,13 @@ async def get_meeting(race_date: str, venue_code: str):
                     .distinct().order_by(HistoricalResultRow.race_id)
                 )
                 fallback_ids = [row[0] for row in hr_result]
+                fallback_rows = {}
             for rid in fallback_ids:
                 try:
                     rnum = int(rid.split("_R")[-1])
                 except ValueError:
                     continue
-                rp_rows[rid] = None  # sentinel — no RacePredictionRow
+                rp_rows[rid] = fallback_rows.get(rid)  # row tuple or None
 
     race_list = []
     for race_id, rp in rp_rows.items():
@@ -3005,17 +3013,37 @@ async def get_meeting(race_date: str, venue_code: str):
             rnum = int(race_id.split("_R")[-1])
         except ValueError:
             continue
+        # rp is either a RacePredictionRow object, a runner row tuple
+        # (race_id, scheduled_time, race_name, distance, track_condition), or None
+        if rp is None:
+            sched = race_name = dist = tc = None
+            field_size = prize_money = None
+        elif hasattr(rp, "scheduled_time"):
+            # RacePredictionRow ORM object
+            sched = rp.scheduled_time
+            race_name = rp.race_name
+            dist = rp.distance
+            tc = rp.track_condition
+            field_size = rp.field_size
+            prize_money = rp.prize_money
+        else:
+            # Row tuple from RunnerPredictionRow fallback
+            sched = rp[1]        # scheduled_time
+            race_name = rp[2]    # race_name
+            dist = rp[3]         # distance
+            tc = rp[4]           # track_condition
+            field_size = prize_money = None
         race_list.append({
             "race_id": race_id,
             "race_number": rnum,
-            "race_name": rp.race_name if rp else None,
-            "distance": rp.distance if rp else None,
-            "scheduled_time": rp.scheduled_time if rp else None,
-            "time": rp.scheduled_time if rp else None,
+            "race_name": race_name,
+            "distance": dist,
+            "scheduled_time": sched,
+            "time": sched,
             "status": None,  # filled by RA below if available
-            "track_condition": rp.track_condition if rp else None,
-            "field_size": rp.field_size if rp else None,
-            "prize_money": rp.prize_money if rp else None,
+            "track_condition": tc,
+            "field_size": field_size,
+            "prize_money": prize_money,
         })
     race_list.sort(key=lambda r: r["race_number"])
 
