@@ -1395,16 +1395,24 @@ async def _seed_race_results_on_demand(race_ids: list[str]) -> dict[tuple, int]:
                         ))
                         db_positions[(race_id, horse)] = int(pos)
                     if rows_to_add:
+                        from sqlalchemy import update as sa_update
                         async with get_session() as session:
                             for row in rows_to_add:
-                                exists = (await session.execute(
-                                    select(HistoricalResultRow.id)
+                                existing = (await session.execute(
+                                    select(HistoricalResultRow.id, HistoricalResultRow.starting_price)
                                     .where(HistoricalResultRow.race_id == row.race_id)
                                     .where(HistoricalResultRow.horse_name == row.horse_name)
                                     .limit(1)
-                                )).scalar()
-                                if not exists:
+                                )).first()
+                                if not existing:
                                     session.add(row)
+                                elif existing.starting_price is None and row.starting_price is not None:
+                                    # Row was written by _persist_live_results without SP; fill it in now
+                                    await session.execute(
+                                        sa_update(HistoricalResultRow)
+                                        .where(HistoricalResultRow.id == existing.id)
+                                        .values(starting_price=row.starting_price)
+                                    )
                             await session.commit()
                         log.info("[on-demand-seed] Seeded %d results for %s", len(rows_to_add), race_id)
             except Exception as e:
@@ -1415,10 +1423,16 @@ async def _seed_race_results_on_demand(race_ids: list[str]) -> dict[tuple, int]:
 
 async def _persist_live_results(race_id: str, all_tote: list) -> None:
     """Persist settled race results seen in a live-odds fetch to HistoricalResultRow.
-    Called as a background task — does not block the live-odds response."""
+    Called as a background task — does not block the live-odds response.
+
+    Seeding authority (highest → lowest):
+      1. _seed_results_for_date  — cron, RA + Punters, has feature_vector_json and real SP
+      2. _seed_race_results_on_demand — on first page view; Punters API, real SP from race data
+      3. _persist_live_results   — fastest but no official SP; writes starting_price=None
+    """
     try:
         async with get_session() as session:
-            for horse, current_odds, position in all_tote:
+            for horse, _current_odds, position in all_tote:
                 if not position or not horse:
                     continue
                 existing = (await session.execute(
@@ -1435,7 +1449,7 @@ async def _persist_live_results(race_id: str, all_tote: list) -> None:
                         beaten_margin=0.0,
                         winner=position == 1,
                         placed=position <= 3,
-                        starting_price=current_odds,
+                        starting_price=None,  # live tote ≠ official SP; cron fills this in
                     ))
             await session.commit()
         log.info("[live-odds] Persisted results for %s", race_id)
@@ -1687,7 +1701,7 @@ async def lifespan(app: FastAPI):
     )
     scheduler.add_job(
         _scheduled_check_scratches,
-        CronTrigger(hour="9-20", minute="0,5,10,15,20,25,30,35,40,45,50,55", timezone="Australia/Sydney")
+        CronTrigger(hour="9-20", minute="0,15,30,45", timezone="Australia/Sydney")
     )
     scheduler.start()
     log.info("[scheduler] Cron jobs scheduled")
