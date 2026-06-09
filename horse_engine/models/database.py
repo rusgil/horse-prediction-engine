@@ -439,6 +439,21 @@ async def save_race_predictions(session: AsyncSession, race_id: str, predictions
         rows.append(row)
     await session.commit()
 
+    # Auto-cancel this horse in other races at the same venue/date.
+    # Handles late scratchings that move a horse to a different race number.
+    date_venue = race_id.rsplit("_R", 1)[0]  # e.g. "2026-06-09_scone"
+    horse_names = [p.get("horse_name") for p in predictions if p.get("horse_name")]
+    if horse_names and date_venue:
+        from sqlalchemy import update as sa_update
+        await session.execute(
+            sa_update(RunnerPredictionRow)
+            .where(RunnerPredictionRow.race_id.like(f"{date_venue}_R%"))
+            .where(RunnerPredictionRow.race_id != race_id)
+            .where(RunnerPredictionRow.horse_name.in_(horse_names))
+            .values(cancelled=True)
+        )
+        await session.commit()
+
     # Push to immutable history if this is a pre-race prediction and not already recorded
     if not history_exists and predictions:
         first = predictions[0]
