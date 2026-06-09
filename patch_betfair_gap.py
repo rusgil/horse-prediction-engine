@@ -27,7 +27,7 @@ import bz2
 import json
 import logging
 import re
-import subprocess
+import subprocess  # used only in scan_tar
 import sys
 from collections import defaultdict
 from datetime import datetime, timezone, timedelta
@@ -304,65 +304,61 @@ def scan_tar(date_from: str, date_to: str) -> dict[str, list[str]]:
     return market_files['win']
 
 
-def extract_file(tar_path: Path, inner_path: str) -> bytes | None:
-    """Extract a single file from the tar and return its raw bytes."""
-    result = subprocess.run(
-        ['tar', '-xOf', str(tar_path), inner_path],
-        capture_output=True
-    )
-    return result.stdout if result.returncode == 0 else None
-
-
 # ── Main processing ───────────────────────────────────────────────────────────
 
 def build_race_map(file_paths: list[str], date_from: str, date_to: str) -> dict:
     """
-    Extract and parse all market files. Race numbers are assigned by sorting WIN
-    markets within each (date, venue) group by market_time_ms (BASIC tier has no
-    market names, so time-ordering is the only reliable approach).
+    Stream through the tar once, extracting only matching files. Race numbers
+    are assigned by sorting WIN markets within each (date, venue) group by
+    market_time_ms (BASIC tier has no market names).
 
     Returns: race_map[date_aest][venue_slug][race_number] = {
         'win': parsed_win_dict,
         'placers': [names...],
     }
     """
-    log.info("Parsing %d candidate market files ...", len(file_paths))
+    import tarfile as _tarfile
 
-    # Intermediate storage before race-number assignment
-    # key: (date_aest, venue_slug) → list of parsed WIN dicts (unsorted)
+    path_set = set(file_paths)
+    log.info("Streaming tar for %d candidate files ...", len(path_set))
+
     wins_by_meeting: dict[tuple, list] = defaultdict(list)
-    # key: (date_aest, venue_slug, market_time_ms) → list of placer names
     placers_by_time: dict[tuple, list] = defaultdict(list)
+    win_count = place_count = skip_count = processed = 0
 
-    win_count = place_count = skip_count = 0
+    with _tarfile.open(str(TAR_PATH), 'r:') as tf:
+        for member in tf:
+            if member.name not in path_set:
+                continue
+            processed += 1
+            if processed % 1000 == 0:
+                log.info("  Streamed %d files (wins=%d, places=%d, skipped=%d)",
+                         processed, win_count, place_count, skip_count)
+            try:
+                f = tf.extractfile(member)
+                if not f:
+                    skip_count += 1
+                    continue
+                raw = f.read()
+            except Exception:
+                skip_count += 1
+                continue
 
-    for i, path in enumerate(file_paths):
-        if i % 500 == 0 and i > 0:
-            log.info("  Processed %d / %d files (wins=%d, places=%d, skipped=%d)",
-                     i, len(file_paths), win_count, place_count, skip_count)
+            win = parse_win_market(raw)
+            if win:
+                key = (win['date_aest'], win['venue_slug'])
+                wins_by_meeting[key].append(win)
+                win_count += 1
+                continue
 
-        raw = extract_file(TAR_PATH, path)
-        if not raw:
+            place = parse_place_market(raw)
+            if place:
+                key = (place['date_aest'], place['venue_slug'], place.get('market_time_ms', 0))
+                placers_by_time[key] = place['placers']
+                place_count += 1
+                continue
+
             skip_count += 1
-            continue
-
-        # Try WIN first
-        win = parse_win_market(raw)
-        if win:
-            key = (win['date_aest'], win['venue_slug'])
-            wins_by_meeting[key].append(win)
-            win_count += 1
-            continue
-
-        # Try PLACE
-        place = parse_place_market(raw)
-        if place:
-            key = (place['date_aest'], place['venue_slug'], place.get('market_time_ms', 0))
-            placers_by_time[key] = place['placers']
-            place_count += 1
-            continue
-
-        skip_count += 1
 
     log.info("Parsed: %d WIN markets, %d PLACE markets, %d skipped",
              win_count, place_count, skip_count)
@@ -390,7 +386,7 @@ def build_race_map(file_paths: list[str], date_from: str, date_to: str) -> dict:
 # ── DB patching ───────────────────────────────────────────────────────────────
 
 def patch_via_api(race_map: dict, dry_run: bool, bsp_only: bool,
-                  api_url: str, secret: str, batch_size: int = 50) -> None:
+                  api_url: str, secret: str, batch_size: int = 10) -> None:
     """POST patch data to the Railway admin endpoint in batches."""
     import urllib.request
     import urllib.error
@@ -443,8 +439,17 @@ def patch_via_api(race_map: dict, dry_run: bool, bsp_only: bool,
                     snapshots = []
                     if not bsp_only:
                         market_ms = win_data['market_time_ms']
+                        # Downsample to one snapshot per 5-minute window (pre-race only)
+                        seen_buckets: set[int] = set()
                         for ts_ms, price in win_data['ltp_history'].get(name, []):
-                            mtj = round((market_ms - ts_ms) / 60_000, 1)
+                            mtj_raw = (market_ms - ts_ms) / 60_000
+                            if mtj_raw <= 0:
+                                continue  # skip post-race ticks
+                            bucket = int(ts_ms / (5 * 60_000))  # 5-min bucket
+                            if bucket in seen_buckets:
+                                continue
+                            seen_buckets.add(bucket)
+                            mtj = round(mtj_raw, 1)
                             snap_time = datetime.fromtimestamp(
                                 ts_ms / 1000, tz=timezone.utc
                             ).strftime('%Y-%m-%dT%H:%M:%SZ')

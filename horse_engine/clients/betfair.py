@@ -305,7 +305,7 @@ class BetfairClient:
                     "state": state,
                     "rail_position": "",
                     "date": race_date,
-                    # Punters-compatible keys used by main.py
+                    # Standard keys used by main.py
                     "railPosition": "",
                     "meetingDateLocal": race_date,
                     "markets": [],

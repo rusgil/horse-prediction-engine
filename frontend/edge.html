@@ -3439,7 +3439,7 @@
   function scheduleTriResultFetch(raceId, jumpMs) {
     if (_triResultScheduled.has(raceId)) return;
     _triResultScheduled.add(raceId);
-    // Wait 3 min after jump to give Punters time to post results, then fetch once
+    // Wait 3 min after jump to give RA time to post results, then fetch once
     const waitMs = Math.max(0, jumpMs + 3 * 60 * 1000 - Date.now());
     setTimeout(async () => {
       if (!trifectasData) return;
@@ -3448,7 +3448,7 @@
         if (!res.ok) return;
         trifectasData = await res.json();
         renderTrifectasContent(trifectasData);
-        // If still pending (Punters slow to post), retry once more after 5 min
+        // If still pending (RA slow to post), retry once more after 5 min
         const still = trifectasData.picks.find(p => p.race_id === raceId && p.hit === undefined);
         if (still) {
           _triResultScheduled.delete(raceId);
@@ -3555,7 +3555,7 @@
   }
 
   setInterval(tickCountdowns, 1000);
-  setInterval(refreshOdds, 20 * 60 * 1000); // 20 min — server has its own 15-25 min Punters cadence
+  setInterval(refreshOdds, 20 * 60 * 1000); // 20 min — server has its own 15-25 min RA cadence
   setInterval(refreshResults, 90 * 1000);   // 90s client poll — server jitter gates actual TAB calls to ~100-130s
 
   document.getElementById('stakeInput').addEventListener('input', function() {

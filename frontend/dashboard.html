@@ -627,7 +627,7 @@
         </div>
         <div class="action-explain">
           <strong>Re-enrich Today</strong>
-          <span>Force re-runs the model on every race today, overwriting stored predictions. Makes <strong>one full Punters API call per race</strong> to fetch the latest race card (scratchings, track condition, jockey changes), then re-runs the ML model. On a typical race day (~40 races across 5–6 meetings) this is ~40–50 API calls. Use after a model or form-scoring change when you want all predictions refreshed immediately.<br><br><em>The automated pre-race job runs every 15 min and is more surgical — it makes one lightweight call per meeting just to check start times, then only fetches full race data for races within 2 hours of jump. Use this button when you need to refresh races outside that 2-hour window.</em></span>
+          <span>Force re-runs the model on every race today, overwriting stored predictions. Makes <strong>one full RA API call per race</strong> to fetch the latest race card (scratchings, track condition, jockey changes), then re-runs the ML model. On a typical race day (~40 races across 5–6 meetings) this is ~40–50 API calls. Use after a model or form-scoring change when you want all predictions refreshed immediately.<br><br><em>The automated pre-race job runs every 15 min and is more surgical — it makes one lightweight call per meeting just to check start times, then only fetches full race data for races within 2 hours of jump. Use this button when you need to refresh races outside that 2-hour window.</em></span>
         </div>
         <div class="action-explain">
           <strong>Run Calibration Now</strong>

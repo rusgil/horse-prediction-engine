@@ -2025,12 +2025,12 @@ async def get_edge_picks():
 
 
 _odds_refresh_last: datetime | None = None
-_ODDS_REFRESH_COOLDOWN = 120  # seconds — prevents hammering punters API
+_ODDS_REFRESH_COOLDOWN = 120  # seconds — prevents hammering RA/OddsPro
 
 @app.post("/api/edge/refresh-odds")
 async def refresh_edge_odds():
     """
-    Fetch fresh odds from punters for upcoming edge picks and update DB.
+    Fetch fresh odds from RA/OddsPro for upcoming edge picks and update DB.
     No Claude calls — zero AI cost. Only updates best_available_odds.
     Rate-limited to once per 2 minutes globally.
     """
@@ -2057,36 +2057,33 @@ async def refresh_edge_odds():
             picks = result.scalars().all()
             picks = [p for p in picks if not re.search(r"-(trial|trail|jumpout)s?[_-]", p.race_id, re.IGNORECASE)]
 
-        # Group by meeting slug so we only call punters once per meeting
-        slugs: dict[str, list[RunnerPredictionRow]] = {}
+        # Group picks by (slug, race_num) for per-race RA+OddsPro calls
+        race_groups: dict[tuple[str, int], list[RunnerPredictionRow]] = {}
         for p in picks:
-            _, venue_code, _ = _parse_race_id(p.race_id)
+            _, venue_code, race_num = _parse_race_id(p.race_id)
             slug = _meeting_slug(venue_code, target_date)
-            slugs.setdefault(slug, []).append(p)
+            if race_num:
+                race_groups.setdefault((slug, race_num), []).append(p)
 
-        for slug, slug_picks in slugs.items():
+        for (slug, race_num), race_picks in race_groups.items():
             try:
-                events = await asyncio.wait_for(client.get_meeting_races(slug), timeout=30)
-                # Build normalised horse → odds map (uppercase key for case-insensitive match)
+                raw = await asyncio.wait_for(client.get_race(slug, race_num), timeout=30)
+                if not raw:
+                    continue
                 horse_odds: dict[str, float] = {}
-                for event in events:
-                    for sel in event.get("selections") or []:
-                        name = (sel.get("competitor") or {}).get("name")
-                        if not name:
-                            continue
-                        tote = sel.get("topToteWin")
-                        sp = sel.get("startingPrice")
-                        flucs = sel.get("flucs") or {}
-                        best = (float(tote) if tote else
-                                float(flucs["low"]) if flucs.get("low") else
-                                float(flucs["open"]) if flucs.get("open") else
-                                float(sp) if sp else 0.0)
-                        if best:
-                            horse_odds[name.upper()] = best
+                for sel in raw.get("selections", []):
+                    name = (sel.get("competitor") or {}).get("name", "")
+                    if not name:
+                        continue
+                    tote = sel.get("topToteWin")
+                    if tote:
+                        try:
+                            horse_odds[name.upper()] = float(tote)
+                        except (TypeError, ValueError):
+                            pass
 
-                # Update DB rows that have a fresh odds value or stale value_rating
                 async with get_session() as session:
-                    for pick in slug_picks:
+                    for pick in race_picks:
                         new_odds = horse_odds.get(pick.horse_name.upper())
                         odds_changed = new_odds and new_odds != pick.best_available_odds
                         stale_rating = pick.best_available_odds and (not pick.value_rating)
@@ -2103,7 +2100,7 @@ async def refresh_edge_odds():
                                 updated[pick.race_id] = new_odds
                     await session.commit()
             except Exception as e:
-                log.warning("refresh-odds failed for %s: %s", slug, e)
+                log.warning("refresh-odds failed for %s R%s: %s", slug, race_num, e)
 
     _odds_refresh_last = now
     return {"updated": updated, "count": len(updated)}
@@ -2840,16 +2837,16 @@ async def get_meeting(race_date: str, venue_code: str):
             "distance": rp.distance if rp else None,
             "scheduled_time": rp.scheduled_time if rp else None,
             "time": rp.scheduled_time if rp else None,
-            "status": None,  # filled by Punters below if available
+            "status": None,  # filled by RA below if available
             "track_condition": rp.track_condition if rp else None,
             "field_size": rp.field_size if rp else None,
             "prize_money": rp.prize_money if rp else None,
         })
     race_list.sort(key=lambda r: r["race_number"])
 
-    # ── Step 2: top-up with live Punters data (best-effort) ──────────────────
+    # ── Step 2: top-up with live RA data (best-effort) ───────────────────────
     # Adds: live status for open/closed races + any races not yet enriched
-    punters_times: dict[str, str] = {}  # race_id → startTime, for DB back-fill
+    ra_times: dict[str, str] = {}  # race_id → startTime, for DB back-fill
     try:
         client = get_tab_client()
         slug = _meeting_slug(venue_code, race_date)
@@ -2860,7 +2857,7 @@ async def get_meeting(race_date: str, venue_code: str):
             race_id = f"{race_date}_{venue_code}_R{r_num}"
             start_time = r.get("startTime")
             if start_time:
-                punters_times[race_id] = start_time
+                ra_times[race_id] = start_time
             if r_num in existing_nums:
                 for item in race_list:
                     if item["race_number"] == r_num:
@@ -2885,7 +2882,7 @@ async def get_meeting(race_date: str, venue_code: str):
                 })
         race_list.sort(key=lambda r: r["race_number"])
     except Exception as e:
-        log.warning("[get_meeting] Punters fallback failed for %s/%s: %s", venue_code, race_date, e)
+        log.warning("[get_meeting] RA fallback failed for %s/%s: %s", venue_code, race_date, e)
 
     race_ids = [r["race_id"] for r in race_list]
 
@@ -2904,16 +2901,16 @@ async def get_meeting(race_date: str, venue_code: str):
         enriched_rows = {row.race_id: row.enriched_at for row in enriched_result}
 
         # Back-fill scheduled_time into DB for enriched races that were missing it
-        if punters_times:
+        if ra_times:
             from sqlalchemy import update as sa_update
-            missing_time_ids = [rid for rid in enriched_rows if rid in punters_times]
+            missing_time_ids = [rid for rid in enriched_rows if rid in ra_times]
             if missing_time_ids:
                 for rid in missing_time_ids:
                     await session.execute(
                         sa_update(RunnerPredictionRow)
                         .where(RunnerPredictionRow.race_id == rid)
                         .where(RunnerPredictionRow.scheduled_time.is_(None))
-                        .values(scheduled_time=punters_times[rid])
+                        .values(scheduled_time=ra_times[rid])
                     )
                 await session.commit()
                 log.info("[get_meeting] Back-filled scheduled_time for %d races at %s/%s",
@@ -4084,26 +4081,24 @@ async def probe_ras(slug: str = "warwick-farm", date: str = "", race_num: int = 
     return results
 
 
-@app.get("/api/admin/probe-punters")
-async def probe_punters(x_cron_secret: Optional[str] = Header(None)):
-    """Probe api.punters.com.au directly from Railway to test if IP is blocked."""
+@app.post("/api/admin/cancel-runner")
+async def cancel_runner(
+    race_id: str = Query(...),
+    horse_name: str = Query(...),
+    x_cron_secret: Optional[str] = Header(None),
+):
+    """Mark a specific runner as cancelled (e.g. scratched from wrong race)."""
     _check_admin(x_cron_secret)
-    import httpx as _httpx
-    HEADERS = {
-        "Authorization": "Bearer none",
-        "Content-Type": "application/json",
-        "Origin": "https://www.punters.com.au",
-        "Referer": "https://www.punters.com.au/",
-        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-    }
-    query = '{ meetings(sport: HorseRacing, startDate: "2026-06-04", endDate: "2026-06-04") { id name slug } }'
-    try:
-        async with _httpx.AsyncClient(headers=HEADERS, timeout=15) as c:
-            resp = await c.post("https://api.punters.com.au/racing", json={"query": query})
-            body = resp.text[:500]
-            return {"status": resp.status_code, "blocked": resp.status_code == 403, "snippet": body}
-    except Exception as e:
-        return {"error": str(e)}
+    from sqlalchemy import update as sa_update
+    async with get_session() as session:
+        result = await session.execute(
+            sa_update(RunnerPredictionRow)
+            .where(RunnerPredictionRow.race_id == race_id)
+            .where(RunnerPredictionRow.horse_name == horse_name)
+            .values(cancelled=True)
+        )
+        await session.commit()
+        return {"updated": result.rowcount, "race_id": race_id, "horse_name": horse_name}
 
 
 @app.get("/api/admin/probe-tab")
@@ -4553,26 +4548,6 @@ async def purge_trial_rows(x_cron_secret: Optional[str] = Header(None), dry_run:
         await session.commit()
 
     return {"dry_run": False, "deleted_pred_race_ids": trial_pred_ids, "deleted_snap_race_ids": trial_snap_ids, "deleted_hist_race_ids": trial_hist_ids}
-
-
-@app.post("/api/admin/cancel-runner")
-async def cancel_runner(
-    race_id: str = Query(...),
-    horse_name: str = Query(...),
-    x_cron_secret: Optional[str] = Header(None),
-):
-    """Mark a specific runner as cancelled (e.g. scratched or entered in wrong race)."""
-    _check_admin(x_cron_secret)
-    from sqlalchemy import update as sa_update
-    async with get_session() as session:
-        result = await session.execute(
-            sa_update(RunnerPredictionRow)
-            .where(RunnerPredictionRow.race_id == race_id)
-            .where(RunnerPredictionRow.horse_name == horse_name)
-            .values(cancelled=True)
-        )
-        await session.commit()
-        return {"updated": result.rowcount, "race_id": race_id, "horse_name": horse_name}
 
 
 @app.delete("/api/admin/purge-venue/{venue_code}")

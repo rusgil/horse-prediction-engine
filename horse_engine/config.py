@@ -16,11 +16,6 @@ class Settings(BaseSettings):
     betfair_username: str = ""
     betfair_password: str = ""
 
-    # Cloudflare Worker proxy for Punters API (bypasses IP blocks)
-    # Set to your *.workers.dev URL once deployed
-    punters_proxy_url: str = ""
-    punters_proxy_secret: str = ""
-
     @property
     def async_database_url(self) -> str:
         """Ensure the URL uses an async driver."""
