@@ -2030,20 +2030,23 @@ _ODDS_REFRESH_COOLDOWN = 120  # seconds — prevents hammering RA/OddsPro
 @app.post("/api/edge/refresh-odds")
 async def refresh_edge_odds():
     """
-    Fetch fresh odds from RA/OddsPro for upcoming edge picks and update DB.
-    No Claude calls — zero AI cost. Only updates best_available_odds.
+    Fetch fresh OddsPro odds for all upcoming edge picks and update DB.
+    Uses the same direct OddsPro path as _scheduled_live_odds_refresh (no Betfair).
     Rate-limited to once per 2 minutes globally.
     """
+    from horse_engine.clients.oddspro import OddsProClient
     global _odds_refresh_last
     now = datetime.utcnow()
     if _odds_refresh_last and (now - _odds_refresh_last).total_seconds() < _ODDS_REFRESH_COOLDOWN:
         return {"updated": {}, "count": 0, "cached": True}
+
     threshold = 0.295
     today = _today_aest()
-    client = get_tab_client()
-    updated: dict[str, float] = {}  # race_id → new odds
+    op = OddsProClient()
+    updated: dict[str, float] = {}
+    diag: list[dict] = []
 
-    for i in range(4):  # today + next 3 days — covers weekend picks
+    for i in range(4):  # today + next 3 days
         target_date = (today + timedelta(days=i)).isoformat()
         prefix = f"{target_date}_"
 
@@ -2053,67 +2056,78 @@ async def refresh_edge_odds():
                 .where(RunnerPredictionRow.model_rank == 1)
                 .where(RunnerPredictionRow.win_probability >= threshold)
                 .where(RunnerPredictionRow.race_id.like(f"{prefix}%"))
+                .where(RunnerPredictionRow.cancelled.is_(False) | RunnerPredictionRow.cancelled.is_(None))
             )
-            picks = result.scalars().all()
-            picks = [p for p in picks if not re.search(r"-(trial|trail|jumpout)s?[_-]", p.race_id, re.IGNORECASE)]
+            all_picks = result.scalars().all()
+            all_picks = [p for p in all_picks if not re.search(r"-(trial|trail|jumpout)s?[_-]", p.race_id, re.IGNORECASE)]
 
-        # Group picks by (slug, race_num) for per-race RA+OddsPro calls
-        race_groups: dict[tuple[str, int], list[RunnerPredictionRow]] = {}
-        for p in picks:
-            _, venue_code, race_num = _parse_race_id(p.race_id)
-            slug = _meeting_slug(venue_code, target_date)
-            if race_num:
-                race_groups.setdefault((slug, race_num), []).append(p)
+        if not all_picks:
+            continue
 
-        race_diag: list[dict] = []
-        for (slug, race_num), race_picks in race_groups.items():
-            diag: dict = {"slug": slug, "race": race_num, "picks": [p.horse_name for p in race_picks]}
+        try:
+            tracks = await op.get_tracks(target_date)
+        except Exception as e:
+            diag.append({"date": target_date, "error": f"get_tracks failed: {e}"})
+            continue
+
+        by_venue: dict[str, list[RunnerPredictionRow]] = {}
+        for row in all_picks:
+            if row.venue:
+                by_venue.setdefault(row.venue, []).append(row)
+
+        for venue, rows in by_venue.items():
+            op_track = op.find_matching_track(venue, tracks)
+            venue_diag: dict = {"date": target_date, "venue": venue, "op_track": op_track}
+            if not op_track:
+                diag.append(venue_diag)
+                continue
             try:
-                raw = await asyncio.wait_for(client.get_race(slug, race_num), timeout=30)
-                if not raw:
-                    diag["error"] = "get_race returned None"
-                    race_diag.append(diag)
-                    continue
-                horse_odds: dict[str, float] = {}
-                tote_raw: dict[str, float | None] = {}
-                for sel in raw.get("selections", []):
-                    name = (sel.get("competitor") or {}).get("name", "")
-                    if not name:
-                        continue
-                    tote = sel.get("topToteWin")
-                    tote_raw[name] = tote
-                    if tote:
-                        try:
-                            horse_odds[name.upper()] = float(tote)
-                        except (TypeError, ValueError):
-                            pass
-                diag["topToteWin"] = tote_raw
-                diag["horse_odds"] = horse_odds
+                odds_map = await op.get_track_odds(op_track)
+                venue_diag["runners_in_odds"] = len(odds_map)
+
+                by_race: dict[int, list[RunnerPredictionRow]] = {}
+                for row in rows:
+                    if row.race_number:
+                        by_race.setdefault(row.race_number, []).append(row)
 
                 async with get_session() as session:
-                    for pick in race_picks:
-                        new_odds = horse_odds.get(pick.horse_name.upper())
-                        odds_changed = new_odds and new_odds != pick.best_available_odds
-                        stale_rating = pick.best_available_odds and (not pick.value_rating)
-                        if odds_changed or stale_rating:
-                            pick_row = await session.get(RunnerPredictionRow, pick.id)
-                            if pick_row:
-                                if odds_changed:
-                                    pick_row.best_available_odds = new_odds
-                                else:
-                                    new_odds = pick_row.best_available_odds
-                                market_implied = 1.0 / new_odds if new_odds else 0.0
-                                pick_row.overlay = round(pick_row.win_probability - market_implied, 4)
-                                pick_row.value_rating = _value_rating(pick_row.win_probability, new_odds, pick_row.overlay)
-                                updated[pick.race_id] = new_odds
+                    sorted_ids_map: dict[int, list[int]] = {}
+                    for race_num, race_rows in by_race.items():
+                        new_odds_map: dict[int, float] = {}
+                        for row in race_rows:
+                            op_runner = odds_map.get((race_num, row.horse_name.lower()))
+                            if op_runner:
+                                raw_val = op_runner.get("currentBestOdds")
+                                try:
+                                    val = float(raw_val) if raw_val else 0.0
+                                    if val > 1.0:
+                                        new_odds_map[row.id] = val
+                                except (TypeError, ValueError):
+                                    pass
+                        sorted_ids_map[race_num] = sorted(new_odds_map, key=lambda rid: new_odds_map[rid])
+                        for row in race_rows:
+                            new_o = new_odds_map.get(row.id)
+                            if not new_o:
+                                continue
+                            db_row = await session.get(RunnerPredictionRow, row.id)
+                            if not db_row:
+                                continue
+                            db_row.best_available_odds = new_o
+                            market_implied = 1.0 / new_o
+                            db_row.overlay = round(db_row.win_probability - market_implied, 4)
+                            db_row.value_rating = _value_rating(db_row.win_probability, new_o, db_row.overlay)
+                            rank_list = sorted_ids_map[race_num]
+                            db_row.market_rank = rank_list.index(row.id) + 1 if row.id in rank_list else db_row.market_rank
+                            updated[row.race_id] = new_o
                     await session.commit()
+                diag.append(venue_diag)
             except Exception as e:
-                diag["error"] = str(e)
-                log.warning("refresh-odds failed for %s R%s: %s", slug, race_num, e)
-            race_diag.append(diag)
+                venue_diag["error"] = str(e)
+                diag.append(venue_diag)
+                log.warning("refresh-odds OddsPro failed for %s: %s", venue, e)
 
     _odds_refresh_last = now
-    return {"updated": updated, "count": len(updated), "debug": race_diag}
+    return {"updated": updated, "count": len(updated), "debug": diag}
 
 
 _results_refresh_last: datetime | None = None
