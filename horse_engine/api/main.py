@@ -2037,6 +2037,15 @@ async def get_edge_picks():
 _odds_refresh_last: datetime | None = None
 _ODDS_REFRESH_COOLDOWN = 120  # seconds — prevents hammering RA/OddsPro
 
+# Venue name aliases: our internal name → what TAB/OddsPro use
+# Key is lowercased; value is the canonical name to search with
+_VENUE_ALIASES: dict[str, str] = {
+    "kensington": "randwick",  # Kensington track is the inner track at Royal Randwick
+    "royal randwick": "randwick",
+    "canberra": "thoroughbred park",
+    "gold coast": "the gold coast",
+}
+
 async def _update_odds_from_oddspro(
     op: "OddsProClient",
     target_date: str,
@@ -2062,7 +2071,8 @@ async def _update_odds_from_oddspro(
             by_venue.setdefault(venue_key, []).append(row)
 
     for venue, rows in by_venue.items():
-        op_track = op.find_matching_track(venue, tracks)
+        search_venue = _VENUE_ALIASES.get(venue.lower(), venue)
+        op_track = op.find_matching_track(search_venue, tracks)
         venue_diag: dict = {"date": target_date, "venue": venue, "source": "oddspro", "op_track": op_track}
         if not op_track:
             diag.append(venue_diag)
@@ -2160,14 +2170,15 @@ async def _update_odds_from_tab(
         if not race_num:
             continue
         venue_key = (row.venue or venue_code).lower().strip()
-        meeting = meeting_map.get(venue_key)
+        alias_key = _VENUE_ALIASES.get(venue_key, venue_key)
+        meeting = meeting_map.get(alias_key) or meeting_map.get(venue_key)
         if not meeting:
             for k, v in meeting_map.items():
-                if venue_code in k or k in venue_code:
+                if venue_code in k or k in venue_code or alias_key in k or k in alias_key:
                     meeting = v
                     break
         if not meeting:
-            diag.append({"date": target_date, "venue": venue_key, "source": "tab", "error": "no meeting match"})
+            diag.append({"date": target_date, "venue": venue_key, "tab_venues": list(meeting_map.keys())[:15], "source": "tab", "error": "no meeting match"})
             continue
         by_race.setdefault((meeting["code"], meeting["jur"], race_num), []).append(row)
 
@@ -4286,6 +4297,33 @@ async def debug_odds(venue: str = "", date: str = "", x_cron_secret: Optional[st
             result["op_sample"] = sample
     except Exception as e:
         result["op_error"] = str(e)
+
+    # TAB meetings (raw venue names from API)
+    try:
+        import httpx as _httpx
+        _TAB = "https://api.tab.com.au/v1/tab-info-service"
+        _JURS = ["NSW", "VIC", "QLD", "SA", "WA", "TAS", "NT", "ACT"]
+        _HDR = {"Accept": "application/json", "User-Agent": "Mozilla/5.0"}
+        async with _httpx.AsyncClient(headers=_HDR, timeout=10) as client:
+            tasks = [
+                client.get(f"{_TAB}/racing/dates/{target_date}/meetings", params={"jurisdiction": j})
+                for j in _JURS
+            ]
+            responses = await asyncio.gather(*tasks, return_exceptions=True)
+        tab_venues = []
+        for jur, resp in zip(_JURS, responses):
+            if isinstance(resp, Exception) or resp.status_code != 200:
+                continue
+            for m in resp.json().get("meetings", []):
+                if m.get("raceType") == "R" and m.get("meetingCode"):
+                    tab_venues.append({
+                        "name": m.get("venueName"),
+                        "code": m.get("meetingCode"),
+                        "jur": jur,
+                    })
+        result["tab_venues"] = tab_venues
+    except Exception as e:
+        result["tab_error"] = str(e)
 
     # Betfair
     try:
