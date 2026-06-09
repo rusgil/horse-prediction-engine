@@ -2897,23 +2897,30 @@ async def get_track_record():
         hr_result = await session.execute(
             select(HistoricalResultRow).where(HistoricalResultRow.race_id >= cutoff)
         )
-        hr_map = {(r.race_id, r.horse_name): r for r in hr_result.scalars().all()}
+        hr_map = {(r.race_id, _normalize_horse(r.horse_name)): r for r in hr_result.scalars().all()}
 
-        pred_result = await session.execute(
-            select(RunnerPredictionRow)
-            .where(RunnerPredictionRow.race_id >= cutoff)
-            .where(RunnerPredictionRow.win_probability.isnot(None))
-        )
-        # Top-probability horse per race
-        best_per_race: dict[str, RunnerPredictionRow] = {}
-        for r in pred_result.scalars().all():
-            existing = best_per_race.get(r.race_id)
-            if existing is None or (r.win_probability or 0) > (existing.win_probability or 0):
-                best_per_race[r.race_id] = r
+        # Use history table — written once pre-race, never overwritten by re-enrichments
+        max_at_rows = (await session.execute(
+            select(RunnerPredictionHistoryRow.race_id,
+                   func.max(RunnerPredictionHistoryRow.enriched_at).label("max_at"))
+            .where(RunnerPredictionHistoryRow.race_id >= cutoff)
+            .where(RunnerPredictionHistoryRow.model_rank == 1)
+            .group_by(RunnerPredictionHistoryRow.race_id)
+        )).all()
+        max_at_hist = {r.race_id: r.max_at for r in max_at_rows}
+
+        hist_picks = (await session.execute(
+            select(RunnerPredictionHistoryRow)
+            .where(RunnerPredictionHistoryRow.race_id >= cutoff)
+            .where(RunnerPredictionHistoryRow.model_rank == 1)
+            .where(RunnerPredictionHistoryRow.win_probability.isnot(None))
+        )).scalars().all()
 
         all_rows = []
-        for r in best_per_race.values():
-            hr = hr_map.get((r.race_id, r.horse_name))
+        for r in hist_picks:
+            if r.enriched_at != max_at_hist.get(r.race_id):
+                continue
+            hr = hr_map.get((r.race_id, _normalize_horse(r.horse_name)))
             if hr:
                 all_rows.append({
                     "win_prob": r.win_probability,
@@ -5393,30 +5400,27 @@ async def get_meeting_results(race_date: str, venue_code: str):
                 seeded += 1
                 races_with_results.add(race_id)
 
-    # Clear stale cancelled flags
-    if races_with_results:
-        from sqlalchemy import update as sa_update
-        async with get_session() as session:
-            await session.execute(
-                sa_update(RunnerPredictionRow)
-                .where(RunnerPredictionRow.race_id.in_(list(races_with_results)))
-                .where(RunnerPredictionRow.cancelled.is_(True))
-                .values(cancelled=False)
-            )
-            await session.commit()
-
-    # Load top model picks for these races to compute model_correct
+    # Load top model picks from history — history is written once pre-race and
+    # is never overwritten, so it always holds the genuine pre-race prediction.
     top_picks: dict[str, str] = {}
-    async with get_session() as session:
-        for race_id in races_with_results:
-            tp = (await session.execute(
-                select(RunnerPredictionRow.horse_name)
-                .where(RunnerPredictionRow.race_id == race_id)
-                .where(RunnerPredictionRow.model_rank == 1)
-                .limit(1)
-            )).scalars().first()
-            if tp:
-                top_picks[race_id] = tp
+    if races_with_results:
+        async with get_session() as session:
+            max_at_rows = (await session.execute(
+                select(RunnerPredictionHistoryRow.race_id,
+                       func.max(RunnerPredictionHistoryRow.enriched_at).label("max_at"))
+                .where(RunnerPredictionHistoryRow.race_id.in_(list(races_with_results)))
+                .group_by(RunnerPredictionHistoryRow.race_id)
+            )).all()
+            max_at_hist = {r.race_id: r.max_at for r in max_at_rows}
+            hist_rows = (await session.execute(
+                select(RunnerPredictionHistoryRow.race_id, RunnerPredictionHistoryRow.horse_name,
+                       RunnerPredictionHistoryRow.enriched_at)
+                .where(RunnerPredictionHistoryRow.race_id.in_(list(races_with_results)))
+                .where(RunnerPredictionHistoryRow.model_rank == 1)
+            )).all()
+        for r in hist_rows:
+            if r.enriched_at == max_at_hist.get(r.race_id):
+                top_picks[r.race_id] = r.horse_name
 
     # Build response
     races_out = []
