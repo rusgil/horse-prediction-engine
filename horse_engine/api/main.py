@@ -485,7 +485,8 @@ async def _scheduled_pre_race_enrich():
 async def _check_scratches_today() -> int:
     """
     Lightweight scratch detection — no ML inference.
-    Fetches current RA runner statuses and cancels scratched runners in the DB.
+    Checks races starting within the next 4 hours (wider than the 2-hour pre-race
+    enrich window so scratches are caught before enrichment runs).
     Returns count of newly cancelled runners.
     """
     from sqlalchemy import update as sa_update
@@ -3368,20 +3369,17 @@ async def get_meeting(race_date: str, venue_code: str):
         top_place_probs = {race_id: None for race_id in race_ids}
 
         if completed_ids:
-            max_at_result = await session.execute(
-                select(RunnerPredictionHistoryRow.race_id,
-                       func.max(RunnerPredictionHistoryRow.enriched_at).label("max_at"))
-                .where(RunnerPredictionHistoryRow.race_id.in_(completed_ids))
-                .group_by(RunnerPredictionHistoryRow.race_id)
-            )
-            max_at_by_race = {row.race_id: row.max_at for row in max_at_result}
             hist_tp_result = await session.execute(
                 select(RunnerPredictionHistoryRow)
                 .where(RunnerPredictionHistoryRow.race_id.in_(completed_ids))
                 .where(RunnerPredictionHistoryRow.model_rank == 1)
+                .where(RunnerPredictionHistoryRow.cancelled.is_(False) | RunnerPredictionHistoryRow.cancelled.is_(None))
+                .order_by(RunnerPredictionHistoryRow.enriched_at.desc())
             )
+            seen_races: set[str] = set()
             for p in hist_tp_result.scalars().all():
-                if p.enriched_at == max_at_by_race.get(p.race_id):
+                if p.race_id not in seen_races:
+                    seen_races.add(p.race_id)
                     top_picks[p.race_id] = p.horse_name
                     top_win_probs[p.race_id] = p.win_probability
                     top_place_probs[p.race_id] = p.place_probability
@@ -3477,18 +3475,13 @@ async def get_race(race_id: str):
             runners = mutable_result.scalars().all()
 
             if not runners:
-                max_at = (await session.execute(
-                    select(func.max(RunnerPredictionHistoryRow.enriched_at))
+                hist_result = await session.execute(
+                    select(RunnerPredictionHistoryRow)
                     .where(RunnerPredictionHistoryRow.race_id == race_id)
-                )).scalar()
-                if max_at:
-                    hist_result = await session.execute(
-                        select(RunnerPredictionHistoryRow)
-                        .where(RunnerPredictionHistoryRow.race_id == race_id)
-                        .where(RunnerPredictionHistoryRow.enriched_at == max_at)
-                        .order_by(RunnerPredictionHistoryRow.model_rank)
-                    )
-                    runners = hist_result.scalars().all()
+                    .where(RunnerPredictionHistoryRow.cancelled.is_(False) | RunnerPredictionHistoryRow.cancelled.is_(None))
+                    .order_by(RunnerPredictionHistoryRow.model_rank)
+                )
+                runners = hist_result.scalars().all()
 
     if not runners:
         raise HTTPException(404, f"No predictions for race {race_id}. Trigger /enrich first.")
