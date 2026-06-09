@@ -1443,9 +1443,18 @@ async def _persist_live_results(race_id: str, all_tote: list) -> None:
 
 
 async def _scheduled_seed_results():
-    """Seed today's and yesterday's settled results, then snapshot any unrecorded predictions."""
+    """Snapshot any unrecorded pre-race predictions, then seed settled results."""
     today     = _today_aest().isoformat()
     yesterday = (_today_aest() - timedelta(days=1)).isoformat()
+    # Snapshot BEFORE seeding — the time guard in _snapshot_prerace_predictions ensures
+    # only races that haven't started yet are captured. Seeding first would mark races
+    # as resulted, and a snapshot without the time guard would capture post-race state.
+    try:
+        n = await _snapshot_prerace_predictions()
+        if n:
+            log.info("[scheduler] Pre-seed snapshot: %d races written", n)
+    except Exception as e:
+        log.exception("[scheduler] Pre-seed snapshot failed: %s", e)
     for race_date in (today, yesterday):
         log.info("[scheduler] Seeding results for %s", race_date)
         try:
@@ -1453,13 +1462,6 @@ async def _scheduled_seed_results():
             log.info("[scheduler] Seeded %d results for %s", n, race_date)
         except Exception as e:
             log.exception("[scheduler] Result seeding failed for %s: %s", race_date, e)
-    # Snapshot after seeding — belt-and-suspenders for races enriched between cycles
-    try:
-        n = await _snapshot_prerace_predictions()
-        if n:
-            log.info("[scheduler] Post-seed snapshot: %d races written", n)
-    except Exception as e:
-        log.exception("[scheduler] Post-seed snapshot failed: %s", e)
 
 
 async def _scheduled_exotic_retrain():
@@ -1569,12 +1571,21 @@ async def _snapshot_prerace_predictions() -> int:
         )
         rows = pred_result.scalars().all()
 
-    # Group by race, skip only races already in history
-    # No settled_set guard — retrains only run at 2am so intraday predictions
-    # are never contaminated by results even if the race has already run
+    # Group by race — skip races already in history OR that have already started.
+    # The time guard (BUG-01 fix) prevents post-race mutable state from being
+    # snapshotted as if it were a pre-race prediction.
     races: dict[str, list[RunnerPredictionRow]] = {}
     for r in rows:
         if r.race_id in already_set:
+            continue
+        # Time guard: skip if race has already started
+        sched = sched_map.get(r.race_id)
+        if sched is None and r.scheduled_time:
+            try:
+                sched = datetime.fromisoformat(str(r.scheduled_time).replace("Z", "+00:00")).replace(tzinfo=None)
+            except (ValueError, TypeError):
+                pass
+        if sched and sched <= now_utc:
             continue
         races.setdefault(r.race_id, []).append(r)
 
@@ -1582,48 +1593,50 @@ async def _snapshot_prerace_predictions() -> int:
         log.info("[snapshot] No unsnapshotted pre-race races for %s", today)
         return 0
 
-    # Rank by win_probability within each race
+    import uuid as _uuid
     async with get_session() as session:
         for race_id, runners in races.items():
-            runners.sort(key=lambda x: x.win_probability or 0, reverse=True)
-            place_sorted = sorted(runners, key=lambda x: x.place_probability or 0, reverse=True)
-            place_rank_map = {r.horse_name: i + 1 for i, r in enumerate(place_sorted)}
-
-            for rank, r in enumerate(runners, 1):
-                session.add(RunnerPredictionHistoryRow(
-                    race_id=r.race_id,
-                    horse_name=r.horse_name,
-                    tab_number=r.tab_number,
-                    barrier=r.barrier,
-                    jockey=r.jockey,
-                    trainer=r.trainer,
-                    weight=r.weight,
-                    win_probability=r.win_probability,
-                    place_probability=r.place_probability,
-                    model_rank=rank,
-                    place_model_rank=place_rank_map.get(r.horse_name),
-                    market_rank=r.market_rank,
-                    overlay=r.overlay,
-                    best_available_odds=r.best_available_odds,
-                    value_rating=r.value_rating,
-                    key_flags=r.key_flags,
-                    enriched_json=r.enriched_json,
-                    scheduled_time=r.scheduled_time,
-                    enriched_at=r.enriched_at or now_utc,
-                    cancelled=r.cancelled,
-                    venue=r.venue,
-                    state=r.state,
-                    race_number=r.race_number,
-                    race_name=r.race_name,
-                    distance=r.distance,
-                    track_condition=r.track_condition,
-                    field_size=r.field_size,
-                    prize_money=r.prize_money,
-                    rail_position=getattr(r, "rail_position", None),
-                    class_change=getattr(r, "class_change", None),
-                    source="live",
-                    recorded_at=now_utc,
-                ))
+            batch_id = str(_uuid.uuid4())  # shared across all runners in this enrichment batch
+            for r in runners:
+                try:
+                    session.add(RunnerPredictionHistoryRow(
+                        race_id=r.race_id,
+                        horse_name=r.horse_name,
+                        tab_number=r.tab_number,
+                        barrier=r.barrier,
+                        jockey=r.jockey,
+                        trainer=r.trainer,
+                        weight=r.weight,
+                        win_probability=r.win_probability,
+                        place_probability=r.place_probability,
+                        model_rank=r.model_rank,
+                        place_model_rank=r.place_model_rank,
+                        exotic_model_rank=r.exotic_model_rank,
+                        market_rank=r.market_rank,
+                        overlay=r.overlay,
+                        best_available_odds=r.best_available_odds,
+                        value_rating=r.value_rating,
+                        key_flags=r.key_flags,
+                        enriched_json=r.enriched_json,
+                        scheduled_time=r.scheduled_time,
+                        enriched_at=r.enriched_at or now_utc,
+                        cancelled=r.cancelled,
+                        venue=r.venue,
+                        state=r.state,
+                        race_number=r.race_number,
+                        race_name=r.race_name,
+                        distance=r.distance,
+                        track_condition=r.track_condition,
+                        field_size=r.field_size,
+                        prize_money=r.prize_money,
+                        rail_position=getattr(r, "rail_position", None),
+                        class_change=getattr(r, "class_change", None),
+                        source="live",
+                        batch_id=batch_id,
+                        recorded_at=now_utc,
+                    ))
+                except Exception:
+                    pass  # unique constraint: row already exists for this race+horse, skip
             await session.commit()
             written += 1
 
@@ -9406,6 +9419,7 @@ async def placement_model_comparison(
 def _prediction_to_db_dict(pred, race_id: str, scheduled_time: str | None = None, race=None) -> dict:
     d = {
         "race_id": race_id,
+        "enriched_at": datetime.utcnow(),
         "horse_name": pred.runner.horse_name,
         "tab_number": pred.runner.tab_number,
         "barrier": pred.runner.barrier,

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import uuid
 from datetime import datetime
 
 from sqlalchemy import Column, Float, Integer, String, Text, Boolean, DateTime, select, text
@@ -282,6 +283,7 @@ class RunnerPredictionHistoryRow(Base):
     source = Column(String, default="live", nullable=True)  # "live" | "validation"
 
     recorded_at = Column(DateTime, default=datetime.utcnow, index=True)  # when history was written
+    batch_id = Column(String, nullable=True, index=True)    # UUID shared by all runners in one enrichment run
 
 
 async def init_db() -> None:
@@ -306,6 +308,9 @@ async def init_db() -> None:
                 "ALTER TABLE runner_predictions ADD COLUMN IF NOT EXISTS rail_position TEXT",
                 "ALTER TABLE runner_predictions ADD COLUMN IF NOT EXISTS class_change INTEGER",
                 "ALTER TABLE runner_prediction_history ADD COLUMN IF NOT EXISTS source TEXT DEFAULT 'live'",
+                "ALTER TABLE runner_prediction_history ADD COLUMN IF NOT EXISTS batch_id TEXT",
+                "CREATE INDEX IF NOT EXISTS ix_hist_batch_id ON runner_prediction_history (batch_id)",
+                "CREATE UNIQUE INDEX IF NOT EXISTS uq_history_race_horse ON runner_prediction_history (race_id, horse_name)",
                 "CREATE INDEX IF NOT EXISTS ix_runner_pred_race_rank ON runner_predictions (race_id, model_rank)",
                 "CREATE INDEX IF NOT EXISTS ix_runner_pred_hist_race_rank ON runner_prediction_history (race_id, model_rank)",
                 "CREATE INDEX IF NOT EXISTS ix_hist_results_race_winner ON historical_results (race_id, winner)",
@@ -488,41 +493,52 @@ async def save_race_predictions(session: AsyncSession, race_id: str, predictions
     if not history_exists and predictions:
         first = predictions[0]
         scheduled_time = first.get("scheduled_time")
+        # enriched_at is set by _prediction_to_db_dict at prediction time; fall back to now
         enriched_at = first.get("enriched_at") or datetime.utcnow()
+        if not isinstance(enriched_at, datetime):
+            try:
+                enriched_at = datetime.fromisoformat(str(enriched_at))
+            except (ValueError, TypeError):
+                enriched_at = datetime.utcnow()
         is_pre_race = False
-        if scheduled_time and enriched_at:
+        if scheduled_time:
             try:
                 sched = datetime.fromisoformat(str(scheduled_time).replace("Z", "+00:00")).replace(tzinfo=None)
-                ea = enriched_at if isinstance(enriched_at, datetime) else datetime.fromisoformat(str(enriched_at))
-                is_pre_race = ea < sched
+                is_pre_race = enriched_at < sched
             except (ValueError, TypeError):
                 pass
         if is_pre_race:
+            batch_id = str(uuid.uuid4())
+            now = datetime.utcnow()
             for p in predictions:
-                session.add(RunnerPredictionHistoryRow(
-                    race_id=p.get("race_id"), horse_name=p.get("horse_name"),
-                    tab_number=p.get("tab_number"), barrier=p.get("barrier"),
-                    jockey=p.get("jockey"), trainer=p.get("trainer"), weight=p.get("weight"),
-                    win_probability=p.get("win_probability"),
-                    place_probability=p.get("place_probability"),
-                    model_rank=p.get("model_rank"), market_rank=p.get("market_rank"),
-                    overlay=p.get("overlay"), best_available_odds=p.get("best_available_odds"),
-                    value_rating=p.get("value_rating"),
-                    narrative=p.get("narrative"), key_flags=p.get("key_flags"),
-                    enriched_json=p.get("enriched_json"),
-                    place_model_rank=p.get("place_model_rank"),
-                    exotic_model_rank=p.get("exotic_model_rank"),
-                    scheduled_time=p.get("scheduled_time"),
-                    enriched_at=enriched_at, cancelled=p.get("cancelled"),
-                    venue=p.get("venue"), state=p.get("state"),
-                    race_number=p.get("race_number"), race_name=p.get("race_name"),
-                    distance=p.get("distance"), track_condition=p.get("track_condition"),
-                    field_size=p.get("field_size"), prize_money=p.get("prize_money"),
-                    rail_position=p.get("rail_position"), class_change=p.get("class_change"),
-                    model_score=p.get("model_score"),
-                    source="live",
-                    recorded_at=datetime.utcnow(),
-                ))
+                try:
+                    session.add(RunnerPredictionHistoryRow(
+                        race_id=p.get("race_id"), horse_name=p.get("horse_name"),
+                        tab_number=p.get("tab_number"), barrier=p.get("barrier"),
+                        jockey=p.get("jockey"), trainer=p.get("trainer"), weight=p.get("weight"),
+                        win_probability=p.get("win_probability"),
+                        place_probability=p.get("place_probability"),
+                        model_rank=p.get("model_rank"), market_rank=p.get("market_rank"),
+                        overlay=p.get("overlay"), best_available_odds=p.get("best_available_odds"),
+                        value_rating=p.get("value_rating"),
+                        narrative=p.get("narrative"), key_flags=p.get("key_flags"),
+                        enriched_json=p.get("enriched_json"),
+                        place_model_rank=p.get("place_model_rank"),
+                        exotic_model_rank=p.get("exotic_model_rank"),
+                        scheduled_time=p.get("scheduled_time"),
+                        enriched_at=enriched_at, cancelled=p.get("cancelled"),
+                        venue=p.get("venue"), state=p.get("state"),
+                        race_number=p.get("race_number"), race_name=p.get("race_name"),
+                        distance=p.get("distance"), track_condition=p.get("track_condition"),
+                        field_size=p.get("field_size"), prize_money=p.get("prize_money"),
+                        rail_position=p.get("rail_position"), class_change=p.get("class_change"),
+                        model_score=p.get("model_score"),
+                        source="live",
+                        batch_id=batch_id,
+                        recorded_at=now,
+                    ))
+                except Exception:
+                    pass  # unique constraint: row already exists for this race+horse, skip
             await session.commit()
 
 
