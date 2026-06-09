@@ -2027,11 +2027,162 @@ async def get_edge_picks():
 _odds_refresh_last: datetime | None = None
 _ODDS_REFRESH_COOLDOWN = 120  # seconds — prevents hammering RA/OddsPro
 
+async def _update_odds_from_oddspro(
+    op: "OddsProClient",
+    target_date: str,
+    all_picks: list,
+    updated: dict,
+    diag: list,
+) -> set[str]:
+    """
+    Fetch OddsPro odds for all picks on target_date.
+    Returns set of race_ids that got odds so callers can skip them in fallback.
+    """
+    covered: set[str] = set()
+    try:
+        tracks = await op.get_tracks(target_date)
+    except Exception as e:
+        diag.append({"date": target_date, "source": "oddspro", "error": f"get_tracks: {e}"})
+        return covered
+
+    by_venue: dict[str, list] = {}
+    for row in all_picks:
+        if row.venue:
+            by_venue.setdefault(row.venue, []).append(row)
+
+    for venue, rows in by_venue.items():
+        op_track = op.find_matching_track(venue, tracks)
+        venue_diag: dict = {"date": target_date, "venue": venue, "source": "oddspro", "op_track": op_track}
+        if not op_track:
+            diag.append(venue_diag)
+            continue
+        try:
+            odds_map = await op.get_track_odds(op_track)
+            venue_diag["runners_in_odds"] = len(odds_map)
+            by_race: dict[int, list] = {}
+            for row in rows:
+                if row.race_number:
+                    by_race.setdefault(row.race_number, []).append(row)
+            async with get_session() as session:
+                for race_num, race_rows in by_race.items():
+                    new_odds_map: dict[int, float] = {}
+                    for row in race_rows:
+                        op_runner = odds_map.get((race_num, row.horse_name.lower()))
+                        if op_runner:
+                            raw_val = op_runner.get("currentBestOdds")
+                            try:
+                                val = float(raw_val) if raw_val else 0.0
+                                if val > 1.0:
+                                    new_odds_map[row.id] = val
+                            except (TypeError, ValueError):
+                                pass
+                    sorted_ids = sorted(new_odds_map, key=lambda rid: new_odds_map[rid])
+                    for row in race_rows:
+                        new_o = new_odds_map.get(row.id)
+                        if not new_o:
+                            continue
+                        db_row = await session.get(RunnerPredictionRow, row.id)
+                        if not db_row:
+                            continue
+                        db_row.best_available_odds = new_o
+                        market_implied = 1.0 / new_o
+                        db_row.overlay = round(db_row.win_probability - market_implied, 4)
+                        db_row.value_rating = _value_rating(db_row.win_probability, new_o, db_row.overlay)
+                        db_row.market_rank = sorted_ids.index(row.id) + 1 if row.id in sorted_ids else db_row.market_rank
+                        updated[row.race_id] = new_o
+                        covered.add(row.race_id)
+                await session.commit()
+            diag.append(venue_diag)
+        except Exception as e:
+            venue_diag["error"] = str(e)
+            diag.append(venue_diag)
+            log.warning("refresh-odds OddsPro failed for %s: %s", venue, e)
+    return covered
+
+
+async def _update_odds_from_betfair(
+    target_date: str,
+    all_picks: list,
+    skip_race_ids: set[str],
+    updated: dict,
+    diag: list,
+) -> None:
+    """
+    Fallback: fetch Betfair Exchange best-back odds for picks not covered by OddsPro.
+    Only runs if BETFAIR_* credentials are configured.
+    """
+    picks = [p for p in all_picks if p.race_id not in skip_race_ids]
+    if not picks:
+        return
+    try:
+        from horse_engine.config import settings
+        if not (settings.betfair_app_key and settings.betfair_username and settings.betfair_password):
+            return
+        from horse_engine.clients.betfair import BetfairClient
+        bf = BetfairClient()
+        meetings = await bf.get_meetings(target_date)
+        slug_to_meeting = {m["slug"]: m for m in meetings}
+
+        by_venue_slug: dict[str, list] = {}
+        for row in picks:
+            _, venue_code, race_num = _parse_race_id(row.race_id)
+            slug = _meeting_slug(venue_code, target_date)
+            by_venue_slug.setdefault(slug, []).append(row)
+
+        for slug, rows in by_venue_slug.items():
+            meeting = slug_to_meeting.get(slug)
+            bf_diag: dict = {"date": target_date, "slug": slug, "source": "betfair", "found": bool(meeting)}
+            if not meeting:
+                diag.append(bf_diag)
+                continue
+            by_race: dict[int, list] = {}
+            for row in rows:
+                if row.race_number:
+                    by_race.setdefault(row.race_number, []).append(row)
+            for race_num, race_rows in by_race.items():
+                try:
+                    bf_race = await bf.get_race(slug, race_num)
+                    if not bf_race:
+                        continue
+                    horse_odds: dict[str, float] = {}
+                    for sel in bf_race.get("selections", []):
+                        name = (sel.get("competitor") or {}).get("name", "")
+                        tote = sel.get("topToteWin")
+                        if name and tote:
+                            try:
+                                horse_odds[name.upper()] = float(tote)
+                            except (TypeError, ValueError):
+                                pass
+                    if not horse_odds:
+                        continue
+                    async with get_session() as session:
+                        for row in race_rows:
+                            new_o = horse_odds.get(row.horse_name.upper())
+                            if not new_o:
+                                continue
+                            db_row = await session.get(RunnerPredictionRow, row.id)
+                            if not db_row:
+                                continue
+                            db_row.best_available_odds = new_o
+                            market_implied = 1.0 / new_o
+                            db_row.overlay = round(db_row.win_probability - market_implied, 4)
+                            db_row.value_rating = _value_rating(db_row.win_probability, new_o, db_row.overlay)
+                            updated[row.race_id] = new_o
+                        await session.commit()
+                    bf_diag[f"R{race_num}_found"] = len(horse_odds)
+                except Exception as e:
+                    log.warning("Betfair odds failed for %s R%s: %s", slug, race_num, e)
+            diag.append(bf_diag)
+    except Exception as e:
+        diag.append({"date": target_date, "source": "betfair", "error": str(e)})
+        log.warning("Betfair fallback failed for %s: %s", target_date, e)
+
+
 @app.post("/api/edge/refresh-odds")
 async def refresh_edge_odds():
     """
-    Fetch fresh OddsPro odds for all upcoming edge picks and update DB.
-    Uses the same direct OddsPro path as _scheduled_live_odds_refresh (no Betfair).
+    Fetch odds for all upcoming edge picks — today + next 3 days.
+    Primary: OddsPro (live, no auth). Fallback: Betfair Exchange (if credentials set).
     Rate-limited to once per 2 minutes globally.
     """
     from horse_engine.clients.oddspro import OddsProClient
@@ -2064,67 +2215,8 @@ async def refresh_edge_odds():
         if not all_picks:
             continue
 
-        try:
-            tracks = await op.get_tracks(target_date)
-        except Exception as e:
-            diag.append({"date": target_date, "error": f"get_tracks failed: {e}"})
-            continue
-
-        by_venue: dict[str, list[RunnerPredictionRow]] = {}
-        for row in all_picks:
-            if row.venue:
-                by_venue.setdefault(row.venue, []).append(row)
-
-        for venue, rows in by_venue.items():
-            op_track = op.find_matching_track(venue, tracks)
-            venue_diag: dict = {"date": target_date, "venue": venue, "op_track": op_track}
-            if not op_track:
-                diag.append(venue_diag)
-                continue
-            try:
-                odds_map = await op.get_track_odds(op_track)
-                venue_diag["runners_in_odds"] = len(odds_map)
-
-                by_race: dict[int, list[RunnerPredictionRow]] = {}
-                for row in rows:
-                    if row.race_number:
-                        by_race.setdefault(row.race_number, []).append(row)
-
-                async with get_session() as session:
-                    sorted_ids_map: dict[int, list[int]] = {}
-                    for race_num, race_rows in by_race.items():
-                        new_odds_map: dict[int, float] = {}
-                        for row in race_rows:
-                            op_runner = odds_map.get((race_num, row.horse_name.lower()))
-                            if op_runner:
-                                raw_val = op_runner.get("currentBestOdds")
-                                try:
-                                    val = float(raw_val) if raw_val else 0.0
-                                    if val > 1.0:
-                                        new_odds_map[row.id] = val
-                                except (TypeError, ValueError):
-                                    pass
-                        sorted_ids_map[race_num] = sorted(new_odds_map, key=lambda rid: new_odds_map[rid])
-                        for row in race_rows:
-                            new_o = new_odds_map.get(row.id)
-                            if not new_o:
-                                continue
-                            db_row = await session.get(RunnerPredictionRow, row.id)
-                            if not db_row:
-                                continue
-                            db_row.best_available_odds = new_o
-                            market_implied = 1.0 / new_o
-                            db_row.overlay = round(db_row.win_probability - market_implied, 4)
-                            db_row.value_rating = _value_rating(db_row.win_probability, new_o, db_row.overlay)
-                            rank_list = sorted_ids_map[race_num]
-                            db_row.market_rank = rank_list.index(row.id) + 1 if row.id in rank_list else db_row.market_rank
-                            updated[row.race_id] = new_o
-                    await session.commit()
-                diag.append(venue_diag)
-            except Exception as e:
-                venue_diag["error"] = str(e)
-                diag.append(venue_diag)
-                log.warning("refresh-odds OddsPro failed for %s: %s", venue, e)
+        covered = await _update_odds_from_oddspro(op, target_date, all_picks, updated, diag)
+        await _update_odds_from_betfair(target_date, all_picks, covered, updated, diag)
 
     _odds_refresh_last = now
     return {"updated": updated, "count": len(updated), "debug": diag}
