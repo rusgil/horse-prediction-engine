@@ -186,6 +186,33 @@ def _parse_horse_form_page(html: str) -> dict:
     soup = BeautifulSoup(html, "html.parser")
     result: dict = {}
 
+    # Extract sire/dam/age/sex/colour from the header td in horse-search-details.
+    # Format: "HORSENAME 3yo Bay Colt D.O.B: 29-Oct-2022 by SIRE from DAM View..."
+    for table in soup.find_all("table", class_="horse-search-details"):
+        # Find the td that contains the pedigree/identity block (may not be the first td)
+        header_td = next(
+            (td for td in table.find_all("td") if " by " in td.get_text(" ")),
+            None,
+        )
+        if header_td:
+            header = header_td.get_text(" ", strip=True)
+            age_m = re.search(r"(\d+)yo", header)
+            if age_m:
+                result["age"] = int(age_m.group(1))
+            sex_m = re.search(r"\b(Colt|Filly|Gelding|Mare|Horse|Rig|Stallion)\b", header)
+            if sex_m:
+                result["sex"] = sex_m.group(1)
+            colour_m = re.search(r"(\d+yo)\s+([\w\s/]+?)\s+(Colt|Filly|Gelding|Mare|Horse|Rig|Stallion)", header)
+            if colour_m:
+                result["colour"] = colour_m.group(2).strip()
+            sire_m = re.search(r"\bby\s+([A-Z][A-Z0-9 '()\-]+?)\s+from\b", header)
+            if sire_m:
+                result["sire"] = sire_m.group(1).strip()
+            dam_m = re.search(r"\bfrom\s+([A-Z][A-Z0-9 '()\-]+?)(?:\s+View|\s*$)", header)
+            if dam_m:
+                result["dam"] = dam_m.group(1).strip()
+        break
+
     # Find the Career row in the horse-search-details table
     for table in soup.find_all("table", class_="horse-search-details"):
         for row in table.find_all("tr"):
@@ -1017,6 +1044,19 @@ class RacingAustraliaClient:
         if not horse_name:
             return None
 
+        hf_pre = horse_form or {}
+        # Backfill pedigree/identity fields from the form page if acceptances page left them empty
+        if not comp.get("sire") and hf_pre.get("sire"):
+            comp["sire"] = hf_pre["sire"]
+        if not comp.get("dam") and hf_pre.get("dam"):
+            comp["dam"] = hf_pre["dam"]
+        if not comp.get("age") and hf_pre.get("age"):
+            comp["age"] = hf_pre["age"]
+        if not comp.get("sex") and hf_pre.get("sex"):
+            comp["sex"] = hf_pre["sex"]
+        if not comp.get("colour") and hf_pre.get("colour"):
+            comp["colour"] = hf_pre["colour"]
+
         sire = comp.get("sire") or ""
         profile = SIRE_PROFILES.get(sire, {})
         pedigree = PedigreeProfile(
@@ -1032,7 +1072,7 @@ class RacingAustraliaClient:
             brilliance_index=float(profile.get("brilliance", 5)),
         )
 
-        hf = horse_form or {}
+        hf = hf_pre
         jf = jockey_form or {}
         tf = trainer_form or {}
 
