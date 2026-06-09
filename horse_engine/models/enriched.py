@@ -102,3 +102,5 @@ class EnrichedRunner(BaseModel):
     first_up_win_rate: float = 0.0        # win % when first-up from spell
     second_up_win_rate: float = 0.0       # win % when second-up
     career_place_rate: float = 0.0        # career places / career starts
+    wins_last_10: int = 0                 # wins in last 10 starts
+    starts_last_10: int = 0              # actual starts in last 10 (may be < 10 for lightly raced)

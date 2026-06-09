@@ -9350,6 +9350,8 @@ def _runner_response(row: RunnerPredictionRow) -> dict:
         "value_rating": row.value_rating,
         "key_flags": json.loads(row.key_flags or "[]"),
         "form_score": enriched.get("form_score"),
+        "wins_last_10": enriched.get("wins_last_10"),
+        "starts_last_10": enriched.get("starts_last_10"),
         "distance_aptitude": enriched.get("distance_aptitude"),
         "sire_name": enriched.get("sire_name"),
         "pedigree_distance_match": enriched.get("pedigree_distance_match"),

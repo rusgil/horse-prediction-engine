@@ -279,6 +279,8 @@ def enrich_runner(
         first_up_win_rate=wr_first_up,
         second_up_win_rate=wr_second_up,
         career_place_rate=career_place_rate,
+        wins_last_10=sum(1 for s in starts if s.position == 1),
+        starts_last_10=len(starts),
         # Live stream signals — passed through directly if populated
         steam_60=runner.steam_60,
         steam_30=runner.steam_30,
