@@ -3397,18 +3397,16 @@ async def get_meeting(race_date: str, venue_code: str):
 async def get_race(race_id: str):
     """Return full race prediction for a given race_id."""
     async with get_session() as session:
-        # Prefer live mutable rows so race card matches edge picks (current model weights).
-        # Falls back to history snapshot for past races no longer in the live table.
-        mutable_result = await session.execute(
-            select(RunnerPredictionRow)
-            .where(RunnerPredictionRow.race_id == race_id)
-            .where(RunnerPredictionRow.cancelled.is_(False) | RunnerPredictionRow.cancelled.is_(None))
-            .order_by(RunnerPredictionRow.model_rank)
-        )
-        runners = mutable_result.scalars().all()
+        # Completed races use history table (written once pre-race) so the rank-1 shown
+        # on the card matches the pick used for model_correct / result banners.
+        # Upcoming races use mutable (reflects latest enrichment).
+        settled = (await session.execute(
+            select(HistoricalResultRow.race_id)
+            .where(HistoricalResultRow.race_id == race_id)
+            .limit(1)
+        )).scalar() is not None
 
-        if not runners:
-            # Filter to latest enrichment batch to avoid returning mixed rows from re-enrichments
+        if settled:
             max_at = (await session.execute(
                 select(func.max(RunnerPredictionHistoryRow.enriched_at))
                 .where(RunnerPredictionHistoryRow.race_id == race_id)
@@ -3421,6 +3419,30 @@ async def get_race(race_id: str):
                     .order_by(RunnerPredictionHistoryRow.model_rank)
                 )
                 runners = hist_result.scalars().all()
+            else:
+                runners = []
+        else:
+            mutable_result = await session.execute(
+                select(RunnerPredictionRow)
+                .where(RunnerPredictionRow.race_id == race_id)
+                .where(RunnerPredictionRow.cancelled.is_(False) | RunnerPredictionRow.cancelled.is_(None))
+                .order_by(RunnerPredictionRow.model_rank)
+            )
+            runners = mutable_result.scalars().all()
+
+            if not runners:
+                max_at = (await session.execute(
+                    select(func.max(RunnerPredictionHistoryRow.enriched_at))
+                    .where(RunnerPredictionHistoryRow.race_id == race_id)
+                )).scalar()
+                if max_at:
+                    hist_result = await session.execute(
+                        select(RunnerPredictionHistoryRow)
+                        .where(RunnerPredictionHistoryRow.race_id == race_id)
+                        .where(RunnerPredictionHistoryRow.enriched_at == max_at)
+                        .order_by(RunnerPredictionHistoryRow.model_rank)
+                    )
+                    runners = hist_result.scalars().all()
 
     if not runners:
         raise HTTPException(404, f"No predictions for race {race_id}. Trigger /enrich first.")
