@@ -1947,7 +1947,29 @@ async def get_edge_picks():
         target_date = (today + timedelta(days=i)).isoformat()
         prefix = f"{target_date}_"
         async with get_session() as session:
-            result = await session.execute(
+            # Identify settled races for this date (have historical results)
+            settled_q = await session.execute(
+                select(HistoricalResultRow.race_id)
+                .where(HistoricalResultRow.race_id.like(f"{prefix}%"))
+                .distinct()
+            )
+            settled_race_ids: set[str] = {r for (r,) in settled_q.fetchall()}
+
+            # For settled races, query history rank-1 — threshold evaluated against pre-race win_probability
+            hist_rows: list = []
+            if settled_race_ids:
+                hr_q = await session.execute(
+                    select(RunnerPredictionHistoryRow)
+                    .where(RunnerPredictionHistoryRow.race_id.in_(settled_race_ids))
+                    .where(RunnerPredictionHistoryRow.model_rank == 1)
+                    .where(RunnerPredictionHistoryRow.win_probability >= threshold)
+                    .where(RunnerPredictionHistoryRow.cancelled.is_(False) | RunnerPredictionHistoryRow.cancelled.is_(None))
+                    .order_by(RunnerPredictionHistoryRow.win_probability.desc())
+                )
+                hist_rows = hr_q.scalars().all()
+
+            # For upcoming races, query mutable as before
+            mut_q = (
                 select(RunnerPredictionRow)
                 .where(RunnerPredictionRow.model_rank == 1)
                 .where(RunnerPredictionRow.win_probability >= threshold)
@@ -1955,51 +1977,91 @@ async def get_edge_picks():
                 .where(RunnerPredictionRow.cancelled.is_(False) | RunnerPredictionRow.cancelled.is_(None))
                 .order_by(RunnerPredictionRow.win_probability.desc())
             )
-            rows = result.scalars().all()
-            # Exclude trial/trackwork venues (race_id venue slug contains -trial- or -trail-)
+            if settled_race_ids:
+                mut_q = mut_q.where(~RunnerPredictionRow.race_id.in_(settled_race_ids))
+            mut_rows: list = (await session.execute(mut_q)).scalars().all()
+
+            rows = hist_rows + mut_rows
+            # Exclude trial/trackwork venues
             rows = [r for r in rows if not re.search(r"-(trial|trail|jumpout)s?[_-]", r.race_id, re.IGNORECASE)]
 
             if not rows:
                 continue
 
+            hist_race_ids = {r.race_id for r in hist_rows}
+            mut_race_ids_list = [r.race_id for r in mut_rows]
+
             # Batch-fetch place model runners for trifecta legs
-            race_ids = [r.race_id for r in rows]
-            place_result = await session.execute(
-                select(RunnerPredictionRow)
-                .where(RunnerPredictionRow.race_id.in_(race_ids))
-                .where(RunnerPredictionRow.place_model_rank >= 1)
-                .where(RunnerPredictionRow.place_model_rank <= 4)
-                .where(RunnerPredictionRow.cancelled.is_(False) | RunnerPredictionRow.cancelled.is_(None))
-            )
-            place_rows_list = place_result.scalars().all()
+            place_rows_list: list = []
+            if hist_race_ids:
+                place_rows_list.extend((await session.execute(
+                    select(RunnerPredictionHistoryRow)
+                    .where(RunnerPredictionHistoryRow.race_id.in_(hist_race_ids))
+                    .where(RunnerPredictionHistoryRow.place_model_rank >= 1)
+                    .where(RunnerPredictionHistoryRow.place_model_rank <= 4)
+                    .where(RunnerPredictionHistoryRow.cancelled.is_(False) | RunnerPredictionHistoryRow.cancelled.is_(None))
+                )).scalars().all())
+            if mut_race_ids_list:
+                place_rows_list.extend((await session.execute(
+                    select(RunnerPredictionRow)
+                    .where(RunnerPredictionRow.race_id.in_(mut_race_ids_list))
+                    .where(RunnerPredictionRow.place_model_rank >= 1)
+                    .where(RunnerPredictionRow.place_model_rank <= 4)
+                    .where(RunnerPredictionRow.cancelled.is_(False) | RunnerPredictionRow.cancelled.is_(None))
+                )).scalars().all())
 
             # Batch-fetch exotic model top-3 for alignment check
-            exotic_result = await session.execute(
-                select(RunnerPredictionRow)
-                .where(RunnerPredictionRow.race_id.in_(race_ids))
-                .where(RunnerPredictionRow.exotic_model_rank >= 1)
-                .where(RunnerPredictionRow.exotic_model_rank <= 3)
-                .where(RunnerPredictionRow.cancelled.is_(False) | RunnerPredictionRow.cancelled.is_(None))
-            )
-            exotic_rows_list = exotic_result.scalars().all()
+            exotic_rows_list: list = []
+            if hist_race_ids:
+                exotic_rows_list.extend((await session.execute(
+                    select(RunnerPredictionHistoryRow)
+                    .where(RunnerPredictionHistoryRow.race_id.in_(hist_race_ids))
+                    .where(RunnerPredictionHistoryRow.exotic_model_rank >= 1)
+                    .where(RunnerPredictionHistoryRow.exotic_model_rank <= 3)
+                    .where(RunnerPredictionHistoryRow.cancelled.is_(False) | RunnerPredictionHistoryRow.cancelled.is_(None))
+                )).scalars().all())
+            if mut_race_ids_list:
+                exotic_rows_list.extend((await session.execute(
+                    select(RunnerPredictionRow)
+                    .where(RunnerPredictionRow.race_id.in_(mut_race_ids_list))
+                    .where(RunnerPredictionRow.exotic_model_rank >= 1)
+                    .where(RunnerPredictionRow.exotic_model_rank <= 3)
+                    .where(RunnerPredictionRow.cancelled.is_(False) | RunnerPredictionRow.cancelled.is_(None))
+                )).scalars().all())
 
             # Batch-fetch win model ranks 2–5 for hedge insurance calculations
-            hedge_rank_result = await session.execute(
-                select(RunnerPredictionRow)
-                .where(RunnerPredictionRow.race_id.in_(race_ids))
-                .where(RunnerPredictionRow.model_rank.in_([2, 3, 4, 5]))
-                .where(RunnerPredictionRow.cancelled.is_(False) | RunnerPredictionRow.cancelled.is_(None))
-            )
-            hedge_rank_rows = hedge_rank_result.scalars().all()
+            hedge_rank_rows: list = []
+            if hist_race_ids:
+                hedge_rank_rows.extend((await session.execute(
+                    select(RunnerPredictionHistoryRow)
+                    .where(RunnerPredictionHistoryRow.race_id.in_(hist_race_ids))
+                    .where(RunnerPredictionHistoryRow.model_rank.in_([2, 3, 4, 5]))
+                    .where(RunnerPredictionHistoryRow.cancelled.is_(False) | RunnerPredictionHistoryRow.cancelled.is_(None))
+                )).scalars().all())
+            if mut_race_ids_list:
+                hedge_rank_rows.extend((await session.execute(
+                    select(RunnerPredictionRow)
+                    .where(RunnerPredictionRow.race_id.in_(mut_race_ids_list))
+                    .where(RunnerPredictionRow.model_rank.in_([2, 3, 4, 5]))
+                    .where(RunnerPredictionRow.cancelled.is_(False) | RunnerPredictionRow.cancelled.is_(None))
+                )).scalars().all())
 
             # Field sizes (active runner count per race) for place divisor
-            field_size_result = await session.execute(
-                select(RunnerPredictionRow.race_id, func.count(RunnerPredictionRow.id))
-                .where(RunnerPredictionRow.race_id.in_(race_ids))
-                .where(RunnerPredictionRow.cancelled.is_(False) | RunnerPredictionRow.cancelled.is_(None))
-                .group_by(RunnerPredictionRow.race_id)
-            )
-            field_sizes: dict[str, int] = dict(field_size_result.fetchall())
+            field_sizes: dict[str, int] = {}
+            if hist_race_ids:
+                field_sizes.update(dict((await session.execute(
+                    select(RunnerPredictionHistoryRow.race_id, func.count(RunnerPredictionHistoryRow.id))
+                    .where(RunnerPredictionHistoryRow.race_id.in_(hist_race_ids))
+                    .where(RunnerPredictionHistoryRow.cancelled.is_(False) | RunnerPredictionHistoryRow.cancelled.is_(None))
+                    .group_by(RunnerPredictionHistoryRow.race_id)
+                )).fetchall()))
+            if mut_race_ids_list:
+                field_sizes.update(dict((await session.execute(
+                    select(RunnerPredictionRow.race_id, func.count(RunnerPredictionRow.id))
+                    .where(RunnerPredictionRow.race_id.in_(mut_race_ids_list))
+                    .where(RunnerPredictionRow.cancelled.is_(False) | RunnerPredictionRow.cancelled.is_(None))
+                    .group_by(RunnerPredictionRow.race_id)
+                )).fetchall()))
 
         # Build place-model lookup: race_id -> sorted list by place_model_rank
         trifecta_map: dict[str, list] = {}
@@ -2140,7 +2202,7 @@ async def get_edge_picks():
                 "hedge": hedge,
             })
 
-    # Annotate trifecta legs for finished races — DB-first, seeds from Punters once if missing
+    # Annotate finished picks with actual race results
     now_utc = datetime.utcnow().replace(tzinfo=timezone.utc)
     finished_picks = [
         p for p in picks
@@ -2151,34 +2213,7 @@ async def get_edge_picks():
         db_positions = await _seed_race_results_on_demand(finished_race_ids)
         seeded_race_ids: set[str] = {rid for (rid, _) in db_positions}
 
-        # For completed races, the history table holds the genuine pre-race pick.
-        # Swap out any mutable rank-1 horse that differs from history so that
-        # result annotation and stats reflect what was actually predicted.
-        async with get_session() as session:
-            max_at_rows = (await session.execute(
-                select(RunnerPredictionHistoryRow.race_id,
-                       func.max(RunnerPredictionHistoryRow.enriched_at).label("max_at"))
-                .where(RunnerPredictionHistoryRow.race_id.in_(finished_race_ids))
-                .group_by(RunnerPredictionHistoryRow.race_id)
-            )).all()
-            max_at_hist = {r.race_id: r.max_at for r in max_at_rows}
-            hist_rank1_rows = (await session.execute(
-                select(RunnerPredictionHistoryRow.race_id, RunnerPredictionHistoryRow.horse_name,
-                       RunnerPredictionHistoryRow.enriched_at)
-                .where(RunnerPredictionHistoryRow.race_id.in_(finished_race_ids))
-                .where(RunnerPredictionHistoryRow.model_rank == 1)
-            )).all()
-        hist_pick: dict[str, str] = {
-            r.race_id: r.horse_name
-            for r in hist_rank1_rows
-            if r.enriched_at == max_at_hist.get(r.race_id)
-        }
-        for p in finished_picks:
-            canonical = hist_pick.get(p["race_id"])
-            if canonical:
-                p["horse_name"] = canonical
-
-        # Also fetch SP for finished picks
+        # Fetch SP for finished picks
         async with get_session() as session:
             sp_rows = (await session.execute(
                 select(HistoricalResultRow.race_id, HistoricalResultRow.horse_name,
