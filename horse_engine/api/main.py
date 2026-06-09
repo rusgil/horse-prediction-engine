@@ -351,15 +351,25 @@ async def _cancel_abandoned_meetings(client, today: str) -> None:
         all_abandoned = bool(statuses) and statuses.issubset({"abandoned", "cancelled", "closed"}) and "open" not in statuses and "resulted" not in statuses
 
         if not dropped and not all_abandoned:
-            # Venue is confirmed active — restore any false cancellations from a prior blocked run
+            # Only restore if EVERY runner in the race was cancelled — that's a venue-level
+            # block from a prior run. Leave individually-cancelled runners (manual scratches) alone.
             async with get_session() as session:
-                await session.execute(
-                    sa_update(RunnerPredictionRow)
+                total = (await session.execute(
+                    select(func.count()).where(RunnerPredictionRow.race_id == race_id)
+                )).scalar_one()
+                n_cancelled = (await session.execute(
+                    select(func.count())
                     .where(RunnerPredictionRow.race_id == race_id)
                     .where(RunnerPredictionRow.cancelled.is_(True))
-                    .values(cancelled=False)
-                )
-                await session.commit()
+                )).scalar_one()
+                if total > 0 and n_cancelled == total:
+                    await session.execute(
+                        sa_update(RunnerPredictionRow)
+                        .where(RunnerPredictionRow.race_id == race_id)
+                        .where(RunnerPredictionRow.cancelled.is_(True))
+                        .values(cancelled=False)
+                    )
+                    await session.commit()
         elif dropped or all_abandoned:
             async with get_session() as session:
                 await session.execute(
