@@ -2111,7 +2111,7 @@ async def _update_odds_from_oddspro(
     return covered
 
 
-async def _update_odds_from_betfair(
+async def _update_odds_from_tab(
     target_date: str,
     all_picks: list,
     skip_race_ids: set[str],
@@ -2119,81 +2119,67 @@ async def _update_odds_from_betfair(
     diag: list,
 ) -> None:
     """
-    Fallback: fetch Betfair Exchange best-back odds for picks not covered by OddsPro.
-    Only runs if BETFAIR_* credentials are configured.
+    Fallback: fetch TAB fixed-win odds for picks not covered by OddsPro.
+    TAB returns odds for ALL runners (no auth required).
     """
+    from horse_engine.clients.tab import TABClient
     picks = [p for p in all_picks if p.race_id not in skip_race_ids]
     if not picks:
         return
-    try:
-        from horse_engine.config import settings
-        if not (settings.betfair_app_key and settings.betfair_username and settings.betfair_password):
-            return
-        from horse_engine.clients.betfair import BetfairClient
-        bf = BetfairClient()
-        meetings = await bf.get_meetings(target_date)
-        slug_to_meeting = {m["slug"]: m for m in meetings}
 
-        by_venue_slug: dict[str, list] = {}
-        for row in picks:
-            _, venue_code, race_num = _parse_race_id(row.race_id)
-            slug = _meeting_slug(venue_code, target_date)
-            by_venue_slug.setdefault(slug, []).append(row)
+    tab = TABClient()
+    by_race: dict[tuple[str, int], list] = {}
+    for row in picks:
+        _, venue_code, race_num = _parse_race_id(row.race_id)
+        slug = _meeting_slug(venue_code, target_date)
+        if race_num:
+            by_race.setdefault((slug, race_num), []).append(row)
 
-        for slug, rows in by_venue_slug.items():
-            meeting = slug_to_meeting.get(slug)
-            bf_diag: dict = {"date": target_date, "slug": slug, "source": "betfair", "found": bool(meeting)}
-            if not meeting:
-                diag.append(bf_diag)
+    for (slug, race_num), race_rows in by_race.items():
+        tab_diag: dict = {"date": target_date, "slug": slug, "race": race_num, "source": "tab"}
+        try:
+            raw = await asyncio.wait_for(tab.get_race(slug, race_num), timeout=20)
+            if not raw:
+                tab_diag["error"] = "no data"
+                diag.append(tab_diag)
                 continue
-            by_race: dict[int, list] = {}
-            for row in rows:
-                if row.race_number:
-                    by_race.setdefault(row.race_number, []).append(row)
-            for race_num, race_rows in by_race.items():
-                try:
-                    bf_race = await bf.get_race(slug, race_num)
-                    if not bf_race:
+            horse_odds: dict[str, float] = {}
+            for runner in raw.get("runners", []):
+                name = (runner.get("runnerName") or "").upper()
+                if not name:
+                    continue
+                for p in runner.get("prices", []):
+                    pt = p.get("priceType", "")
+                    if pt in ("FixedWin", "Win"):
+                        val = float(p.get("winPrice") or 0)
+                        if val > 1.0 and name not in horse_odds:
+                            horse_odds[name] = val
+            tab_diag["runners_with_odds"] = len(horse_odds)
+            async with get_session() as session:
+                for row in race_rows:
+                    new_o = horse_odds.get(row.horse_name.upper())
+                    if not new_o:
                         continue
-                    horse_odds: dict[str, float] = {}
-                    for sel in bf_race.get("selections", []):
-                        name = (sel.get("competitor") or {}).get("name", "")
-                        tote = sel.get("topToteWin")
-                        if name and tote:
-                            try:
-                                horse_odds[name.upper()] = float(tote)
-                            except (TypeError, ValueError):
-                                pass
-                    if not horse_odds:
+                    db_row = await session.get(RunnerPredictionRow, row.id)
+                    if not db_row:
                         continue
-                    async with get_session() as session:
-                        for row in race_rows:
-                            new_o = horse_odds.get(row.horse_name.upper())
-                            if not new_o:
-                                continue
-                            db_row = await session.get(RunnerPredictionRow, row.id)
-                            if not db_row:
-                                continue
-                            db_row.best_available_odds = new_o
-                            market_implied = 1.0 / new_o
-                            db_row.overlay = round(db_row.win_probability - market_implied, 4)
-                            db_row.value_rating = _value_rating(db_row.win_probability, new_o, db_row.overlay)
-                            updated[row.race_id] = new_o
-                        await session.commit()
-                    bf_diag[f"R{race_num}_found"] = len(horse_odds)
-                except Exception as e:
-                    log.warning("Betfair odds failed for %s R%s: %s", slug, race_num, e)
-            diag.append(bf_diag)
-    except Exception as e:
-        diag.append({"date": target_date, "source": "betfair", "error": str(e)})
-        log.warning("Betfair fallback failed for %s: %s", target_date, e)
+                    db_row.best_available_odds = new_o
+                    market_implied = 1.0 / new_o
+                    db_row.overlay = round(db_row.win_probability - market_implied, 4)
+                    db_row.value_rating = _value_rating(db_row.win_probability, new_o, db_row.overlay)
+                    updated[row.race_id] = new_o
+                await session.commit()
+        except Exception as e:
+            tab_diag["error"] = str(e)
+            log.warning("TAB odds failed for %s R%s: %s", slug, race_num, e)
+        diag.append(tab_diag)
 
 
 @app.post("/api/edge/refresh-odds")
 async def refresh_edge_odds():
     """
     Fetch odds for all upcoming edge picks — today + next 3 days.
-    Primary: OddsPro (live, no auth). Fallback: Betfair Exchange (if credentials set).
+    Primary: OddsPro movers. Fallback: TAB API (all runners, no auth).
     Rate-limited to once per 2 minutes globally.
     """
     from horse_engine.clients.oddspro import OddsProClient
@@ -2227,7 +2213,7 @@ async def refresh_edge_odds():
             continue
 
         covered = await _update_odds_from_oddspro(op, target_date, all_picks, updated, diag)
-        await _update_odds_from_betfair(target_date, all_picks, covered, updated, diag)
+        await _update_odds_from_tab(target_date, all_picks, covered, updated, diag)
 
     _odds_refresh_last = now
     return {"updated": updated, "count": len(updated), "debug": diag}
