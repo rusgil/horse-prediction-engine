@@ -3703,8 +3703,7 @@ async def get_race(race_id: str):
     if not runners:
         raise HTTPException(404, f"No predictions for race {race_id}. Trigger /enrich first.")
 
-    # Derive Last 10 win record from historical_results for any runner whose
-    # enriched_json predates the wins_last_10 field (or is missing it entirely).
+    # Last 10 win record derived live from historical_results — always accurate.
     horse_names = [r.horse_name for r in runners]
     two_years_ago = (datetime.utcnow() - timedelta(days=730)).strftime("%Y-%m-%d")
     async with get_session() as session:
@@ -9730,13 +9729,8 @@ def _runner_response(row: RunnerPredictionRow, last10: dict | None = None) -> di
         except Exception:
             pass
 
-    # Use enriched_json values when present; fall back to historical_results-derived stats
-    # for records predating the wins_last_10 field (pre-June 2026 snapshots).
-    wins_last_10 = enriched.get("wins_last_10")
-    starts_last_10 = enriched.get("starts_last_10")
-    if starts_last_10 is None and last10 is not None:
-        wins_last_10 = last10.get("wins_last_10", 0)
-        starts_last_10 = last10.get("starts_last_10", 0)
+    wins_last_10 = last10.get("wins_last_10", 0) if last10 is not None else 0
+    starts_last_10 = last10.get("starts_last_10", 0) if last10 is not None else 0
 
     return {
         "tab_number": row.tab_number,
