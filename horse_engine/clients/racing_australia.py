@@ -603,7 +603,8 @@ def _parse_results_page(html: str) -> dict[int, dict]:
 
             finish = cells[fi] if fi < len(cells) else ""
             try:
-                position = int(finish) if finish.isdigit() else None
+                fm = re.match(r"^(\d+)", finish.strip())
+                position = int(fm.group(1)) if fm else None
             except (ValueError, AttributeError):
                 position = None
 

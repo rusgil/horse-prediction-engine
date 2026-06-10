@@ -5784,21 +5784,18 @@ async def get_meeting_results(race_date: str, venue_code: str):
     top_picks: dict[str, str] = {}
     if races_with_results:
         async with get_session() as session:
-            max_at_rows = (await session.execute(
-                select(RunnerPredictionHistoryRow.race_id,
-                       func.max(RunnerPredictionHistoryRow.enriched_at).label("max_at"))
-                .where(RunnerPredictionHistoryRow.race_id.in_(list(races_with_results)))
-                .group_by(RunnerPredictionHistoryRow.race_id)
-            )).all()
-            max_at_hist = {r.race_id: r.max_at for r in max_at_rows}
             hist_rows = (await session.execute(
                 select(RunnerPredictionHistoryRow.race_id, RunnerPredictionHistoryRow.horse_name,
                        RunnerPredictionHistoryRow.enriched_at)
                 .where(RunnerPredictionHistoryRow.race_id.in_(list(races_with_results)))
                 .where(RunnerPredictionHistoryRow.model_rank == 1)
+                .where(RunnerPredictionHistoryRow.cancelled.is_(False) | RunnerPredictionHistoryRow.cancelled.is_(None))
+                .order_by(RunnerPredictionHistoryRow.enriched_at.desc())
             )).all()
+        seen: set[str] = set()
         for r in hist_rows:
-            if r.enriched_at == max_at_hist.get(r.race_id):
+            if r.race_id not in seen:
+                seen.add(r.race_id)
                 top_picks[r.race_id] = r.horse_name
 
     # Build response
