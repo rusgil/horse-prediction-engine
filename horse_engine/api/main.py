@@ -4254,10 +4254,24 @@ async def cancel_meeting(
             .where(RunnerPredictionRow.race_id.like(f"{target_date}_{venue}_%"))
             .values(cancelled=True)
         )
+        # Mirror into history so settled-race reads also exclude the cancelled meeting.
+        hist_result = await session.execute(
+            sa_update(RunnerPredictionHistoryRow)
+            .where(RunnerPredictionHistoryRow.race_id.like(f"{target_date}_{venue}_%"))
+            .values(cancelled=True)
+        )
         await session.commit()
         affected = result.rowcount
-    log.info("[admin] cancel-meeting: marked %d runners cancelled for %s on %s", affected, venue, target_date)
-    return {"status": "cancelled", "venue": venue, "date": target_date, "runners_affected": affected}
+        hist_affected = hist_result.rowcount
+    log.info("[admin] cancel-meeting: marked %d mutable / %d history row(s) cancelled for %s on %s",
+             affected, hist_affected, venue, target_date)
+    return {
+        "status": "cancelled",
+        "venue": venue,
+        "date": target_date,
+        "runners_affected": affected,
+        "history_affected": hist_affected,
+    }
 
 
 @app.post("/api/admin/retrain-place")
@@ -4915,11 +4929,23 @@ async def cancel_runner(
             .where(RunnerPredictionRow.horse_name == horse_name)
             .values(cancelled=True)
         )
+        # Mirror into history so settled-race reads also exclude this runner.
+        hist_result = await session.execute(
+            sa_update(RunnerPredictionHistoryRow)
+            .where(RunnerPredictionHistoryRow.race_id == race_id)
+            .where(RunnerPredictionHistoryRow.horse_name == horse_name)
+            .values(cancelled=True)
+        )
         await session.commit()
     # Clear meeting cache so the change is immediately visible
     date_part, venue_part, _ = _parse_race_id(race_id)
     _get_meeting_cache.pop(f"{date_part}/{venue_part}", None)
-    return {"updated": result.rowcount, "race_id": race_id, "horse_name": horse_name}
+    return {
+        "updated": result.rowcount,
+        "history_updated": hist_result.rowcount,
+        "race_id": race_id,
+        "horse_name": horse_name,
+    }
 
 
 @app.get("/api/admin/debug-odds")
@@ -9390,7 +9416,12 @@ async def exotic_calibration_status(x_cron_secret: Optional[str] = Header(None))
 # ── Cron ──────────────────────────────────────────────────────────────────────
 
 async def _load_venue_calibration() -> dict[str, float]:
-    """Compute venue win-rate multipliers from last 60 days of historical results."""
+    """Compute venue win-rate multipliers from last 60 days of historical results.
+
+    Reads top picks from RunnerPredictionHistoryRow (immutable pre-race snapshot) per
+    Ground Rule 1 — mutable can be overwritten by post-race re-enrichment for races
+    that were never snapshotted, which would otherwise contaminate the calibration.
+    """
     cutoff = (date.today() - timedelta(days=60)).isoformat()
     async with get_session() as session:
         hr_result = await session.execute(
@@ -9400,12 +9431,19 @@ async def _load_venue_calibration() -> dict[str, float]:
         if not hr_rows:
             return {}
         race_ids = list({r.race_id for r in hr_rows})
+        # Dedup-in-Python on latest enriched_at avoids the BUG-09 exact-timestamp
+        # pitfall: races with duplicate snapshots keep the most recent pre-race row.
         pred_result = await session.execute(
-            select(RunnerPredictionRow)
-            .where(RunnerPredictionRow.race_id.in_(race_ids))
-            .where(RunnerPredictionRow.model_rank == 1)
+            select(RunnerPredictionHistoryRow)
+            .where(RunnerPredictionHistoryRow.race_id.in_(race_ids))
+            .where(RunnerPredictionHistoryRow.model_rank == 1)
+            .where(RunnerPredictionHistoryRow.cancelled.is_(False) | RunnerPredictionHistoryRow.cancelled.is_(None))
+            .order_by(RunnerPredictionHistoryRow.enriched_at.desc())
         )
-        top_picks = {p.race_id: p for p in pred_result.scalars().all()}
+        top_picks: dict[str, RunnerPredictionHistoryRow] = {}
+        for p in pred_result.scalars().all():
+            if p.race_id not in top_picks:
+                top_picks[p.race_id] = p
 
     result_by_key = {(r.race_id, _normalize_horse(r.horse_name)): r for r in hr_rows}
     venue_stats: dict[str, dict] = {}
