@@ -41,7 +41,7 @@ FEATURE_NAMES_BASE = [
     "jockey_booking_significance", # 22
     "stable_form",              # 23
     "track_bias_advantage",     # 24
-    "win_rate_track_distance",  # 25 — win % at this exact track+distance (Punters stats)
+    "win_rate_track_distance",  # 25 — win % at this exact track+distance (Racing Australia stats)
     "condition_win_rate",       # 26 — win % in today's going (good/soft/heavy/firm)
     "first_up_win_rate",        # 27 — win % when first-up (only relevant if resuming)
     "going_preference",         # 28 — signed differential: how much better on today's going vs opposite

@@ -12,7 +12,13 @@ Endpoints:
   POST /api/cron/enrich                       — daily cron enrichment
   GET  /api/health                            — liveness check
 
-Venue codes are the punters.com.au venue slug, e.g. "werribee", "randwick", "flemington".
+Data sources:
+  Racing Australia — meeting / race-card / results feed (primary)
+  OddsPro          — multi-book live odds + steam/drift inputs
+  Betfair          — optional REST metadata + live streaming odds (when credentials set)
+  TAB direct API   — fallback odds lookup for picks not covered by OddsPro
+
+Venue codes are lowercase venue slugs, e.g. "werribee", "randwick", "flemington".
 Meeting slugs follow the pattern "{venue}-{date}" e.g. "werribee-20260514".
 Race IDs follow the pattern "{date}_{venue}_R{num}" e.g. "2026-05-14_werribee_R3".
 """
@@ -106,7 +112,7 @@ def _like_safe(value: str) -> str:
 async def _scheduled_odds_snapshot():
     """Snapshot current odds for all upcoming races within the next 3 hours."""
     delay = random.uniform(0, 600)
-    log.info("[odds-snapshot] Waiting %.0fs before Punters requests", delay)
+    log.info("[odds-snapshot] Waiting %.0fs before RA requests", delay)
     await asyncio.sleep(delay)
     log.info("[odds-snapshot] Running odds snapshot")
     try:
@@ -300,7 +306,7 @@ async def _cancel_abandoned_meetings(
     venue_events: dict[str, list] | None = None,
 ) -> None:
     """
-    Compare today's DB predictions against Punters' live meeting list.
+    Compare today's DB predictions against Racing Australia's live meeting list.
     Mark runners cancelled for any venue that has been dropped or where
     all races are abandoned/closed without having resulted.
 
@@ -317,23 +323,23 @@ async def _cancel_abandoned_meetings(
             log.warning("[cancel-check] Could not fetch meetings: %s", e)
             return
 
-    # Guard: if Punters returns nothing, it's likely blocked — never mass-cancel on empty response
+    # Guard: if RA returns nothing, it's likely blocked — never mass-cancel on empty response
     if not meetings:
-        log.warning("[cancel-check] Punters returned 0 meetings for %s — skipping to avoid false cancellations", today)
+        log.warning("[cancel-check] RA returned 0 meetings for %s — skipping to avoid false cancellations", today)
         return
 
     active_venue_codes: set[str] = set()
-    punters_race_statuses: dict[str, set[str]] = {}
+    ra_race_statuses: dict[str, set[str]] = {}
     for m in meetings:
         slug = m.get("slug", "")
         vc = slug[:-len(date_sfx)] if slug.endswith(date_sfx) else slug
         active_venue_codes.add(vc)
         if venue_events is not None and vc in venue_events:
-            punters_race_statuses[vc] = {(e.get("status") or "").lower() for e in venue_events[vc]}
+            ra_race_statuses[vc] = {(e.get("status") or "").lower() for e in venue_events[vc]}
         else:
             try:
                 raw_events = await asyncio.wait_for(client.get_meeting_races(slug), timeout=15)
-                punters_race_statuses[vc] = {(e.get("status") or "").lower() for e in raw_events}
+                ra_race_statuses[vc] = {(e.get("status") or "").lower() for e in raw_events}
             except Exception:
                 pass
 
@@ -346,26 +352,28 @@ async def _cancel_abandoned_meetings(
         )).scalars().all()
 
     db_venue_codes = {_parse_race_id(rid)[1] for rid in db_race_ids}
-    punters_count = len(active_venue_codes)
+    ra_count = len(active_venue_codes)
     db_count = len(db_venue_codes)
-    # Only trust "dropped" signal if Punters returned >= 80% of known DB venues.
-    # A partial Punters response (e.g. 2 of 5 venues when blocked) must NOT cancel the rest.
-    trust_drop_signal = punters_count >= max(1, round(db_count * 0.8))
+    # Only trust "dropped" signal if RA returned >= 80% of known DB venues.
+    # A partial RA response (e.g. 2 of 5 venues when blocked) must NOT cancel the rest.
+    trust_drop_signal = ra_count >= max(1, round(db_count * 0.8))
     if not trust_drop_signal:
         log.warning(
-            "[cancel-check] Punters returned %d venues but DB has %d — partial response, ignoring 'dropped' signal",
-            punters_count, db_count,
+            "[cancel-check] RA returned %d venues but DB has %d — partial response, ignoring 'dropped' signal",
+            ra_count, db_count,
         )
 
     for race_id in db_race_ids:
         _, venue_code, _ = _parse_race_id(race_id)
-        statuses = punters_race_statuses.get(venue_code, set())
+        statuses = ra_race_statuses.get(venue_code, set())
         dropped = trust_drop_signal and (venue_code not in active_venue_codes)
         all_abandoned = bool(statuses) and statuses.issubset({"abandoned", "cancelled", "closed"}) and "open" not in statuses and "resulted" not in statuses
 
         if not dropped and not all_abandoned:
             # Only restore if EVERY runner in the race was cancelled — that's a venue-level
             # block from a prior run. Leave individually-cancelled runners (manual scratches) alone.
+            # The same guard is applied separately to mutable and history so an individual
+            # scratch in either table prevents a mass-uncancel from clobbering it.
             async with get_session() as session:
                 total = (await session.execute(
                     select(func.count()).where(RunnerPredictionRow.race_id == race_id)
@@ -382,12 +390,37 @@ async def _cancel_abandoned_meetings(
                         .where(RunnerPredictionRow.cancelled.is_(True))
                         .values(cancelled=False)
                     )
-                    await session.commit()
+                # Same all-cancelled guard for history. Without this, a mass-cancel that
+                # was previously mirrored into history (FIX-J / BUG-14) stays sticky in
+                # history even after mutable is restored.
+                hist_total = (await session.execute(
+                    select(func.count()).where(RunnerPredictionHistoryRow.race_id == race_id)
+                )).scalar_one()
+                hist_n_cancelled = (await session.execute(
+                    select(func.count())
+                    .where(RunnerPredictionHistoryRow.race_id == race_id)
+                    .where(RunnerPredictionHistoryRow.cancelled.is_(True))
+                )).scalar_one()
+                if hist_total > 0 and hist_n_cancelled == hist_total:
+                    await session.execute(
+                        sa_update(RunnerPredictionHistoryRow)
+                        .where(RunnerPredictionHistoryRow.race_id == race_id)
+                        .where(RunnerPredictionHistoryRow.cancelled.is_(True))
+                        .values(cancelled=False)
+                    )
+                await session.commit()
         elif dropped or all_abandoned:
             async with get_session() as session:
                 await session.execute(
                     sa_update(RunnerPredictionRow)
                     .where(RunnerPredictionRow.race_id == race_id)
+                    .values(cancelled=True)
+                )
+                # Mirror mass-cancel into history so settled-race readers (which filter
+                # on history.cancelled per BUG-13) also exclude the abandoned race.
+                await session.execute(
+                    sa_update(RunnerPredictionHistoryRow)
+                    .where(RunnerPredictionHistoryRow.race_id == race_id)
                     .values(cancelled=True)
                 )
                 await session.commit()
@@ -1257,7 +1290,7 @@ async def _inject_accumulated_stats(race, session) -> None:
 
         # ── Trainer first-up / second-up stats from form history ─────────────────
         # Compute per-trainer first-up and second-up stats from the full form history.
-        # This covers what Punters enrichment provides, using DB data for backfill rows.
+        # This covers what RA enrichment provides, using DB data for backfill rows.
         if form_by_horse:
             trainer_fu_map: dict[str, list[tuple[bool, bool, bool]]] = {}  # trainer → [(won, is_fu, is_su), ...]
 
@@ -1388,12 +1421,12 @@ async def _seed_results_for_date(race_date: str) -> int:
     if ra_seeded_total:
         log.info("[seed-results] RA direct-key seeded %d entries for %s", ra_seeded_total, race_date)
 
-    # Primary source: meetings from Punters (works reliably for today/upcoming)
+    # Primary source: meetings from Racing Australia (works reliably for today/upcoming)
     meetings = await client.get_meetings(race_date)
     date_sfx = f"-{race_date.replace('-', '')}"
-    punters_slugs = {m.get("slug", ""): m for m in meetings if m.get("slug")}
+    ra_slugs = {m.get("slug", ""): m for m in meetings if m.get("slug")}
 
-    # Secondary source: venues we already have predictions for — Punters form guide
+    # Secondary source: venues we already have predictions for — RA form guide
     # doesn't reliably list past country meetings so many venues get missed.
     async with get_session() as session:
         db_race_ids = (await session.execute(
@@ -1408,16 +1441,16 @@ async def _seed_results_for_date(race_date: str) -> int:
         if vc:
             db_venue_codes[vc] = row.venue or vc
 
-    # Build union of meetings: Punters slugs + DB-only venues (synthesise slug for DB venues)
+    # Build union of meetings: RA slugs + DB-only venues (synthesise slug for DB venues)
     all_meetings = list(meetings)
-    punters_vcs = set()
+    ra_vcs = set()
     for m in meetings:
         slug = m.get("slug", "")
         vc = slug[:-len(date_sfx)] if slug.endswith(date_sfx) else slug.split("-")[0] if slug else ""
         if vc:
-            punters_vcs.add(vc)
+            ra_vcs.add(vc)
     for vc, venue_name in db_venue_codes.items():
-        if vc not in punters_vcs:
+        if vc not in ra_vcs:
             synth_slug = f"{vc}{date_sfx}"
             all_meetings.append({"slug": synth_slug, "id": None, "name": venue_name, "state": "", "rail_position": ""})
             log.info("[seed-results] Adding DB-only venue %s (slug: %s) for %s", vc, synth_slug, race_date)
@@ -1555,7 +1588,7 @@ async def _seed_results_for_date(race_date: str) -> int:
 
         # Clear stale cancelled flags only for mass-cancelled races (all runners cancelled).
         # Never clear individual dedup cancellations — only restore when the whole race
-        # was mass-cancelled by _cancel_abandoned_meetings due to a Punters block.
+        # was mass-cancelled by _cancel_abandoned_meetings due to a feed block.
         if races_with_results:
             from sqlalchemy import update as sa_update
             async with get_session() as session:
@@ -1582,7 +1615,7 @@ async def _seed_results_for_date(race_date: str) -> int:
 
 async def _seed_race_results_on_demand(race_ids: list[str]) -> dict[tuple, int]:
     """
-    For finished races not yet in HistoricalResultRow, fetch from Punters once and persist.
+    For finished races not yet in HistoricalResultRow, fetch from RA once and persist.
     Returns {(race_id, horse_name): position} for all seeded entries.
     Only called on first page load after a race finishes — subsequent loads use DB.
     """
@@ -1676,8 +1709,8 @@ async def _persist_live_results(race_id: str, all_tote: list) -> None:
     Called as a background task — does not block the live-odds response.
 
     Seeding authority (highest → lowest):
-      1. _seed_results_for_date  — cron, RA + Punters, has feature_vector_json and real SP
-      2. _seed_race_results_on_demand — on first page view; Punters API, real SP from race data
+      1. _seed_results_for_date  — cron, RA, has feature_vector_json and real SP
+      2. _seed_race_results_on_demand — on first page view; RA, real SP from race data
       3. _persist_live_results   — fastest but no official SP; writes starting_price=None
     """
     try:
@@ -1798,7 +1831,7 @@ async def _snapshot_prerace_predictions() -> int:
     now_utc = datetime.utcnow()
     written = 0
 
-    # Build race_id → scheduled_time from Punters (authoritative start times)
+    # Build race_id → scheduled_time from Racing Australia (authoritative start times)
     sched_map: dict[str, datetime] = {}
     try:
         client = get_tab_client()
@@ -1818,7 +1851,7 @@ async def _snapshot_prerace_predictions() -> int:
             except Exception:
                 pass
     except Exception as e:
-        log.warning("[snapshot] Could not fetch Punters start times: %s", e)
+        log.warning("[snapshot] Could not fetch RA start times: %s", e)
 
     async with get_session() as session:
         already_result = await session.execute(
@@ -2042,7 +2075,7 @@ def _today() -> str:
 
 
 def _meeting_slug(venue: str, race_date: str) -> str:
-    """Build the punters.com.au meeting slug from venue slug and date."""
+    """Build the Racing Australia meeting slug from venue slug and date."""
     return f"{venue}-{race_date.replace('-', '')}"
 
 
@@ -2074,7 +2107,7 @@ def _normalize_horse(name: str) -> str:
 _edge_times_cache: dict[str, tuple[datetime, dict[int, str]]] = {}
 _edge_odds_cache: dict[str, tuple[datetime, dict[str, float]]] = {}  # race_id → {horse_name: flucs_win}
 
-# Cache full list_meetings response for 10 min (weather + Punters calls are expensive)
+# Cache full list_meetings response for 10 min (weather + RA calls are expensive)
 _list_meetings_cache: dict[str, tuple[datetime, dict]] = {}  # date → (ts, response)
 
 # Cache per-venue meeting response for 2 min — prevents thundering herd from _loadMeetingWinRate
@@ -2829,7 +2862,7 @@ async def refresh_edge_results():
 
 @app.get("/api/edge/yesterday")
 async def get_edge_yesterday(for_date: Optional[str] = Query(None, alias="date")):
-    """Qualifying picks with actual results and SP odds from punters.
+    """Qualifying picks with actual results and SP odds from Racing Australia.
     Accepts ?date=YYYY-MM-DD (defaults to yesterday)."""
     target_date = for_date or (_today_aest() - timedelta(days=1)).isoformat()
     threshold = 0.295
@@ -2900,7 +2933,7 @@ async def get_edge_yesterday(for_date: Optional[str] = Query(None, alias="date")
         position = r.get("position")
         # Race seeded but horse absent → scratched (HistoricalResultRow skips scratched runners)
         scratched = bool(p.race_id in seeded_race_ids and not r)
-        # Race not seeded at all → result unavailable (Punters had no data; don't show as Unplaced)
+        # Race not seeded at all → result unavailable (RA had no data; don't show as Unplaced)
         no_result = bool(p.race_id not in seeded_race_ids and not r)
         model_pct = round(p.win_probability * 100, 1)
         payout = round(sp * stake, 2) if winner and sp else 0
@@ -3154,7 +3187,7 @@ async def get_edge_trifectas():
         for row in exotic_rows:
             race_map.setdefault(row.race_id, []).append(row)
 
-        # Race times come from DB (RunnerPredictionRow.scheduled_time) — no Punters call needed
+        # Race times come from DB (RunnerPredictionRow.scheduled_time) — no RA call needed
 
         for race_id, runners in race_map.items():
             runners.sort(key=rank_key)
@@ -3255,7 +3288,7 @@ async def get_edge_trifectas():
     ]
     if finished_picks:
         finished_race_ids = list({p["race_id"] for p in finished_picks})
-        # Fetch from DB; on first load after a race finishes, seeds missing results from Punters once
+        # Fetch from DB; on first load after a race finishes, seeds missing results from RA once
         db_positions = await _seed_race_results_on_demand(finished_race_ids)
         seeded_race_ids: set[str] = {rid for (rid, _) in db_positions}
 
@@ -3403,7 +3436,7 @@ async def list_meetings(race_date: str = _today()):
             "slug": slug,
         })
 
-    # Merge DB-enriched meetings — ensures venues still appear when Punters is blocked
+    # Merge DB-enriched meetings — ensures venues still appear when RA is blocked
     active_codes = {it["venue_code"] for it in items}
     async with get_session() as session:
         # RacePredictionRow has venue/state metadata from enrichment
@@ -3473,7 +3506,7 @@ async def list_meetings(race_date: str = _today()):
     if seen_vc:
         log.info("list_meetings: added %d DB-only venues for %s: %s", len(seen_vc), race_date, seen_vc)
 
-    # Add any DB-cancelled meetings that are no longer on Punters
+    # Add any DB-cancelled meetings that are no longer on RA
     active_codes = {it["venue_code"] for it in items}
     async with get_session() as session:
         cancelled_race_ids = (await session.execute(
@@ -3615,9 +3648,9 @@ async def get_meeting(race_date: str, venue_code: str):
         client = get_tab_client()
         slug = _meeting_slug(venue_code, race_date)
         raw_races = await asyncio.wait_for(client.get_meeting_races(slug), timeout=25)
-        punters_by_num = {r.get("eventNumber"): r for r in raw_races}
+        ra_by_num = {r.get("eventNumber"): r for r in raw_races}
         existing_nums = {r["race_number"] for r in race_list}
-        for r_num, r in punters_by_num.items():
+        for r_num, r in ra_by_num.items():
             race_id = f"{race_date}_{venue_code}_R{r_num}"
             start_time = r.get("startTime")
             if start_time:
@@ -3895,7 +3928,7 @@ async def get_race(race_id: str):
 @app.get("/api/races/{race_id}/live-odds")
 async def live_odds(race_id: str):
     """
-    Re-fetch current tote odds from punters for a race and compute updated overlays.
+    Re-fetch current tote odds from Racing Australia for a race and compute updated overlays.
     Fast (~1s) — does not regenerate model predictions, just refreshes market data.
     """
     parts = race_id.split("_")
@@ -3962,8 +3995,8 @@ async def live_odds(race_id: str):
     model_probs = {r.horse_name: r.win_probability or 0.0 for r in model_probs_src}
 
     # ── Step 2: try TAB for live odds + any missing positions ────────────────
-    punters_tote: dict[str, tuple] = {}   # horse → (current_odds, actual_position)
-    punters_ok = False
+    ra_tote: dict[str, tuple] = {}   # horse → (current_odds, actual_position)
+    ra_ok = False
     try:
         client = get_tab_client()
         slug = _meeting_slug(venue_code, race_date)
@@ -3978,20 +4011,20 @@ async def live_odds(race_id: str):
                 current_odds = fixed_win or tote_win
                 pos_raw = r.get("finishingPosition")
                 actual_position = int(pos_raw) if pos_raw and int(pos_raw) > 0 else None
-                punters_tote[horse] = (current_odds, actual_position)
-            punters_ok = True
+                ra_tote[horse] = (current_odds, actual_position)
+            ra_ok = True
     except Exception:
         pass  # use DB data only
 
     # ── Step 3: merge — DB results are authoritative for settled races ─────────
-    all_horses = set(model_probs.keys()) | set(punters_tote.keys())
+    all_horses = set(model_probs.keys()) | set(ra_tote.keys())
     all_tote = []
     for horse in all_horses:
-        p_odds, p_pos = punters_tote.get(horse, (None, None))
+        p_odds, p_pos = ra_tote.get(horse, (None, None))
         db_r = db_results.get(horse)
-        # Position: Punters live > DB historical
+        # Position: RA live > DB historical
         actual_position = p_pos or (db_r.position if db_r else None)
-        # Odds: Punters live > DB historical SP > stored enrichment odds
+        # Odds: RA live > DB historical SP > stored enrichment odds
         current_odds = p_odds or (db_r.starting_price if db_r else None) or stored_odds.get(horse)
         all_tote.append((horse, current_odds, actual_position))
 
@@ -5609,7 +5642,7 @@ async def purge_results_for_venue(
 
 @app.post("/api/admin/results/{race_date}")
 async def seed_results(race_date: str, x_cron_secret: Optional[str] = Header(None)):
-    """Fetch race results from punters for a past date and store as training data."""
+    """Fetch race results from Racing Australia for a past date and store as training data."""
     _check_admin(x_cron_secret)
     seeded = await _seed_results_for_date(race_date)
     return {"status": "seeded", "results": seeded}
@@ -7336,7 +7369,7 @@ async def _run_backtest_range(start_date: str, end_date: str) -> None:
         _backtest_state["processed"] += 1
         await _save_backtest_state(start_date, end_date, date_str)  # persist progress
         current += timedelta(days=1)
-        await asyncio.sleep(0.1)  # be polite to punters API
+        await asyncio.sleep(0.1)  # be polite to the RA API
 
     _backtest_state["running"] = False
 
@@ -9609,7 +9642,7 @@ async def restore_cancelled(
 ):
     """
     Re-run cancellation check for a date, restoring any races that were
-    falsely marked cancelled when Punters was blocked. Fast — no re-enrichment.
+    falsely marked cancelled when Racing Australia was blocked. Fast — no re-enrichment.
     """
     _check_admin(x_cron_secret)
     target = date or _today_aest().isoformat()
@@ -9624,8 +9657,9 @@ async def force_restore(
     x_cron_secret: Optional[str] = Header(None),
 ):
     """
-    Directly uncancels ALL cancelled predictions for a date without hitting Punters.
-    Use when Punters is blocked and restore-cancelled can't succeed.
+    Directly uncancels ALL cancelled predictions for a date without hitting the
+    upstream meeting feed. Use when Racing Australia is blocked or returning
+    stale data and `/api/admin/restore-cancelled` can't succeed.
     """
     from sqlalchemy import update as sa_update
     _check_admin(x_cron_secret)
@@ -9637,10 +9671,24 @@ async def force_restore(
             .where(RunnerPredictionRow.cancelled.is_(True))
             .values(cancelled=False)
         )
+        # Mirror into history so settled-race reads also see the restored state.
+        hist_result = await session.execute(
+            sa_update(RunnerPredictionHistoryRow)
+            .where(RunnerPredictionHistoryRow.race_id.like(f"{target}_%"))
+            .where(RunnerPredictionHistoryRow.cancelled.is_(True))
+            .values(cancelled=False)
+        )
         await session.commit()
         affected = result.rowcount
-    log.info("[force-restore] Uncancelled %d runners for %s", affected, target)
-    return {"status": "done", "date": target, "rows_restored": affected}
+        hist_affected = hist_result.rowcount
+    log.info("[force-restore] Uncancelled %d mutable / %d history row(s) for %s",
+             affected, hist_affected, target)
+    return {
+        "status": "done",
+        "date": target,
+        "rows_restored": affected,
+        "history_restored": hist_affected,
+    }
 
 
 @app.get("/api/admin/trifecta-model-comparison")

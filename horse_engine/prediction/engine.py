@@ -76,7 +76,7 @@ def enrich_runner(
     class_chg = form_enricher.class_change_flag(starts, race.race_class)
     spell_w = form_enricher.spell_weeks(starts)
 
-    # Career win rate — prefer Punters direct stats (accurate), fall back to form starts
+    # Career win rate — prefer Racing Australia direct stats (accurate), fall back to form starts
     if runner.career_starts > 0:
         wr_career = runner.career_wins / runner.career_starts
     else:
@@ -126,7 +126,7 @@ def enrich_runner(
         if runner.second_up_starts > 0 else 0.0
     )
 
-    # Surface match — prefer Punters condition stats, fall back to form-based
+    # Surface match — prefer Racing Australia condition stats, fall back to form-based
     if runner.condition_starts > 0:
         surface_match = wr_condition
     else:

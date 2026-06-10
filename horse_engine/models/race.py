@@ -84,7 +84,7 @@ class Runner(BaseModel):
     career_wins: int
     career_places: int
 
-    # Direct stats from Punters API — replaces form-start derived rates
+    # Direct stats from Racing Australia API — replaces form-start derived rates
     track_starts: int = 0
     track_wins: int = 0
     distance_starts: int = 0

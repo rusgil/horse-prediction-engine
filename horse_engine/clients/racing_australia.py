@@ -36,7 +36,7 @@ _STATE_TZ = {
     "QLD": "+10:00", "SA": "+09:30", "WA": "+08:00", "NT": "+09:30",
 }
 
-# Strip bookmaker/sponsor prefixes from venue names so slugs match Punters format
+# Strip bookmaker/sponsor prefixes from venue names so slugs match our internal format
 _SPONSOR_RE = re.compile(
     r"^(sportsbet|bet365|tab|ubet|ladbrokes|neds|palmerbet|pointsbet|"
     r"betfair|bluebet|boombet|playup|elitebet|topbetta|racing\.com|"
