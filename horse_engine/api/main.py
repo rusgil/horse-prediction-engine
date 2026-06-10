@@ -730,7 +730,12 @@ async def _scheduled_pre_race_enrich_and_scratch():
                         if not current_field:
                             continue
                         async with get_session() as session:
-                            db_runners = (await session.execute(
+                            # Compare current RA field against the union of uncancelled
+                            # rows in both mutable and history. This catches horses that
+                            # only live in history (e.g. snapshotted at 9am but already
+                            # removed from mutable by a subsequent re-enrichment) as well
+                            # as horses still present in mutable.
+                            mut_runners = (await session.execute(
                                 select(RunnerPredictionRow.horse_name)
                                 .where(RunnerPredictionRow.race_id == race_id)
                                 .where(
@@ -738,19 +743,40 @@ async def _scheduled_pre_race_enrich_and_scratch():
                                     | RunnerPredictionRow.cancelled.is_(None)
                                 )
                             )).scalars().all()
-                            scratched_names = {n for n in db_runners if n not in current_field}
+                            hist_runners = (await session.execute(
+                                select(RunnerPredictionHistoryRow.horse_name)
+                                .where(RunnerPredictionHistoryRow.race_id == race_id)
+                                .where(
+                                    RunnerPredictionHistoryRow.cancelled.is_(False)
+                                    | RunnerPredictionHistoryRow.cancelled.is_(None)
+                                )
+                            )).scalars().all()
+                            scratched_names = {
+                                n for n in set(mut_runners) | set(hist_runners)
+                                if n not in current_field
+                            }
                             if scratched_names:
-                                result = await session.execute(
+                                mut_result = await session.execute(
                                     sa_update(RunnerPredictionRow)
                                     .where(RunnerPredictionRow.race_id == race_id)
                                     .where(RunnerPredictionRow.horse_name.in_(scratched_names))
                                     .values(cancelled=True)
                                 )
-                                if result.rowcount:
+                                # Mirror into history so downstream readers (which filter on
+                                # history.cancelled per BUG-13) actually exclude scratches.
+                                hist_result = await session.execute(
+                                    sa_update(RunnerPredictionHistoryRow)
+                                    .where(RunnerPredictionHistoryRow.race_id == race_id)
+                                    .where(RunnerPredictionHistoryRow.horse_name.in_(scratched_names))
+                                    .values(cancelled=True)
+                                )
+                                if mut_result.rowcount or hist_result.rowcount:
                                     await session.commit()
-                                    log.info("[scratch-check] %s: cancelled %d runner(s): %s",
-                                             race_id, result.rowcount, scratched_names)
-                                    scratch_count += result.rowcount
+                                    log.info(
+                                        "[scratch-check] %s: cancelled %d mutable / %d history row(s): %s",
+                                        race_id, mut_result.rowcount, hist_result.rowcount, scratched_names,
+                                    )
+                                    scratch_count += len(scratched_names)
                     except Exception as e:
                         log.debug("[scratch-check] Failed for %s: %s", race_id, e)
 
@@ -3642,18 +3668,20 @@ async def get_meeting(race_date: str, venue_code: str):
                 placers.setdefault(r.race_id, set()).add(r.horse_name)
         log.info("[get_meeting] position-based winners for %s/%s: %s", venue_code, race_date, winners)
 
-        # Any race with a history snapshot is treated as completed — use history for
-        # its top pick even if results seeding hasn't run yet (winner position=1 not
-        # yet seeded). Without this, a post-race re-enrichment would inflate mutable
-        # win/place probabilities and they'd show on the card instead of pre-race values.
-        snapshotted_ids_q = await session.execute(
-            select(RunnerPredictionHistoryRow.race_id)
-            .where(RunnerPredictionHistoryRow.race_id.in_(race_ids))
+        # Completed = HistoricalResultRow exists for the race (Ground Rule 5).
+        # Completed races read from the immutable history snapshot so the displayed
+        # top pick matches the pick used for model_correct / result banners. Upcoming
+        # races read from mutable so post-9am enrichments (fresh form, scratches,
+        # updated odds) are visible. Mutable is protected from post-race contamination
+        # by the history_exists + scheduled_time guard in save_race_predictions.
+        settled_ids_q = await session.execute(
+            select(HistoricalResultRow.race_id)
+            .where(HistoricalResultRow.race_id.in_(race_ids))
             .distinct()
         )
-        snapshotted_ids: set[str] = set(snapshotted_ids_q.scalars().all())
+        settled_ids: set[str] = set(settled_ids_q.scalars().all())
 
-        completed_ids = set(winners.keys()) | snapshotted_ids
+        completed_ids = set(winners.keys()) | settled_ids
 
         # Top pick per race:
         # - Completed races → history table only (written once pre-race; re-enrichments
@@ -3736,14 +3764,15 @@ async def get_meeting(race_date: str, venue_code: str):
 async def get_race(race_id: str):
     """Return full race prediction for a given race_id."""
     async with get_session() as session:
-        # Completed races use history table (written once pre-race) so the rank-1 shown
-        # on the card matches the pick used for model_correct / result banners.
-        # Use RunnerPredictionHistoryRow (snapshot, written at 9am) as the primary
-        # signal — it exists before results seeding runs, preventing post-race
-        # re-enrichment in mutable from inflating displayed probabilities.
+        # Settled = HistoricalResultRow exists (Ground Rule 5). Settled races read from
+        # the immutable history snapshot so the rank-1 shown on the card matches the
+        # pick used for model_correct / result banners. Unsettled races read from
+        # mutable so post-9am enrichments (fresh form, scratches, updated odds) are
+        # visible. Mutable is protected from post-race contamination by the
+        # history_exists + scheduled_time guard in save_race_predictions.
         settled = (await session.execute(
-            select(RunnerPredictionHistoryRow.race_id)
-            .where(RunnerPredictionHistoryRow.race_id == race_id)
+            select(HistoricalResultRow.race_id)
+            .where(HistoricalResultRow.race_id == race_id)
             .limit(1)
         )).scalar() is not None
 
@@ -3757,6 +3786,7 @@ async def get_race(race_id: str):
                     select(RunnerPredictionHistoryRow)
                     .where(RunnerPredictionHistoryRow.race_id == race_id)
                     .where(RunnerPredictionHistoryRow.enriched_at == max_at)
+                    .where(RunnerPredictionHistoryRow.cancelled.is_(False) | RunnerPredictionHistoryRow.cancelled.is_(None))
                     .order_by(RunnerPredictionHistoryRow.model_rank)
                 )
                 runners = hist_result.scalars().all()
