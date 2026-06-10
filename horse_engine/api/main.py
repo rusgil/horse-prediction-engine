@@ -3762,21 +3762,25 @@ async def get_race(race_id: str):
     two_years_ago = (datetime.utcnow() - timedelta(days=730)).strftime("%Y-%m-%d")
     async with get_session() as session:
         hist_rows = (await session.execute(
-            select(HistoricalResultRow.horse_name, HistoricalResultRow.winner)
+            select(HistoricalResultRow.horse_name, HistoricalResultRow.winner, HistoricalResultRow.placed)
             .where(HistoricalResultRow.horse_name.in_(horse_names))
             .where(HistoricalResultRow.race_id != race_id)
             .where(HistoricalResultRow.race_id >= two_years_ago)
             .order_by(HistoricalResultRow.race_id.desc())
         )).all()
 
-    hist_by_horse: dict[str, list[bool]] = {}
-    for horse_name, winner in hist_rows:
+    hist_by_horse: dict[str, list[tuple[bool, bool]]] = {}
+    for horse_name, winner, placed in hist_rows:
         bucket = hist_by_horse.setdefault(horse_name, [])
         if len(bucket) < 10:
-            bucket.append(bool(winner))
+            bucket.append((bool(winner), bool(placed)))
 
     last10 = {
-        name: {"wins_last_10": sum(starts), "starts_last_10": len(starts)}
+        name: {
+            "wins_last_10": sum(1 for w, _ in starts if w),
+            "places_last_10": sum(1 for w, p in starts if w or p),
+            "starts_last_10": len(starts),
+        }
         for name, starts in hist_by_horse.items()
     }
 
@@ -9787,9 +9791,11 @@ def _runner_response(row: RunnerPredictionRow, last10: dict | None = None) -> di
     # Fallback: historical_results-derived stats for pre-June-2026 records
     # where enriched_json predates the wins_last_10 field.
     wins_last_10 = enriched.get("wins_last_10")
+    places_last_10 = enriched.get("places_last_10")
     starts_last_10 = enriched.get("starts_last_10")
     if starts_last_10 is None and last10 is not None:
         wins_last_10 = last10.get("wins_last_10", 0)
+        places_last_10 = last10.get("places_last_10", 0)
         starts_last_10 = last10.get("starts_last_10", 0)
 
     return {
@@ -9810,6 +9816,7 @@ def _runner_response(row: RunnerPredictionRow, last10: dict | None = None) -> di
         "key_flags": json.loads(row.key_flags or "[]"),
         "form_score": enriched.get("form_score"),
         "wins_last_10": wins_last_10,
+        "places_last_10": places_last_10,
         "starts_last_10": starts_last_10,
         "distance_aptitude": enriched.get("distance_aptitude"),
         "sire_name": enriched.get("sire_name"),
