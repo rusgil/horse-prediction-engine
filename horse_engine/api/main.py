@@ -573,6 +573,13 @@ async def _check_scratches_today() -> int:
                             .where(RunnerPredictionRow.horse_name.in_(scratched_names))
                             .values(cancelled=True)
                         )
+                        # Mirror scratch into history so settled-race edge picks also exclude them
+                        await session.execute(
+                            sa_update(RunnerPredictionHistoryRow)
+                            .where(RunnerPredictionHistoryRow.race_id == race_id)
+                            .where(RunnerPredictionHistoryRow.horse_name.in_(scratched_names))
+                            .values(cancelled=True)
+                        )
                         if result.rowcount:
                             await session.commit()
                             log.info("[scratch-check] %s: cancelled %d runner(s): %s",
@@ -2144,6 +2151,22 @@ async def get_edge_picks():
                 mut_q = mut_q.where(~RunnerPredictionRow.race_id.in_(settled_race_ids))
             mut_rows: list = (await session.execute(mut_q)).scalars().all()
 
+            # For settled-race history picks with 0 odds, fall back to mutable best_available_odds.
+            # History is snapshotted at 9am before the edge page triggers a refresh; mutable
+            # has up-to-date odds. Use a dict — never mutate history row objects in-session.
+            hist_odds_override: dict[tuple[str, str], float] = {}
+            hist_zero_odds = [r for r in hist_rows if not (r.best_available_odds or 0)]
+            if hist_zero_odds:
+                mut_odds_q = await session.execute(
+                    select(RunnerPredictionRow.race_id, RunnerPredictionRow.horse_name,
+                           RunnerPredictionRow.best_available_odds)
+                    .where(RunnerPredictionRow.race_id.in_({r.race_id for r in hist_zero_odds}))
+                    .where(RunnerPredictionRow.horse_name.in_({r.horse_name for r in hist_zero_odds}))
+                )
+                for race_id, horse_name, bao in mut_odds_q.fetchall():
+                    if (bao or 0) > 1.0:
+                        hist_odds_override[(race_id, horse_name)] = bao
+
             rows = hist_rows + mut_rows
             # Exclude trial/trackwork venues
             rows = [r for r in rows if not re.search(r"-(trial|trail|jumpout)s?[_-]", r.race_id, re.IGNORECASE)]
@@ -2268,7 +2291,7 @@ async def get_edge_picks():
         )
 
         for runner_row in rows:
-            odds = runner_row.best_available_odds or 0
+            odds = runner_row.best_available_odds or hist_odds_override.get((runner_row.race_id, runner_row.horse_name), 0)
             model_pct = round(runner_row.win_probability * 100, 1)
             market_implied_pct = round((1 / odds) * 100, 1) if odds else None
             edge_pct = round(model_pct - market_implied_pct, 1) if market_implied_pct else None
