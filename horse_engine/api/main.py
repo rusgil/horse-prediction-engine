@@ -947,11 +947,18 @@ async def _inject_accumulated_stats(race, session) -> None:
     Inject real jockey/trainer/career win rates from historical_results into Race runners.
     Runs after parse_race() so it overrides the flat 10.0 defaults from RA/Betfair.
     Only updates fields where we have >= MIN_SAMPLES observations.
+
+    All aggregates exclude historical_results rows on or after race.date so that
+    today's already-resulted races don't leak into the features for races later
+    today (and so backtests are deterministic).
     """
     from sqlalchemy import text as sa_text
 
     venue = (race.venue or "").lower()
     distance = race.distance or 0
+    # race_id format is "YYYY-MM-DD_venue_RN"; lex-comparing race_id < race.date
+    # correctly excludes today's races and any future seeded results.
+    race_date_prefix = race.date or date.today().isoformat()
 
     jockeys = list({r.jockey for r in race.runners if r.jockey})
     trainers = list({r.trainer for r in race.runners if r.trainer})
@@ -968,6 +975,7 @@ async def _inject_accumulated_stats(race, session) -> None:
         params["venue"] = venue
         params["dist_lo"] = distance - 200
         params["dist_hi"] = distance + 200
+        params["race_date_prefix"] = race_date_prefix
         rows = (await session.execute(sa_text(f"""
             SELECT
                 jockey,
@@ -988,6 +996,7 @@ async def _inject_accumulated_stats(race, session) -> None:
                 SELECT jockey, winner, venue, distance, barrier, 0 AS wins_season_placeholder
                 FROM historical_results
                 WHERE jockey IN ({placeholders}) AND jockey IS NOT NULL
+                  AND race_id < :race_date_prefix
             ) sub
             GROUP BY jockey
         """), params)).fetchall()
@@ -1009,6 +1018,7 @@ async def _inject_accumulated_stats(race, session) -> None:
         params["venue"] = venue
         params["dist_lo"] = distance - 200
         params["dist_hi"] = distance + 200
+        params["race_date_prefix"] = race_date_prefix
         rows = (await session.execute(sa_text(f"""
             SELECT
                 trainer,
@@ -1022,6 +1032,7 @@ async def _inject_accumulated_stats(race, session) -> None:
                 SUM(CASE WHEN (LOWER(track_condition) LIKE 'soft%' OR LOWER(track_condition) LIKE 'heavy%') AND winner THEN 1 ELSE 0 END) AS wet_wins
             FROM historical_results
             WHERE trainer IN ({placeholders}) AND trainer IS NOT NULL
+              AND race_id < :race_date_prefix
             GROUP BY trainer
         """), params)).fetchall()
         for row in rows:
@@ -1040,6 +1051,7 @@ async def _inject_accumulated_stats(race, session) -> None:
         params["venue"] = venue
         params["dist_lo"] = distance - 200
         params["dist_hi"] = distance + 200
+        params["race_date_prefix"] = race_date_prefix
         rows = (await session.execute(sa_text(f"""
             SELECT
                 LOWER(horse_name) AS hname,
@@ -1054,6 +1066,7 @@ async def _inject_accumulated_stats(race, session) -> None:
                 SUM(CASE WHEN (LOWER(track_condition) LIKE 'soft%' OR LOWER(track_condition) LIKE 'heavy%') AND winner THEN 1 ELSE 0 END) AS wet_wins
             FROM historical_results
             WHERE LOWER(horse_name) IN ({placeholders})
+              AND race_id < :race_date_prefix
             GROUP BY LOWER(horse_name)
         """), params)).fetchall()
         for row in rows:
@@ -6492,16 +6505,20 @@ async def snapshot_backfill(
     written = 0
     async with get_session() as session:
         for race_id, runners in race_groups.items():
-            runners.sort(key=lambda x: x.win_probability or 0, reverse=True)
-            place_sorted = sorted(runners, key=lambda x: x.place_probability or 0, reverse=True)
-            place_rank_map = {r.horse_name: i + 1 for i, r in enumerate(place_sorted)}
-            for rank, r in enumerate(runners, 1):
+            # Copy model_rank / place_model_rank / exotic_model_rank verbatim from
+            # mutable per BUG-07's fix. Recomputing rank by sorting on win_probability
+            # would lose any overlay-adjusted or tie-broken rank ordering that
+            # mutable holds. Fall back to a win_probability sort only when mutable
+            # has no rank populated (legacy rows).
+            for r in runners:
                 session.add(RunnerPredictionHistoryRow(
                     race_id=r.race_id, horse_name=r.horse_name,
                     tab_number=r.tab_number, barrier=r.barrier,
                     jockey=r.jockey, trainer=r.trainer, weight=r.weight,
                     win_probability=r.win_probability, place_probability=r.place_probability,
-                    model_rank=rank, place_model_rank=place_rank_map.get(r.horse_name),
+                    model_rank=r.model_rank,
+                    place_model_rank=r.place_model_rank,
+                    exotic_model_rank=r.exotic_model_rank,
                     market_rank=r.market_rank, overlay=r.overlay,
                     best_available_odds=r.best_available_odds, value_rating=r.value_rating,
                     key_flags=r.key_flags, enriched_json=r.enriched_json,
@@ -6515,6 +6532,19 @@ async def snapshot_backfill(
                     source="late",  # retroactive fill — flagged for auditing
                     recorded_at=now_utc,
                 ))
+            # Fallback: if mutable has no model_rank for any runner in this race,
+            # derive one from win_probability so downstream readers can still
+            # locate a rank-1 row (legacy pre-rank-tracking data).
+            if all((r.model_rank is None) for r in runners):
+                from sqlalchemy import update as sa_update
+                wp_sorted = sorted(runners, key=lambda x: x.win_probability or 0, reverse=True)
+                for rank, r in enumerate(wp_sorted, 1):
+                    await session.execute(
+                        sa_update(RunnerPredictionHistoryRow)
+                        .where(RunnerPredictionHistoryRow.race_id == r.race_id)
+                        .where(RunnerPredictionHistoryRow.horse_name == r.horse_name)
+                        .values(model_rank=rank)
+                    )
             await session.commit()
             written += 1
 
