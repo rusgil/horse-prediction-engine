@@ -293,19 +293,29 @@ async def _update_steam_features(race_ids: list[str]) -> None:
         log.info("[steam-update] Updated steam features for %d runners across %d races", updated, len(race_ids))
 
 
-async def _cancel_abandoned_meetings(client, today: str) -> None:
+async def _cancel_abandoned_meetings(
+    client,
+    today: str,
+    meetings: list | None = None,
+    venue_events: dict[str, list] | None = None,
+) -> None:
     """
     Compare today's DB predictions against Punters' live meeting list.
     Mark runners cancelled for any venue that has been dropped or where
     all races are abandoned/closed without having resulted.
+
+    Pass pre-fetched ``meetings`` and ``venue_events`` to skip redundant API calls
+    when called from a combined job that has already fetched this data.
     """
     from sqlalchemy import update as sa_update
     date_sfx = f"-{today.replace('-', '')}"
-    try:
-        meetings = await asyncio.wait_for(client.get_meetings(today), timeout=20)
-    except Exception as e:
-        log.warning("[cancel-check] Could not fetch meetings: %s", e)
-        return
+
+    if meetings is None:
+        try:
+            meetings = await asyncio.wait_for(client.get_meetings(today), timeout=20)
+        except Exception as e:
+            log.warning("[cancel-check] Could not fetch meetings: %s", e)
+            return
 
     # Guard: if Punters returns nothing, it's likely blocked — never mass-cancel on empty response
     if not meetings:
@@ -318,11 +328,14 @@ async def _cancel_abandoned_meetings(client, today: str) -> None:
         slug = m.get("slug", "")
         vc = slug[:-len(date_sfx)] if slug.endswith(date_sfx) else slug
         active_venue_codes.add(vc)
-        try:
-            raw_events = await asyncio.wait_for(client.get_meeting_races(slug), timeout=15)
-            punters_race_statuses[vc] = {(e.get("status") or "").lower() for e in raw_events}
-        except Exception:
-            pass
+        if venue_events is not None and vc in venue_events:
+            punters_race_statuses[vc] = {(e.get("status") or "").lower() for e in venue_events[vc]}
+        else:
+            try:
+                raw_events = await asyncio.wait_for(client.get_meeting_races(slug), timeout=15)
+                punters_race_statuses[vc] = {(e.get("status") or "").lower() for e in raw_events}
+            except Exception:
+                pass
 
     async with get_session() as session:
         db_race_ids = (await session.execute(
@@ -580,6 +593,145 @@ async def _scheduled_check_scratches():
             log.info("[scheduler] Scratch check: cancelled %d runner(s)", n)
     except Exception as e:
         log.exception("[scheduler] Scratch check failed: %s", e)
+
+
+async def _scheduled_pre_race_enrich_and_scratch():
+    """
+    Combined 15-min job: re-enrich races within 2h, detect scratches within 4h,
+    and check for abandoned meetings — all from a single get_meetings +
+    get_meeting_races pass. Eliminates ~2,100 redundant API calls/day vs running
+    these as separate crons.
+    """
+    from sqlalchemy import update as sa_update
+    now_utc = datetime.utcnow().replace(tzinfo=timezone.utc)
+    enrich_horizon = now_utc + timedelta(hours=2)
+    scratch_horizon = now_utc + timedelta(hours=4)
+    today = _today_aest().isoformat()
+    date_sfx = f"-{today.replace('-', '')}"
+    log.info("[pre-race] Combined enrich+scratch scan starting")
+
+    try:
+        client = get_tab_client()
+
+        # Clear RA meeting cache so scratch detection sees fresh runner lists
+        if hasattr(client, "_ra") and hasattr(client._ra, "_meeting_cache"):
+            client._ra._meeting_cache.clear()
+
+        async with get_session() as session:
+            model = await _load_model(session)
+            place_model = await _load_place_model(session)
+
+        meetings = await client.get_meetings(today)
+        if not meetings:
+            log.warning("[pre-race] No meetings returned for %s", today)
+            return
+
+        # Single get_meeting_races pass per meeting — shared by enrich, scratch, and cancel-check
+        meeting_meta: dict[str, tuple] = {}   # vc -> (slug, venue_name, state)
+        venue_raw_events: dict[str, list] = {}  # vc -> raw_events
+        for m in meetings:
+            slug = m.get("slug", "")
+            if not slug:
+                continue
+            vc = slug[:-len(date_sfx)] if slug.endswith(date_sfx) else slug.split("-")[0]
+            meeting_meta[vc] = (slug, m.get("venue", vc), m.get("state", ""))
+            try:
+                venue_raw_events[vc] = await client.get_meeting_races(slug)
+            except Exception as e:
+                log.debug("[pre-race] get_meeting_races failed for %s: %s", slug, e)
+
+        # Cancel-check using pre-fetched data — no extra API calls
+        await _cancel_abandoned_meetings(client, today, meetings=meetings, venue_events=venue_raw_events)
+
+        enriched_count = 0
+        scratch_count = 0
+
+        for vc, raw_events in venue_raw_events.items():
+            slug, venue_name, state = meeting_meta[vc]
+            for raw_event in raw_events:
+                start_raw = raw_event.get("startTime")
+                if not start_raw:
+                    continue
+                try:
+                    jump = datetime.fromisoformat(start_raw.replace("Z", "+00:00"))
+                except ValueError:
+                    continue
+
+                in_enrich = now_utc <= jump <= enrich_horizon
+                in_scratch = now_utc - timedelta(minutes=30) <= jump <= scratch_horizon
+
+                if not in_enrich and not in_scratch:
+                    continue
+
+                race_num = raw_event.get("eventNumber")
+                race_id = f"{today}_{vc}_R{race_num}"
+
+                try:
+                    full_event = await client.get_race(slug, race_num)
+                except Exception as e:
+                    log.warning("[pre-race] get_race failed for %s: %s", race_id, e)
+                    continue
+                if not full_event:
+                    continue
+
+                if in_enrich:
+                    try:
+                        race = await client.parse_race(full_event, today, venue_name, state)
+                        async with get_session() as session:
+                            await _inject_accumulated_stats(race, session)
+                        predictions, _ = await enrich_and_predict_race(race, model, place_model=place_model)
+                        async with get_session() as session:
+                            await save_race_predictions(
+                                session,
+                                race_id,
+                                [_prediction_to_db_dict(p, race_id, start_raw, race=race) for p in predictions],
+                            )
+                        log.info("[pre-race] Re-enriched %s (jump %s)", race_id, start_raw)
+                        enriched_count += 1
+                    except Exception as e:
+                        log.warning("[pre-race] Enrich failed for %s: %s", race_id, e)
+
+                if in_scratch:
+                    try:
+                        current_field = {
+                            (sel.get("competitor") or {}).get("name", "").strip()
+                            for sel in full_event.get("selections", [])
+                            if (sel.get("competitor") or {}).get("name", "").strip()
+                        }
+                        if not current_field:
+                            continue
+                        async with get_session() as session:
+                            db_runners = (await session.execute(
+                                select(RunnerPredictionRow.horse_name)
+                                .where(RunnerPredictionRow.race_id == race_id)
+                                .where(
+                                    RunnerPredictionRow.cancelled.is_(False)
+                                    | RunnerPredictionRow.cancelled.is_(None)
+                                )
+                            )).scalars().all()
+                            scratched_names = {n for n in db_runners if n not in current_field}
+                            if scratched_names:
+                                result = await session.execute(
+                                    sa_update(RunnerPredictionRow)
+                                    .where(RunnerPredictionRow.race_id == race_id)
+                                    .where(RunnerPredictionRow.horse_name.in_(scratched_names))
+                                    .values(cancelled=True)
+                                )
+                                if result.rowcount:
+                                    await session.commit()
+                                    log.info("[scratch-check] %s: cancelled %d runner(s): %s",
+                                             race_id, result.rowcount, scratched_names)
+                                    scratch_count += result.rowcount
+                    except Exception as e:
+                        log.debug("[scratch-check] Failed for %s: %s", race_id, e)
+
+        if enriched_count:
+            log.info("[pre-race] Re-enriched %d races", enriched_count)
+        if scratch_count:
+            log.info("[scratch-check] Cancelled %d runner(s) total", scratch_count)
+
+    except Exception as e:
+        log.exception("[pre-race] Combined enrich+scratch job failed: %s", e)
 
 
 async def _scheduled_live_odds_refresh():
@@ -1692,16 +1844,12 @@ async def lifespan(app: FastAPI):
         CronTrigger(hour="9-20", minute="0,15,30,45", timezone="Australia/Sydney")
     )
     scheduler.add_job(
-        _scheduled_pre_race_enrich,
+        _scheduled_pre_race_enrich_and_scratch,
         CronTrigger(hour="9-20", minute="0,15,30,45", timezone="Australia/Sydney")
     )
     scheduler.add_job(
         _scheduled_live_odds_refresh,
         CronTrigger(hour="9-20", minute="0,20,40", timezone="Australia/Sydney")
-    )
-    scheduler.add_job(
-        _scheduled_check_scratches,
-        CronTrigger(hour="9-20", minute="0,15,30,45", timezone="Australia/Sydney")
     )
     scheduler.start()
     log.info("[scheduler] Cron jobs scheduled")
