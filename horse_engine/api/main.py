@@ -3757,12 +3757,16 @@ async def get_race(race_id: str):
     if not runners:
         raise HTTPException(404, f"No predictions for race {race_id}. Trigger /enrich first.")
 
-    # Last 10 win record derived live from historical_results — always accurate.
+    # Last 10 + most recent run date from historical_results.
+    # race_id format "YYYY-MM-DD_venue_RN" sorts chronologically, so the first
+    # result per horse is the most recent tracked run.
     horse_names = [r.horse_name for r in runners]
     two_years_ago = (datetime.utcnow() - timedelta(days=730)).strftime("%Y-%m-%d")
+    today_str = datetime.utcnow().strftime("%Y-%m-%d")
     async with get_session() as session:
         hist_rows = (await session.execute(
-            select(HistoricalResultRow.horse_name, HistoricalResultRow.winner, HistoricalResultRow.placed)
+            select(HistoricalResultRow.horse_name, HistoricalResultRow.winner,
+                   HistoricalResultRow.placed, HistoricalResultRow.race_id)
             .where(HistoricalResultRow.horse_name.in_(horse_names))
             .where(HistoricalResultRow.race_id != race_id)
             .where(HistoricalResultRow.race_id >= two_years_ago)
@@ -3770,19 +3774,32 @@ async def get_race(race_id: str):
         )).all()
 
     hist_by_horse: dict[str, list[tuple[bool, bool]]] = {}
-    for horse_name, winner, placed in hist_rows:
+    hist_last_run: dict[str, int] = {}  # horse_name → days since last tracked run
+    for horse_name, winner, placed, hist_race_id in hist_rows:
         bucket = hist_by_horse.setdefault(horse_name, [])
         if len(bucket) < 10:
             bucket.append((bool(winner), bool(placed)))
+        if horse_name not in hist_last_run:
+            run_date_str = hist_race_id[:10]  # "YYYY-MM-DD"
+            try:
+                run_date = datetime.strptime(run_date_str, "%Y-%m-%d").date()
+                hist_last_run[horse_name] = (datetime.strptime(today_str, "%Y-%m-%d").date() - run_date).days
+            except ValueError:
+                pass
 
     last10 = {
         name: {
             "wins_last_10": sum(1 for w, _ in starts if w),
             "places_last_10": sum(1 for w, p in starts if w or p),
             "starts_last_10": len(starts),
+            "days_since_last_run_hist": hist_last_run.get(name),
         }
         for name, starts in hist_by_horse.items()
     }
+    # Also include hist_last_run for horses that have history but no last10 bucket
+    for name, days in hist_last_run.items():
+        if name not in last10:
+            last10[name] = {"days_since_last_run_hist": days}
 
     return {
         "race_id": race_id,
@@ -9779,6 +9796,13 @@ def _prediction_to_db_dict(pred, race_id: str, scheduled_time: str | None = None
     return d
 
 
+def _best_days_since(ra_days: int | None, hist_days: int | None) -> int | None:
+    """Return the smaller (more recent) of the two days-since-last-run values.
+    Ignores -1 (RA sentinel for no prior starts) and None."""
+    candidates = [d for d in (ra_days, hist_days) if d is not None and d >= 0]
+    return min(candidates) if candidates else ra_days
+
+
 def _runner_response(row: RunnerPredictionRow, last10: dict | None = None) -> dict:
     enriched = {}
     if row.enriched_json:
@@ -9827,7 +9851,7 @@ def _runner_response(row: RunnerPredictionRow, last10: dict | None = None) -> di
         "is_drifted": enriched.get("is_drifted", False),
         "trainer_overall_rate": enriched.get("trainer_overall_rate"),
         "jockey_overall_rate": enriched.get("jockey_overall_rate"),
-        "days_since_last_run": enriched.get("days_since_last_run"),
+        "days_since_last_run": _best_days_since(enriched.get("days_since_last_run"), last10.get("days_since_last_run_hist") if last10 else None),
         "runs_this_prep": enriched.get("runs_this_prep"),
         "win_rate_distance": enriched.get("win_rate_distance"),
         "class_change": enriched.get("class_change"),
