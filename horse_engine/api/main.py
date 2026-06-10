@@ -3703,9 +3703,33 @@ async def get_race(race_id: str):
     if not runners:
         raise HTTPException(404, f"No predictions for race {race_id}. Trigger /enrich first.")
 
+    # Derive Last 10 win record from historical_results for any runner whose
+    # enriched_json predates the wins_last_10 field (or is missing it entirely).
+    horse_names = [r.horse_name for r in runners]
+    two_years_ago = (datetime.utcnow() - timedelta(days=730)).strftime("%Y-%m-%d")
+    async with get_session() as session:
+        hist_rows = (await session.execute(
+            select(HistoricalResultRow.horse_name, HistoricalResultRow.winner)
+            .where(HistoricalResultRow.horse_name.in_(horse_names))
+            .where(HistoricalResultRow.race_id != race_id)
+            .where(HistoricalResultRow.race_id >= two_years_ago)
+            .order_by(HistoricalResultRow.race_id.desc())
+        )).all()
+
+    hist_by_horse: dict[str, list[bool]] = {}
+    for horse_name, winner in hist_rows:
+        bucket = hist_by_horse.setdefault(horse_name, [])
+        if len(bucket) < 10:
+            bucket.append(bool(winner))
+
+    last10 = {
+        name: {"wins_last_10": sum(starts), "starts_last_10": len(starts)}
+        for name, starts in hist_by_horse.items()
+    }
+
     return {
         "race_id": race_id,
-        "runners": [_runner_response(r) for r in runners],
+        "runners": [_runner_response(r, last10.get(r.horse_name)) for r in runners],
     }
 
 
@@ -9698,13 +9722,22 @@ def _prediction_to_db_dict(pred, race_id: str, scheduled_time: str | None = None
     return d
 
 
-def _runner_response(row: RunnerPredictionRow) -> dict:
+def _runner_response(row: RunnerPredictionRow, last10: dict | None = None) -> dict:
     enriched = {}
     if row.enriched_json:
         try:
             enriched = json.loads(row.enriched_json)
         except Exception:
             pass
+
+    # Use enriched_json values when present; fall back to historical_results-derived stats
+    # for records predating the wins_last_10 field (pre-June 2026 snapshots).
+    wins_last_10 = enriched.get("wins_last_10")
+    starts_last_10 = enriched.get("starts_last_10")
+    if starts_last_10 is None and last10 is not None:
+        wins_last_10 = last10.get("wins_last_10", 0)
+        starts_last_10 = last10.get("starts_last_10", 0)
+
     return {
         "tab_number": row.tab_number,
         "barrier": row.barrier,
@@ -9722,8 +9755,8 @@ def _runner_response(row: RunnerPredictionRow) -> dict:
         "value_rating": row.value_rating,
         "key_flags": json.loads(row.key_flags or "[]"),
         "form_score": enriched.get("form_score"),
-        "wins_last_10": enriched.get("wins_last_10"),
-        "starts_last_10": enriched.get("starts_last_10"),
+        "wins_last_10": wins_last_10,
+        "starts_last_10": starts_last_10,
         "distance_aptitude": enriched.get("distance_aptitude"),
         "sire_name": enriched.get("sire_name"),
         "pedigree_distance_match": enriched.get("pedigree_distance_match"),
