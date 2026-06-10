@@ -1375,6 +1375,19 @@
       S.enrichedRaceIds = new Set(
         S.races.filter(r => r.enriched_at).map(r => r.race_id)
       );
+      // Refresh meeting label maxConf from fresh race data (cache may be stale)
+      const freshMaxConf = S.races.reduce((max, r) => {
+        const pct = r.top_win_probability ? Math.round(r.top_win_probability * 100) : 0;
+        return Math.max(max, pct);
+      }, 0);
+      const key = m.venue_code;
+      if (S.meetingStats[key]) S.meetingStats[key].maxConf = freshMaxConf;
+      const confEl = document.getElementById(`pill-conf-${key}`);
+      if (confEl && freshMaxConf >= 25) {
+        confEl.textContent = `${freshMaxConf}% best pick`;
+        confEl.style.color = freshMaxConf >= 40 ? 'var(--green)' : 'var(--gold)';
+        confEl.style.display = '';
+      }
       renderRacePills();
       document.getElementById('raceContent').innerHTML = '';
 
