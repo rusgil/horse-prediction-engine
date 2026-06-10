@@ -906,7 +906,19 @@ async def _scheduled_live_odds_refresh():
                     if not new_odds and not steam_map:
                         continue
 
-                    sorted_ids = sorted(new_odds, key=lambda rid: new_odds[rid])
+                    # Recompute market_rank across the FULL active field, not just the
+                    # OddsPro-updated runners (BUG-20). Use new_odds where we have it,
+                    # falling back to the row's existing best_available_odds, so the
+                    # ranking is coherent even when OddsPro only covers part of the
+                    # field. Cancelled runners are excluded from the ranking.
+                    final_odds: dict[int, float] = {}
+                    for row in race_rows:
+                        if row.cancelled:
+                            continue
+                        o = new_odds.get(row.id) or row.best_available_odds or 0
+                        if o and o > 1.0:
+                            final_odds[row.id] = o
+                    sorted_ids = sorted(final_odds, key=lambda rid: final_odds[rid])
                     rank_map = {rid: i + 1 for i, rid in enumerate(sorted_ids)}
 
                     for row in race_rows:
@@ -919,8 +931,12 @@ async def _scheduled_live_odds_refresh():
                             market_implied = 1.0 / new_o
                             db_row.overlay = round(db_row.win_probability - market_implied, 4)
                             db_row.value_rating = _value_rating(db_row.win_probability, new_o, db_row.overlay)
-                            db_row.market_rank = rank_map.get(row.id, db_row.market_rank)
                             total_updated += 1
+                        # Apply the recomputed market_rank to every active runner that
+                        # appeared in the ranking, not just those with refreshed odds.
+                        new_rank = rank_map.get(row.id)
+                        if new_rank is not None:
+                            db_row.market_rank = new_rank
                         steam = steam_map.get(row.id)
                         if steam and db_row.enriched_json:
                             try:
