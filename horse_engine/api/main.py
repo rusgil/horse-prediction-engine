@@ -7776,26 +7776,19 @@ async def performance_summary(days: int = Query(5, ge=1, le=365)):
         race_ids = list({r.race_id for r in hr_rows})
 
         # History table — pre-race snapshot, unaffected by post-race re-enrichments.
-        # Use max(enriched_at) per race to pick the latest pre-race batch.
-        max_at_result = await session.execute(
-            select(RunnerPredictionHistoryRow.race_id,
-                   func.max(RunnerPredictionHistoryRow.enriched_at).label("max_at"))
-            .where(RunnerPredictionHistoryRow.race_id.in_(race_ids))
-            .group_by(RunnerPredictionHistoryRow.race_id)
-        )
-        max_at_by_race = {row.race_id: row.max_at for row in max_at_result}
-
+        # Dedup in Python (latest enriched_at first) to avoid BUG-09 exact timestamp
+        # match silently dropping picks when microsecond precision differs.
         hist_pred_result = await session.execute(
             select(RunnerPredictionHistoryRow)
             .where(RunnerPredictionHistoryRow.race_id.in_(race_ids))
             .where(RunnerPredictionHistoryRow.model_rank == 1)
             .where(RunnerPredictionHistoryRow.cancelled.is_(False) | RunnerPredictionHistoryRow.cancelled.is_(None))
+            .order_by(RunnerPredictionHistoryRow.enriched_at.desc())
         )
-        top_picks: dict[str, RunnerPredictionHistoryRow] = {
-            p.race_id: p
-            for p in hist_pred_result.scalars().all()
-            if p.enriched_at == max_at_by_race.get(p.race_id)
-        }
+        top_picks: dict[str, RunnerPredictionHistoryRow] = {}
+        for p in hist_pred_result.scalars().all():
+            if p.race_id not in top_picks:
+                top_picks[p.race_id] = p
 
     # Winner per race (position==1) — used for accurate act_won comparison
     winners: dict[str, str] = {}
@@ -7860,7 +7853,8 @@ async def performance_summary(days: int = Query(5, ge=1, le=365)):
         total_predicted_settled = predicted_settled_by_date.get(day_str, races)
         total_ran = result_races_by_date.get(day_str, races)
         # Incomplete if history snapshots cover <85% of races we predicted that also settled
-        data_complete = races >= total_predicted_settled * 0.85
+        # Incomplete if history snapshots cover <85% of races that actually ran
+        data_complete = (races >= total_ran * 0.85) if total_ran else False
         summary.append({
             "date": day_str,
             "races": races,
