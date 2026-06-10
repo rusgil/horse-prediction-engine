@@ -3725,10 +3725,12 @@ async def get_race(race_id: str):
     async with get_session() as session:
         # Completed races use history table (written once pre-race) so the rank-1 shown
         # on the card matches the pick used for model_correct / result banners.
-        # Upcoming races use mutable (reflects latest enrichment).
+        # Use RunnerPredictionHistoryRow (snapshot, written at 9am) as the primary
+        # signal — it exists before results seeding runs, preventing post-race
+        # re-enrichment in mutable from inflating displayed probabilities.
         settled = (await session.execute(
-            select(HistoricalResultRow.race_id)
-            .where(HistoricalResultRow.race_id == race_id)
+            select(RunnerPredictionHistoryRow.race_id)
+            .where(RunnerPredictionHistoryRow.race_id == race_id)
             .limit(1)
         )).scalar() is not None
 
