@@ -2651,13 +2651,21 @@ async def refresh_edge_odds(force: bool = False):
         prefix = f"{target_date}_"
 
         async with get_session() as session:
-            result = await session.execute(
+            settled_ids = set((await session.execute(
+                select(HistoricalResultRow.race_id)
+                .where(HistoricalResultRow.race_id.like(f"{prefix}%"))
+                .distinct()
+            )).scalars().all())
+            q = (
                 select(RunnerPredictionRow)
                 .where(RunnerPredictionRow.model_rank == 1)
                 .where(RunnerPredictionRow.win_probability >= threshold)
                 .where(RunnerPredictionRow.race_id.like(f"{prefix}%"))
                 .where(RunnerPredictionRow.cancelled.is_(False) | RunnerPredictionRow.cancelled.is_(None))
             )
+            if settled_ids:
+                q = q.where(RunnerPredictionRow.race_id.notin_(settled_ids))
+            result = await session.execute(q)
             all_picks = result.scalars().all()
             all_picks = [p for p in all_picks if not re.search(r"-(trial|trail|jumpout)s?[_-]", p.race_id, re.IGNORECASE)]
 
@@ -4653,13 +4661,13 @@ async def exotic_daily_performance(
         )
         all_hr = hr_result.scalars().all()
 
-        # All exotic predictions in the window
+        # Exotic predictions from history table — pre-race ranks, never post-race contaminated
         pred_result = await session.execute(
-            select(RunnerPredictionRow)
-            .where(RunnerPredictionRow.race_id >= cutoff)
+            select(RunnerPredictionHistoryRow)
+            .where(RunnerPredictionHistoryRow.race_id >= cutoff)
             .where(
-                (RunnerPredictionRow.exotic_model_rank >= 1) |
-                (RunnerPredictionRow.place_model_rank >= 1)
+                (RunnerPredictionHistoryRow.exotic_model_rank >= 1) |
+                (RunnerPredictionHistoryRow.place_model_rank >= 1)
             )
         )
         all_pred = pred_result.scalars().all()
