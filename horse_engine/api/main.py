@@ -806,8 +806,9 @@ async def _scheduled_live_odds_refresh():
 
         by_venue: dict[str, list[RunnerPredictionRow]] = {}
         for row in upcoming:
-            if row.venue:
-                by_venue.setdefault(row.venue, []).append(row)
+            venue_key = row.venue or _parse_race_id(row.race_id)[1]
+            if venue_key:
+                by_venue.setdefault(venue_key, []).append(row)
 
         total_updated = 0
         for venue, rows in by_venue.items():
