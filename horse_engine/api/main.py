@@ -759,6 +759,19 @@ async def _scheduled_pre_race_enrich_and_scratch():
         if scratch_count:
             log.info("[scratch-check] Cancelled %d runner(s) total", scratch_count)
 
+        # Snapshot any newly-enriched races that don't yet have a history row.
+        # Covers WA venues (Belmont etc.) that aren't listed at 9am AEST — their
+        # first enrichment happens here, so we snapshot immediately rather than
+        # waiting for the next _scheduled_enrich (10am/1pm) by which point they
+        # may already be mid-race and blocked by the time guard.
+        if enriched_count:
+            try:
+                n_snap = await _snapshot_prerace_predictions()
+                if n_snap:
+                    log.info("[pre-race] Snapshotted %d runner(s) after combined enrich", n_snap)
+            except Exception as snap_err:
+                log.warning("[pre-race] Snapshot after enrich failed: %s", snap_err)
+
     except Exception as e:
         log.exception("[pre-race] Combined enrich+scratch job failed: %s", e)
 
