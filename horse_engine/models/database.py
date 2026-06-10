@@ -289,54 +289,59 @@ class RunnerPredictionHistoryRow(Base):
 async def init_db() -> None:
     import logging as _logging
     _log = _logging.getLogger(__name__)
-    try:
-        async with engine.begin() as conn:
-            await conn.run_sync(Base.metadata.create_all)
-            for col in [
-                "ALTER TABLE runner_predictions ADD COLUMN IF NOT EXISTS cancelled BOOLEAN DEFAULT FALSE",
-                "ALTER TABLE runner_predictions ADD COLUMN IF NOT EXISTS place_model_rank INTEGER",
-                "ALTER TABLE runner_predictions ADD COLUMN IF NOT EXISTS exotic_model_rank INTEGER",
-                "ALTER TABLE runner_predictions ADD COLUMN IF NOT EXISTS scheduled_time TEXT",
-                "ALTER TABLE runner_predictions ADD COLUMN IF NOT EXISTS venue TEXT",
-                "ALTER TABLE runner_predictions ADD COLUMN IF NOT EXISTS state TEXT",
-                "ALTER TABLE runner_predictions ADD COLUMN IF NOT EXISTS race_number INTEGER",
-                "ALTER TABLE runner_predictions ADD COLUMN IF NOT EXISTS race_name TEXT",
-                "ALTER TABLE runner_predictions ADD COLUMN IF NOT EXISTS distance INTEGER",
-                "ALTER TABLE runner_predictions ADD COLUMN IF NOT EXISTS track_condition TEXT",
-                "ALTER TABLE runner_predictions ADD COLUMN IF NOT EXISTS field_size INTEGER",
-                "ALTER TABLE runner_predictions ADD COLUMN IF NOT EXISTS prize_money INTEGER",
-                "ALTER TABLE runner_predictions ADD COLUMN IF NOT EXISTS rail_position TEXT",
-                "ALTER TABLE runner_predictions ADD COLUMN IF NOT EXISTS class_change INTEGER",
-                "ALTER TABLE runner_prediction_history ADD COLUMN IF NOT EXISTS source TEXT DEFAULT 'live'",
-                "ALTER TABLE runner_prediction_history ADD COLUMN IF NOT EXISTS batch_id TEXT",
-                "CREATE INDEX IF NOT EXISTS ix_hist_batch_id ON runner_prediction_history (batch_id)",
-                "CREATE UNIQUE INDEX IF NOT EXISTS uq_history_race_horse ON runner_prediction_history (race_id, horse_name)",
-                "CREATE INDEX IF NOT EXISTS ix_runner_pred_race_rank ON runner_predictions (race_id, model_rank)",
-                "CREATE INDEX IF NOT EXISTS ix_runner_pred_hist_race_rank ON runner_prediction_history (race_id, model_rank)",
-                "CREATE INDEX IF NOT EXISTS ix_hist_results_race_winner ON historical_results (race_id, winner)",
-                "CREATE INDEX IF NOT EXISTS ix_hist_results_race_placed ON historical_results (race_id, placed)",
-                "ALTER TABLE historical_results ADD COLUMN IF NOT EXISTS jockey TEXT",
-                "ALTER TABLE historical_results ADD COLUMN IF NOT EXISTS trainer TEXT",
-                "ALTER TABLE historical_results ADD COLUMN IF NOT EXISTS venue TEXT",
-                "ALTER TABLE historical_results ADD COLUMN IF NOT EXISTS state TEXT",
-                "ALTER TABLE historical_results ADD COLUMN IF NOT EXISTS distance INTEGER",
-                "ALTER TABLE historical_results ADD COLUMN IF NOT EXISTS track_condition TEXT",
-                "ALTER TABLE historical_results ADD COLUMN IF NOT EXISTS barrier INTEGER",
-                "ALTER TABLE historical_results ADD COLUMN IF NOT EXISTS tab_number INTEGER",
-                "ALTER TABLE historical_results ADD COLUMN IF NOT EXISTS weight REAL",
-                "ALTER TABLE historical_results ADD COLUMN IF NOT EXISTS age INTEGER",
-                "ALTER TABLE historical_results ADD COLUMN IF NOT EXISTS sex TEXT",
-                "ALTER TABLE historical_results ADD COLUMN IF NOT EXISTS race_class TEXT",
-                "ALTER TABLE historical_results ADD COLUMN IF NOT EXISTS prize_money INTEGER",
-                "ALTER TABLE historical_results ADD COLUMN IF NOT EXISTS field_size INTEGER",
-                "ALTER TABLE historical_results ADD COLUMN IF NOT EXISTS race_number INTEGER",
-                "CREATE INDEX IF NOT EXISTS ix_hist_results_jockey ON historical_results (jockey)",
-                "CREATE INDEX IF NOT EXISTS ix_hist_results_trainer ON historical_results (trainer)",
-                "CREATE INDEX IF NOT EXISTS ix_hist_results_venue ON historical_results (venue)",
-            ]:
-                await conn.execute(text(col))
-    except Exception as e:
-        _log.warning("[init_db] schema migration skipped — will retry next deploy: %s", e)
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+
+    # Run each DDL statement in its own transaction so one failure never
+    # blocks the rest. All statements are idempotent (IF NOT EXISTS / IF EXISTS).
+    migrations = [
+        "ALTER TABLE runner_predictions ADD COLUMN IF NOT EXISTS cancelled BOOLEAN DEFAULT FALSE",
+        "ALTER TABLE runner_predictions ADD COLUMN IF NOT EXISTS place_model_rank INTEGER",
+        "ALTER TABLE runner_predictions ADD COLUMN IF NOT EXISTS exotic_model_rank INTEGER",
+        "ALTER TABLE runner_predictions ADD COLUMN IF NOT EXISTS scheduled_time TEXT",
+        "ALTER TABLE runner_predictions ADD COLUMN IF NOT EXISTS venue TEXT",
+        "ALTER TABLE runner_predictions ADD COLUMN IF NOT EXISTS state TEXT",
+        "ALTER TABLE runner_predictions ADD COLUMN IF NOT EXISTS race_number INTEGER",
+        "ALTER TABLE runner_predictions ADD COLUMN IF NOT EXISTS race_name TEXT",
+        "ALTER TABLE runner_predictions ADD COLUMN IF NOT EXISTS distance INTEGER",
+        "ALTER TABLE runner_predictions ADD COLUMN IF NOT EXISTS track_condition TEXT",
+        "ALTER TABLE runner_predictions ADD COLUMN IF NOT EXISTS field_size INTEGER",
+        "ALTER TABLE runner_predictions ADD COLUMN IF NOT EXISTS prize_money INTEGER",
+        "ALTER TABLE runner_predictions ADD COLUMN IF NOT EXISTS rail_position TEXT",
+        "ALTER TABLE runner_predictions ADD COLUMN IF NOT EXISTS class_change INTEGER",
+        "ALTER TABLE runner_prediction_history ADD COLUMN IF NOT EXISTS source TEXT DEFAULT 'live'",
+        "ALTER TABLE runner_prediction_history ADD COLUMN IF NOT EXISTS batch_id TEXT",
+        "CREATE INDEX IF NOT EXISTS ix_hist_batch_id ON runner_prediction_history (batch_id)",
+        "CREATE UNIQUE INDEX IF NOT EXISTS uq_history_race_horse ON runner_prediction_history (race_id, horse_name)",
+        "CREATE INDEX IF NOT EXISTS ix_runner_pred_race_rank ON runner_predictions (race_id, model_rank)",
+        "CREATE INDEX IF NOT EXISTS ix_runner_pred_hist_race_rank ON runner_prediction_history (race_id, model_rank)",
+        "CREATE INDEX IF NOT EXISTS ix_hist_results_race_winner ON historical_results (race_id, winner)",
+        "CREATE INDEX IF NOT EXISTS ix_hist_results_race_placed ON historical_results (race_id, placed)",
+        "ALTER TABLE historical_results ADD COLUMN IF NOT EXISTS jockey TEXT",
+        "ALTER TABLE historical_results ADD COLUMN IF NOT EXISTS trainer TEXT",
+        "ALTER TABLE historical_results ADD COLUMN IF NOT EXISTS venue TEXT",
+        "ALTER TABLE historical_results ADD COLUMN IF NOT EXISTS state TEXT",
+        "ALTER TABLE historical_results ADD COLUMN IF NOT EXISTS distance INTEGER",
+        "ALTER TABLE historical_results ADD COLUMN IF NOT EXISTS track_condition TEXT",
+        "ALTER TABLE historical_results ADD COLUMN IF NOT EXISTS barrier INTEGER",
+        "ALTER TABLE historical_results ADD COLUMN IF NOT EXISTS tab_number INTEGER",
+        "ALTER TABLE historical_results ADD COLUMN IF NOT EXISTS weight REAL",
+        "ALTER TABLE historical_results ADD COLUMN IF NOT EXISTS age INTEGER",
+        "ALTER TABLE historical_results ADD COLUMN IF NOT EXISTS sex TEXT",
+        "ALTER TABLE historical_results ADD COLUMN IF NOT EXISTS race_class TEXT",
+        "ALTER TABLE historical_results ADD COLUMN IF NOT EXISTS prize_money INTEGER",
+        "ALTER TABLE historical_results ADD COLUMN IF NOT EXISTS field_size INTEGER",
+        "ALTER TABLE historical_results ADD COLUMN IF NOT EXISTS race_number INTEGER",
+        "CREATE INDEX IF NOT EXISTS ix_hist_results_jockey ON historical_results (jockey)",
+        "CREATE INDEX IF NOT EXISTS ix_hist_results_trainer ON historical_results (trainer)",
+        "CREATE INDEX IF NOT EXISTS ix_hist_results_venue ON historical_results (venue)",
+    ]
+    for stmt in migrations:
+        try:
+            async with engine.begin() as conn:
+                await conn.execute(text(stmt))
+        except Exception as e:
+            _log.warning("[init_db] migration skipped (%s): %s", stmt[:60], e)
 
 
 async def backfill_prediction_history(session: AsyncSession) -> int:
