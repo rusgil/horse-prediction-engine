@@ -590,6 +590,28 @@ async def _check_scratches_today() -> int:
     except Exception as e:
         log.exception("[scratch-check] Failed: %s", e)
 
+    # Sync step: catch any mutable-cancelled runners whose history row predates this fix.
+    # Runs every call so retroactive scratches (cancelled before this code was deployed) propagate.
+    try:
+        async with get_session() as session:
+            already_cancelled_mut = (await session.execute(
+                select(RunnerPredictionRow.race_id, RunnerPredictionRow.horse_name)
+                .where(RunnerPredictionRow.race_id.like(f"{today}_%"))
+                .where(RunnerPredictionRow.cancelled.is_(True))
+            )).fetchall()
+            if already_cancelled_mut:
+                for race_id, horse_name in already_cancelled_mut:
+                    await session.execute(
+                        sa_update(RunnerPredictionHistoryRow)
+                        .where(RunnerPredictionHistoryRow.race_id == race_id)
+                        .where(RunnerPredictionHistoryRow.horse_name == horse_name)
+                        .where(RunnerPredictionHistoryRow.cancelled.is_(False) | RunnerPredictionHistoryRow.cancelled.is_(None))
+                        .values(cancelled=True)
+                    )
+                await session.commit()
+    except Exception as e:
+        log.warning("[scratch-check] History sync failed: %s", e)
+
     return total_cancelled
 
 
