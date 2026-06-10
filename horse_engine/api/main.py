@@ -2773,55 +2773,110 @@ async def get_edge_trifectas():
         prefix = f"{target_date}_"
 
         async with get_session() as session:
-            exotic_result = await session.execute(
-                select(RunnerPredictionRow)
-                .where(RunnerPredictionRow.race_id.like(f"{prefix}%"))
-                .where(RunnerPredictionRow.exotic_model_rank >= 1)
-                .where(RunnerPredictionRow.exotic_model_rank <= 4)
-                .where(RunnerPredictionRow.cancelled.is_(False) | RunnerPredictionRow.cancelled.is_(None))
+            # Identify settled races for this date (have historical results)
+            settled_q = await session.execute(
+                select(HistoricalResultRow.race_id)
+                .where(HistoricalResultRow.race_id.like(f"{prefix}%"))
+                .distinct()
             )
-            exotic_rows = exotic_result.scalars().all()
+            settled_race_ids: set[str] = {r for (r,) in settled_q.fetchall()}
+
+            # Exotic/place model legs — history for settled, mutable for upcoming
+            exotic_rows: list = []
+            using_fallback = False
+
+            def _exotic_q_hist(rank_col, lo, hi):
+                q = (select(RunnerPredictionHistoryRow)
+                     .where(RunnerPredictionHistoryRow.race_id.in_(settled_race_ids))
+                     .where(rank_col >= lo).where(rank_col <= hi)
+                     .where(RunnerPredictionHistoryRow.cancelled.is_(False) | RunnerPredictionHistoryRow.cancelled.is_(None)))
+                return q
+
+            def _exotic_q_mut(race_filter, rank_col, lo, hi):
+                q = (select(RunnerPredictionRow)
+                     .where(race_filter)
+                     .where(rank_col >= lo).where(rank_col <= hi)
+                     .where(RunnerPredictionRow.cancelled.is_(False) | RunnerPredictionRow.cancelled.is_(None)))
+                return q
+
+            mut_filter = RunnerPredictionRow.race_id.like(f"{prefix}%")
+            if settled_race_ids:
+                mut_filter = mut_filter & ~RunnerPredictionRow.race_id.in_(settled_race_ids)
+
+            # Try exotic_model_rank first
+            if settled_race_ids:
+                exotic_rows.extend((await session.execute(
+                    _exotic_q_hist(RunnerPredictionHistoryRow.exotic_model_rank, 1, 4)
+                )).scalars().all())
+            exotic_rows.extend((await session.execute(
+                _exotic_q_mut(mut_filter, RunnerPredictionRow.exotic_model_rank, 1, 4)
+            )).scalars().all())
 
             if not exotic_rows:
                 # Fall back to place_model_rank until exotic model is trained
-                exotic_result = await session.execute(
-                    select(RunnerPredictionRow)
-                    .where(RunnerPredictionRow.race_id.like(f"{prefix}%"))
-                    .where(RunnerPredictionRow.place_model_rank >= 1)
-                    .where(RunnerPredictionRow.place_model_rank <= 4)
-                    .where(RunnerPredictionRow.cancelled.is_(False) | RunnerPredictionRow.cancelled.is_(None))
-                )
-                exotic_rows = exotic_result.scalars().all()
+                if settled_race_ids:
+                    exotic_rows.extend((await session.execute(
+                        _exotic_q_hist(RunnerPredictionHistoryRow.place_model_rank, 1, 4)
+                    )).scalars().all())
+                exotic_rows.extend((await session.execute(
+                    _exotic_q_mut(mut_filter, RunnerPredictionRow.place_model_rank, 1, 4)
+                )).scalars().all())
                 using_fallback = True
-            else:
-                using_fallback = False
 
             exotic_rows = [r for r in exotic_rows if not re.search(r"-(trial|trail|jumpout)s?[_-]", r.race_id, re.IGNORECASE)]
             if not exotic_rows:
                 continue
 
             race_ids = list({r.race_id for r in exotic_rows})
+            hist_exotic_ids = {r.race_id for r in exotic_rows if r.race_id in settled_race_ids}
+            mut_exotic_ids = [r for r in race_ids if r not in settled_race_ids]
+
             race_result = await session.execute(
                 select(RacePredictionRow).where(RacePredictionRow.race_id.in_(race_ids))
             )
             race_lookup = {r.race_id: r for r in race_result.scalars().all()}
-            # Count actual non-cancelled runners per race for field size
-            count_result = await session.execute(
-                select(RunnerPredictionRow.race_id, func.count(RunnerPredictionRow.id))
-                .where(RunnerPredictionRow.race_id.in_(race_ids))
-                .where(RunnerPredictionRow.cancelled.is_(False) | RunnerPredictionRow.cancelled.is_(None))
-                .group_by(RunnerPredictionRow.race_id)
-            )
-            field_size_lookup = {row[0]: row[1] for row in count_result.all()}
 
-            # Only fetch edge-qualifying win picks (same threshold as /api/edge)
-            win_result = await session.execute(
-                select(RunnerPredictionRow)
-                .where(RunnerPredictionRow.race_id.in_(race_ids))
-                .where(RunnerPredictionRow.model_rank == 1)
-                .where(RunnerPredictionRow.win_probability >= 0.295)
-            )
-            win_lookup = {r.race_id: r.horse_name for r in win_result.scalars().all()}
+            # Field sizes — history for settled, mutable for upcoming
+            field_size_lookup: dict[str, int] = {}
+            if hist_exotic_ids:
+                field_size_lookup.update(dict((await session.execute(
+                    select(RunnerPredictionHistoryRow.race_id, func.count(RunnerPredictionHistoryRow.id))
+                    .where(RunnerPredictionHistoryRow.race_id.in_(hist_exotic_ids))
+                    .where(RunnerPredictionHistoryRow.cancelled.is_(False) | RunnerPredictionHistoryRow.cancelled.is_(None))
+                    .group_by(RunnerPredictionHistoryRow.race_id)
+                )).fetchall()))
+            if mut_exotic_ids:
+                field_size_lookup.update(dict((await session.execute(
+                    select(RunnerPredictionRow.race_id, func.count(RunnerPredictionRow.id))
+                    .where(RunnerPredictionRow.race_id.in_(mut_exotic_ids))
+                    .where(RunnerPredictionRow.cancelled.is_(False) | RunnerPredictionRow.cancelled.is_(None))
+                    .group_by(RunnerPredictionRow.race_id)
+                )).fetchall()))
+
+            # Win picks — history for settled (threshold on pre-race prob), mutable for upcoming
+            win_lookup: dict[str, str] = {}
+            if hist_exotic_ids:
+                seen: set[str] = set()
+                for p in (await session.execute(
+                    select(RunnerPredictionHistoryRow)
+                    .where(RunnerPredictionHistoryRow.race_id.in_(hist_exotic_ids))
+                    .where(RunnerPredictionHistoryRow.model_rank == 1)
+                    .where(RunnerPredictionHistoryRow.win_probability >= 0.295)
+                    .where(RunnerPredictionHistoryRow.cancelled.is_(False) | RunnerPredictionHistoryRow.cancelled.is_(None))
+                    .order_by(RunnerPredictionHistoryRow.enriched_at.desc())
+                )).scalars().all():
+                    if p.race_id not in seen:
+                        seen.add(p.race_id)
+                        win_lookup[p.race_id] = p.horse_name
+            if mut_exotic_ids:
+                for p in (await session.execute(
+                    select(RunnerPredictionRow)
+                    .where(RunnerPredictionRow.race_id.in_(mut_exotic_ids))
+                    .where(RunnerPredictionRow.model_rank == 1)
+                    .where(RunnerPredictionRow.win_probability >= 0.295)
+                    .where(RunnerPredictionRow.cancelled.is_(False) | RunnerPredictionRow.cancelled.is_(None))
+                )).scalars().all():
+                    win_lookup[p.race_id] = p.horse_name
 
         # Group by race, sort by exotic_model_rank (or place_model_rank fallback)
         rank_key = (lambda r: r.place_model_rank or 99) if using_fallback else (lambda r: r.exotic_model_rank or 99)
@@ -3536,6 +3591,7 @@ async def live_odds(race_id: str):
                 select(RunnerPredictionHistoryRow)
                 .where(RunnerPredictionHistoryRow.race_id == race_id)
                 .where(RunnerPredictionHistoryRow.enriched_at == max_hist_at)
+                .where(RunnerPredictionHistoryRow.cancelled.is_(False) | RunnerPredictionHistoryRow.cancelled.is_(None))
                 .order_by(RunnerPredictionHistoryRow.model_rank)
             )
         else:
@@ -3545,6 +3601,7 @@ async def live_odds(race_id: str):
         mutable_result = await session.execute(
             select(RunnerPredictionRow)
             .where(RunnerPredictionRow.race_id == race_id)
+            .where(RunnerPredictionRow.cancelled.is_(False) | RunnerPredictionRow.cancelled.is_(None))
             .order_by(RunnerPredictionRow.model_rank)
         )
         mut_stored = mutable_result.scalars().all()
