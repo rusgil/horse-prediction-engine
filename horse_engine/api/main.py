@@ -3629,7 +3629,18 @@ async def get_meeting(race_date: str, venue_code: str):
                 placers.setdefault(r.race_id, set()).add(r.horse_name)
         log.info("[get_meeting] position-based winners for %s/%s: %s", venue_code, race_date, winners)
 
-        completed_ids = set(winners.keys())
+        # Any race with a history snapshot is treated as completed — use history for
+        # its top pick even if results seeding hasn't run yet (winner position=1 not
+        # yet seeded). Without this, a post-race re-enrichment would inflate mutable
+        # win/place probabilities and they'd show on the card instead of pre-race values.
+        snapshotted_ids_q = await session.execute(
+            select(RunnerPredictionHistoryRow.race_id)
+            .where(RunnerPredictionHistoryRow.race_id.in_(race_ids))
+            .distinct()
+        )
+        snapshotted_ids: set[str] = set(snapshotted_ids_q.scalars().all())
+
+        completed_ids = set(winners.keys()) | snapshotted_ids
 
         # Top pick per race:
         # - Completed races → history table only (written once pre-race; re-enrichments
