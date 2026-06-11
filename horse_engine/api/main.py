@@ -4300,11 +4300,19 @@ async def retrain_model(
 
     async def _do_win_retrain():
         from collections import defaultdict as _defaultdict
+        from horse_engine.prediction.clean_features import (
+            AggregateIndex, recompute_clean_feature_vector,
+        )
         # FIX-S filter trio enforced at SQL level (BUG-38): cancelled NULL/false
         # and source="live". Without source="live" any prior
         # _run_validation_backtest rows (source="validation") would be ingested
         # as additional training examples, bleeding backtest-fit signal into
         # production weights.
+        # Note: hr_rows is loaded over the FULL history range (no cutoff) so the
+        # BUG-18-clean aggregate recompute has access to every result strictly
+        # before each training example's race date. Without that, a 30-day
+        # cutoff training set would see only 30 days of HR which defeats the
+        # purpose of computing accurate career/track/distance rates.
         async with get_session() as session:
             hist_query = (
                 select(RunnerPredictionHistoryRow)
@@ -4316,10 +4324,12 @@ async def retrain_model(
                 hist_query = hist_query.where(RunnerPredictionHistoryRow.race_id >= cutoff)
             hist_rows = (await session.execute(hist_query)).scalars().all()
 
-            hr_query = select(HistoricalResultRow)
-            if cutoff:
-                hr_query = hr_query.where(HistoricalResultRow.race_id >= cutoff)
-            hr_rows = (await session.execute(hr_query)).scalars().all()
+            hr_rows = (await session.execute(select(HistoricalResultRow))).scalars().all()
+
+        # Build the BUG-18-clean aggregate index from the FULL historical
+        # results pool, then recompute each training row's feature vector
+        # using only results strictly before that row's race date.
+        index = AggregateIndex(hr_rows)
 
         # Use position == 1 directly — winner boolean can be stale from re-seedings
         winners: dict[str, str] = {}
@@ -4333,6 +4343,7 @@ async def retrain_model(
         _today_r = date.today()
         race_groups: list[list[tuple]] = []
         race_weights: list[float] = []
+        contam_repaired = 0
         for race_id, runners in by_race.items():
             winner_name = winners.get(race_id)
             if not winner_name:
@@ -4340,8 +4351,14 @@ async def retrain_model(
             race: list[tuple] = []
             for row in runners:
                 try:
-                    er = EnrichedRunner(**json.loads(row.enriched_json))
-                    fv = build_feature_vector(er)
+                    fv = recompute_clean_feature_vector(row, index)
+                    if fv is None:
+                        # Fallback to the original enriched_json path so a single
+                        # bad row doesn't drop the race from the training set.
+                        er = EnrichedRunner(**json.loads(row.enriched_json))
+                        fv = build_feature_vector(er)
+                    else:
+                        contam_repaired += 1
                     label = 1 if _normalize_horse(row.horse_name) == winner_name else 0
                     race.append((fv, label))
                 except Exception as e:
@@ -4354,6 +4371,10 @@ async def retrain_model(
             except Exception:
                 days_ago = 30
             race_weights.append(math.exp(-days_ago / 30.0))
+        log.info(
+            "[retrain] BUG-18 recompute repaired %d / %d runner feature vectors",
+            contam_repaired, sum(len(r) for r in race_groups) or 1,
+        )
 
         if len(race_groups) < 50:
             log.error("[retrain] Need at least 50 races, have %d", len(race_groups))
@@ -4422,8 +4443,13 @@ async def retrain_place_model(
     cutoff = (date.today() - timedelta(days=days)).isoformat() if days > 0 else None
 
     async def _do_place_retrain():
+        from horse_engine.prediction.clean_features import (
+            AggregateIndex, recompute_clean_feature_vector,
+        )
         # FIX-S filter trio enforced at SQL level (BUG-39): cancelled NULL/false
         # and source="live". Mirrors the BUG-38 fix on the win retrain.
+        # hr_rows loaded over the FULL historical range (no cutoff) so the
+        # BUG-18-clean aggregate recompute has access to every prior result.
         async with get_session() as session:
             hist_query = (
                 select(RunnerPredictionHistoryRow)
@@ -4435,10 +4461,9 @@ async def retrain_place_model(
                 hist_query = hist_query.where(RunnerPredictionHistoryRow.race_id >= cutoff)
             hist_rows = (await session.execute(hist_query)).scalars().all()
 
-            hr_query = select(HistoricalResultRow)
-            if cutoff:
-                hr_query = hr_query.where(HistoricalResultRow.race_id >= cutoff)
-            hr_rows = (await session.execute(hr_query)).scalars().all()
+            hr_rows = (await session.execute(select(HistoricalResultRow))).scalars().all()
+
+        index = AggregateIndex(hr_rows)
 
         # Use position <= 3 directly — placed boolean can be stale from re-seedings
         placed_lookup = {
@@ -4448,13 +4473,18 @@ async def retrain_place_model(
         training_data = []
         place_sample_weights = []
         _today_p = date.today()
+        contam_repaired = 0
         for row in hist_rows:
             placed = placed_lookup.get((row.race_id, _normalize_horse(row.horse_name)))
             if placed is None:
                 continue
             try:
-                er = EnrichedRunner(**json.loads(row.enriched_json))
-                fv = build_feature_vector(er)
+                fv = recompute_clean_feature_vector(row, index)
+                if fv is None:
+                    er = EnrichedRunner(**json.loads(row.enriched_json))
+                    fv = build_feature_vector(er)
+                else:
+                    contam_repaired += 1
                 training_data.append((fv, 1 if placed else 0))
                 try:
                     days_ago = (_today_p - date.fromisoformat(row.race_id[:10])).days
@@ -4463,6 +4493,10 @@ async def retrain_place_model(
                 place_sample_weights.append(math.exp(-days_ago / 30.0))
             except Exception as e:
                 log.debug("Skipping place retrain row %s/%s: %s", row.race_id, row.horse_name, e)
+        log.info(
+            "[place-retrain] BUG-18 recompute repaired %d / %d feature vectors",
+            contam_repaired, len(training_data) or 1,
+        )
 
         if not training_data:
             log.error("[place-retrain] No matched training examples")
@@ -5492,6 +5526,71 @@ async def probe_ra_results(race_date: str = "", x_cron_secret: Optional[str] = H
         "venues_with_predictions": len(venue_state),
         "race_ids_missing_venue": no_venue[:10],
         "detail": detail,
+    }
+
+
+@app.get("/api/admin/contamination-audit")
+async def contamination_audit(
+    sample: int = Query(5, ge=1, le=50),
+    x_cron_secret: Optional[str] = Header(None),
+):
+    """Pick `sample` random pre-2026-06-11 history rows and show the BUG-18
+    contamination delta for each aggregate-rate field.
+
+    Use this to verify the recompute helper before committing to a retrain,
+    and to quantify how big the bias actually is for your specific data.
+    """
+    _check_admin(x_cron_secret)
+    from horse_engine.prediction.clean_features import (
+        AggregateIndex, contamination_diff,
+    )
+    import random as _random
+
+    async with get_session() as session:
+        # Pull from before the BUG-18 fix so the delta is real.
+        cutoff = "2026-06-11"
+        candidates = (await session.execute(
+            select(RunnerPredictionHistoryRow)
+            .where(RunnerPredictionHistoryRow.enriched_json.isnot(None))
+            .where(RunnerPredictionHistoryRow.cancelled.is_(False) | RunnerPredictionHistoryRow.cancelled.is_(None))
+            .where(RunnerPredictionHistoryRow.source == "live")
+            .where(RunnerPredictionHistoryRow.race_id < cutoff)
+        )).scalars().all()
+        hr_rows = (await session.execute(select(HistoricalResultRow))).scalars().all()
+
+    if not candidates:
+        return {"sample": 0, "rows": [], "note": "no pre-fix history rows available"}
+
+    chosen = _random.sample(candidates, min(sample, len(candidates)))
+    index = AggregateIndex(hr_rows)
+    diffs = [contamination_diff(row, index) for row in chosen]
+
+    # Summary stats — which fields shifted most and by how much
+    field_deltas: dict[str, list[float]] = {}
+    for d in diffs:
+        for field, vals in d.get("fields", {}).items():
+            delta = vals.get("delta")
+            if delta is not None:
+                field_deltas.setdefault(field, []).append(abs(delta))
+    summary = sorted(
+        [
+            {
+                "field": f,
+                "mean_abs_delta": round(sum(v) / len(v), 4),
+                "max_abs_delta": round(max(v), 4),
+                "n_with_change": sum(1 for x in v if x > 1e-6),
+            }
+            for f, v in field_deltas.items()
+        ],
+        key=lambda x: x["mean_abs_delta"],
+        reverse=True,
+    )
+
+    return {
+        "sample": len(chosen),
+        "available_pre_fix_rows": len(candidates),
+        "field_shift_summary": summary,
+        "rows": diffs,
     }
 
 
