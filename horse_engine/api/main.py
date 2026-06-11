@@ -2870,11 +2870,15 @@ async def get_edge_yesterday(for_date: Optional[str] = Query(None, alias="date")
     stake = 10
 
     async with get_session() as session:
+        # Cancelled filter added per BUG-25 — without it, a horse scratched after
+        # snapshot still appears as the model's rank-1 edge pick; the result lookup
+        # then fails and the race is silently dropped from the displayed list.
         result = await session.execute(
             select(RunnerPredictionHistoryRow)
             .where(RunnerPredictionHistoryRow.model_rank == 1)
             .where(RunnerPredictionHistoryRow.win_probability >= threshold)
             .where(RunnerPredictionHistoryRow.race_id.like(f"{prefix}%"))
+            .where(RunnerPredictionHistoryRow.cancelled.is_(False) | RunnerPredictionHistoryRow.cancelled.is_(None))
             .order_by(RunnerPredictionHistoryRow.win_probability.desc())
         )
         picks = result.scalars().all()
@@ -2883,13 +2887,15 @@ async def get_edge_yesterday(for_date: Optional[str] = Query(None, alias="date")
         if not picks:
             return {"date": target_date, "picks": [], "summary": None}
 
-        # Batch-fetch place model runners for trifecta legs
+        # Batch-fetch place model runners for trifecta legs — same cancelled filter
+        # so scratched horses don't appear as trifecta legs alongside live picks.
         yst_race_ids = [p.race_id for p in picks]
         yst_place_result = await session.execute(
             select(RunnerPredictionHistoryRow)
             .where(RunnerPredictionHistoryRow.race_id.in_(yst_race_ids))
             .where(RunnerPredictionHistoryRow.place_model_rank >= 1)
             .where(RunnerPredictionHistoryRow.place_model_rank <= 4)
+            .where(RunnerPredictionHistoryRow.cancelled.is_(False) | RunnerPredictionHistoryRow.cancelled.is_(None))
         )
         yst_place_rows = yst_place_result.scalars().all()
 
@@ -8541,20 +8547,23 @@ async def premium_performance(days: int = Query(30, ge=1, le=365), x_cron_secret
             return {"days": days, "picks": [], "summary": {"bets": 0, "wins": 0, "win_pct": None, "pnl": 0.0, "roi_pct": None, "avg_sp": None}}
 
         race_ids = list({r.race_id for r in hr_rows})
-        # Use immutable history table — guaranteed pre-race snapshots, never overwritten
+        # Immutable history table — guaranteed pre-race snapshots. Use model_rank == 1
+        # (BUG-24: was max(win_probability), which diverges from the race-card top pick
+        # when ranks were tie-broken or overlay-adjusted). Filter cancelled (BUG-25),
+        # exclude validation-backtest rows, dedup-in-Python by latest enriched_at.
         pred_result = await session.execute(
             select(RunnerPredictionHistoryRow)
             .where(RunnerPredictionHistoryRow.race_id.in_(race_ids))
+            .where(RunnerPredictionHistoryRow.model_rank == 1)
             .where(RunnerPredictionHistoryRow.win_probability.isnot(None))
+            .where(RunnerPredictionHistoryRow.cancelled.is_(False) | RunnerPredictionHistoryRow.cancelled.is_(None))
             .where(RunnerPredictionHistoryRow.source == "live")
+            .order_by(RunnerPredictionHistoryRow.enriched_at.desc())
         )
-        # Top pick per race by win_probability
-        best: dict[str, RunnerPredictionHistoryRow] = {}
+        top_picks: dict[str, RunnerPredictionHistoryRow] = {}
         for p in pred_result.scalars().all():
-            ex = best.get(p.race_id)
-            if ex is None or (p.win_probability or 0) > (ex.win_probability or 0):
-                best[p.race_id] = p
-        top_picks = best
+            if p.race_id not in top_picks:
+                top_picks[p.race_id] = p
 
     result_by_key = {(r.race_id, _normalize_horse(r.horse_name)): r for r in hr_rows}
 
@@ -8614,19 +8623,22 @@ async def premium_performance_public():
             return {"days": days, "bets": 0, "wins": 0, "win_pct": None, "pnl_at_10": 0.0, "roi_pct": None, "avg_sp": None}
 
         race_ids = list({r.race_id for r in hr_rows})
-        # Immutable history table — guaranteed pre-race, source="live" only
+        # Immutable history table — use model_rank == 1 (BUG-24), filter cancelled
+        # (BUG-25), exclude validation-backtest rows, dedup-in-Python by latest
+        # enriched_at.
         pred_result = await session.execute(
             select(RunnerPredictionHistoryRow)
             .where(RunnerPredictionHistoryRow.race_id.in_(race_ids))
+            .where(RunnerPredictionHistoryRow.model_rank == 1)
             .where(RunnerPredictionHistoryRow.win_probability.isnot(None))
+            .where(RunnerPredictionHistoryRow.cancelled.is_(False) | RunnerPredictionHistoryRow.cancelled.is_(None))
             .where(RunnerPredictionHistoryRow.source == "live")
+            .order_by(RunnerPredictionHistoryRow.enriched_at.desc())
         )
-        best: dict[str, RunnerPredictionHistoryRow] = {}
+        top_picks: dict[str, RunnerPredictionHistoryRow] = {}
         for p in pred_result.scalars().all():
-            ex = best.get(p.race_id)
-            if ex is None or (p.win_probability or 0) > (ex.win_probability or 0):
-                best[p.race_id] = p
-        top_picks = best
+            if p.race_id not in top_picks:
+                top_picks[p.race_id] = p
 
     result_by_key = {(r.race_id, _normalize_horse(r.horse_name)): r for r in hr_rows}
     bets = wins = 0
@@ -8679,13 +8691,19 @@ async def premium_performance_monthly():
             return {"months": []}
 
         race_ids = list({r.race_id for r in hr_rows})
+        # Filter cancelled (BUG-25), dedup-in-Python by latest enriched_at.
         pred_result = await session.execute(
             select(RunnerPredictionHistoryRow)
             .where(RunnerPredictionHistoryRow.race_id.in_(race_ids))
             .where(RunnerPredictionHistoryRow.model_rank == 1)
+            .where(RunnerPredictionHistoryRow.cancelled.is_(False) | RunnerPredictionHistoryRow.cancelled.is_(None))
             .where(RunnerPredictionHistoryRow.source == "live")
+            .order_by(RunnerPredictionHistoryRow.enriched_at.desc())
         )
-        top_picks = {p.race_id: p for p in pred_result.scalars().all()}
+        top_picks: dict[str, RunnerPredictionHistoryRow] = {}
+        for p in pred_result.scalars().all():
+            if p.race_id not in top_picks:
+                top_picks[p.race_id] = p
 
     result_by_key = {(r.race_id, _normalize_horse(r.horse_name)): r for r in hr_rows}
     monthly: dict[str, dict] = {}
@@ -8743,13 +8761,19 @@ async def premium_performance_daily():
             return {"days": []}
 
         race_ids = list({r.race_id for r in hr_rows})
+        # Filter cancelled (BUG-25), dedup-in-Python by latest enriched_at.
         pred_result = await session.execute(
             select(RunnerPredictionHistoryRow)
             .where(RunnerPredictionHistoryRow.race_id.in_(race_ids))
             .where(RunnerPredictionHistoryRow.model_rank == 1)
+            .where(RunnerPredictionHistoryRow.cancelled.is_(False) | RunnerPredictionHistoryRow.cancelled.is_(None))
             .where(RunnerPredictionHistoryRow.source == "live")
+            .order_by(RunnerPredictionHistoryRow.enriched_at.desc())
         )
-        top_picks = {p.race_id: p for p in pred_result.scalars().all()}
+        top_picks: dict[str, RunnerPredictionHistoryRow] = {}
+        for p in pred_result.scalars().all():
+            if p.race_id not in top_picks:
+                top_picks[p.race_id] = p
 
     result_by_key = {(r.race_id, _normalize_horse(r.horse_name)): r for r in hr_rows}
     daily: dict[str, dict] = {}
