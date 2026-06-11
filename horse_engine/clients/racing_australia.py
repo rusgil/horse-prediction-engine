@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import random
 import re
 from datetime import date, datetime
 from typing import Optional
@@ -44,14 +45,44 @@ _SPONSOR_RE = re.compile(
     re.IGNORECASE,
 )
 
-_HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-    ),
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-    "Accept-Language": "en-AU,en;q=0.9",
-}
+# Pool of recent, plausible browser UAs. Rotated per-request so we look like
+# a mix of organic visitors rather than one bot. Refresh occasionally as
+# version numbers age (Cloudflare-style WAFs flag stale UAs).
+_USER_AGENTS = [
+    # macOS Chrome
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+    # Windows Chrome
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+    # macOS Safari
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Safari/605.1.15",
+    # Windows Firefox
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:128.0) Gecko/20100101 Firefox/128.0",
+    # macOS Firefox
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 14.5; rv:128.0) Gecko/20100101 Firefox/128.0",
+    # Windows Edge
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36 Edg/131.0.0.0",
+]
+
+def _build_headers(referer: str | None = None) -> dict[str, str]:
+    """Realistic browser header set with rotating UA. Including a Referer
+    where one makes sense (inner-page requests) makes the traffic look like
+    a normal user clicking through the site, not a bot scraping URLs."""
+    ua = random.choice(_USER_AGENTS)
+    headers = {
+        "User-Agent": ua,
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+        "Accept-Language": "en-AU,en;q=0.9",
+        "Accept-Encoding": "gzip, deflate, br",
+        "Cache-Control": "max-age=0",
+        "Upgrade-Insecure-Requests": "1",
+        "Sec-Fetch-Dest": "document",
+        "Sec-Fetch-Mode": "navigate",
+        "Sec-Fetch-Site": "same-origin" if referer else "none",
+        "Sec-Fetch-User": "?1",
+    }
+    if referer:
+        headers["Referer"] = referer
+    return headers
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
@@ -649,29 +680,74 @@ class RacingAustraliaClient:
         self._jockey_form_cache: dict[str, tuple[datetime, dict]] = {}
         # trainercode → (ts, parsed form dict)
         self._trainer_form_cache: dict[str, tuple[datetime, dict]] = {}
-        # rate-limit: one request at a time
+        # rate-limit
         self._sem: asyncio.Semaphore | None = None
+        # Circuit breaker: when RA returns 403 we back off the whole client
+        # for a cooldown window so we don't grind the WAF block deeper.
+        # Hard rule: this program can not HAMMER apis.
+        self._blocked_until: datetime | None = None
+        self._block_count: int = 0  # tracks consecutive 403s for backoff growth
 
     def _get_sem(self) -> asyncio.Semaphore:
         if self._sem is None:
-            self._sem = asyncio.Semaphore(3)
+            # Single-flight requests. RA is small enough that we don't need
+            # parallelism, and parallel calls were how we tripped the WAF.
+            self._sem = asyncio.Semaphore(1)
         return self._sem
 
-    async def _get(self, url: str) -> str:
+    def _is_blocked(self) -> bool:
+        if self._blocked_until is None:
+            return False
+        if datetime.utcnow() >= self._blocked_until:
+            self._blocked_until = None
+            self._block_count = 0
+            return False
+        return True
+
+    def _trip_breaker(self) -> None:
+        """Called on 403. Exponential backoff: 60s, 5min, 15min, 60min cap."""
+        self._block_count += 1
+        backoff = min(60 * (5 ** (self._block_count - 1)), 3600)
+        from datetime import timedelta as _td
+        self._blocked_until = datetime.utcnow() + _td(seconds=backoff)
+        log.warning(
+            "[RA] WAF block detected (403). Circuit breaker tripped — "
+            "no requests for %ds (consecutive=%d).",
+            backoff, self._block_count,
+        )
+
+    async def _request(self, url: str, *, referer: str | None = None, timeout: float = 20.0) -> str:
+        """Shared GET path. Honours the breaker, jitters delay, rotates UA,
+        and trips the breaker on 403 instead of grinding the WAF deeper."""
+        if self._is_blocked():
+            raise httpx.HTTPStatusError(
+                f"RA circuit breaker open until {self._blocked_until.isoformat()}",
+                request=httpx.Request("GET", url),
+                response=httpx.Response(503),
+            )
         async with self._get_sem():
-            await asyncio.sleep(0.3)
-            async with httpx.AsyncClient(headers=_HEADERS, timeout=20.0, follow_redirects=True) as client:
+            # 0.6–1.2s jittered pause between requests. Was 0.3s — that was too
+            # tight; combined with Semaphore(3) it produced ~10 req/s sustained.
+            await asyncio.sleep(0.6 + random.random() * 0.6)
+            headers = _build_headers(referer=referer)
+            async with httpx.AsyncClient(headers=headers, timeout=timeout, follow_redirects=True) as client:
                 resp = await client.get(url)
+                if resp.status_code == 403:
+                    self._trip_breaker()
+                    resp.raise_for_status()
                 resp.raise_for_status()
+                # Successful response → reset breaker counter (block_count was
+                # for *consecutive* 403s).
+                self._block_count = 0
                 return resp.text
 
+    async def _get(self, url: str) -> str:
+        return await self._request(url, timeout=20.0)
+
     async def _get_form(self, url: str) -> str:
-        async with self._get_sem():
-            await asyncio.sleep(0.3)
-            async with httpx.AsyncClient(headers=_HEADERS, timeout=10.0, follow_redirects=True) as client:
-                resp = await client.get(url)
-                resp.raise_for_status()
-                return resp.text
+        # Form pages are inner pages — supply a Referer so the traffic looks
+        # like a normal navigation from the calendar/meeting page.
+        return await self._request(url, referer=f"{_BASE}/Calendar.aspx", timeout=10.0)
 
     # ── InteractiveForm fetchers ──────────────────────────────────────────────
 
