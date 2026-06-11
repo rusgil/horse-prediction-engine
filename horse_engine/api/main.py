@@ -374,6 +374,7 @@ async def _cancel_abandoned_meetings(
             # block from a prior run. Leave individually-cancelled runners (manual scratches) alone.
             # The same guard is applied separately to mutable and history so an individual
             # scratch in either table prevents a mass-uncancel from clobbering it.
+            restored = False
             async with get_session() as session:
                 total = (await session.execute(
                     select(func.count()).where(RunnerPredictionRow.race_id == race_id)
@@ -390,6 +391,7 @@ async def _cancel_abandoned_meetings(
                         .where(RunnerPredictionRow.cancelled.is_(True))
                         .values(cancelled=False)
                     )
+                    restored = True
                 # Same all-cancelled guard for history. Without this, a mass-cancel that
                 # was previously mirrored into history (FIX-J / BUG-14) stays sticky in
                 # history even after mutable is restored.
@@ -408,7 +410,12 @@ async def _cancel_abandoned_meetings(
                         .where(RunnerPredictionHistoryRow.cancelled.is_(True))
                         .values(cancelled=False)
                     )
+                    restored = True
                 await session.commit()
+            if restored:
+                # Cancellation state changed — drop cached entries for this venue
+                # so the restoration is visible on the next request (BUG-30).
+                _invalidate_meeting_caches(today, venue_code)
         elif dropped or all_abandoned:
             async with get_session() as session:
                 await session.execute(
@@ -426,6 +433,9 @@ async def _cancel_abandoned_meetings(
                 await session.commit()
             reason = "venue dropped" if dropped else "all races abandoned/closed"
             log.info("[cancel-check] Marked %s CANCELLED (%s)", race_id, reason)
+            # State changed — drop cached list + per-venue detail so the next
+            # request reflects the cancellation (BUG-30).
+            _invalidate_meeting_caches(today, venue_code)
 
 
 async def _scheduled_enrich():
@@ -810,6 +820,13 @@ async def _scheduled_pre_race_enrich_and_scratch():
                                         race_id, mut_result.rowcount, hist_result.rowcount, scratched_names,
                                     )
                                     scratch_count += len(scratched_names)
+                                    # Drop the per-venue meeting cache so the
+                                    # scratch is visible on the next request
+                                    # (BUG-30). _list_meetings_cache is also
+                                    # dropped — cheap insurance for the rare
+                                    # case where a scratch causes a venue to
+                                    # fall off the DB-merged extension list.
+                                    _invalidate_meeting_caches(today, vc)
                     except Exception as e:
                         log.debug("[scratch-check] Failed for %s: %s", race_id, e)
 
@@ -2112,6 +2129,24 @@ _list_meetings_cache: dict[str, tuple[datetime, dict]] = {}  # date → (ts, res
 
 # Cache per-venue meeting response for 2 min — prevents thundering herd from _loadMeetingWinRate
 _get_meeting_cache: dict[str, tuple[datetime, dict]] = {}  # "date/venue" → (ts, response)
+
+
+def _invalidate_meeting_caches(race_date: str, venue_code: str | None = None) -> None:
+    """Drop cached meeting list / detail entries whenever cancellation state for a
+    date changes (admin cancel/restore, mass-cancel by _cancel_abandoned_meetings,
+    scratch detection). Without this the 10-min list cache and 2-min per-venue
+    cache can keep showing a cancelled meeting or a scratched runner as live.
+
+    When venue_code is None, every per-venue entry for the date is dropped.
+    """
+    _list_meetings_cache.pop(race_date, None)
+    if venue_code:
+        _get_meeting_cache.pop(f"{race_date}/{venue_code}", None)
+        return
+    prefix = f"{race_date}/"
+    for key in list(_get_meeting_cache.keys()):
+        if key.startswith(prefix):
+            _get_meeting_cache.pop(key, None)
 
 async def _fetch_live_odds(client, race_id: str) -> dict[str, float]:
     """Return {horse_name: flucs_win_odds} for a race. Cached 5 min."""
@@ -4334,6 +4369,9 @@ async def cancel_meeting(
         await session.commit()
         affected = result.rowcount
         hist_affected = hist_result.rowcount
+    # Invalidate cached meeting list + the per-venue detail so the change is
+    # immediately visible (BUG-30).
+    _invalidate_meeting_caches(target_date, venue)
     log.info("[admin] cancel-meeting: marked %d mutable / %d history row(s) cancelled for %s on %s",
              affected, hist_affected, venue, target_date)
     return {
@@ -5008,9 +5046,12 @@ async def cancel_runner(
             .values(cancelled=True)
         )
         await session.commit()
-    # Clear meeting cache so the change is immediately visible
+    # Clear the per-venue meeting cache so the scratch is immediately visible.
+    # The helper also drops the list cache for this date — strictly unnecessary
+    # for a single-runner scratch (the venue list rarely changes) but the cost
+    # of an extra RA fetch on the next list_meetings call is trivial.
     date_part, venue_part, _ = _parse_race_id(race_id)
-    _get_meeting_cache.pop(f"{date_part}/{venue_part}", None)
+    _invalidate_meeting_caches(date_part, venue_part)
     return {
         "updated": result.rowcount,
         "history_updated": hist_result.rowcount,
@@ -9751,6 +9792,9 @@ async def force_restore(
         await session.commit()
         affected = result.rowcount
         hist_affected = hist_result.rowcount
+    # Restore can affect every venue at the date — drop the list cache and every
+    # per-venue cache entry for this date (BUG-30).
+    _invalidate_meeting_caches(target)
     log.info("[force-restore] Uncancelled %d mutable / %d history row(s) for %s",
              affected, hist_affected, target)
     return {
