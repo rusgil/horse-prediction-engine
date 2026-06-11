@@ -315,6 +315,12 @@ async def init_db() -> None:
         "CREATE UNIQUE INDEX IF NOT EXISTS uq_history_race_horse ON runner_prediction_history (race_id, horse_name)",
         "CREATE INDEX IF NOT EXISTS ix_runner_pred_race_rank ON runner_predictions (race_id, model_rank)",
         "CREATE INDEX IF NOT EXISTS ix_runner_pred_hist_race_rank ON runner_prediction_history (race_id, model_rank)",
+        # OBS-G: composite (source, race_id, cancelled) supports the very common
+        # premium / edge / calibration / backtest reads, which all filter on
+        # source='live' + cancelled NULL/false and scan races_id ranges. Postgres
+        # can ignore the prefix here; SQLite uses leftmost prefix matching so the
+        # ordering still benefits common workloads.
+        "CREATE INDEX IF NOT EXISTS ix_hist_source_race_cancelled ON runner_prediction_history (source, race_id, cancelled)",
         "CREATE INDEX IF NOT EXISTS ix_hist_results_race_winner ON historical_results (race_id, winner)",
         "CREATE INDEX IF NOT EXISTS ix_hist_results_race_placed ON historical_results (race_id, placed)",
         "ALTER TABLE historical_results ADD COLUMN IF NOT EXISTS jockey TEXT",
