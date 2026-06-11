@@ -7499,10 +7499,13 @@ async def backtest_analysis(x_cron_secret: Optional[str] = Header(None)):
     _check_admin(x_cron_secret)
 
     async with get_session() as session:
-        # Cutover date = earliest date we have live predictions
+        # Cutover date = earliest date we have live predictions (use history per
+        # Ground Rule 1; mutable rank-1 for past races may be post-race
+        # contaminated for races without a snapshot).
         cutover_result = await session.execute(
-            select(func.min(RunnerPredictionRow.race_id))
-            .where(RunnerPredictionRow.model_rank == 1)
+            select(func.min(RunnerPredictionHistoryRow.race_id))
+            .where(RunnerPredictionHistoryRow.model_rank == 1)
+            .where(RunnerPredictionHistoryRow.source == "live")
         )
         earliest_race_id = cutover_result.scalar()
         cutover_date = earliest_race_id[:10] if earliest_race_id else None
@@ -7513,14 +7516,26 @@ async def backtest_analysis(x_cron_secret: Optional[str] = Header(None)):
         )
         bt_rows = bt_result.scalars().all()
 
-        # --- Live: runner_predictions joined with historical_results ---
+        # --- Live: history rank-1 joined with historical_results (BUG-32).
+        # Previously read from RunnerPredictionRow which can hold post-race
+        # mutable for races without snapshots. cancelled filter + source="live"
+        # for consistency with the rest of the Ground Rule 1 sweep; dedup-in-
+        # Python on latest enriched_at avoids the BUG-09 timestamp pitfall.
         hr_result = await session.execute(select(HistoricalResultRow))
         hr_map = {(r.race_id, r.horse_name): r for r in hr_result.scalars().all()}
 
         live_result = await session.execute(
-            select(RunnerPredictionRow).where(RunnerPredictionRow.model_rank == 1)
+            select(RunnerPredictionHistoryRow)
+            .where(RunnerPredictionHistoryRow.model_rank == 1)
+            .where(RunnerPredictionHistoryRow.cancelled.is_(False) | RunnerPredictionHistoryRow.cancelled.is_(None))
+            .where(RunnerPredictionHistoryRow.source == "live")
+            .order_by(RunnerPredictionHistoryRow.enriched_at.desc())
         )
-        live_rows = live_result.scalars().all()
+        live_top_picks: dict[str, RunnerPredictionHistoryRow] = {}
+        for p in live_result.scalars().all():
+            if p.race_id not in live_top_picks:
+                live_top_picks[p.race_id] = p
+        live_rows = list(live_top_picks.values())
 
     # Build unified row list: (win_probability, starting_price, winner, source)
     unified = []
@@ -7536,10 +7551,12 @@ async def backtest_analysis(x_cron_secret: Optional[str] = Header(None)):
     for r in live_rows:
         hr = hr_map.get((r.race_id, r.horse_name))
         if hr and r.win_probability is not None:
+            # Position == 1 over hr.winner (BUG-28 pattern) — boolean can drift
+            # under re-seedings; position is authoritative.
             unified.append({
                 "win_prob": r.win_probability,
                 "sp": hr.starting_price,
-                "winner": bool(hr.winner),
+                "winner": hr.position == 1,
                 "source": "live",
                 "race_date": r.race_id[:10],
             })
