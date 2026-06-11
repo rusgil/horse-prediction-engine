@@ -321,13 +321,33 @@ def predict_race(race: Race, model: HorseModel, venue_calibration: dict[str, flo
 
     from horse_engine.prediction.venue_calibration import apply_venue_calibration
     feature_vectors = [build_feature_vector(er) for er in enriched_runners]
-    win_probs, place_probs = model.predict_field(feature_vectors)
+    win_probs, heuristic_place_probs = model.predict_field(feature_vectors)
     win_probs = apply_venue_calibration(list(win_probs), race.venue, venue_calibration or {})
+
+    # When a trained place_model is available, use ITS output as place_prob
+    # (ARCH-1). The win model's predict_field returns a heuristic
+    # `softmax(raw × 0.5) × n_places` for place_prob — not a trained P(top-3).
+    # PlaceModel.predict_field's first tuple element is the trained
+    # place-probability output and is the correct number to show users.
+    if place_model is not None:
+        place_probs_list, _ = place_model.predict_field(feature_vectors)
+    else:
+        place_probs_list = list(heuristic_place_probs)
+
+    # Compute exotic scores up-front too (BUG-40 / ARCH-1 sibling fix). The old
+    # `zip(scores, predictions)` after `predictions.sort()` paired scores in
+    # original-runner-order with predictions in win-rank order — assigning each
+    # rank to the wrong horse. Compute scores while indexes still match the
+    # predictions list, attach them to each prediction, then sort.
+    if exotic_model is not None:
+        exotic_scores_list, _ = exotic_model.predict_field(feature_vectors)
+    else:
+        exotic_scores_list = []
 
     predictions: list[RunnerPrediction] = []
     for i, (runner, er) in enumerate(zip(race.runners[:len(enriched_runners)], enriched_runners)):
         wp = win_probs[i] if i < len(win_probs) else 0.0
-        pp = place_probs[i] if i < len(place_probs) else 0.0
+        pp = place_probs_list[i] if i < len(place_probs_list) else 0.0
         overlay = wp - er.market_implied_prob
         er.overlay = round(overlay, 4)
 
@@ -335,11 +355,13 @@ def predict_race(race: Race, model: HorseModel, venue_calibration: dict[str, flo
             runner=runner,
             enriched=er,
             win_prob=wp,
-            place_prob=pp,
+            place_prob=round(pp, 4),
             feature_vector=feature_vectors[i],
         )
         pred.overlay = overlay
         pred.key_flags = _generate_flags(er, wp, overlay)
+        # Attach exotic score before sort so ranking pairs the right horse.
+        pred._exotic_score = exotic_scores_list[i] if i < len(exotic_scores_list) else 0.0
         predictions.append(pred)
 
     # Rank by win probability
@@ -348,26 +370,19 @@ def predict_race(race: Race, model: HorseModel, venue_calibration: dict[str, flo
         p.model_rank = rank
         p.value_rating = _value_rating(p.win_prob, p.enriched.best_available_odds, p.overlay)
 
-    # Run place model if provided — assigns place_model_rank independently
+    # Rank by place probability (using the trained place model when provided,
+    # else the heuristic carried on each prediction). Sorting predictions by
+    # their own place_prob guarantees the ranking matches the horse.
     if place_model is not None:
-        place_win_probs, _ = place_model.predict_field(feature_vectors)
-        place_ranked = sorted(
-            zip(place_win_probs, predictions),
-            key=lambda x: x[0],
-            reverse=True,
-        )
-        for place_rank, (_, p) in enumerate(place_ranked, 1):
+        place_sorted = sorted(predictions, key=lambda p: p.place_prob, reverse=True)
+        for place_rank, p in enumerate(place_sorted, 1):
             p.place_model_rank = place_rank
 
-    # Run exotic model if provided — assigns exotic_model_rank independently
+    # Rank by exotic score — uses the score attached on each prediction so the
+    # rank pairs the right horse.
     if exotic_model is not None:
-        exotic_scores, _ = exotic_model.predict_field(feature_vectors)
-        exotic_ranked = sorted(
-            zip(exotic_scores, predictions),
-            key=lambda x: x[0],
-            reverse=True,
-        )
-        for exotic_rank, (_, p) in enumerate(exotic_ranked, 1):
+        exotic_sorted = sorted(predictions, key=lambda p: getattr(p, "_exotic_score", 0.0), reverse=True)
+        for exotic_rank, p in enumerate(exotic_sorted, 1):
             p.exotic_model_rank = exotic_rank
 
     return predictions

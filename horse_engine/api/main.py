@@ -4300,9 +4300,17 @@ async def retrain_model(
 
     async def _do_win_retrain():
         from collections import defaultdict as _defaultdict
+        # FIX-S filter trio enforced at SQL level (BUG-38): cancelled NULL/false
+        # and source="live". Without source="live" any prior
+        # _run_validation_backtest rows (source="validation") would be ingested
+        # as additional training examples, bleeding backtest-fit signal into
+        # production weights.
         async with get_session() as session:
-            hist_query = select(RunnerPredictionHistoryRow).where(
-                RunnerPredictionHistoryRow.enriched_json.isnot(None)
+            hist_query = (
+                select(RunnerPredictionHistoryRow)
+                .where(RunnerPredictionHistoryRow.enriched_json.isnot(None))
+                .where(RunnerPredictionHistoryRow.cancelled.is_(False) | RunnerPredictionHistoryRow.cancelled.is_(None))
+                .where(RunnerPredictionHistoryRow.source == "live")
             )
             if cutoff:
                 hist_query = hist_query.where(RunnerPredictionHistoryRow.race_id >= cutoff)
@@ -4320,8 +4328,7 @@ async def retrain_model(
                 winners[r.race_id] = _normalize_horse(r.horse_name)
         by_race: dict[str, list] = _defaultdict(list)
         for row in hist_rows:
-            if not row.cancelled:
-                by_race[row.race_id].append(row)
+            by_race[row.race_id].append(row)
 
         _today_r = date.today()
         race_groups: list[list[tuple]] = []
@@ -4415,9 +4422,14 @@ async def retrain_place_model(
     cutoff = (date.today() - timedelta(days=days)).isoformat() if days > 0 else None
 
     async def _do_place_retrain():
+        # FIX-S filter trio enforced at SQL level (BUG-39): cancelled NULL/false
+        # and source="live". Mirrors the BUG-38 fix on the win retrain.
         async with get_session() as session:
-            hist_query = select(RunnerPredictionHistoryRow).where(
-                RunnerPredictionHistoryRow.enriched_json.isnot(None)
+            hist_query = (
+                select(RunnerPredictionHistoryRow)
+                .where(RunnerPredictionHistoryRow.enriched_json.isnot(None))
+                .where(RunnerPredictionHistoryRow.cancelled.is_(False) | RunnerPredictionHistoryRow.cancelled.is_(None))
+                .where(RunnerPredictionHistoryRow.source == "live")
             )
             if cutoff:
                 hist_query = hist_query.where(RunnerPredictionHistoryRow.race_id >= cutoff)
@@ -4437,8 +4449,6 @@ async def retrain_place_model(
         place_sample_weights = []
         _today_p = date.today()
         for row in hist_rows:
-            if row.cancelled:
-                continue
             placed = placed_lookup.get((row.race_id, _normalize_horse(row.horse_name)))
             if placed is None:
                 continue
@@ -8989,9 +8999,15 @@ async def _run_calibration_sweep(holdout_days: int = 14) -> dict:
     for window in _CANDIDATE_WINDOWS:
         train_cutoff = (today - timedelta(days=window)).isoformat()
 
-        # Training data: within window, outside holdout; pre-race enrichments only
-        training_data = []
-        cal_sample_weights = []
+        # Training data: build per-race groups for race-grouped softmax training
+        # (ARCH-2). Per-runner binary CE — what the calibration sweep used
+        # before — ignores that horses compete within the field, so the
+        # production weights it set were systematically less aligned with the
+        # softmax inference step than the admin retrain endpoint's were.
+        # Now both training paths use the same loss as inference.
+        import math as _math
+        races_in_window: dict[str, list[tuple[list[float], int]]] = {}
+        race_weight_by_id: dict[str, float] = {}
         for row in all_hr:
             if row.race_id < train_cutoff or row.race_id >= holdout_cutoff:
                 continue
@@ -9010,28 +9026,45 @@ async def _run_calibration_sweep(holdout_days: int = 14) -> dict:
                 fv = build_feature_vector(er)
                 # Use position == 1 over row.winner (BUG-28) — the boolean can
                 # be stale after re-seedings; position is authoritative.
-                training_data.append((fv, 1 if row.position == 1 else 0))
-                try:
-                    race_date = date.fromisoformat(row.race_id[:10])
-                    days_ago = (today - race_date).days
-                except Exception:
-                    days_ago = 30
-                import math as _math
-                cal_sample_weights.append(_math.exp(-days_ago / 30.0))
+                races_in_window.setdefault(row.race_id, []).append(
+                    (fv, 1 if row.position == 1 else 0)
+                )
+                if row.race_id not in race_weight_by_id:
+                    try:
+                        race_date = date.fromisoformat(row.race_id[:10])
+                        days_ago = (today - race_date).days
+                    except Exception:
+                        days_ago = 30
+                    race_weight_by_id[row.race_id] = _math.exp(-days_ago / 30.0)
             except Exception:
                 continue
 
-        if len(training_data) < 50:
+        # Keep only races with exactly one winner and ≥2 runners — the same
+        # validity check train_race_grouped applies internally; pre-filtering
+        # gives accurate skip diagnostics.
+        race_groups: list[list[tuple[list[float], int]]] = []
+        race_sample_weights: list[float] = []
+        for race_id, runners in races_in_window.items():
+            if len(runners) < 2:
+                continue
+            if sum(l for _, l in runners) != 1:
+                continue
+            race_groups.append(runners)
+            race_sample_weights.append(race_weight_by_id[race_id])
+
+        if len(race_groups) < 50:
             window_results.append({
                 "window_days": window,
-                "training_examples": len(training_data),
+                "training_races": len(race_groups),
                 "skipped": True,
-                "reason": "insufficient training data",
+                "reason": "insufficient training races",
             })
             continue
 
         model = HorseModel()
-        stats = await asyncio.to_thread(model.train, training_data, sample_weights=cal_sample_weights)
+        stats = await asyncio.to_thread(
+            model.train_race_grouped, race_groups, sample_weights=race_sample_weights
+        )
 
         # Score holdout races with candidate model
         win_picks = place_picks = value_bets = total_races = 0
@@ -9078,8 +9111,11 @@ async def _run_calibration_sweep(holdout_days: int = 14) -> dict:
 
         result = {
             "window_days": window,
-            "training_examples": len(training_data),
-            "training_log_loss": stats.get("log_loss"),
+            # Race-grouped training reports races (the unit of the softmax loss)
+            # plus the total runners across those races, instead of the flat
+            # example count the per-runner binary CE used to report.
+            "training_races": len(race_groups),
+            "training_runners": sum(len(r) for r in race_groups),
             "training_top1_hit_rate": stats.get("top1_hit_rate"),
             "holdout_races": total_races,
             "win_rate": win_rate,
