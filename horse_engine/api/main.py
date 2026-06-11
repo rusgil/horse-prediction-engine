@@ -3367,27 +3367,27 @@ async def get_track_record():
         )
         hr_map = {(r.race_id, _normalize_horse(r.horse_name)): r for r in hr_result.scalars().all()}
 
-        # Use history table — written once pre-race, never overwritten by re-enrichments
-        max_at_rows = (await session.execute(
-            select(RunnerPredictionHistoryRow.race_id,
-                   func.max(RunnerPredictionHistoryRow.enriched_at).label("max_at"))
-            .where(RunnerPredictionHistoryRow.race_id >= cutoff)
-            .where(RunnerPredictionHistoryRow.model_rank == 1)
-            .group_by(RunnerPredictionHistoryRow.race_id)
-        )).all()
-        max_at_hist = {r.race_id: r.max_at for r in max_at_rows}
-
+        # History table — written once pre-race, never overwritten by re-enrichments.
+        # Filter cancelled (BUG-31) so scratched horses don't surface as the tier
+        # pick; exclude validation-backtest rows; dedup-in-Python on latest
+        # enriched_at to avoid the BUG-09 exact-timestamp drop.
         hist_picks = (await session.execute(
             select(RunnerPredictionHistoryRow)
             .where(RunnerPredictionHistoryRow.race_id >= cutoff)
             .where(RunnerPredictionHistoryRow.model_rank == 1)
             .where(RunnerPredictionHistoryRow.win_probability.isnot(None))
+            .where(RunnerPredictionHistoryRow.cancelled.is_(False) | RunnerPredictionHistoryRow.cancelled.is_(None))
+            .where(RunnerPredictionHistoryRow.source == "live")
+            .order_by(RunnerPredictionHistoryRow.enriched_at.desc())
         )).scalars().all()
 
-        all_rows = []
+        top_picks: dict[str, RunnerPredictionHistoryRow] = {}
         for r in hist_picks:
-            if r.enriched_at != max_at_hist.get(r.race_id):
-                continue
+            if r.race_id not in top_picks:
+                top_picks[r.race_id] = r
+
+        all_rows = []
+        for r in top_picks.values():
             hr = hr_map.get((r.race_id, _normalize_horse(r.horse_name)))
             if hr:
                 all_rows.append({
@@ -4907,7 +4907,11 @@ async def exotic_daily_performance(
         )
         all_hr = hr_result.scalars().all()
 
-        # Exotic predictions from history table — pre-race ranks, never post-race contaminated
+        # Exotic predictions from history table — pre-race ranks, never post-race
+        # contaminated. Cancelled (BUG-34) keeps scratched horses out of the
+        # "predicted top 3" set so they don't depress the trifecta hit rate
+        # by guaranteeing a mismatch against actuals. Source="live" excludes
+        # validation-backtest rows.
         pred_result = await session.execute(
             select(RunnerPredictionHistoryRow)
             .where(RunnerPredictionHistoryRow.race_id >= cutoff)
@@ -4915,6 +4919,8 @@ async def exotic_daily_performance(
                 (RunnerPredictionHistoryRow.exotic_model_rank >= 1) |
                 (RunnerPredictionHistoryRow.place_model_rank >= 1)
             )
+            .where(RunnerPredictionHistoryRow.cancelled.is_(False) | RunnerPredictionHistoryRow.cancelled.is_(None))
+            .where(RunnerPredictionHistoryRow.source == "live")
         )
         all_pred = pred_result.scalars().all()
 
@@ -9200,8 +9206,14 @@ async def _run_place_calibration_sweep(holdout_days: int = 14) -> dict:
         hr_result = await session.execute(select(HistoricalResultRow))
         all_hr = hr_result.scalars().all()
         # History table only — written once pre-race, never overwritten by re-enrichments.
+        # Cancelled filter added per BUG-33 (sister of BUG-29 in the win sweep) so a
+        # scratched runner can't be the holdout rank-1 pick and silently drop the
+        # race. Source="live" excludes prior validation-backtest rows.
         pred_result = await session.execute(
-            select(RunnerPredictionHistoryRow).where(RunnerPredictionHistoryRow.enriched_json.isnot(None))
+            select(RunnerPredictionHistoryRow)
+            .where(RunnerPredictionHistoryRow.enriched_json.isnot(None))
+            .where(RunnerPredictionHistoryRow.cancelled.is_(False) | RunnerPredictionHistoryRow.cancelled.is_(None))
+            .where(RunnerPredictionHistoryRow.source == "live")
         )
         all_pred = pred_result.scalars().all()
 
