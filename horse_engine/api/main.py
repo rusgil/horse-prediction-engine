@@ -7808,7 +7808,7 @@ async def win_feature_ablation(
             if not actual:
                 continue
             races += 1
-            if actual.winner:
+            if actual.position == 1:
                 wins += 1
         return round(wins / races * 100, 1) if races else 0.0, races
 
@@ -8797,7 +8797,7 @@ async def premium_performance(days: int = Query(30, ge=1, le=365), x_cron_secret
         overlay = pick.overlay or 0.0
         model_pct = round((pick.win_probability or 0) * 100, 1)
         if model_pct >= 30 and sp >= 3.0 and overlay > 0.05:
-            pnl = (sp - 1.0) if actual.winner else -1.0
+            pnl = (sp - 1.0) if actual.position == 1 else -1.0
             picks.append({
                 "date": race_id[:10],
                 "race_id": race_id,
@@ -8805,7 +8805,7 @@ async def premium_performance(days: int = Query(30, ge=1, le=365), x_cron_secret
                 "model_pct": model_pct,
                 "sp": sp,
                 "overlay_pct": round(overlay * 100, 1),
-                "winner": actual.winner,
+                "winner": actual.position == 1,
                 "pnl": round(pnl, 2),
             })
 
@@ -8874,7 +8874,7 @@ async def premium_performance_public():
         model_pct = (pick.win_probability or 0) * 100
         if model_pct >= 30 and sp >= 3.0 and overlay > 0.05:
             bets += 1
-            if actual.winner:
+            if actual.position == 1:
                 wins += 1
                 total_pnl += sp - 1.0
             else:
@@ -8941,7 +8941,7 @@ async def premium_performance_monthly():
             if month not in monthly:
                 monthly[month] = {"bets": 0, "wins": 0, "pnl": 0.0}
             monthly[month]["bets"] += 1
-            if actual.winner:
+            if actual.position == 1:
                 monthly[month]["wins"] += 1
                 monthly[month]["pnl"] += sp - 1.0
             else:
@@ -9011,7 +9011,7 @@ async def premium_performance_daily():
             if day not in daily:
                 daily[day] = {"bets": 0, "wins": 0, "pnl": 0.0}
             daily[day]["bets"] += 1
-            if actual.winner:
+            if actual.position == 1:
                 daily[day]["wins"] += 1
                 daily[day]["pnl"] += sp - 1.0
             else:
