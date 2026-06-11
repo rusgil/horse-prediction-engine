@@ -9049,7 +9049,15 @@ async def _run_calibration_sweep(holdout_days: int = 14) -> dict:
     For each candidate training window, train the model excluding the holdout
     period, then score holdout races in-memory to get true out-of-sample stats.
     Saves the best window's weights to the DB and writes a CalibrationRow.
+
+    Uses the BUG-18-clean recompute path so candidate-window scoring sees the
+    same feature distribution that production inference now uses. Without this,
+    nightly calibration would still pick windows based on contaminated
+    aggregate-rate features and overwrite the clean retrained weights.
     """
+    from horse_engine.prediction.clean_features import (
+        AggregateIndex, recompute_clean_feature_vector,
+    )
     today = date.today()
     holdout_cutoff = (today - timedelta(days=holdout_days)).isoformat()
 
@@ -9071,6 +9079,9 @@ async def _run_calibration_sweep(holdout_days: int = 14) -> dict:
         )
         all_pred = pred_result.scalars().all()
 
+    # Build the BUG-18-clean aggregate index once over the full HR pool.
+    # Used for both training (per-window) and holdout scoring.
+    index = AggregateIndex(all_hr)
     pred_by_key = {(p.race_id, p.horse_name): p for p in all_pred}
 
     # Group predictions by race_id for holdout scoring
@@ -9114,8 +9125,12 @@ async def _run_calibration_sweep(holdout_days: int = 14) -> dict:
                 except (ValueError, AttributeError):
                     pass
             try:
-                er = EnrichedRunner(**json.loads(pred.enriched_json))
-                fv = build_feature_vector(er)
+                # BUG-18 clean recompute — falls back to raw enriched_json when
+                # the recompute can't produce a vector for this row.
+                fv = recompute_clean_feature_vector(pred, index)
+                if fv is None:
+                    er = EnrichedRunner(**json.loads(pred.enriched_json))
+                    fv = build_feature_vector(er)
                 # Use position == 1 over row.winner (BUG-28) — the boolean can
                 # be stale after re-seedings; position is authoritative.
                 races_in_window.setdefault(row.race_id, []).append(
@@ -9166,8 +9181,12 @@ async def _run_calibration_sweep(holdout_days: int = 14) -> dict:
             runner_fvs = []
             for r in runners:
                 try:
-                    er = EnrichedRunner(**json.loads(r.enriched_json))
-                    runner_fvs.append((r, build_feature_vector(er)))
+                    # BUG-18 clean recompute for holdout scoring too.
+                    fv = recompute_clean_feature_vector(r, index)
+                    if fv is None:
+                        er = EnrichedRunner(**json.loads(r.enriched_json))
+                        fv = build_feature_vector(er)
+                    runner_fvs.append((r, fv))
                 except Exception:
                     continue
             if not runner_fvs:
@@ -9384,7 +9403,14 @@ async def _run_place_calibration_sweep(holdout_days: int = 14) -> dict:
     Multi-window calibration for the place model (P(position ≤ 3)).
     Holdout metric: fraction of races where the top-ranked place pick actually placed.
     Saves best window's weights to place_model_weights.
+
+    Uses the BUG-18-clean recompute path so candidate-window scoring sees the
+    same feature distribution that production inference now uses (mirrors the
+    win-sweep wiring).
     """
+    from horse_engine.prediction.clean_features import (
+        AggregateIndex, recompute_clean_feature_vector,
+    )
     import math as _math
     today = date.today()
     holdout_cutoff = (today - timedelta(days=holdout_days)).isoformat()
@@ -9404,6 +9430,7 @@ async def _run_place_calibration_sweep(holdout_days: int = 14) -> dict:
         )
         all_pred = pred_result.scalars().all()
 
+    index = AggregateIndex(all_hr)
     pred_by_key = {(p.race_id, p.horse_name): p for p in all_pred}
 
     holdout_races: dict[str, list] = {}
@@ -9438,8 +9465,11 @@ async def _run_place_calibration_sweep(holdout_days: int = 14) -> dict:
                 except (ValueError, AttributeError):
                     pass
             try:
-                er = EnrichedRunner(**json.loads(pred.enriched_json))
-                fv = build_feature_vector(er)
+                # BUG-18 clean recompute — fall back to raw enriched_json when None.
+                fv = recompute_clean_feature_vector(pred, index)
+                if fv is None:
+                    er = EnrichedRunner(**json.loads(pred.enriched_json))
+                    fv = build_feature_vector(er)
                 training_data.append((fv, 1 if row.placed else 0))
                 try:
                     days_ago = (today - date.fromisoformat(row.race_id[:10])).days
@@ -9462,8 +9492,12 @@ async def _run_place_calibration_sweep(holdout_days: int = 14) -> dict:
             runner_fvs = []
             for r in runners:
                 try:
-                    er = EnrichedRunner(**json.loads(r.enriched_json))
-                    runner_fvs.append((r, build_feature_vector(er)))
+                    # BUG-18 clean recompute for holdout scoring too.
+                    fv = recompute_clean_feature_vector(r, index)
+                    if fv is None:
+                        er = EnrichedRunner(**json.loads(r.enriched_json))
+                        fv = build_feature_vector(er)
+                    runner_fvs.append((r, fv))
                 except Exception:
                     continue
             if not runner_fvs:
