@@ -7119,6 +7119,11 @@ async def backtest_report(
     """
     Performance report: join predictions vs actual results.
     Returns top-pick win/place rate, value P&L, and per-condition breakdown.
+
+    Reads top picks from RunnerPredictionHistoryRow per Ground Rule 1 — mutable
+    can be overwritten by post-race re-enrichment for races without snapshots,
+    which would inflate metrics. Uses the dedup-in-Python latest-enriched_at
+    pattern, filters on cancelled, and excludes validation-backtest rows.
     """
     _check_admin(x_cron_secret)
 
@@ -7142,21 +7147,21 @@ async def backtest_report(
             }
 
         pred_result = await session.execute(
-            select(RunnerPredictionRow)
-            .where(RunnerPredictionRow.race_id.in_(race_ids))
+            select(RunnerPredictionHistoryRow)
+            .where(RunnerPredictionHistoryRow.race_id.in_(race_ids))
+            .where(RunnerPredictionHistoryRow.model_rank == 1)
+            .where(RunnerPredictionHistoryRow.cancelled.is_(False) | RunnerPredictionHistoryRow.cancelled.is_(None))
+            .where(RunnerPredictionHistoryRow.source == "live")
+            .order_by(RunnerPredictionHistoryRow.enriched_at.desc())
         )
         pred_rows = pred_result.scalars().all()
 
-    # Index predictions by (race_id, horse_name) and track top-pick per race
-    pred_by_key: dict[tuple, RunnerPredictionRow] = {}
-    top_pick: dict[str, RunnerPredictionRow] = {}   # race_id -> model_rank=1
+    # Dedup-in-Python on latest enriched_at — keeps the most recent pre-race row
+    # per race and avoids the BUG-09 exact-timestamp pitfall.
+    top_pick: dict[str, RunnerPredictionHistoryRow] = {}
     for p in pred_rows:
-        pred_by_key[(p.race_id, p.horse_name)] = p
-        if p.model_rank == 1 or p.race_id not in top_pick:
-            if p.model_rank == 1:
-                top_pick[p.race_id] = p
-            elif p.race_id not in top_pick:
-                top_pick[p.race_id] = p
+        if p.race_id not in top_pick:
+            top_pick[p.race_id] = p
 
     # Index results by (race_id, normalized_horse_name)
     result_by_key: dict[tuple, HistoricalResultRow] = {
@@ -7613,6 +7618,13 @@ async def backtest_place(
     """
     Place model backtest: scores holdout races through the place model,
     reports top-pick place rate by tier and overall.
+
+    Reads from RunnerPredictionHistoryRow per Ground Rule 1 — mutable can be
+    overwritten by post-race re-enrichment for races without snapshots, which
+    would contaminate the holdout feature vectors. Filters on cancelled and
+    excludes validation-backtest rows. Per-race runners are deduplicated by
+    keeping only the latest enriched_at batch so a re-snapshot edge case
+    can't yield a mixed-batch feature set.
     """
     _check_admin(x_cron_secret)
     from horse_engine.prediction.features import FEATURE_NAMES
@@ -7628,20 +7640,29 @@ async def backtest_place(
         hr_rows = hr_result.scalars().all()
         race_ids = list({r.race_id for r in hr_rows})
         pred_result = await session.execute(
-            select(RunnerPredictionRow)
-            .where(RunnerPredictionRow.race_id.in_(race_ids))
-            .where(RunnerPredictionRow.enriched_json.isnot(None))
+            select(RunnerPredictionHistoryRow)
+            .where(RunnerPredictionHistoryRow.race_id.in_(race_ids))
+            .where(RunnerPredictionHistoryRow.enriched_json.isnot(None))
+            .where(RunnerPredictionHistoryRow.cancelled.is_(False) | RunnerPredictionHistoryRow.cancelled.is_(None))
+            .where(RunnerPredictionHistoryRow.source == "live")
+            .order_by(RunnerPredictionHistoryRow.enriched_at.desc())
         )
         pred_rows = pred_result.scalars().all()
 
     pm = PlaceModel.from_weights_dict(weights_dict) if weights_dict else PlaceModel()
-    pred_by_key = {(p.race_id, p.horse_name): p for p in pred_rows}
     hr_map = {(r.race_id, r.horse_name): r for r in hr_rows}
 
-    # Group by race
+    # Group by race, keeping only the latest-enriched_at batch per race so a
+    # race with multiple snapshots (legacy) can't mix feature vectors from
+    # different enrichment runs.
     races: dict[str, list] = {}
+    latest_at_by_race: dict[str, datetime] = {}
     for p in pred_rows:
-        races.setdefault(p.race_id, []).append(p)
+        existing = latest_at_by_race.get(p.race_id)
+        if existing is None:
+            latest_at_by_race[p.race_id] = p.enriched_at
+        if p.enriched_at == latest_at_by_race[p.race_id]:
+            races.setdefault(p.race_id, []).append(p)
 
     total = place_hits = 0
     tier_buckets: dict[str, dict] = {
