@@ -36,7 +36,7 @@ from datetime import date, datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 from typing import Any, Optional
 
-from fastapi import BackgroundTasks, Depends, FastAPI, Header, HTTPException, Query
+from fastapi import BackgroundTasks, Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
@@ -10246,6 +10246,7 @@ async def cron_enrich(
 
 @app.post("/api/admin/reenrich")
 async def admin_reenrich(
+    request: Request,
     date: Optional[str] = None,
     x_cron_secret: Optional[str] = Header(None),
 ):
@@ -10253,18 +10254,31 @@ async def admin_reenrich(
     _check_admin(x_cron_secret)
     target = date or _today_aest().isoformat()
 
+    # Caller fingerprint — helps identify a runaway external loop. UA, Referer
+    # and X-Forwarded-For are usually enough to pin down which Railway service
+    # (or external script) is hitting us.
+    h = request.headers
+    caller_fp = (
+        f"ua={h.get('user-agent','?')[:80]!r} "
+        f"ref={h.get('referer','?')!r} "
+        f"xff={h.get('x-forwarded-for','?')!r} "
+        f"client={request.client.host if request.client else '?'}"
+    )
+
     # Debounce — per (endpoint, date). Defends against external schedulers
     # (Railway dashboard cron, stuck curl loops) firing this every few seconds
     # and hammering Racing Australia into 403/WAF bans.
     skip, age = _should_debounce("reenrich", target)
     if skip:
-        log.info("[reenrich] DEBOUNCED %s — last call %.0fs ago", target, age)
+        log.info("[reenrich] DEBOUNCED %s — last call %.0fs ago — %s", target, age, caller_fp)
         return {
             "status": "debounced",
             "date": target,
             "seconds_since_last_call": round(age, 1),
             "cooldown_seconds": _ADMIN_DEBOUNCE_SECONDS,
         }
+
+    log.info("[reenrich] ACCEPTED %s — %s", target, caller_fp)
 
     async def _do_reenrich():
         client = get_tab_client()
