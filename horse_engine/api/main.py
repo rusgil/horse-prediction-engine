@@ -7816,7 +7816,12 @@ async def backtest_place(
         if not runner_fvs:
             continue
 
-        _, place_probs = pm.predict_field([fv for _, fv in runner_fvs])
+        # BUG-41 fix: PlaceModel.predict_field returns (trained_p_top3, heuristic).
+        # Use the FIRST tuple element (the trained P(top-3) output) for ranking
+        # and tier classification. The previous `_, place_probs = ...` discarded
+        # the trained output and ranked by the win model's softmax(raw×0.5) heuristic
+        # applied to PlaceModel weights — a fundamentally different quantity.
+        place_probs, _ = pm.predict_field([fv for _, fv in runner_fvs])
         best_idx = place_probs.index(max(place_probs))
         top_runner = runner_fvs[best_idx][0]
         top_prob = place_probs[best_idx]
@@ -9376,7 +9381,11 @@ async def _run_place_calibration_sweep(holdout_days: int = 14) -> dict:
                     continue
             if not runner_fvs:
                 continue
-            _, place_probs = model.predict_field([fv for _, fv in runner_fvs])
+            # BUG-41 fix: use the trained P(top-3) output (first tuple element),
+            # not the win-model heuristic in the second element. Without this the
+            # place calibration sweep optimises window selection against the
+            # wrong objective.
+            place_probs, _ = model.predict_field([fv for _, fv in runner_fvs])
             best_idx = place_probs.index(max(place_probs))
             top_runner = runner_fvs[best_idx][0]
             actual = holdout_results.get((race_id, top_runner.horse_name))
