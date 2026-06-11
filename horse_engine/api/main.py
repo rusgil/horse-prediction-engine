@@ -3550,16 +3550,18 @@ async def list_meetings(race_date: str = _today()):
     if seen_vc:
         log.info("list_meetings: added %d DB-only venues for %s: %s", len(seen_vc), race_date, seen_vc)
 
-    # Add any DB-cancelled meetings that are no longer on RA
+    # Add any DB-mass-cancelled meetings that are no longer on RA.
+    # BUG-35: previously identified "cancelled venues" by "rank-1 mutable row is
+    # cancelled", which fires false-positives when a single scratch happens to
+    # hit the rank-1 horse. Now uses an aggregate over the venue's full field —
+    # a venue is mass-cancelled only when EVERY runner across all its races for
+    # the date is cancelled.
     active_codes = {it["venue_code"] for it in items}
     async with get_session() as session:
-        cancelled_race_ids = (await session.execute(
-            select(RunnerPredictionRow.race_id)
+        pred_status_rows = (await session.execute(
+            select(RunnerPredictionRow.race_id, RunnerPredictionRow.cancelled)
             .where(RunnerPredictionRow.race_id.like(f"{race_date}_%"))
-            .where(RunnerPredictionRow.model_rank == 1)
-            .where(RunnerPredictionRow.cancelled.is_(True))
-            .distinct()
-        )).scalars().all()
+        )).all()
 
         # Venues with actual results in HistoricalResultRow are NOT cancelled —
         # the enrichment cron sometimes marks races abandoned prematurely.
@@ -3568,15 +3570,31 @@ async def list_meetings(race_date: str = _today()):
             .where(HistoricalResultRow.race_id.like(f"{race_date}_%"))
             .distinct()
         )).scalars().all()
+
     resulted_vcs = set()
     for rid in resulted_race_ids:
         _, vc, _ = _parse_race_id(rid)
         if vc:
             resulted_vcs.add(vc)
 
-    seen_cancelled: set[str] = set()
-    for race_id in cancelled_race_ids:
+    # Aggregate cancellation state per venue.
+    venue_totals: dict[str, dict[str, int]] = {}
+    for race_id, cancelled in pred_status_rows:
         _, vc, _ = _parse_race_id(race_id)
+        if not vc:
+            continue
+        bucket = venue_totals.setdefault(vc, {"total": 0, "cancelled": 0})
+        bucket["total"] += 1
+        if cancelled:
+            bucket["cancelled"] += 1
+
+    fully_cancelled_vcs = {
+        vc for vc, b in venue_totals.items()
+        if b["total"] > 0 and b["cancelled"] == b["total"]
+    }
+
+    seen_cancelled: set[str] = set()
+    for vc in fully_cancelled_vcs:
         if vc not in active_codes and vc not in seen_cancelled:
             seen_cancelled.add(vc)
             venue_name_c, state_c = rp_venue_meta.get(vc, (None, None))
@@ -5723,7 +5741,12 @@ async def seed_ra_results(
     client = get_tab_client()
     ra = client._ra
 
-    # Find all predictions for this date
+    # Find all predictions for this date. Mutable is the canonical source of
+    # "which venues we predicted" — we need it to scope the venue/state lookup.
+    # History is also fetched so feature_vector_json on the new HistoricalResultRow
+    # rows can be sourced from the immutable pre-race snapshot when available
+    # (BUG-36) rather than mutable, which can carry post-race contamination for
+    # races without a snapshot.
     async with get_session() as session:
         pred_rows = (await session.execute(
             select(RunnerPredictionRow)
@@ -5731,8 +5754,21 @@ async def seed_ra_results(
             .where(RunnerPredictionRow.cancelled.is_(False) | RunnerPredictionRow.cancelled.is_(None))
         )).scalars().all()
 
+        hist_rows = (await session.execute(
+            select(RunnerPredictionHistoryRow)
+            .where(RunnerPredictionHistoryRow.race_id.like(f"{race_date}_%"))
+            .where(RunnerPredictionHistoryRow.enriched_json.isnot(None))
+            .where(RunnerPredictionHistoryRow.cancelled.is_(False) | RunnerPredictionHistoryRow.cancelled.is_(None))
+            .where(RunnerPredictionHistoryRow.source == "live")
+        )).scalars().all()
+
     if not pred_rows:
         return {"status": "ok", "seeded": 0, "detail": "no predictions for this date"}
+
+    # Index history by (race_id, normalized horse name) for fv_json lookup.
+    hist_by_key: dict[tuple[str, str], RunnerPredictionHistoryRow] = {
+        (h.race_id, _normalize_horse(h.horse_name)): h for h in hist_rows
+    }
 
     # Group predictions by (venue_name, state) → list of race_ids
     venue_state_map: dict[tuple[str, str], set[str]] = {}
@@ -5798,6 +5834,12 @@ async def seed_ra_results(
                             continue
 
                     display_name = matched_pred.horse_name if matched_pred else name_lower.title()
+                    # Prefer history's enriched_json (immutable pre-race snapshot)
+                    # over mutable's, which may be post-race-contaminated for
+                    # races without a snapshot (BUG-36).
+                    matched_hist = hist_by_key.get((race_id, _normalize_horse(name_lower)))
+                    fv_json = (matched_hist.enriched_json if matched_hist
+                               else (matched_pred.enriched_json if matched_pred else None))
                     session.add(HistoricalResultRow(
                         race_id=race_id,
                         horse_name=display_name,
@@ -5806,7 +5848,7 @@ async def seed_ra_results(
                         winner=pos == 1,
                         placed=pos <= 3,
                         starting_price=sp,
-                        feature_vector_json=matched_pred.enriched_json if matched_pred else None,
+                        feature_vector_json=fv_json,
                     ))
                     race_seeded += 1
                 await session.commit()
@@ -9769,6 +9811,9 @@ async def admin_reenrich(
         async with get_session() as session:
             model = await _load_model(session)
         await _enrich_date(target, client, model, force=True)
+        # Drop cached meeting list + every per-venue detail entry for this date
+        # so the refreshed enrichment is immediately visible (BUG-37).
+        _invalidate_meeting_caches(target)
         log.info("[reenrich] Completed re-enrich for %s", target)
 
     asyncio.create_task(_do_reenrich())
