@@ -9506,13 +9506,15 @@ async def _run_calibration_sweep(holdout_days: int = 14) -> dict:
                 continue
             if pred.race_id not in winners:
                 continue  # no result yet, can't label
-            if pred.enriched_at and pred.scheduled_time:
-                try:
-                    sched = datetime.fromisoformat(pred.scheduled_time.replace("Z", "+00:00")).replace(tzinfo=None)
-                    if pred.enriched_at > sched:
-                        continue  # post-race enrichment — feature leak risk
-                except (ValueError, AttributeError):
-                    pass
+            # No pre-race time guard: recompute_clean_feature_vector uses the
+            # BUG-18-clean AggregateIndex which only reads HR results strictly
+            # before each row's race_date, so post-race enriched_at can't leak
+            # this-race results into the feature vector. Adding the
+            # enriched_at > scheduled_time check dropped 99% of backfilled
+            # rows (their enriched_at is the backfill time, not the original
+            # pre-race time) — taking us down to 28 races per window.
+            # retrain_model uses the same recompute chain without the guard
+            # and trains cleanly.
             races_in_window.setdefault(pred.race_id, []).append(pred)
 
         # Build per-race (fv, label) groups using the clean recompute chain.
@@ -9842,13 +9844,8 @@ async def _run_place_calibration_sweep(holdout_days: int = 14) -> dict:
             actual = hr_by_key.get((pred.race_id, pred.horse_name))
             if actual is None:
                 continue  # no result for this horse
-            if pred.enriched_at and pred.scheduled_time:
-                try:
-                    sched = datetime.fromisoformat(pred.scheduled_time.replace("Z", "+00:00")).replace(tzinfo=None)
-                    if pred.enriched_at > sched:
-                        continue  # post-race enrichment — feature leak risk
-                except (ValueError, AttributeError):
-                    pass
+            # No pre-race time guard here (same reason as win sweep): the clean
+            # recompute path is already date-safe via AggregateIndex.
             try:
                 fv = recompute_clean_feature_vector(pred, index)
                 if fv is None:
