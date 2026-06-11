@@ -2607,6 +2607,28 @@ async def get_edge_picks():
 _odds_refresh_last: datetime | None = None
 _ODDS_REFRESH_COOLDOWN = 120  # seconds — prevents hammering RA/OddsPro
 
+# Per-(endpoint, key) debounce. Any admin endpoint that triggers upstream
+# fetches (Racing Australia, TAB, OddsPro) must register here so a wayward
+# caller — Railway dashboard cron set to seconds, a stuck curl loop, an
+# accidental retry storm — cannot drag us into a 403/WAF ban.
+# Hard rule (feedback_no_api_hammer.md): this program can not HAMMER apis.
+_admin_debounce: dict[tuple[str, str], datetime] = {}
+_ADMIN_DEBOUNCE_SECONDS = 300  # 5 min — admin reenrich/restore shouldn't fire
+                               # more often than this from any source.
+
+def _should_debounce(endpoint: str, key: str) -> tuple[bool, float]:
+    """Return (should_skip, age_seconds_of_last_call). Updates timestamp on
+    accept so the next call within the window is debounced."""
+    now = datetime.utcnow()
+    k = (endpoint, key)
+    last = _admin_debounce.get(k)
+    if last is not None:
+        age = (now - last).total_seconds()
+        if age < _ADMIN_DEBOUNCE_SECONDS:
+            return True, age
+    _admin_debounce[k] = now
+    return False, 0.0
+
 # Venue name aliases: our internal name → what TAB/OddsPro use
 # Key is lowercased; value is the canonical name to search with
 _VENUE_ALIASES: dict[str, str] = {
@@ -6077,6 +6099,14 @@ async def purge_results_for_venue(
 async def seed_results(race_date: str, x_cron_secret: Optional[str] = Header(None)):
     """Fetch race results from Racing Australia for a past date and store as training data."""
     _check_admin(x_cron_secret)
+    skip, age = _should_debounce("seed-results", race_date)
+    if skip:
+        return {
+            "status": "debounced",
+            "date": race_date,
+            "seconds_since_last_call": round(age, 1),
+            "cooldown_seconds": _ADMIN_DEBOUNCE_SECONDS,
+        }
     seeded = await _seed_results_for_date(race_date)
     return {"status": "seeded", "results": seeded}
 
@@ -6095,6 +6125,14 @@ async def seed_ra_results(
     so stale/wrong rows are replaced with fresh RA data.
     """
     _check_admin(x_cron_secret)
+    skip, age = _should_debounce("seed-ra-results", race_date)
+    if skip and not force:
+        return {
+            "status": "debounced",
+            "date": race_date,
+            "seconds_since_last_call": round(age, 1),
+            "cooldown_seconds": _ADMIN_DEBOUNCE_SECONDS,
+        }
     from sqlalchemy import delete as sa_delete
 
     client = get_tab_client()
@@ -10215,6 +10253,19 @@ async def admin_reenrich(
     _check_admin(x_cron_secret)
     target = date or _today_aest().isoformat()
 
+    # Debounce — per (endpoint, date). Defends against external schedulers
+    # (Railway dashboard cron, stuck curl loops) firing this every few seconds
+    # and hammering Racing Australia into 403/WAF bans.
+    skip, age = _should_debounce("reenrich", target)
+    if skip:
+        log.info("[reenrich] DEBOUNCED %s — last call %.0fs ago", target, age)
+        return {
+            "status": "debounced",
+            "date": target,
+            "seconds_since_last_call": round(age, 1),
+            "cooldown_seconds": _ADMIN_DEBOUNCE_SECONDS,
+        }
+
     async def _do_reenrich():
         client = get_tab_client()
         async with get_session() as session:
@@ -10240,6 +10291,15 @@ async def restore_cancelled(
     """
     _check_admin(x_cron_secret)
     target = date or _today_aest().isoformat()
+    skip, age = _should_debounce("restore-cancelled", target)
+    if skip:
+        log.info("[restore-cancelled] DEBOUNCED %s — last call %.0fs ago", target, age)
+        return {
+            "status": "debounced",
+            "date": target,
+            "seconds_since_last_call": round(age, 1),
+            "cooldown_seconds": _ADMIN_DEBOUNCE_SECONDS,
+        }
     client = get_tab_client()
     await _cancel_abandoned_meetings(client, target)
     return {"status": "done", "date": target}
