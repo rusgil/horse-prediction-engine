@@ -248,28 +248,28 @@ def _patch_clean_aggregates(er_data: dict, history_row, index: AggregateIndex) -
 def recompute_clean_feature_vector(history_row, index: AggregateIndex) -> list[float] | None:
     """Build a feature vector for one history row using BUG-18-fixed aggregates.
 
-    Returns None if enriched_json is missing or malformed.
+    Returns None if anything goes wrong (missing enriched_json, malformed JSON,
+    EnrichedRunner validation failure, build_feature_vector error, etc.). Callers
+    rely on None as the signal to fall back to the raw enriched_json path —
+    NEVER re-raise from this function. If we did, the caller's outer try/except
+    would swallow the error WITHOUT firing the fallback (the calibration sweep
+    bug found 2026-06-11 13:50 AEST).
     """
     if not history_row.enriched_json:
         return None
     try:
         er_data = json.loads(history_row.enriched_json)
-    except Exception as e:
-        log.debug("Bad enriched_json for %s/%s: %s", history_row.race_id, history_row.horse_name, e)
-        return None
-
-    er_data = _patch_clean_aggregates(er_data, history_row, index)
-    try:
-        # EnrichedRunner has strict pydantic-style validation; pass only known fields
-        # by letting **er_data fall through. Extra/missing keys would raise.
+        er_data = _patch_clean_aggregates(er_data, history_row, index)
+        # EnrichedRunner has strict pydantic-style validation; pass only known
+        # fields. Extra/missing keys would raise.
         er = EnrichedRunner(**{k: v for k, v in er_data.items() if k in EnrichedRunner.model_fields})
+        return build_feature_vector(er)
     except Exception as e:
         log.debug(
-            "Failed to construct EnrichedRunner for %s/%s: %s",
+            "Clean recompute failed for %s/%s: %s",
             history_row.race_id, history_row.horse_name, e,
         )
         return None
-    return build_feature_vector(er)
 
 
 def contamination_diff(history_row, index: AggregateIndex) -> dict:
