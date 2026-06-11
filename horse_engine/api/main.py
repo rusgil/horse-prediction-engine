@@ -7897,12 +7897,7 @@ async def backtest_place(
             races.setdefault(p.race_id, []).append(p)
 
     total = place_hits = 0
-    tier_buckets: dict[str, dict] = {
-        "premium": {"races": 0, "hits": 0},
-        "hot":     {"races": 0, "hits": 0},
-        "high":    {"races": 0, "hits": 0},
-        "strong":  {"races": 0, "hits": 0},
-    }
+    sum_predicted_prob = 0.0
 
     for race_id, runners in races.items():
         runner_fvs = []
@@ -7917,9 +7912,9 @@ async def backtest_place(
 
         # BUG-41 fix: PlaceModel.predict_field returns (trained_p_top3, heuristic).
         # Use the FIRST tuple element (the trained P(top-3) output) for ranking
-        # and tier classification. The previous `_, place_probs = ...` discarded
-        # the trained output and ranked by the win model's softmax(raw×0.5) heuristic
-        # applied to PlaceModel weights — a fundamentally different quantity.
+        # — the previous `_, place_probs = ...` discarded the trained output and
+        # ranked by the win model's softmax(raw×0.5) heuristic applied to
+        # PlaceModel weights, a fundamentally different quantity.
         place_probs, _ = pm.predict_field([fv for _, fv in runner_fvs])
         best_idx = place_probs.index(max(place_probs))
         top_runner = runner_fvs[best_idx][0]
@@ -7928,36 +7923,29 @@ async def backtest_place(
         if not actual:
             continue
 
-        # Tier by place probability percentile (same thresholds as win model)
-        model_pct = top_prob * 100
-        if model_pct >= 50:
-            tier = "premium"
-        elif model_pct >= 45:
-            tier = "hot"
-        elif model_pct >= 35:
-            tier = "high"
-        else:
-            tier = "strong"
-
         total += 1
-        placed = bool(actual.placed)
-        if placed:
+        sum_predicted_prob += top_prob
+        if bool(actual.placed):
             place_hits += 1
-        tier_buckets[tier]["races"] += 1
-        if placed:
-            tier_buckets[tier]["hits"] += 1
 
-    def _rate(d):
-        return round(d["hits"] / d["races"] * 100, 1) if d["races"] else 0.0
-
+    # Tier breakdown removed — the previous premium/hot/high/strong thresholds
+    # were copied from the WIN model's UI shortlist (model_pct >= 30 AND sp >=
+    # 3.0 AND overlay > 5%) and applied here without the odds/overlay
+    # components. That made "premium tier in backtest_place" a confidence
+    # percentile, not a bet-selection criterion — measuring something different
+    # from what the public-facing premium picks actually represent. Premium
+    # pick performance is tracked separately by /api/performance/premium*
+    # endpoints with the real win-criteria; this backtest now just reports
+    # overall place rate and a single calibration gap.
+    overall_place_rate = (place_hits / total * 100) if total else 0.0
+    avg_predicted = (sum_predicted_prob / total * 100) if total else 0.0
     return {
         "holdout_days": holdout_days,
         "total_races": total,
-        "overall_place_rate_pct": round(place_hits / total * 100, 1) if total else 0,
-        "by_tier": {
-            tier: {**b, "place_rate_pct": _rate(b)}
-            for tier, b in tier_buckets.items() if b["races"] > 0
-        },
+        "place_hits": place_hits,
+        "overall_place_rate_pct": round(overall_place_rate, 1),
+        "avg_predicted_place_pct": round(avg_predicted, 1),
+        "calibration_gap_pct": round(avg_predicted - overall_place_rate, 1),
     }
 
 
