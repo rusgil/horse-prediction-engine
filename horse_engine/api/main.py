@@ -9301,9 +9301,15 @@ async def _run_calibration_sweep(holdout_days: int = 14) -> dict:
     Saves the best window's weights to the DB and writes a CalibrationRow.
 
     Uses the BUG-18-clean recompute path so candidate-window scoring sees the
-    same feature distribution that production inference now uses. Without this,
-    nightly calibration would still pick windows based on contaminated
-    aggregate-rate features and overwrite the clean retrained weights.
+    same feature distribution that production inference now uses.
+
+    Iterates predictions directly (mirroring retrain_model's pattern) rather
+    than walking HistoricalResultRow and trying to look up matching predictions.
+    The HR table currently has ~136K rows but only ~15K of them have a matching
+    RunnerPredictionHistoryRow — most are for older races that were never
+    enriched. The old "iterate HR" design hit 99.8% pred_missing and dropped
+    every window; iterating predictions directly only processes rows that
+    actually have features to train on. (2026-06-11 calibration sweep rewrite.)
     """
     from horse_engine.prediction.clean_features import (
         AggregateIndex, recompute_clean_feature_vector, fallback_feature_vector,
@@ -9312,34 +9318,28 @@ async def _run_calibration_sweep(holdout_days: int = 14) -> dict:
     holdout_cutoff = (today - timedelta(days=holdout_days)).isoformat()
 
     async with get_session() as session:
-        # All historical results
-        hr_result = await session.execute(select(HistoricalResultRow))
-        all_hr = hr_result.scalars().all()
-        # History table only — written once pre-race, never overwritten by re-enrichments,
-        # so enriched_json always reflects the genuine pre-race feature vector.
-        # Cancelled filter added per BUG-29 — without it, a scratched runner can be
-        # the holdout-rank-1 pick; the result lookup then fails and the race is
-        # silently dropped from the sample. Source="live" excludes prior
-        # validation-backtest rows from contaminating the calibration.
-        pred_result = await session.execute(
+        all_hr = (await session.execute(select(HistoricalResultRow))).scalars().all()
+        all_pred = (await session.execute(
             select(RunnerPredictionHistoryRow)
             .where(RunnerPredictionHistoryRow.enriched_json.isnot(None))
             .where(RunnerPredictionHistoryRow.cancelled.is_(False) | RunnerPredictionHistoryRow.cancelled.is_(None))
             .where(RunnerPredictionHistoryRow.source == "live")
-        )
-        all_pred = pred_result.scalars().all()
+        )).scalars().all()
 
-    # Build the BUG-18-clean aggregate index once over the full HR pool.
-    # Used for both training (per-window) and holdout scoring.
+    # BUG-18-clean aggregate index, built once over full HR pool.
     index = AggregateIndex(all_hr)
-    pred_by_key = {(p.race_id, p.horse_name): p for p in all_pred}
 
-    # Group predictions by race_id for holdout scoring
-    holdout_races: dict[str, list] = {}
-    holdout_results: dict[tuple, HistoricalResultRow] = {}
+    # Build winners per race + per-(race,horse) result lookup. Used for labels
+    # in training and for holdout-pick scoring.
+    winners: dict[str, str] = {}  # race_id -> normalized winner horse name
+    hr_by_key: dict[tuple, HistoricalResultRow] = {}
     for r in all_hr:
-        if r.race_id >= holdout_cutoff:
-            holdout_results[(r.race_id, r.horse_name)] = r
+        hr_by_key[(r.race_id, r.horse_name)] = r
+        if r.position == 1:
+            winners[r.race_id] = _normalize_horse(r.horse_name)
+
+    # Holdout = predictions in the most recent N days, grouped by race.
+    holdout_races: dict[str, list] = {}
     for p in all_pred:
         if p.race_id >= holdout_cutoff:
             holdout_races.setdefault(p.race_id, []).append(p)
@@ -9349,67 +9349,55 @@ async def _run_calibration_sweep(holdout_days: int = 14) -> dict:
     best_score = float("-inf")
     best_weights = None
 
+    import math as _math
     for window in _CANDIDATE_WINDOWS:
         train_cutoff = (today - timedelta(days=window)).isoformat()
 
-        # Training data: build per-race groups for race-grouped softmax training
-        # (ARCH-2). Per-runner binary CE — what the calibration sweep used
-        # before — ignores that horses compete within the field, so the
-        # production weights it set were systematically less aligned with the
-        # softmax inference step than the admin retrain endpoint's were.
-        # Now both training paths use the same loss as inference.
-        import math as _math
-        races_in_window: dict[str, list[tuple[list[float], int]]] = {}
-        race_weight_by_id: dict[str, float] = {}
-        for row in all_hr:
-            if row.race_id < train_cutoff or row.race_id >= holdout_cutoff:
+        # Group training predictions by race_id. Only include races we have a
+        # winner for (so labels can be assigned), within the window, that pass
+        # the pre-race time guard.
+        races_in_window: dict[str, list] = {}
+        for pred in all_pred:
+            if pred.race_id < train_cutoff or pred.race_id >= holdout_cutoff:
                 continue
-            pred = pred_by_key.get((row.race_id, row.horse_name))
-            if not pred:
-                continue
+            if pred.race_id not in winners:
+                continue  # no result yet, can't label
             if pred.enriched_at and pred.scheduled_time:
                 try:
                     sched = datetime.fromisoformat(pred.scheduled_time.replace("Z", "+00:00")).replace(tzinfo=None)
                     if pred.enriched_at > sched:
-                        continue
+                        continue  # post-race enrichment — feature leak risk
                 except (ValueError, AttributeError):
                     pass
-            try:
-                # BUG-18 clean recompute — falls back to safe enriched_json
-                # construction (strips None values that crash strict pydantic on
-                # pre-2026-06-11 rows) when the clean path can't produce a vector.
-                fv = recompute_clean_feature_vector(pred, index)
-                if fv is None:
-                    fv = fallback_feature_vector(pred)
-                    if fv is None:
-                        continue
-                # Use position == 1 over row.winner (BUG-28) — the boolean can
-                # be stale after re-seedings; position is authoritative.
-                races_in_window.setdefault(row.race_id, []).append(
-                    (fv, 1 if row.position == 1 else 0)
-                )
-                if row.race_id not in race_weight_by_id:
-                    try:
-                        race_date = date.fromisoformat(row.race_id[:10])
-                        days_ago = (today - race_date).days
-                    except Exception:
-                        days_ago = 30
-                    race_weight_by_id[row.race_id] = _math.exp(-days_ago / 30.0)
-            except Exception:
-                continue
+            races_in_window.setdefault(pred.race_id, []).append(pred)
 
-        # Keep only races with exactly one winner and ≥2 runners — the same
-        # validity check train_race_grouped applies internally; pre-filtering
-        # gives accurate skip diagnostics.
+        # Build per-race (fv, label) groups using the clean recompute chain.
         race_groups: list[list[tuple[list[float], int]]] = []
         race_sample_weights: list[float] = []
-        for race_id, runners in races_in_window.items():
-            if len(runners) < 2:
+        for race_id, preds in races_in_window.items():
+            winner_name = winners[race_id]
+            race: list[tuple] = []
+            for pred in preds:
+                try:
+                    fv = recompute_clean_feature_vector(pred, index)
+                    if fv is None:
+                        fv = fallback_feature_vector(pred)
+                        if fv is None:
+                            continue
+                    label = 1 if _normalize_horse(pred.horse_name) == winner_name else 0
+                    race.append((fv, label))
+                except Exception:
+                    continue
+            # train_race_grouped requires ≥2 runners and exactly one winner.
+            if len(race) < 2 or sum(l for _, l in race) != 1:
                 continue
-            if sum(l for _, l in runners) != 1:
-                continue
-            race_groups.append(runners)
-            race_sample_weights.append(race_weight_by_id[race_id])
+            race_groups.append(race)
+            try:
+                race_date = date.fromisoformat(race_id[:10])
+                days_ago = (today - race_date).days
+            except Exception:
+                days_ago = 30
+            race_sample_weights.append(_math.exp(-days_ago / 30.0))
 
         if len(race_groups) < 50:
             window_results.append({
@@ -9452,7 +9440,7 @@ async def _run_calibration_sweep(holdout_days: int = 14) -> dict:
             top_runner = runner_fvs[best_idx][0]
             top_prob = win_probs[best_idx]
 
-            actual = holdout_results.get((race_id, top_runner.horse_name))
+            actual = hr_by_key.get((race_id, top_runner.horse_name))
             if not actual:
                 continue
 
@@ -9671,28 +9659,26 @@ async def _run_place_calibration_sweep(holdout_days: int = 14) -> dict:
     holdout_cutoff = (today - timedelta(days=holdout_days)).isoformat()
 
     async with get_session() as session:
-        hr_result = await session.execute(select(HistoricalResultRow))
-        all_hr = hr_result.scalars().all()
-        # History table only — written once pre-race, never overwritten by re-enrichments.
-        # Cancelled filter added per BUG-33 (sister of BUG-29 in the win sweep) so a
-        # scratched runner can't be the holdout rank-1 pick and silently drop the
-        # race. Source="live" excludes prior validation-backtest rows.
-        pred_result = await session.execute(
+        all_hr = (await session.execute(select(HistoricalResultRow))).scalars().all()
+        all_pred = (await session.execute(
             select(RunnerPredictionHistoryRow)
             .where(RunnerPredictionHistoryRow.enriched_json.isnot(None))
             .where(RunnerPredictionHistoryRow.cancelled.is_(False) | RunnerPredictionHistoryRow.cancelled.is_(None))
             .where(RunnerPredictionHistoryRow.source == "live")
-        )
-        all_pred = pred_result.scalars().all()
+        )).scalars().all()
 
     index = AggregateIndex(all_hr)
-    pred_by_key = {(p.race_id, p.horse_name): p for p in all_pred}
 
+    # Per-(race, horse) result lookup — used to label both training (placed?)
+    # and holdout (did the top pick place?) examples. Same rewrite pattern as
+    # the win sweep above: iterate predictions directly instead of iterating
+    # the 136K-row HR table and missing 99.8% on the join.
+    hr_by_key: dict[tuple, HistoricalResultRow] = {
+        (r.race_id, r.horse_name): r for r in all_hr
+    }
+
+    # Holdout = predictions in the most recent N days, grouped by race.
     holdout_races: dict[str, list] = {}
-    holdout_results: dict[tuple, HistoricalResultRow] = {}
-    for r in all_hr:
-        if r.race_id >= holdout_cutoff:
-            holdout_results[(r.race_id, r.horse_name)] = r
     for p in all_pred:
         if p.race_id >= holdout_cutoff:
             holdout_races.setdefault(p.race_id, []).append(p)
@@ -9706,31 +9692,28 @@ async def _run_place_calibration_sweep(holdout_days: int = 14) -> dict:
         train_cutoff = (today - timedelta(days=window)).isoformat()
         training_data = []
         sw_list = []
-        for row in all_hr:
-            if row.race_id < train_cutoff or row.race_id >= holdout_cutoff:
+        for pred in all_pred:
+            if pred.race_id < train_cutoff or pred.race_id >= holdout_cutoff:
                 continue
-            pred = pred_by_key.get((row.race_id, row.horse_name))
-            if not pred:
-                continue
+            actual = hr_by_key.get((pred.race_id, pred.horse_name))
+            if actual is None:
+                continue  # no result for this horse
             if pred.enriched_at and pred.scheduled_time:
                 try:
                     sched = datetime.fromisoformat(pred.scheduled_time.replace("Z", "+00:00")).replace(tzinfo=None)
                     if pred.enriched_at > sched:
-                        continue
+                        continue  # post-race enrichment — feature leak risk
                 except (ValueError, AttributeError):
                     pass
             try:
-                # BUG-18 clean recompute — falls back to safe construction that
-                # strips None values which would otherwise crash strict
-                # EnrichedRunner validation on pre-2026-06-11 rows.
                 fv = recompute_clean_feature_vector(pred, index)
                 if fv is None:
                     fv = fallback_feature_vector(pred)
                     if fv is None:
                         continue
-                training_data.append((fv, 1 if row.placed else 0))
+                training_data.append((fv, 1 if actual.placed else 0))
                 try:
-                    days_ago = (today - date.fromisoformat(row.race_id[:10])).days
+                    days_ago = (today - date.fromisoformat(pred.race_id[:10])).days
                 except Exception:
                     days_ago = 30
                 sw_list.append(_math.exp(-days_ago / 30.0))
@@ -9769,7 +9752,7 @@ async def _run_place_calibration_sweep(holdout_days: int = 14) -> dict:
             place_probs, _ = model.predict_field([fv for _, fv in runner_fvs])
             best_idx = place_probs.index(max(place_probs))
             top_runner = runner_fvs[best_idx][0]
-            actual = holdout_results.get((race_id, top_runner.horse_name))
+            actual = hr_by_key.get((race_id, top_runner.horse_name))
             if not actual:
                 continue
             total_races += 1
