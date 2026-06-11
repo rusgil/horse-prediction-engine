@@ -2629,6 +2629,56 @@ def _should_debounce(endpoint: str, key: str) -> tuple[bool, float]:
     _admin_debounce[k] = now
     return False, 0.0
 
+
+# ── Per-caller rate limit (kill switch for runaway/bot callers) ──────────────
+# Tracks recent request timestamps per origin IP. Any origin that exceeds
+# the threshold gets 429'd until the window slides past.
+#
+# IMPORTANT: we identify the origin from the LEFTMOST X-Forwarded-For entry
+# (Railway's edge proxy puts the real client IP there). All Railway traffic
+# arrives via 100.64.x.x so request.client.host is useless for distinguishing
+# callers — XFF is the only signal we can act on.
+#
+# Spoofing risk: a malicious caller can send their own XFF and look like
+# multiple origins. We don't defend against that here. For our use case
+# (curl loops + accidental hammering) XFF-based tracking is sufficient.
+import time as _time
+_caller_hits: dict[str, list[float]] = {}
+_CALLER_RATE_LIMIT = 5       # max requests per origin per window
+_CALLER_RATE_WINDOW = 60.0   # seconds
+
+def _caller_origin(request: Request) -> str:
+    """Resolve the upstream caller IP from the XFF chain. Leftmost entry
+    is the real client; fall back to request.client.host (will be Railway
+    internal) if XFF is missing."""
+    xff = request.headers.get("x-forwarded-for", "")
+    if xff:
+        return xff.split(",")[0].strip()
+    return request.client.host if request.client else "unknown"
+
+def _enforce_caller_rate(request: Request, endpoint: str) -> None:
+    """429 if this origin has exceeded the per-window threshold. Called
+    BEFORE auth so even unauthenticated scans can't outrun the limiter."""
+    origin = _caller_origin(request)
+    now = _time.time()
+    hits = _caller_hits.setdefault(origin, [])
+    # Drop timestamps that fell out of the window
+    hits[:] = [t for t in hits if now - t < _CALLER_RATE_WINDOW]
+    if len(hits) >= _CALLER_RATE_LIMIT:
+        ua = request.headers.get("user-agent", "?")[:80]
+        retry = int(_CALLER_RATE_WINDOW - (now - hits[0])) + 1
+        log.warning(
+            "[rate-limit] BLOCKED %s on %s — %d hits / %ds — ua=%r",
+            origin, endpoint, len(hits), int(_CALLER_RATE_WINDOW), ua,
+        )
+        raise HTTPException(
+            status_code=429,
+            detail=f"Rate limit: {_CALLER_RATE_LIMIT} requests per {int(_CALLER_RATE_WINDOW)}s per origin. Retry in {retry}s.",
+            headers={"Retry-After": str(retry)},
+        )
+    hits.append(now)
+
+
 # Venue name aliases: our internal name → what TAB/OddsPro use
 # Key is lowercased; value is the canonical name to search with
 _VENUE_ALIASES: dict[str, str] = {
@@ -6096,8 +6146,9 @@ async def purge_results_for_venue(
 # ── Admin: seed results ───────────────────────────────────────────────────────
 
 @app.post("/api/admin/results/{race_date}")
-async def seed_results(race_date: str, x_cron_secret: Optional[str] = Header(None)):
+async def seed_results(race_date: str, request: Request, x_cron_secret: Optional[str] = Header(None)):
     """Fetch race results from Racing Australia for a past date and store as training data."""
+    _enforce_caller_rate(request, "seed-results")
     _check_admin(x_cron_secret)
     skip, age = _should_debounce("seed-results", race_date)
     if skip:
@@ -6114,6 +6165,7 @@ async def seed_results(race_date: str, x_cron_secret: Optional[str] = Header(Non
 @app.post("/api/admin/seed-ra-results/{race_date}")
 async def seed_ra_results(
     race_date: str,
+    request: Request,
     x_cron_secret: Optional[str] = Header(None),
     force: bool = Query(False),
 ):
@@ -6124,6 +6176,7 @@ async def seed_ra_results(
     force=true deletes existing HistoricalResultRow for each race before re-inserting,
     so stale/wrong rows are replaced with fresh RA data.
     """
+    _enforce_caller_rate(request, "seed-ra-results")
     _check_admin(x_cron_secret)
     skip, age = _should_debounce("seed-ra-results", race_date)
     if skip and not force:
@@ -10251,6 +10304,7 @@ async def admin_reenrich(
     x_cron_secret: Optional[str] = Header(None),
 ):
     """Force re-enrich races for a given date (defaults to today). Fire-and-forget."""
+    _enforce_caller_rate(request, "reenrich")
     _check_admin(x_cron_secret)
     target = date or _today_aest().isoformat()
 
@@ -10296,6 +10350,7 @@ async def admin_reenrich(
 
 @app.post("/api/admin/restore-cancelled")
 async def restore_cancelled(
+    request: Request,
     date: Optional[str] = None,
     x_cron_secret: Optional[str] = Header(None),
 ):
@@ -10303,6 +10358,7 @@ async def restore_cancelled(
     Re-run cancellation check for a date, restoring any races that were
     falsely marked cancelled when Racing Australia was blocked. Fast — no re-enrichment.
     """
+    _enforce_caller_rate(request, "restore-cancelled")
     _check_admin(x_cron_secret)
     target = date or _today_aest().isoformat()
     skip, age = _should_debounce("restore-cancelled", target)
