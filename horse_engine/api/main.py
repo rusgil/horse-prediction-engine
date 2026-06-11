@@ -2882,12 +2882,13 @@ async def _update_odds_from_tab(
 
 
 @app.post("/api/edge/refresh-odds")
-async def refresh_edge_odds(force: bool = False):
+async def refresh_edge_odds(request: Request, force: bool = False):
     """
     Fetch odds for all upcoming edge picks — today + next 3 days.
     Primary: OddsPro movers. Fallback: TAB API (all runners, no auth).
     Rate-limited to once per 2 minutes globally. Pass force=true to bypass.
     """
+    _enforce_caller_rate(request, "edge-refresh-odds")
     from horse_engine.clients.oddspro import OddsProClient
     global _odds_refresh_last
     now = datetime.utcnow()
@@ -2937,12 +2938,13 @@ _results_refresh_last: datetime | None = None
 _results_refresh_cooldown: float = 100.0  # refreshed each call with jitter
 
 @app.post("/api/edge/refresh-results")
-async def refresh_edge_results():
+async def refresh_edge_results(request: Request):
     """
     Seed today's settled results on demand. Rate-limited globally with random jitter
     (100–130s) so TAB sees one semi-regular user, not a clock-perfect bot.
     Only runs during race hours 12pm–8pm AEST. Returns cached=True outside that window.
     """
+    _enforce_caller_rate(request, "edge-refresh-results")
     global _results_refresh_last, _results_refresh_cooldown
     now_aest = datetime.now(_AEST)
     # Only run during race hours
@@ -4981,8 +4983,7 @@ async def _do_exotic_backtest():
 
 @app.get("/api/admin/backtest-exotic/last")
 async def backtest_exotic_last(x_cron_secret: Optional[str] = Header(None)):
-    if x_cron_secret != settings.cron_secret:
-        raise HTTPException(403)
+    _check_admin(x_cron_secret)
     from horse_engine.models.database import ExoticBacktestRow
     async with get_session() as session:
         result = await session.execute(
@@ -6782,8 +6783,9 @@ async def start_backfill(
 
 
 @app.get("/api/admin/backfill/status")
-async def backfill_status():
+async def backfill_status(x_cron_secret: Optional[str] = Header(None)):
     """Current backfill progress."""
+    _check_admin(x_cron_secret)
     return _backfill
 
 
@@ -7029,8 +7031,9 @@ async def start_db_backfill(
 
 
 @app.get("/api/admin/backfill/from-db/status")
-async def db_backfill_status():
+async def db_backfill_status(x_cron_secret: Optional[str] = Header(None)):
     """Current DB backfill progress."""
+    _check_admin(x_cron_secret)
     return _db_backfill
 
 
