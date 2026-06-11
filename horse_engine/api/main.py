@@ -2870,15 +2870,17 @@ async def get_edge_yesterday(for_date: Optional[str] = Query(None, alias="date")
     stake = 10
 
     async with get_session() as session:
-        # Cancelled filter added per BUG-25 — without it, a horse scratched after
-        # snapshot still appears as the model's rank-1 edge pick; the result lookup
-        # then fails and the race is silently dropped from the displayed list.
+        # cancelled filter (BUG-25) + source="live" filter (BUG-26) — exclude
+        # scratched horses (whose result lookup would silently drop the race)
+        # and validation-backtest rows (so retroactive scores don't surface
+        # alongside genuine pre-race picks).
         result = await session.execute(
             select(RunnerPredictionHistoryRow)
             .where(RunnerPredictionHistoryRow.model_rank == 1)
             .where(RunnerPredictionHistoryRow.win_probability >= threshold)
             .where(RunnerPredictionHistoryRow.race_id.like(f"{prefix}%"))
             .where(RunnerPredictionHistoryRow.cancelled.is_(False) | RunnerPredictionHistoryRow.cancelled.is_(None))
+            .where(RunnerPredictionHistoryRow.source == "live")
             .order_by(RunnerPredictionHistoryRow.win_probability.desc())
         )
         picks = result.scalars().all()
@@ -2887,8 +2889,8 @@ async def get_edge_yesterday(for_date: Optional[str] = Query(None, alias="date")
         if not picks:
             return {"date": target_date, "picks": [], "summary": None}
 
-        # Batch-fetch place model runners for trifecta legs — same cancelled filter
-        # so scratched horses don't appear as trifecta legs alongside live picks.
+        # Batch-fetch place model runners for trifecta legs — same filters so
+        # scratched horses or validation rows don't appear as trifecta legs.
         yst_race_ids = [p.race_id for p in picks]
         yst_place_result = await session.execute(
             select(RunnerPredictionHistoryRow)
@@ -2896,6 +2898,7 @@ async def get_edge_yesterday(for_date: Optional[str] = Query(None, alias="date")
             .where(RunnerPredictionHistoryRow.place_model_rank >= 1)
             .where(RunnerPredictionHistoryRow.place_model_rank <= 4)
             .where(RunnerPredictionHistoryRow.cancelled.is_(False) | RunnerPredictionHistoryRow.cancelled.is_(None))
+            .where(RunnerPredictionHistoryRow.source == "live")
         )
         yst_place_rows = yst_place_result.scalars().all()
 
@@ -6928,6 +6931,10 @@ async def _run_validation_backtest(train_days_start: int, train_days_end: int) -
     test_end    = today.isoformat()
 
     # ── 1. Build training data ────────────────────────────────────────────────
+    # Read features from RunnerPredictionHistoryRow per Ground Rule 1 (BUG-27).
+    # Mutable for past races without snapshots can hold post-race-contaminated
+    # feature vectors; training on those biases the model toward post-race
+    # information. Source="live" excludes any prior validation-backtest rows.
     async with get_session() as session:
         hr_result = await session.execute(
             select(HistoricalResultRow)
@@ -6937,10 +6944,12 @@ async def _run_validation_backtest(train_days_start: int, train_days_end: int) -
         hr_rows = hr_result.scalars().all()
 
         pred_result = await session.execute(
-            select(RunnerPredictionRow)
-            .where(RunnerPredictionRow.race_id >= train_start)
-            .where(RunnerPredictionRow.race_id < train_end)
-            .where(RunnerPredictionRow.enriched_json.isnot(None))
+            select(RunnerPredictionHistoryRow)
+            .where(RunnerPredictionHistoryRow.race_id >= train_start)
+            .where(RunnerPredictionHistoryRow.race_id < train_end)
+            .where(RunnerPredictionHistoryRow.enriched_json.isnot(None))
+            .where(RunnerPredictionHistoryRow.cancelled.is_(False) | RunnerPredictionHistoryRow.cancelled.is_(None))
+            .where(RunnerPredictionHistoryRow.source == "live")
         )
         pred_rows = pred_result.scalars().all()
 
@@ -6957,7 +6966,9 @@ async def _run_validation_backtest(train_days_start: int, train_days_end: int) -
         try:
             er = EnrichedRunner(**json.loads(pred.enriched_json))
             fv = build_feature_vector(er)
-            win_training.append((fv, 1 if hr.winner else 0))
+            # Use position == 1 over hr.winner to avoid stale-boolean risk from
+            # re-seedings (same hardening as the win retrain path).
+            win_training.append((fv, 1 if hr.position == 1 else 0))
             place_training.append((fv, 1 if hr.placed else 0))
         except Exception:
             continue
