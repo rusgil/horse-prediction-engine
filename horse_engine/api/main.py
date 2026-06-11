@@ -2647,6 +2647,18 @@ _caller_hits: dict[str, list[float]] = {}
 _CALLER_RATE_LIMIT = 5       # max requests per origin per window
 _CALLER_RATE_WINDOW = 60.0   # seconds
 
+# Hard IP blocklist — short-circuit before rate-limit/auth so persistent
+# bad actors stop adding log noise. Add IPs here only after confirming
+# they aren't a legitimate user.
+#
+# 202.172.97.92: Sydney curl/8.7.1 loop firing /api/admin/reenrich every
+#   ~10s for weeks. Identified 2026-06-12 via XFF tracing after a CRON_SECRET
+#   leak. The secret was rotated so the bot can't authenticate anyway; this
+#   blocklist just cuts log noise.
+_HARD_BLOCKED_IPS: set[str] = {
+    "202.172.97.92",
+}
+
 def _caller_origin(request: Request) -> str:
     """Resolve the upstream caller IP from the XFF chain. Leftmost entry
     is the real client; fall back to request.client.host (will be Railway
@@ -2657,9 +2669,19 @@ def _caller_origin(request: Request) -> str:
     return request.client.host if request.client else "unknown"
 
 def _enforce_caller_rate(request: Request, endpoint: str) -> None:
-    """429 if this origin has exceeded the per-window threshold. Called
-    BEFORE auth so even unauthenticated scans can't outrun the limiter."""
+    """403 if blocklisted; 429 if over rate limit. Called BEFORE auth so
+    even unauthenticated scans can't outrun the limiter."""
     origin = _caller_origin(request)
+    if origin in _HARD_BLOCKED_IPS:
+        # Don't even log every hit — once per origin per minute is enough
+        # to confirm the block is still firing.
+        now = _time.time()
+        last_log = _caller_hits.get(f"_blocklog:{origin}", [0.0])[-1]
+        if now - last_log >= 60.0:
+            log.warning("[blocklist] DROP %s on %s — ua=%r",
+                        origin, endpoint, request.headers.get("user-agent", "?")[:80])
+            _caller_hits[f"_blocklog:{origin}"] = [now]
+        raise HTTPException(status_code=403, detail="Forbidden")
     now = _time.time()
     hits = _caller_hits.setdefault(origin, [])
     # Drop timestamps that fell out of the window
