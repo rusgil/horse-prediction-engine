@@ -5532,6 +5532,99 @@ async def probe_ra_results(race_date: str = "", x_cron_secret: Optional[str] = H
     }
 
 
+@app.get("/api/admin/recompute-debug")
+async def recompute_debug(
+    sample: int = Query(5, ge=1, le=20),
+    x_cron_secret: Optional[str] = Header(None),
+):
+    """Process `sample` random history rows through the full
+    recompute + fallback chain and report exactly what happens for each row —
+    including the actual exception message when something fails.
+
+    This is the diagnostic the calibration sweep needed but didn't have.
+    """
+    _check_admin(x_cron_secret)
+    import random as _random
+    import traceback as _tb
+    from horse_engine.prediction.clean_features import (
+        AggregateIndex, recompute_clean_feature_vector, fallback_feature_vector,
+        safe_enriched_runner, _patch_clean_aggregates,
+    )
+
+    async with get_session() as session:
+        candidates = (await session.execute(
+            select(RunnerPredictionHistoryRow)
+            .where(RunnerPredictionHistoryRow.enriched_json.isnot(None))
+            .where(RunnerPredictionHistoryRow.cancelled.is_(False) | RunnerPredictionHistoryRow.cancelled.is_(None))
+            .where(RunnerPredictionHistoryRow.source == "live")
+        )).scalars().all()
+        hr_rows = (await session.execute(select(HistoricalResultRow))).scalars().all()
+
+    if not candidates:
+        return {"error": "no candidate rows"}
+
+    chosen = _random.sample(candidates, min(sample, len(candidates)))
+    index = AggregateIndex(hr_rows)
+
+    results = []
+    for row in chosen:
+        item: dict = {
+            "race_id": row.race_id,
+            "horse_name": row.horse_name,
+            "enriched_at": row.enriched_at.isoformat() if row.enriched_at else None,
+        }
+        # Step 1: raw construction — what the OLD code did
+        try:
+            raw_er = EnrichedRunner(**json.loads(row.enriched_json))
+            item["raw_construct"] = "ok"
+            try:
+                build_feature_vector(raw_er)
+                item["raw_build_fv"] = "ok"
+            except Exception as e:
+                item["raw_build_fv"] = f"failed: {type(e).__name__}: {e}"
+        except Exception as e:
+            item["raw_construct"] = f"failed: {type(e).__name__}: {e}"
+
+        # Step 2: safe construction (current fallback path)
+        try:
+            safe_er = safe_enriched_runner(json.loads(row.enriched_json))
+            item["safe_construct"] = "ok" if safe_er is not None else "returned None"
+            if safe_er is not None:
+                try:
+                    build_feature_vector(safe_er)
+                    item["safe_build_fv"] = "ok"
+                except Exception as e:
+                    item["safe_build_fv"] = f"failed: {type(e).__name__}: {e}"
+        except Exception as e:
+            item["safe_construct"] = f"raised: {type(e).__name__}: {e}"
+
+        # Step 3: clean recompute path
+        try:
+            fv = recompute_clean_feature_vector(row, index)
+            item["recompute"] = "ok" if fv is not None else "returned None"
+        except Exception as e:
+            item["recompute"] = f"raised: {type(e).__name__}: {e}"
+
+        # Step 4: fallback path
+        try:
+            fv = fallback_feature_vector(row)
+            item["fallback"] = "ok" if fv is not None else "returned None"
+        except Exception as e:
+            item["fallback"] = f"raised: {type(e).__name__}: {e}"
+
+        results.append(item)
+
+    # Aggregate summary
+    summary = {
+        "raw_construct_ok": sum(1 for r in results if r.get("raw_construct") == "ok"),
+        "safe_construct_ok": sum(1 for r in results if r.get("safe_construct") == "ok"),
+        "recompute_ok": sum(1 for r in results if r.get("recompute") == "ok"),
+        "fallback_ok": sum(1 for r in results if r.get("fallback") == "ok"),
+        "total": len(results),
+    }
+    return {"summary": summary, "rows": results}
+
+
 @app.get("/api/admin/contamination-audit")
 async def contamination_audit(
     sample: int = Query(5, ge=1, le=50),
