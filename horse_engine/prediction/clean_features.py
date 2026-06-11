@@ -245,6 +245,29 @@ def _patch_clean_aggregates(er_data: dict, history_row, index: AggregateIndex) -
     return er_data
 
 
+def safe_enriched_runner(er_data: dict) -> EnrichedRunner | None:
+    """Construct an EnrichedRunner from a dict, surviving null values for
+    non-Optional fields in old enriched_json.
+
+    Pre-2026-06-11 enriched_json rows were sometimes written with ``null``
+    for fields like ``career_place_rate`` that EnrichedRunner declares as
+    ``float = 0.0`` (strict, not Optional). Pydantic rejects None on those.
+    By dropping None values before construction, the model defaults kick in
+    for those fields — which is the desired behaviour anyway.
+
+    Returns None if construction fails for any other reason.
+    """
+    try:
+        clean = {
+            k: v for k, v in er_data.items()
+            if k in EnrichedRunner.model_fields and v is not None
+        }
+        return EnrichedRunner(**clean)
+    except Exception as e:
+        log.debug("safe_enriched_runner failed: %s", e)
+        return None
+
+
 def recompute_clean_feature_vector(history_row, index: AggregateIndex) -> list[float] | None:
     """Build a feature vector for one history row using BUG-18-fixed aggregates.
 
@@ -260,13 +283,35 @@ def recompute_clean_feature_vector(history_row, index: AggregateIndex) -> list[f
     try:
         er_data = json.loads(history_row.enriched_json)
         er_data = _patch_clean_aggregates(er_data, history_row, index)
-        # EnrichedRunner has strict pydantic-style validation; pass only known
-        # fields. Extra/missing keys would raise.
-        er = EnrichedRunner(**{k: v for k, v in er_data.items() if k in EnrichedRunner.model_fields})
+        er = safe_enriched_runner(er_data)
+        if er is None:
+            return None
         return build_feature_vector(er)
     except Exception as e:
         log.debug(
             "Clean recompute failed for %s/%s: %s",
+            history_row.race_id, history_row.horse_name, e,
+        )
+        return None
+
+
+def fallback_feature_vector(history_row) -> list[float] | None:
+    """Build a feature vector from raw enriched_json with safe pydantic
+    construction. Used as the fallback when recompute_clean_feature_vector
+    returns None — replaces the previous ``EnrichedRunner(**json.loads(...))``
+    pattern that crashed on pre-fix rows with null career_place_rate.
+    """
+    if not history_row.enriched_json:
+        return None
+    try:
+        er_data = json.loads(history_row.enriched_json)
+        er = safe_enriched_runner(er_data)
+        if er is None:
+            return None
+        return build_feature_vector(er)
+    except Exception as e:
+        log.debug(
+            "Fallback feature vector failed for %s/%s: %s",
             history_row.race_id, history_row.horse_name, e,
         )
         return None

@@ -4301,7 +4301,7 @@ async def retrain_model(
     async def _do_win_retrain():
         from collections import defaultdict as _defaultdict
         from horse_engine.prediction.clean_features import (
-            AggregateIndex, recompute_clean_feature_vector,
+            AggregateIndex, recompute_clean_feature_vector, fallback_feature_vector,
         )
         # FIX-S filter trio enforced at SQL level (BUG-38): cancelled NULL/false
         # and source="live". Without source="live" any prior
@@ -4353,10 +4353,12 @@ async def retrain_model(
                 try:
                     fv = recompute_clean_feature_vector(row, index)
                     if fv is None:
-                        # Fallback to the original enriched_json path so a single
-                        # bad row doesn't drop the race from the training set.
-                        er = EnrichedRunner(**json.loads(row.enriched_json))
-                        fv = build_feature_vector(er)
+                        # Fallback uses safe pydantic construction (filters out
+                        # None values that would crash the strict EnrichedRunner
+                        # validation on pre-2026-06-11 enriched_json).
+                        fv = fallback_feature_vector(row)
+                        if fv is None:
+                            continue  # both clean + fallback failed; drop row
                     else:
                         contam_repaired += 1
                     label = 1 if _normalize_horse(row.horse_name) == winner_name else 0
@@ -4444,7 +4446,7 @@ async def retrain_place_model(
 
     async def _do_place_retrain():
         from horse_engine.prediction.clean_features import (
-            AggregateIndex, recompute_clean_feature_vector,
+            AggregateIndex, recompute_clean_feature_vector, fallback_feature_vector,
         )
         # FIX-S filter trio enforced at SQL level (BUG-39): cancelled NULL/false
         # and source="live". Mirrors the BUG-38 fix on the win retrain.
@@ -4481,8 +4483,9 @@ async def retrain_place_model(
             try:
                 fv = recompute_clean_feature_vector(row, index)
                 if fv is None:
-                    er = EnrichedRunner(**json.loads(row.enriched_json))
-                    fv = build_feature_vector(er)
+                    fv = fallback_feature_vector(row)
+                    if fv is None:
+                        continue
                 else:
                     contam_repaired += 1
                 training_data.append((fv, 1 if placed else 0))
@@ -9056,7 +9059,7 @@ async def _run_calibration_sweep(holdout_days: int = 14) -> dict:
     aggregate-rate features and overwrite the clean retrained weights.
     """
     from horse_engine.prediction.clean_features import (
-        AggregateIndex, recompute_clean_feature_vector,
+        AggregateIndex, recompute_clean_feature_vector, fallback_feature_vector,
     )
     today = date.today()
     holdout_cutoff = (today - timedelta(days=holdout_days)).isoformat()
@@ -9125,12 +9128,14 @@ async def _run_calibration_sweep(holdout_days: int = 14) -> dict:
                 except (ValueError, AttributeError):
                     pass
             try:
-                # BUG-18 clean recompute — falls back to raw enriched_json when
-                # the recompute can't produce a vector for this row.
+                # BUG-18 clean recompute — falls back to safe enriched_json
+                # construction (strips None values that crash strict pydantic on
+                # pre-2026-06-11 rows) when the clean path can't produce a vector.
                 fv = recompute_clean_feature_vector(pred, index)
                 if fv is None:
-                    er = EnrichedRunner(**json.loads(pred.enriched_json))
-                    fv = build_feature_vector(er)
+                    fv = fallback_feature_vector(pred)
+                    if fv is None:
+                        continue
                 # Use position == 1 over row.winner (BUG-28) — the boolean can
                 # be stale after re-seedings; position is authoritative.
                 races_in_window.setdefault(row.race_id, []).append(
@@ -9181,11 +9186,14 @@ async def _run_calibration_sweep(holdout_days: int = 14) -> dict:
             runner_fvs = []
             for r in runners:
                 try:
-                    # BUG-18 clean recompute for holdout scoring too.
+                    # BUG-18 clean recompute for holdout scoring too, with
+                    # safe-construction fallback (handles old null-fielded
+                    # enriched_json).
                     fv = recompute_clean_feature_vector(r, index)
                     if fv is None:
-                        er = EnrichedRunner(**json.loads(r.enriched_json))
-                        fv = build_feature_vector(er)
+                        fv = fallback_feature_vector(r)
+                        if fv is None:
+                            continue
                     runner_fvs.append((r, fv))
                 except Exception:
                     continue
@@ -9409,7 +9417,7 @@ async def _run_place_calibration_sweep(holdout_days: int = 14) -> dict:
     win-sweep wiring).
     """
     from horse_engine.prediction.clean_features import (
-        AggregateIndex, recompute_clean_feature_vector,
+        AggregateIndex, recompute_clean_feature_vector, fallback_feature_vector,
     )
     import math as _math
     today = date.today()
@@ -9465,11 +9473,14 @@ async def _run_place_calibration_sweep(holdout_days: int = 14) -> dict:
                 except (ValueError, AttributeError):
                     pass
             try:
-                # BUG-18 clean recompute — fall back to raw enriched_json when None.
+                # BUG-18 clean recompute — falls back to safe construction that
+                # strips None values which would otherwise crash strict
+                # EnrichedRunner validation on pre-2026-06-11 rows.
                 fv = recompute_clean_feature_vector(pred, index)
                 if fv is None:
-                    er = EnrichedRunner(**json.loads(pred.enriched_json))
-                    fv = build_feature_vector(er)
+                    fv = fallback_feature_vector(pred)
+                    if fv is None:
+                        continue
                 training_data.append((fv, 1 if row.placed else 0))
                 try:
                     days_ago = (today - date.fromisoformat(row.race_id[:10])).days
@@ -9492,11 +9503,13 @@ async def _run_place_calibration_sweep(holdout_days: int = 14) -> dict:
             runner_fvs = []
             for r in runners:
                 try:
-                    # BUG-18 clean recompute for holdout scoring too.
+                    # BUG-18 clean recompute for holdout scoring, with safe
+                    # construction fallback for old null-fielded rows.
                     fv = recompute_clean_feature_vector(r, index)
                     if fv is None:
-                        er = EnrichedRunner(**json.loads(r.enriched_json))
-                        fv = build_feature_vector(er)
+                        fv = fallback_feature_vector(r)
+                        if fv is None:
+                            continue
                     runner_fvs.append((r, fv))
                 except Exception:
                     continue
