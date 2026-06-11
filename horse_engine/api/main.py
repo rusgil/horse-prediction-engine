@@ -5532,6 +5532,160 @@ async def probe_ra_results(race_date: str = "", x_cron_secret: Optional[str] = H
     }
 
 
+@app.get("/api/admin/calibration-filter-trace")
+async def calibration_filter_trace(
+    holdout_days: int = Query(14, ge=7, le=30),
+    window_days: int = Query(270, ge=30, le=365),
+    x_cron_secret: Optional[str] = Header(None),
+):
+    """Walk the EXACT win-calibration filter pipeline, counting how many rows
+    survive at each step. Lets us see whether rows are being dropped at
+    pred-lookup, time-guard, or feature-vector construction.
+    """
+    _check_admin(x_cron_secret)
+    from horse_engine.prediction.clean_features import (
+        AggregateIndex, recompute_clean_feature_vector, fallback_feature_vector,
+    )
+    today = date.today()
+    train_cutoff = (today - timedelta(days=window_days)).isoformat()
+    holdout_cutoff = (today - timedelta(days=holdout_days)).isoformat()
+
+    async with get_session() as session:
+        all_hr = (await session.execute(select(HistoricalResultRow))).scalars().all()
+        all_pred = (await session.execute(
+            select(RunnerPredictionHistoryRow)
+            .where(RunnerPredictionHistoryRow.enriched_json.isnot(None))
+            .where(RunnerPredictionHistoryRow.cancelled.is_(False) | RunnerPredictionHistoryRow.cancelled.is_(None))
+            .where(RunnerPredictionHistoryRow.source == "live")
+        )).scalars().all()
+
+    pred_by_key = {(p.race_id, p.horse_name): p for p in all_pred}
+    index = AggregateIndex(all_hr)
+
+    # Per-step counters
+    total = 0
+    in_window = 0
+    pred_found = 0
+    pred_missing = 0
+    time_guard_passed = 0
+    time_guard_filtered = 0
+    recompute_ok = 0
+    fallback_used = 0
+    fallback_ok = 0
+    final_added = 0
+    exception_caught = 0
+
+    races_in_window_count = 0
+    races_in_window: dict = {}
+
+    # Sample a few miss reasons for diagnostic
+    pred_missing_samples = []
+    time_guard_samples = []
+    exception_samples = []
+
+    for row in all_hr:
+        total += 1
+        if row.race_id < train_cutoff or row.race_id >= holdout_cutoff:
+            continue
+        in_window += 1
+        pred = pred_by_key.get((row.race_id, row.horse_name))
+        if not pred:
+            pred_missing += 1
+            if len(pred_missing_samples) < 5:
+                # Show alternative pred horse_name candidates for this race
+                alt = [p.horse_name for p in all_pred if p.race_id == row.race_id][:5]
+                pred_missing_samples.append({
+                    "race_id": row.race_id,
+                    "hr_horse_name": row.horse_name,
+                    "pred_candidates_in_race": alt,
+                })
+            continue
+        pred_found += 1
+        if pred.enriched_at and pred.scheduled_time:
+            try:
+                sched = datetime.fromisoformat(pred.scheduled_time.replace("Z", "+00:00")).replace(tzinfo=None)
+                if pred.enriched_at > sched:
+                    time_guard_filtered += 1
+                    if len(time_guard_samples) < 5:
+                        time_guard_samples.append({
+                            "race_id": row.race_id,
+                            "horse_name": row.horse_name,
+                            "enriched_at": str(pred.enriched_at),
+                            "scheduled_time": str(pred.scheduled_time),
+                        })
+                    continue
+            except (ValueError, AttributeError):
+                pass
+        time_guard_passed += 1
+        try:
+            fv = recompute_clean_feature_vector(pred, index)
+            if fv is None:
+                fallback_used += 1
+                fv = fallback_feature_vector(pred)
+                if fv is None:
+                    continue
+                fallback_ok += 1
+            else:
+                recompute_ok += 1
+            final_added += 1
+            races_in_window.setdefault(row.race_id, []).append((fv, 1 if row.position == 1 else 0))
+        except Exception as e:
+            exception_caught += 1
+            if len(exception_samples) < 5:
+                exception_samples.append({
+                    "race_id": row.race_id,
+                    "horse_name": row.horse_name,
+                    "error": f"{type(e).__name__}: {e}",
+                })
+
+    races_with_winner = 0
+    valid_race_groups = 0
+    for race_id, runners in races_in_window.items():
+        if len(runners) >= 2 and sum(l for _, l in runners) == 1:
+            valid_race_groups += 1
+        if any(l == 1 for _, l in runners):
+            races_with_winner += 1
+
+    return {
+        "params": {
+            "window_days": window_days,
+            "holdout_days": holdout_days,
+            "train_cutoff": train_cutoff,
+            "holdout_cutoff": holdout_cutoff,
+            "today": today.isoformat(),
+        },
+        "data_volume": {
+            "all_hr_rows": len(all_hr),
+            "all_pred_rows": len(all_pred),
+            "pred_by_key_unique": len(pred_by_key),
+        },
+        "filter_funnel": {
+            "total_hr_rows_seen": total,
+            "in_window": in_window,
+            "pred_found": pred_found,
+            "pred_missing": pred_missing,
+            "time_guard_passed": time_guard_passed,
+            "time_guard_filtered": time_guard_filtered,
+            "recompute_ok": recompute_ok,
+            "fallback_used": fallback_used,
+            "fallback_ok": fallback_ok,
+            "exception_caught": exception_caught,
+            "final_added_to_race_groups": final_added,
+        },
+        "race_group_stats": {
+            "unique_races_in_window": len(races_in_window),
+            "races_with_at_least_one_winner": races_with_winner,
+            "valid_race_groups_after_train_race_grouped_check": valid_race_groups,
+            "need_at_least_50": valid_race_groups >= 50,
+        },
+        "miss_samples": {
+            "pred_missing": pred_missing_samples,
+            "time_guard_filtered": time_guard_samples,
+            "exceptions": exception_samples,
+        },
+    }
+
+
 @app.get("/api/admin/recompute-debug")
 async def recompute_debug(
     sample: int = Query(5, ge=1, le=20),
