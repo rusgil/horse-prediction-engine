@@ -2679,13 +2679,15 @@ _CALLER_RATE_WINDOW = 60.0   # seconds
 # bad actors stop adding log noise. Add IPs here only after confirming
 # they aren't a legitimate user.
 #
-# 202.172.97.92: Sydney curl/8.7.1 loop firing /api/admin/reenrich every
-#   ~10s for weeks. Identified 2026-06-12 via XFF tracing after a CRON_SECRET
-#   leak. The secret was rotated so the bot can't authenticate anyway; this
-#   blocklist just cuts log noise.
-_HARD_BLOCKED_IPS: set[str] = {
-    "202.172.97.92",
-}
+# Empty by default. Add an IP only after you've confirmed via geo-lookup
+# that it ISN'T your own home connection or any of your users.
+#
+# Mistake history (2026-06-12): 202.172.97.92 was added thinking it was a
+# bot — turned out to be the user's own Spintel home IP. Their laptop
+# was running curl probes (probably an old `while true` script) and
+# Claude Code's outbound traffic also went out through the same address.
+# Always check `curl https://ipinfo.io/ip` from the user's machine first.
+_HARD_BLOCKED_IPS: set[str] = set()
 
 def _caller_origin(request: Request) -> str:
     """Resolve the upstream caller IP from the XFF chain. Leftmost entry
