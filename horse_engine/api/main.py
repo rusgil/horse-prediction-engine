@@ -2061,7 +2061,35 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         )
         return response
 
+
+class BlocklistMiddleware(BaseHTTPMiddleware):
+    """Drop requests from hard-blocked IPs at the very edge of the app, before
+    any route handler runs. Returns 403 from a single global choke point so we
+    don't have to wire _enforce_caller_rate into every endpoint.
+
+    Uses the same XFF-leftmost rule as _caller_origin so the block applies to
+    the real client, not Railway's edge proxy IP."""
+    async def dispatch(self, request: StarletteRequest, call_next):
+        xff = request.headers.get("x-forwarded-for", "")
+        origin = xff.split(",")[0].strip() if xff else (request.client.host if request.client else "")
+        if origin in _HARD_BLOCKED_IPS:
+            # Rate-limit our own logging — once per minute per origin
+            now = _time.time()
+            log_key = f"_mwblocklog:{origin}"
+            last = _caller_hits.get(log_key, [0.0])[-1]
+            if now - last >= 60.0:
+                log.warning(
+                    "[blocklist-mw] DROP %s %s — ua=%r",
+                    request.method, request.url.path,
+                    request.headers.get("user-agent", "?")[:80],
+                )
+                _caller_hits[log_key] = [now]
+            from starlette.responses import JSONResponse
+            return JSONResponse({"detail": "Forbidden"}, status_code=403)
+        return await call_next(request)
+
 app.add_middleware(SecurityHeadersMiddleware)
+app.add_middleware(BlocklistMiddleware)
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
