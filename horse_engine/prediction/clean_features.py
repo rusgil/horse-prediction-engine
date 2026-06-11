@@ -246,22 +246,35 @@ def _patch_clean_aggregates(er_data: dict, history_row, index: AggregateIndex) -
 
 
 def safe_enriched_runner(er_data: dict) -> EnrichedRunner | None:
-    """Construct an EnrichedRunner from a dict, surviving null values for
-    non-Optional fields in old enriched_json.
+    """Construct an EnrichedRunner from a dict, dropping unknown fields and
+    coercing None on optional/defaulted fields to the model's default.
 
-    Pre-2026-06-11 enriched_json rows were sometimes written with ``null``
-    for fields like ``career_place_rate`` that EnrichedRunner declares as
-    ``float = 0.0`` (strict, not Optional). Pydantic rejects None on those.
-    By dropping None values before construction, the model defaults kick in
-    for those fields — which is the desired behaviour anyway.
+    Pre-2026-06-11 enriched_json had null values for some fields. The previous
+    "filter all None" approach was too aggressive — it stripped Nones from
+    REQUIRED fields too, making them missing and breaking pydantic validation.
 
-    Returns None if construction fails for any other reason.
+    Instead: drop only unknown fields, then drop None ONLY for fields that
+    have a default value (those become the default automatically). Required
+    fields keep their value (including None, which pydantic v2 handles for
+    float by raising — which is the OLD behaviour we want to preserve).
+
+    Returns None on any failure.
     """
     try:
-        clean = {
-            k: v for k, v in er_data.items()
-            if k in EnrichedRunner.model_fields and v is not None
-        }
+        fields = EnrichedRunner.model_fields
+        clean = {}
+        for k, v in er_data.items():
+            if k not in fields:
+                continue
+            # Drop None only when the field has a default — let pydantic use it.
+            # Required fields (no default) keep None and will raise validation,
+            # which matches the pre-fix behaviour where those rows failed too.
+            if v is None and fields[k].is_required():
+                clean[k] = v
+            elif v is None:
+                continue
+            else:
+                clean[k] = v
         return EnrichedRunner(**clean)
     except Exception as e:
         log.debug("safe_enriched_runner failed: %s", e)
