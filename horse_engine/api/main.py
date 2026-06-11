@@ -8113,13 +8113,15 @@ async def backtest_win(
         hr_result = await session.execute(select(HistoricalResultRow))
         hr_rows = hr_result.scalars().all()
 
-    # Build lookups
+    # Build lookups — derive winner from position == 1 rather than the winner
+    # boolean (BUG-28). The boolean can be stale after re-seedings; position is
+    # the authoritative source. Matches the win retrain path's hardening.
     winners: dict[str, str] = {
-        r.race_id: _normalize_horse(r.horse_name) for r in hr_rows if r.winner
+        r.race_id: _normalize_horse(r.horse_name) for r in hr_rows if r.position == 1
     }
     sp_lookup: dict[str, float] = {
         r.race_id: r.starting_price
-        for r in hr_rows if r.winner and r.starting_price
+        for r in hr_rows if r.position == 1 and r.starting_price
     }
 
     # Merge rows — history table takes precedence; mutable fills gaps
@@ -8849,8 +8851,15 @@ async def _run_calibration_sweep(holdout_days: int = 14) -> dict:
         all_hr = hr_result.scalars().all()
         # History table only — written once pre-race, never overwritten by re-enrichments,
         # so enriched_json always reflects the genuine pre-race feature vector.
+        # Cancelled filter added per BUG-29 — without it, a scratched runner can be
+        # the holdout-rank-1 pick; the result lookup then fails and the race is
+        # silently dropped from the sample. Source="live" excludes prior
+        # validation-backtest rows from contaminating the calibration.
         pred_result = await session.execute(
-            select(RunnerPredictionHistoryRow).where(RunnerPredictionHistoryRow.enriched_json.isnot(None))
+            select(RunnerPredictionHistoryRow)
+            .where(RunnerPredictionHistoryRow.enriched_json.isnot(None))
+            .where(RunnerPredictionHistoryRow.cancelled.is_(False) | RunnerPredictionHistoryRow.cancelled.is_(None))
+            .where(RunnerPredictionHistoryRow.source == "live")
         )
         all_pred = pred_result.scalars().all()
 
@@ -8893,7 +8902,9 @@ async def _run_calibration_sweep(holdout_days: int = 14) -> dict:
             try:
                 er = EnrichedRunner(**json.loads(pred.enriched_json))
                 fv = build_feature_vector(er)
-                training_data.append((fv, 1 if row.winner else 0))
+                # Use position == 1 over row.winner (BUG-28) — the boolean can
+                # be stale after re-seedings; position is authoritative.
+                training_data.append((fv, 1 if row.position == 1 else 0))
                 try:
                     race_date = date.fromisoformat(row.race_id[:10])
                     days_ago = (today - race_date).days
@@ -8941,7 +8952,10 @@ async def _run_calibration_sweep(holdout_days: int = 14) -> dict:
                 continue
 
             total_races += 1
-            if actual.winner:
+            # Position-based winner check (BUG-28) — matches the training-label
+            # source so train and holdout judge "winner" the same way.
+            actual_won = actual.position == 1
+            if actual_won:
                 win_picks += 1
             if actual.placed:
                 place_picks += 1
@@ -8950,7 +8964,7 @@ async def _run_calibration_sweep(holdout_days: int = 14) -> dict:
             implied = 1 / sp if sp > 1 else 0
             if (top_prob - implied) > 0.05 and sp > 0:
                 value_bets += 1
-                value_pnl += (sp - 1.0) if actual.winner else -1.0
+                value_pnl += (sp - 1.0) if actual_won else -1.0
 
         win_rate = round(win_picks / total_races, 3) if total_races else 0
         place_rate = round(place_picks / total_races, 3) if total_races else 0
