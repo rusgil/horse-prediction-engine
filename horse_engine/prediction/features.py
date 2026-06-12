@@ -89,6 +89,23 @@ def apply_win_mask(fv: list[float]) -> list[float]:
     at train and inference time. PlaceModel/ExoticModel don't use this."""
     return [0.0 if i in WIN_MASK_INDICES else v for i, v in enumerate(fv)]
 
+
+# Exotic-model feature mask. The 2026-06-12 exotic feature ablation showed
+# three features as net-harmful for trifecta box hit rate. The harmful set
+# is different from the win model — exotic is about ranking the top-3,
+# which depends on different signals than picking a single winner.
+#   surface_match_score   +1.96 pp (largest single harmful)
+#   speed_map_advantage   +1.09
+#   going_preference      +0.65 (also harmful for win — only feature in both masks)
+# Market features (market_rank_norm etc) are NOT harmful for exotic and stay.
+# Masked the same way as WIN_MASK_INDICES — inside ExoticModel only.
+EXOTIC_MASK_FEATURES = {
+    "surface_match_score",
+    "speed_map_advantage",
+    "going_preference",
+}
+EXOTIC_MASK_INDICES = frozenset(i for i, name in enumerate(FEATURE_NAMES) if name in EXOTIC_MASK_FEATURES)
+
 DEFAULT_WEIGHTS_BASE = [
     0.8,   # form_score
     0.6,   # win_rate_career

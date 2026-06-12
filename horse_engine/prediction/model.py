@@ -17,7 +17,7 @@ from datetime import datetime
 
 from horse_engine.prediction.features import (
     DEFAULT_WEIGHTS, DEFAULT_PLACE_WEIGHTS, DEFAULT_EXOTIC_WEIGHTS,
-    FEATURE_NAMES, NUM_FEATURES, WIN_MASK_INDICES,
+    FEATURE_NAMES, NUM_FEATURES, WIN_MASK_INDICES, EXOTIC_MASK_INDICES,
 )
 
 log = logging.getLogger(__name__)
@@ -305,9 +305,9 @@ class ExoticModel(HorseModel):
     Only trains on field_size >= 7 races.
     """
 
-    # Exotic model is for placing in top-3/top-4, behaviour closer to PlaceModel
-    # than to the win model. The win ablation doesn't apply — keep all features.
-    _mask_indices: frozenset = frozenset()
+    # Exotic ablation (2026-06-12) identified its own harmful feature set —
+    # different from the win model. See features.EXOTIC_MASK_FEATURES.
+    _mask_indices: frozenset = EXOTIC_MASK_INDICES
 
     def __init__(self, weights: list[float] | None = None, bias: float = 0.0):
         if weights is None:
@@ -344,6 +344,14 @@ class ExoticModel(HorseModel):
         """
         if not race_groups:
             return {"error": "no training data"}
+
+        # Pre-mask FVs so the manual gradient loops below respect the
+        # exotic mask — same fix as HorseModel.train_race_grouped.
+        if self._mask_indices:
+            race_groups = [
+                [(self._mask_fv(fv), label, pos) for (fv, label, pos) in race]
+                for race in race_groups
+            ]
 
         n_total = sum(len(race) for race in race_groups)
         n_races = len(race_groups)
