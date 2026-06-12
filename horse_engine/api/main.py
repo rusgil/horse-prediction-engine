@@ -10595,6 +10595,113 @@ async def trifecta_model_comparison(
     }
 
 
+@app.get("/api/admin/win-place-ensemble")
+async def win_place_ensemble(
+    days: int = Query(default=14, ge=7, le=60),
+    x_cron_secret: Optional[str] = Header(None),
+):
+    """
+    Tier-3 ensemble diagnostic: does filtering the win model's top-1 pick by
+    'place model also ranks this horse top-3' improve win rate?
+
+    For each settled race in the last `days` days where we have both win and
+    place rankings, bucket the win model's top-1 pick by the place model's
+    rank-of-that-pick and report win rate per bucket. If the bucket-1 (place
+    model agrees, rank 1-3) win rate is materially higher than the unfiltered
+    baseline, the ensemble filter is a clear premium-tier qualifier.
+    """
+    _check_admin(x_cron_secret)
+    cutoff = (date.today() - timedelta(days=days)).isoformat()
+    async with get_session() as session:
+        # Top-1 win picks per race, with their place_model_rank
+        pred_rows = (await session.execute(
+            select(RunnerPredictionHistoryRow)
+            .where(RunnerPredictionHistoryRow.model_rank == 1)
+            .where(RunnerPredictionHistoryRow.place_model_rank.isnot(None))
+            .where(RunnerPredictionHistoryRow.cancelled.is_(False) | RunnerPredictionHistoryRow.cancelled.is_(None))
+            .where(RunnerPredictionHistoryRow.source == "live")
+            .where(RunnerPredictionHistoryRow.race_id >= cutoff)
+        )).scalars().all()
+        # Dedup per race — pick the most recently enriched pre-race snapshot
+        pred_rows.sort(key=lambda r: r.enriched_at, reverse=True)
+        seen = set()
+        top_picks: list = []
+        for p in pred_rows:
+            if p.race_id in seen:
+                continue
+            seen.add(p.race_id)
+            top_picks.append(p)
+        # Results lookup
+        hr_rows = (await session.execute(
+            select(HistoricalResultRow)
+            .where(HistoricalResultRow.race_id >= cutoff)
+        )).scalars().all()
+        result_by_key = {(r.race_id, _normalize_horse(r.horse_name)): r for r in hr_rows}
+
+    # Bucket by place model's rank-of-the-winpick
+    buckets: dict[int, dict] = {}
+    for p in top_picks:
+        actual = result_by_key.get((p.race_id, _normalize_horse(p.horse_name)))
+        if actual is None:
+            continue
+        rank = int(p.place_model_rank)
+        b = buckets.setdefault(rank, {"picks": 0, "wins": 0, "places": 0})
+        b["picks"] += 1
+        if actual.position == 1:
+            b["wins"] += 1
+        if actual.position and actual.position <= 3:
+            b["places"] += 1
+
+    # Build report
+    out_buckets = []
+    total_picks = total_wins = total_places = 0
+    for rank in sorted(buckets.keys()):
+        b = buckets[rank]
+        total_picks += b["picks"]
+        total_wins += b["wins"]
+        total_places += b["places"]
+        out_buckets.append({
+            "place_model_rank": rank,
+            "picks": b["picks"],
+            "wins": b["wins"],
+            "win_pct": round(b["wins"] / b["picks"] * 100, 1) if b["picks"] else None,
+            "places": b["places"],
+            "place_pct": round(b["places"] / b["picks"] * 100, 1) if b["picks"] else None,
+        })
+
+    # Aggregate consensus buckets (rank 1-3 = place model also likes it)
+    consensus_picks = sum(b["picks"] for k, b in buckets.items() if k <= 3)
+    consensus_wins = sum(b["wins"] for k, b in buckets.items() if k <= 3)
+    consensus_places = sum(b["places"] for k, b in buckets.items() if k <= 3)
+    dissent_picks = sum(b["picks"] for k, b in buckets.items() if k > 3)
+    dissent_wins = sum(b["wins"] for k, b in buckets.items() if k > 3)
+    dissent_places = sum(b["places"] for k, b in buckets.items() if k > 3)
+
+    return {
+        "holdout_days": days,
+        "cutoff_from": cutoff,
+        "total_picks": total_picks,
+        "baseline_win_pct": round(total_wins / total_picks * 100, 1) if total_picks else None,
+        "baseline_place_pct": round(total_places / total_picks * 100, 1) if total_picks else None,
+        "consensus_filter": {
+            "definition": "win model's top-1 AND place model's rank <= 3",
+            "picks": consensus_picks,
+            "wins": consensus_wins,
+            "places": consensus_places,
+            "win_pct": round(consensus_wins / consensus_picks * 100, 1) if consensus_picks else None,
+            "place_pct": round(consensus_places / consensus_picks * 100, 1) if consensus_picks else None,
+            "coverage": round(consensus_picks / total_picks * 100, 1) if total_picks else None,
+        },
+        "dissent_filter": {
+            "definition": "win model's top-1 BUT place model's rank > 3",
+            "picks": dissent_picks,
+            "wins": dissent_wins,
+            "win_pct": round(dissent_wins / dissent_picks * 100, 1) if dissent_picks else None,
+        },
+        "by_place_rank": out_buckets,
+    }
+
+
 @app.get("/api/admin/placement-model-comparison")
 async def placement_model_comparison(
     days: int = Query(default=30, ge=1, le=90),
