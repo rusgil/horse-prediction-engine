@@ -2152,12 +2152,17 @@ def _normalize_horse(name: str) -> str:
 _edge_times_cache: dict[str, tuple[datetime, dict[int, str]]] = {}
 _edge_odds_cache: dict[str, tuple[datetime, dict[str, float]]] = {}  # race_id → {horse_name: flucs_win}
 
-# Cache full /api/edge response for 60s. /api/edge is the most expensive read
-# in the app — it does 4 sequential rounds of asyncio.gather across all
-# upcoming days, each round potentially hitting RA for race times + live
-# odds. When RA is responsive cache miss is ~2s; when RA is blocked cache
-# miss balloons to 60s+. Caching the assembled response makes 95% of page
-# loads instant. TTL is short enough that race-day data still feels live.
+# Cache full /api/edge response. /api/edge is the most expensive read in
+# the app — 4 sequential rounds of asyncio.gather across upcoming days,
+# each round potentially hitting RA for race times + live odds. Cold-cache
+# costs ~30s when RA is blocked or breaker is oscillating. The breaker
+# resets every 60s on first failure so a short TTL (60s) means every
+# minute one user pays the slow cost.
+#
+# 300s (5 min) makes cold-cache hits 5x less frequent — for race-day data
+# 5 min of staleness is fine (odds don't shift materially in 5 min; field
+# changes are caught by the every-15-min scheduler).
+_EDGE_RESPONSE_TTL = 300
 _edge_response_cache: tuple[datetime, dict] | None = None
 
 # Cache full list_meetings response for 10 min (weather + RA calls are expensive)
@@ -2320,11 +2325,11 @@ def _compute_hedge(pick_odds: float, field_size: int, hedge_horses: list[dict]) 
 async def get_edge_picks():
     """High-confidence picks for today + next 3 days. Threshold: model win_probability >= 29.5% (rounds to 30%)."""
     global _edge_response_cache
-    # Response cache: serve a fully-assembled response if it's <60s old.
-    # First user pays the slow cost, everyone else for the next minute is instant.
+    # Response cache: serve a fully-assembled response if it's <_EDGE_RESPONSE_TTL old.
+    # First user pays the slow cost, everyone else for the TTL window is instant.
     if _edge_response_cache is not None:
         ts, body = _edge_response_cache
-        if (datetime.utcnow() - ts).total_seconds() < 60:
+        if (datetime.utcnow() - ts).total_seconds() < _EDGE_RESPONSE_TTL:
             return body
     threshold = 0.295
     picks = []
