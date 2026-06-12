@@ -1,0 +1,22 @@
+[Unit]
+Description=Racing Australia proxy
+After=network.target
+
+[Service]
+Type=simple
+User=ra-proxy
+WorkingDirectory=/opt/ra-proxy
+EnvironmentFile=/etc/ra-proxy.env
+ExecStart=/opt/ra-proxy/venv/bin/uvicorn proxy:app --host 127.0.0.1 --port 8000
+Restart=on-failure
+RestartSec=5s
+
+# Security hardening
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/ra-proxy
+
+[Install]
+WantedBy=multi-user.target

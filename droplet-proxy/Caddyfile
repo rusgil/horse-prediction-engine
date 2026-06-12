@@ -1,0 +1,26 @@
+# Caddy auto-provisions Let's Encrypt TLS for the domain below.
+# Replace ra-proxy.YOURDOMAIN.com with whatever subdomain you point at the droplet.
+ra-proxy.YOURDOMAIN.com {
+    reverse_proxy 127.0.0.1:8000
+
+    # Block everything except /proxy/* and /health
+    @notproxy {
+        not path /proxy/* /health
+    }
+    respond @notproxy 404
+
+    # Strict TLS, modern ciphers
+    tls {
+        protocols tls1.2 tls1.3
+    }
+
+    encode gzip
+
+    log {
+        output file /var/log/caddy/access.log {
+            roll_size 10mb
+            roll_keep 5
+        }
+        format json
+    }
+}
