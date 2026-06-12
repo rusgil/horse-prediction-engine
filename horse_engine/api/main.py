@@ -2006,12 +2006,13 @@ async def lifespan(app: FastAPI):
     asyncio.create_task(_scheduled_enrich())
 
     # Pre-warm the /api/edge response cache so users don't pay the 25-30s
-    # cold-cache cost. Cache TTL is 300s; we refresh every 180-270s (jittered
-    # so we don't slam RA at predictable intervals). Worst case is 4.5 min
-    # between pre-warms, still inside the 5-min TTL.
+    # cold-cache cost. Refresh every 4 min + 120s jitter (4-6 min). Cache
+    # TTL is bumped to 7 min in parallel (_EDGE_RESPONSE_TTL=420) so the
+    # worst-case 6-min prewarm interval still has 1 min safety margin
+    # before the cache would go cold for a real user.
     async def _prewarm_edge_cache():
         while True:
-            await asyncio.sleep(180 + random.uniform(0, 90))
+            await asyncio.sleep(240 + random.uniform(0, 120))
             try:
                 await get_edge_picks()
             except Exception as e:
@@ -2172,10 +2173,12 @@ _edge_odds_cache: dict[str, tuple[datetime, dict[str, float]]] = {}  # race_id �
 # resets every 60s on first failure so a short TTL (60s) means every
 # minute one user pays the slow cost.
 #
-# 300s (5 min) makes cold-cache hits 5x less frequent — for race-day data
-# 5 min of staleness is fine (odds don't shift materially in 5 min; field
-# changes are caught by the every-15-min scheduler).
-_EDGE_RESPONSE_TTL = 300
+# 420s (7 min) gives the prewarmer (4-6 min jittered interval) a 1-min
+# safety margin — worst-case prewarm fires at 6 min, cache still valid
+# until 7 min, so real users never hit a cold cache. 7 min of staleness
+# is still fine for race-day data (odds shift on minute+ scale, field
+# changes caught by the 15-min scheduler).
+_EDGE_RESPONSE_TTL = 420
 _edge_response_cache: tuple[datetime, dict] | None = None
 
 # Cache full list_meetings response for 10 min (weather + RA calls are expensive)
