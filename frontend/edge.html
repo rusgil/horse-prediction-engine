@@ -2028,6 +2028,13 @@
     const trainerChip = pick.trainer ? `<span class="chip">T: ${escHtml(pick.trainer)}</span>` : '';
     const barrierChip = pick.barrier ? `<span class="chip">B${pick.barrier}</span>` : '';
     const weightChip  = pick.weight  ? `<span class="chip">${pick.weight}kg</span>` : '';
+    // Last-10 form: wins / placings (on the board). Falls back to actual starts
+    // count when the horse has fewer than 10 lifetime starts.
+    const last10Label = (pick.starts_last_10 != null && pick.starts_last_10 < 10)
+      ? `Last ${pick.starts_last_10}` : 'Last 10';
+    const last10Chip = (pick.wins_last_10 != null && pick.places_last_10 != null)
+      ? `<span class="chip">${last10Label}: ${pick.wins_last_10}W / ${pick.places_last_10} on</span>`
+      : '';
 
     const trackChip = pick.track_condition ? `<span class="pick-footer-chip"><strong>${escHtml(pick.track_condition)}</strong></span><span class="pick-footer-sep">·</span>` : '';
     const distChip  = pick.distance ? `<span class="pick-footer-chip"><strong>${pick.distance}m</strong></span><span class="pick-footer-sep">·</span>` : '';
@@ -2064,7 +2071,7 @@
         <div class="pick-body">
           <div class="pick-left">
             <div class="pick-horse-name">${escHtml(pick.horse_name)}</div>
-            <div class="pick-details">${barrierChip}${jockeyChip}${trainerChip}${weightChip}</div>
+            <div class="pick-details">${barrierChip}${jockeyChip}${trainerChip}${weightChip}${last10Chip}</div>
             <div class="dual-stat-row">
               <div class="dual-stat">
                 <span class="dual-stat-num">${conf}%</span>

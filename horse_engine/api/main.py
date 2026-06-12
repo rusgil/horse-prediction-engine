@@ -2605,6 +2605,16 @@ async def get_edge_picks():
                     })
             hedge = _compute_hedge(odds, field_sizes.get(runner_row.race_id, 8), hedge_candidates)
 
+            # Last-10 form (wins / placings / starts) for the horse-card display
+            # — same source as _runner_response uses: enriched_json on the pred row.
+            try:
+                enriched_json_payload = json.loads(runner_row.enriched_json) if runner_row.enriched_json else {}
+            except Exception:
+                enriched_json_payload = {}
+            wins_last_10 = enriched_json_payload.get("wins_last_10")
+            places_last_10 = enriched_json_payload.get("places_last_10")
+            starts_last_10 = enriched_json_payload.get("starts_last_10")
+
             picks.append({
                 "date": target_date,
                 "race_id": runner_row.race_id,
@@ -2630,6 +2640,9 @@ async def get_edge_picks():
                 "value_rating": runner_row.value_rating,
                 "place_probability": round(runner_row.place_probability * 100, 1) if runner_row.place_probability else None,
                 "cancelled": bool(runner_row.cancelled),
+                "wins_last_10": wins_last_10,
+                "places_last_10": places_last_10,
+                "starts_last_10": starts_last_10,
                 "trifecta": trifecta,
                 "hedge": hedge,
             })
