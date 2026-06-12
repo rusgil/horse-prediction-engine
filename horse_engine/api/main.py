@@ -9147,9 +9147,18 @@ async def performance_by_venue(days: int = Query(30, ge=1, le=90)):
 @app.get("/api/performance/premium")
 async def premium_performance(days: int = Query(30, ge=1, le=365), x_cron_secret: Optional[str] = Header(None)):
     """
-    P&L analysis for Premium picks: model_pct >= 30%, SP >= $3.00, overlay > 5%.
+    P&L analysis for Premium picks. Filter chain:
+      model_pct >= 30%
+      SP >= $3.00
+      overlay > 5%
+      place_model_rank >= 2  ← ensemble filter (2026-06-12)
     Reads from the immutable history table to guarantee pre-race predictions only.
     Requires admin auth.
+
+    The place_model_rank >= 2 filter excludes picks where the place model also
+    ranks the horse #1 — diagnostic showed those win at 16.8% (worst of any
+    bucket). Picks where the place model dissents (rank 2+) win at 24.5% vs
+    19.2% baseline. See [[feedback_win_rate_primary]].
     """
     _check_admin(x_cron_secret)
     cutoff = (date.today() - timedelta(days=days)).isoformat()
@@ -9192,7 +9201,7 @@ async def premium_performance(days: int = Query(30, ge=1, le=365), x_cron_secret
         sp = actual.starting_price or 0.0
         overlay = pick.overlay or 0.0
         model_pct = round((pick.win_probability or 0) * 100, 1)
-        if model_pct >= 30 and sp >= 3.0 and overlay > 0.05:
+        if model_pct >= 30 and sp >= 3.0 and overlay > 0.05 and (pick.place_model_rank or 0) >= 2:
             pnl = (sp - 1.0) if actual.position == 1 else -1.0
             picks.append({
                 "date": race_id[:10],
@@ -9268,7 +9277,7 @@ async def premium_performance_public():
         sp = actual.starting_price or 0.0
         overlay = pick.overlay or 0.0
         model_pct = (pick.win_probability or 0) * 100
-        if model_pct >= 30 and sp >= 3.0 and overlay > 0.05:
+        if model_pct >= 30 and sp >= 3.0 and overlay > 0.05 and (pick.place_model_rank or 0) >= 2:
             bets += 1
             if actual.position == 1:
                 wins += 1
@@ -9332,7 +9341,7 @@ async def premium_performance_monthly():
         sp = actual.starting_price or 0.0
         overlay = pick.overlay or 0.0
         model_pct = (pick.win_probability or 0) * 100
-        if model_pct >= 30 and sp >= 3.0 and overlay > 0.05:
+        if model_pct >= 30 and sp >= 3.0 and overlay > 0.05 and (pick.place_model_rank or 0) >= 2:
             month = race_id[:7]  # YYYY-MM
             if month not in monthly:
                 monthly[month] = {"bets": 0, "wins": 0, "pnl": 0.0}
@@ -9402,7 +9411,7 @@ async def premium_performance_daily():
         sp = actual.starting_price or 0.0
         overlay = pick.overlay or 0.0
         model_pct = (pick.win_probability or 0) * 100
-        if model_pct >= 30 and sp >= 3.0 and overlay > 0.05:
+        if model_pct >= 30 and sp >= 3.0 and overlay > 0.05 and (pick.place_model_rank or 0) >= 2:
             day = race_id[:10]
             if day not in daily:
                 daily[day] = {"bets": 0, "wins": 0, "pnl": 0.0}
