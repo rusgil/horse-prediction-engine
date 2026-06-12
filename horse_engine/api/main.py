@@ -4250,24 +4250,31 @@ async def live_odds(race_id: str):
     # ── Step 2: try TAB for live odds + any missing positions ────────────────
     ra_tote: dict[str, tuple] = {}   # horse → (current_odds, actual_position)
     ra_ok = False
-    try:
-        client = get_tab_client()
-        slug = _meeting_slug(venue_code, race_date)
-        raw_event = await asyncio.wait_for(client.get_race(slug, race_num), timeout=15)
-        if raw_event:
-            for r in raw_event.get("runners", []):
-                if r.get("scratched"):
-                    continue
-                horse = r.get("runnerName", "")
-                tote_win = next((float(p["winPrice"]) for p in r.get("prices", []) if p.get("priceType") == "Win" and p.get("winPrice")), None)
-                fixed_win = next((float(p["winPrice"]) for p in r.get("prices", []) if p.get("priceType") == "FixedWin" and p.get("winPrice")), None)
-                current_odds = fixed_win or tote_win
-                pos_raw = r.get("finishingPosition")
-                actual_position = int(pos_raw) if pos_raw and int(pos_raw) > 0 else None
-                ra_tote[horse] = (current_odds, actual_position)
-            ra_ok = True
-    except Exception:
-        pass  # use DB data only
+    client = get_tab_client()
+    # Skip when RA breaker is open — saves the 5s timeout pain. Page falls
+    # back to DB-only positions, which is correct for settled races and
+    # acceptable degradation for unsettled.
+    if not _ra_breaker_open(client):
+        try:
+            slug = _meeting_slug(venue_code, race_date)
+            # Timeout 15s → 5s. Was burning 15s/race-page-load when RA
+            # degraded; the result bar would either not render or arrive
+            # painfully late. 5s is enough headroom for a healthy RA.
+            raw_event = await asyncio.wait_for(client.get_race(slug, race_num), timeout=5)
+            if raw_event:
+                for r in raw_event.get("runners", []):
+                    if r.get("scratched"):
+                        continue
+                    horse = r.get("runnerName", "")
+                    tote_win = next((float(p["winPrice"]) for p in r.get("prices", []) if p.get("priceType") == "Win" and p.get("winPrice")), None)
+                    fixed_win = next((float(p["winPrice"]) for p in r.get("prices", []) if p.get("priceType") == "FixedWin" and p.get("winPrice")), None)
+                    current_odds = fixed_win or tote_win
+                    pos_raw = r.get("finishingPosition")
+                    actual_position = int(pos_raw) if pos_raw and int(pos_raw) > 0 else None
+                    ra_tote[horse] = (current_odds, actual_position)
+                ra_ok = True
+        except Exception:
+            pass  # use DB data only
 
     # ── Step 3: merge — DB results are authoritative for settled races ─────────
     all_horses = set(model_probs.keys()) | set(ra_tote.keys())
@@ -4292,8 +4299,17 @@ async def live_odds(race_id: str):
     # Completed races: history rank 1 is the genuine pre-race pick.
     # Upcoming races: use mutable (latest enrichment).
     top_model_pick = top_model_pick_hist if settled else top_model_pick_mut
-    model_correct = (winner_name == top_model_pick) if winner_name else None
-    model_placed = (top_model_pick in placed_names) if (placed_names and top_model_pick) else None
+    # Use _normalize_horse() for comparisons — matches /api/meetings/.../{venue}'s
+    # logic. Raw string equality failed when RA returned 'Autumn Gem' and we
+    # stored 'AUTUMN GEM' — result-badge wrongly said the top pick missed
+    # while the RAG dot on the race pill correctly said 'model correct'.
+    norm_pick = _normalize_horse(top_model_pick) if top_model_pick else None
+    model_correct = (
+        _normalize_horse(winner_name) == norm_pick
+        if winner_name and norm_pick else None
+    )
+    norm_placed = {_normalize_horse(h) for h in placed_names}
+    model_placed = (norm_pick in norm_placed) if (norm_placed and norm_pick) else None
 
     # Persist results to HistoricalResultRow when seen here for the first time
     # so performance stats update without waiting for the next scheduled seed cron
@@ -4319,7 +4335,8 @@ async def live_odds(race_id: str):
             "overlay": overlay,
             "value": overlay > 0.05 and current_odds and current_odds >= 3.0,
             "actual_position": actual_position,
-            "is_top_pick": horse == top_model_pick,
+            # Normalize before comparing — same fix as model_correct above.
+            "is_top_pick": (norm_pick is not None and _normalize_horse(horse) == norm_pick),
         })
 
     runners_odds.sort(key=lambda x: x["model_win_prob"], reverse=True)
