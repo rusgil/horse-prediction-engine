@@ -2152,8 +2152,28 @@ def _normalize_horse(name: str) -> str:
 _edge_times_cache: dict[str, tuple[datetime, dict[int, str]]] = {}
 _edge_odds_cache: dict[str, tuple[datetime, dict[str, float]]] = {}  # race_id → {horse_name: flucs_win}
 
+# Cache full /api/edge response for 60s. /api/edge is the most expensive read
+# in the app — it does 4 sequential rounds of asyncio.gather across all
+# upcoming days, each round potentially hitting RA for race times + live
+# odds. When RA is responsive cache miss is ~2s; when RA is blocked cache
+# miss balloons to 60s+. Caching the assembled response makes 95% of page
+# loads instant. TTL is short enough that race-day data still feels live.
+_edge_response_cache: tuple[datetime, dict] | None = None
+
 # Cache full list_meetings response for 10 min (weather + RA calls are expensive)
 _list_meetings_cache: dict[str, tuple[datetime, dict]] = {}  # date → (ts, response)
+
+
+def _ra_breaker_open(client) -> bool:
+    """Probe the composite client's RA breaker state. When open we skip
+    external fetches in /api/edge and /api/meetings — they'd just hit the
+    breaker and return empty after burning their timeout budget.
+    Returns False if the client doesn't expose the breaker for any reason
+    (we'd rather attempt and timeout than wrongly skip)."""
+    try:
+        return bool(client._ra._is_blocked())
+    except Exception:
+        return False
 
 # Cache per-venue meeting response for 2 min — prevents thundering herd from _loadMeetingWinRate
 _get_meeting_cache: dict[str, tuple[datetime, dict]] = {}  # "date/venue" → (ts, response)
@@ -2185,7 +2205,10 @@ async def _fetch_live_odds(client, race_id: str) -> dict[str, float]:
         _, venue, race_num = _parse_race_id(race_id)
         date_part = race_id[:10]
         slug = _meeting_slug(venue, date_part)
-        event = await asyncio.wait_for(client.get_race(slug, race_num), timeout=20)
+        # 5s timeout (was 20s). When RA is healthy this returns in ~500ms;
+        # when blocked we want to fail fast and skip live odds rather than
+        # block the whole /api/edge response for 20s per missing race.
+        event = await asyncio.wait_for(client.get_race(slug, race_num), timeout=5)
         if not event:
             return {}
         odds: dict[str, float] = {}
@@ -2209,7 +2232,8 @@ async def _fetch_race_times(client, slug: str) -> dict[int, str]:
     if cached and (datetime.utcnow() - cached[0]).total_seconds() < 300:
         return cached[1]
     try:
-        events = await asyncio.wait_for(client.get_meeting_races(slug), timeout=20)
+        # 5s timeout (was 20s) — same reasoning as _fetch_live_odds.
+        events = await asyncio.wait_for(client.get_meeting_races(slug), timeout=5)
         times = {e["eventNumber"]: e.get("startTime") for e in events if e.get("eventNumber")}
         _edge_times_cache[slug] = (datetime.utcnow(), times)
         return times
@@ -2295,10 +2319,22 @@ def _compute_hedge(pick_odds: float, field_size: int, hedge_horses: list[dict]) 
 @app.get("/api/edge")
 async def get_edge_picks():
     """High-confidence picks for today + next 3 days. Threshold: model win_probability >= 29.5% (rounds to 30%)."""
+    global _edge_response_cache
+    # Response cache: serve a fully-assembled response if it's <60s old.
+    # First user pays the slow cost, everyone else for the next minute is instant.
+    if _edge_response_cache is not None:
+        ts, body = _edge_response_cache
+        if (datetime.utcnow() - ts).total_seconds() < 60:
+            return body
     threshold = 0.295
     picks = []
     today = _today_aest()
     client = get_tab_client()
+    # When RA's breaker is open, the per-venue/per-race external fetches in
+    # asyncio.gather below would each burn their 5s timeout and return empty.
+    # Skip them entirely — picks still surface from DB, just without live odds
+    # overrides and scheduled-time enrichment.
+    ra_blocked = _ra_breaker_open(client)
 
     for i in range(4):
         target_date = (today + timedelta(days=i)).isoformat()
@@ -2459,23 +2495,25 @@ async def get_edge_picks():
         # Fetch scheduled times per unique meeting in parallel
         unique_venues = {_parse_race_id(r.race_id)[1] for r in rows}
         slug_map = {v: _meeting_slug(v, target_date) for v in unique_venues}
-        time_results = await asyncio.gather(*[_fetch_race_times(client, slug) for slug in slug_map.values()])
-        race_times: dict[str, str | None] = {}  # race_id → startTime
-        for venue, times in zip(slug_map.keys(), time_results):
-            for race_num, start_time in times.items():
-                race_times[f"{target_date}_{venue}_R{race_num}"] = start_time
+        # Skip both external-fetch gathers when RA breaker is open — picks
+        # still display, just without live race times / odds overrides.
+        race_times: dict[str, str | None] = {}
+        live_odds_by_race: dict[str, dict[str, float]] = {}
+        if not ra_blocked:
+            time_results = await asyncio.gather(*[_fetch_race_times(client, slug) for slug in slug_map.values()])
+            for venue, times in zip(slug_map.keys(), time_results):
+                for race_num, start_time in times.items():
+                    race_times[f"{target_date}_{venue}_R{race_num}"] = start_time
 
-        # For races where rank-2/3 hedge candidates have 0 odds, fetch live odds in parallel
-        races_needing_live_odds = [
-            r.race_id for r in rows
-            if any((hr.best_available_odds or 0) <= 1.0 for hr in hedge_map.get(r.race_id, []))
-        ]
-        live_odds_results = await asyncio.gather(*[
-            _fetch_live_odds(client, rid) for rid in races_needing_live_odds
-        ])
-        live_odds_by_race: dict[str, dict[str, float]] = dict(
-            zip(races_needing_live_odds, live_odds_results)
-        )
+            # For races where rank-2/3 hedge candidates have 0 odds, fetch live odds in parallel
+            races_needing_live_odds = [
+                r.race_id for r in rows
+                if any((hr.best_available_odds or 0) <= 1.0 for hr in hedge_map.get(r.race_id, []))
+            ]
+            live_odds_results = await asyncio.gather(*[
+                _fetch_live_odds(client, rid) for rid in races_needing_live_odds
+            ])
+            live_odds_by_race = dict(zip(races_needing_live_odds, live_odds_results))
 
         for runner_row in rows:
             odds = runner_row.best_available_odds or hist_odds_override.get((runner_row.race_id, runner_row.horse_name), 0)
@@ -2625,11 +2663,13 @@ async def get_edge_picks():
                     ff_positions = {l["position"] for l in tri["first_four"] if l["position"]}
                     tri["first_four_hit"] = ff_positions == {1, 2, 3, 4}
 
-    return {
+    body = {
         "generated_at": datetime.utcnow().isoformat(),
         "threshold_pct": int(threshold * 100),
         "picks": picks,
     }
+    _edge_response_cache = (datetime.utcnow(), body)
+    return body
 
 
 _odds_refresh_last: datetime | None = None
@@ -3580,11 +3620,18 @@ async def list_meetings(race_date: str = _today()):
     if cached and (datetime.utcnow() - cached[0]).total_seconds() < 600:
         return cached[1]
     client = get_tab_client()
-    try:
-        meetings = await client.get_meetings(race_date)
-    except Exception as e:
-        log.exception("list_meetings failed for %s", race_date)
+    # When RA's breaker is open, client.get_meetings just hits the breaker and
+    # returns empty after the timeout. Skip to the DB-fallback path directly
+    # so the cache miss doesn't burn that time.
+    if _ra_breaker_open(client):
+        log.info("[list_meetings] RA breaker open — using DB-only path for %s", race_date)
         meetings = []
+    else:
+        try:
+            meetings = await client.get_meetings(race_date)
+        except Exception as e:
+            log.exception("list_meetings failed for %s", race_date)
+            meetings = []
 
     from horse_engine.clients.weather import get_weather_for_venue
 
