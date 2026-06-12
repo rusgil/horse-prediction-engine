@@ -4178,12 +4178,26 @@ async def get_race(race_id: str):
     }
 
 
+# Per-race response cache for live-odds. Every race-detail page reload
+# previously triggered an RA call — and the frontend polls every ~15s
+# during race viewing. With a 30s cache window, repeated viewers and
+# polls share the same call. Pre-race: odds shift on a timescale of
+# minutes, so 30s of staleness is invisible. Settled: data is fixed,
+# longer cache would also be fine but 30s keeps the path uniform.
+_live_odds_cache: dict[str, tuple[datetime, dict]] = {}
+_LIVE_ODDS_TTL = 30
+
 @app.get("/api/races/{race_id}/live-odds")
 async def live_odds(race_id: str):
     """
     Re-fetch current tote odds from Racing Australia for a race and compute updated overlays.
     Fast (~1s) — does not regenerate model predictions, just refreshes market data.
     """
+    # Response cache — see _live_odds_cache above for rationale.
+    cached = _live_odds_cache.get(race_id)
+    if cached and (datetime.utcnow() - cached[0]).total_seconds() < _LIVE_ODDS_TTL:
+        return cached[1]
+
     parts = race_id.split("_")
     if len(parts) < 3:
         raise HTTPException(400, "Invalid race_id format")
@@ -4341,7 +4355,7 @@ async def live_odds(race_id: str):
 
     runners_odds.sort(key=lambda x: x["model_win_prob"], reverse=True)
 
-    return {
+    body = {
         "race_id": race_id,
         "fetched_at": datetime.utcnow().isoformat(),
         "settled": settled,
@@ -4350,6 +4364,8 @@ async def live_odds(race_id: str):
         "model_placed": model_placed,
         "runners": runners_odds,
     }
+    _live_odds_cache[race_id] = (datetime.utcnow(), body)
+    return body
 
 
 @app.get("/api/races/{race_id}/odds-trend")
