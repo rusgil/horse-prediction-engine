@@ -1783,9 +1783,15 @@ async def _scheduled_exotic_retrain():
     """Run by APScheduler at 3am AEST — retrain exotic model after nightly calibration."""
     log.info("[scheduler] Running nightly exotic model retrain")
     try:
+        from horse_engine.prediction.clean_features import (
+            AggregateIndex, recompute_clean_feature_vector, fallback_feature_vector,
+        )
         async with get_session() as session:
             hr_result = await session.execute(select(HistoricalResultRow))
             hr_rows = hr_result.scalars().all()
+            # source IN ('live', 'backfill') matches the win/place/exotic
+            # calibration sweeps. Excludes 'validation' / 'backtest' sources
+            # so backtest-fit signal doesn't leak into exotic weights.
             hist_result = await session.execute(
                 select(RunnerPredictionHistoryRow)
                 .where(RunnerPredictionHistoryRow.enriched_json.isnot(None))
@@ -1793,8 +1799,13 @@ async def _scheduled_exotic_retrain():
                     RunnerPredictionHistoryRow.cancelled.is_(False)
                     | RunnerPredictionHistoryRow.cancelled.is_(None)
                 )
+                .where(RunnerPredictionHistoryRow.source.in_(("live", "backfill")))
             )
             hist_rows = hist_result.scalars().all()
+
+        # BUG-18-clean aggregate index — used by the clean-recompute path so
+        # post-race enriched_at can't leak aggregate fields.
+        index = AggregateIndex(hr_rows)
 
         # Result lookup: (race_id, normalized_name) → (placed, position)
         result_lookup: dict[tuple, tuple] = {
@@ -1810,8 +1821,11 @@ async def _scheduled_exotic_retrain():
                 continue
             placed, position = outcome
             try:
-                er = EnrichedRunner(**json.loads(row.enriched_json))
-                fv = build_feature_vector(er)
+                fv = recompute_clean_feature_vector(row, index)
+                if fv is None:
+                    fv = fallback_feature_vector(row)
+                if fv is None:
+                    continue
                 race_data.setdefault(row.race_id, []).append((fv, 1 if placed else 0, position))
             except Exception:
                 continue
@@ -10153,6 +10167,9 @@ async def _run_exotic_calibration_sweep(holdout_days: int = 14) -> dict:
     Only uses races with field_size >= 7. Saves best weights to exotic_model_weights.
     """
     from horse_engine.models.database import ExoticBacktestRow
+    from horse_engine.prediction.clean_features import (
+        AggregateIndex, recompute_clean_feature_vector, fallback_feature_vector,
+    )
     import math as _math
     today = date.today()
     holdout_cutoff = (today - timedelta(days=holdout_days)).isoformat()
@@ -10162,13 +10179,34 @@ async def _run_exotic_calibration_sweep(holdout_days: int = 14) -> dict:
             select(HistoricalResultRow).where(HistoricalResultRow.position.isnot(None))
         )
         all_hr = hr_result.scalars().all()
-        # History table only — written once pre-race, never overwritten by re-enrichments.
+        # Match the win + place sweeps: source IN ('live', 'backfill') unlocks
+        # the full 9-month training horizon. cancelled NULL/false stays.
+        # 'validation' / 'backtest' sources are still excluded — they'd leak
+        # backtest-fit signal into exotic weights.
         pred_result = await session.execute(
-            select(RunnerPredictionHistoryRow).where(RunnerPredictionHistoryRow.enriched_json.isnot(None))
+            select(RunnerPredictionHistoryRow)
+            .where(RunnerPredictionHistoryRow.enriched_json.isnot(None))
+            .where(RunnerPredictionHistoryRow.cancelled.is_(False) | RunnerPredictionHistoryRow.cancelled.is_(None))
+            .where(RunnerPredictionHistoryRow.source.in_(("live", "backfill")))
         )
         all_pred = pred_result.scalars().all()
 
     pred_by_key = {(p.race_id, p.horse_name): p for p in all_pred}
+
+    # BUG-18-clean aggregate index, built once over the full HR pool. Reused
+    # by recompute_clean_feature_vector below to rebuild aggregate fields
+    # (trainer/jockey rates etc) using only HR rows strictly before each
+    # training row's race_date.
+    index = AggregateIndex(all_hr)
+
+    def _build_fv(pred):
+        """Clean-recompute first, then fall back to raw construction. Same
+        chain the win + place sweeps use — neutralises BUG-18 contamination
+        and survives null fields in older enriched_json."""
+        fv = recompute_clean_feature_vector(pred, index)
+        if fv is None:
+            fv = fallback_feature_vector(pred)
+        return fv
 
     # Group historical results by race for holdout
     holdout_race_results: dict[str, list[HistoricalResultRow]] = {}
@@ -10208,16 +10246,15 @@ async def _run_exotic_calibration_sweep(holdout_days: int = 14) -> dict:
                 pred = pred_by_key.get((race_id, row.horse_name))
                 if not pred:
                     continue
-                if pred.enriched_at and pred.scheduled_time:
-                    try:
-                        sched = datetime.fromisoformat(pred.scheduled_time.replace("Z", "+00:00")).replace(tzinfo=None)
-                        if pred.enriched_at > sched:
-                            continue
-                    except (ValueError, AttributeError):
-                        pass
+                # No pre-race time guard (same reason as win + place sweeps):
+                # recompute_clean_feature_vector uses the date-safe
+                # AggregateIndex, so post-race enriched_at can't leak this
+                # race's results into the aggregate fields. The old guard
+                # dropped 99% of backfilled rows.
                 try:
-                    er = EnrichedRunner(**json.loads(pred.enriched_json))
-                    fv = build_feature_vector(er)
+                    fv = _build_fv(pred)
+                    if fv is None:
+                        continue
                     label = 1 if row.placed else 0
                     group.append((fv, label, row.position))
                 except Exception:
@@ -10245,9 +10282,13 @@ async def _run_exotic_calibration_sweep(holdout_days: int = 14) -> dict:
                 pred = next((p for p in pred_rows if p.horse_name == r.horse_name), None)
                 if not pred or not pred.enriched_json:
                     continue
+                # Same clean-recompute chain as training so the holdout score
+                # is on the same feature distribution the model trained on.
                 try:
-                    er = EnrichedRunner(**json.loads(pred.enriched_json))
-                    runner_fvs.append((r, build_feature_vector(er)))
+                    fv = _build_fv(pred)
+                    if fv is None:
+                        continue
+                    runner_fvs.append((r, fv))
                 except Exception:
                     continue
             if len(runner_fvs) < 7:
