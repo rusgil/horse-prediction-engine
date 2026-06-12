@@ -2939,6 +2939,12 @@
     const jockeyChip  = p.jockey  ? `<span class="chip">J: ${escHtml(p.jockey)}</span>` : '';
     const trainerChip = p.trainer ? `<span class="chip">T: ${escHtml(p.trainer)}</span>` : '';
     const weightChip  = p.weight  ? `<span class="chip">${p.weight}kg</span>` : '';
+    // Last-10 form — same logic as live picks block.
+    const yLast10Label = (p.starts_last_10 != null && p.starts_last_10 < 10)
+      ? `Last ${p.starts_last_10}` : 'Last 10';
+    const last10Chip = (p.wins_last_10 != null && p.places_last_10 != null)
+      ? `<span class="chip">${yLast10Label}: ${p.wins_last_10}W / ${p.places_last_10} on</span>`
+      : '';
 
     // Odds panel (SP in place of Best Odds)
     const oddsHtml = p.sp
@@ -3016,7 +3022,7 @@
         <div class="pick-body">
           <div class="pick-left">
             <div class="pick-horse-name" ${!isWin && !p.scratched ? 'style="color:var(--text-secondary)"' : ''}>${escHtml(p.horse_name)}</div>
-            <div class="pick-details">${barrierChip}${jockeyChip}${trainerChip}${weightChip}</div>
+            <div class="pick-details">${barrierChip}${jockeyChip}${trainerChip}${weightChip}${last10Chip}</div>
             <div class="dual-stat-row" style="margin-bottom:8px">
               <div class="dual-stat">
                 <span class="dual-stat-num" style="color:${pctColor}">${p.model_pct}%</span>

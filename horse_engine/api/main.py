@@ -3237,6 +3237,12 @@ async def get_edge_yesterday(for_date: Optional[str] = Query(None, alias="date")
             "first_four_hit": ff_hit,
         } if len(yst_tri_legs) >= 3 else None
 
+        # Last-10 form from the pre-race enriched_json snapshot — same source
+        # as the live /api/edge picks block.
+        try:
+            yst_enriched = json.loads(p.enriched_json) if p.enriched_json else {}
+        except Exception:
+            yst_enriched = {}
         output.append({
             "race_id": p.race_id,
             "venue": venue_code,
@@ -3259,6 +3265,9 @@ async def get_edge_yesterday(for_date: Optional[str] = Query(None, alias="date")
             "payout": payout,
             "profit": profit,
             "stake": stake,
+            "wins_last_10": yst_enriched.get("wins_last_10"),
+            "places_last_10": yst_enriched.get("places_last_10"),
+            "starts_last_10": yst_enriched.get("starts_last_10"),
             "trifecta": yst_trifecta,
         })
 
