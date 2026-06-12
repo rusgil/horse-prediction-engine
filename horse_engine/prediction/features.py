@@ -65,6 +65,30 @@ FEATURE_NAMES_ODDS_MOVEMENT = [
 FEATURE_NAMES = FEATURE_NAMES_BASE + (FEATURE_NAMES_ODDS_MOVEMENT if USE_ODDS_MOVEMENT_FEATURES else [])
 NUM_FEATURES = len(FEATURE_NAMES)
 
+# Win-model feature mask. The 2026-06-12 feature-ablation showed four
+# features were net-harmful to top-1 win rate when present:
+#   market_rank_norm     +1.8 pp on ablation (single largest harmful)
+#   going_preference     +1.0
+#   market_implied_prob  +0.8
+#   odds_movement_norm   +0.5
+# We MASK them inside HorseModel rather than remove from FEATURE_NAMES so:
+#  - stored weights stay 41-dim (no migration of model_weights table)
+#  - HR feature_vector_json stays 41-dim (no recompute of 130K rows)
+#  - PlaceModel / ExoticModel keep these features (only win was harmed)
+#  - rollback = remove this set, redeploy
+WIN_MASK_FEATURES = {
+    "market_rank_norm",
+    "going_preference",
+    "market_implied_prob",
+    "odds_movement_norm",
+}
+WIN_MASK_INDICES = frozenset(i for i, name in enumerate(FEATURE_NAMES) if name in WIN_MASK_FEATURES)
+
+def apply_win_mask(fv: list[float]) -> list[float]:
+    """Zero out features the win model shouldn't see. Called by HorseModel
+    at train and inference time. PlaceModel/ExoticModel don't use this."""
+    return [0.0 if i in WIN_MASK_INDICES else v for i, v in enumerate(fv)]
+
 DEFAULT_WEIGHTS_BASE = [
     0.8,   # form_score
     0.6,   # win_rate_career

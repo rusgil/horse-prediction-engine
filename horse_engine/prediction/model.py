@@ -15,7 +15,10 @@ import math
 import logging
 from datetime import datetime
 
-from horse_engine.prediction.features import DEFAULT_WEIGHTS, DEFAULT_PLACE_WEIGHTS, DEFAULT_EXOTIC_WEIGHTS, FEATURE_NAMES, NUM_FEATURES
+from horse_engine.prediction.features import (
+    DEFAULT_WEIGHTS, DEFAULT_PLACE_WEIGHTS, DEFAULT_EXOTIC_WEIGHTS,
+    FEATURE_NAMES, NUM_FEATURES, WIN_MASK_INDICES,
+)
 
 log = logging.getLogger(__name__)
 
@@ -36,6 +39,10 @@ def softmax(scores: list[float]) -> list[float]:
 class HorseModel:
     """Logistic regression with per-feature weights, trained on historical results."""
 
+    # Feature indices the win model should ignore. PlaceModel overrides this
+    # to be empty. See features.WIN_MASK_INDICES for the list and rationale.
+    _mask_indices: frozenset = WIN_MASK_INDICES
+
     def __init__(self, weights: list[float] | None = None, bias: float = 0.0):
         self.weights = list(weights or DEFAULT_WEIGHTS)
         self.bias = bias
@@ -43,9 +50,16 @@ class HorseModel:
             f"Expected {NUM_FEATURES} weights, got {len(self.weights)}"
         )
 
+    def _mask_fv(self, fv: list[float]) -> list[float]:
+        """Zero out masked features. Cheap when nothing's masked (PlaceModel)."""
+        if not self._mask_indices:
+            return fv
+        return [0.0 if i in self._mask_indices else v for i, v in enumerate(fv)]
+
     def raw_score(self, feature_vector: list[float]) -> float:
         """Dot product + bias. Higher = more likely to win."""
-        return sum(w * x for w, x in zip(self.weights, feature_vector)) + self.bias
+        fv = self._mask_fv(feature_vector)
+        return sum(w * x for w, x in zip(self.weights, fv)) + self.bias
 
     def predict_field(
         self, feature_vectors: list[list[float]]
@@ -88,6 +102,11 @@ class HorseModel:
         """
         if not training_data:
             return {"error": "no training data"}
+
+        # Same masking as train_race_grouped — keep gradient view consistent
+        # with raw_score's masked view so weight updates respect the mask.
+        if self._mask_indices:
+            training_data = [(self._mask_fv(fv), label) for (fv, label) in training_data]
 
         n = len(training_data)
         weights_arr = sample_weights if sample_weights and len(sample_weights) == n else [1.0] * n
@@ -176,6 +195,14 @@ class HorseModel:
         if not valid:
             return {"error": "no races with exactly one winner and ≥2 runners"}
 
+        # Pre-mask each runner's FV up front so gradients computed against
+        # fv[k] are zero for masked features. raw_score also masks, but the
+        # manual gradient loop below reads fv[k] directly. Without this,
+        # masked features would still get weight updates while predict_field
+        # ignored them — divergent train/predict behaviour.
+        if self._mask_indices:
+            valid = [[(self._mask_fv(fv), label) for (fv, label) in race] for race in valid]
+
         n_races = len(valid)
         race_w = sample_weights if sample_weights and len(sample_weights) == n_races else [1.0] * n_races
         w_total = sum(race_w) or 1.0
@@ -245,6 +272,10 @@ class PlaceModel(HorseModel):
     Used to rank legs 2 and 3 of trifecta picks.
     """
 
+    # Place model ablation showed no feature was net-harmful — keep all 41
+    # features active. The mask only applies to the win model.
+    _mask_indices: frozenset = frozenset()
+
     def __init__(self, weights: list[float] | None = None, bias: float = 0.0):
         if weights is None:
             weights = list(DEFAULT_PLACE_WEIGHTS)
@@ -273,6 +304,10 @@ class ExoticModel(HorseModel):
          missed finishers up and wrongly-included runners down.
     Only trains on field_size >= 7 races.
     """
+
+    # Exotic model is for placing in top-3/top-4, behaviour closer to PlaceModel
+    # than to the win model. The win ablation doesn't apply — keep all features.
+    _mask_indices: frozenset = frozenset()
 
     def __init__(self, weights: list[float] | None = None, bias: float = 0.0):
         if weights is None:
