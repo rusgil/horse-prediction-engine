@@ -8375,6 +8375,116 @@ async def win_feature_ablation(
     }
 
 
+@app.get("/api/admin/backtest/exotic-feature-ablation")
+async def exotic_feature_ablation(
+    holdout_days: int = Query(14, ge=7, le=30),
+    x_cron_secret: Optional[str] = Header(None),
+):
+    """
+    Feature ablation for the EXOTIC model. For each feature, zero it out
+    across holdout races and measure the change in trifecta box hit rate
+    (top-3 ranked runners == actual positions 1-2-3 in any order).
+
+    Mirrors /api/admin/backtest/feature-ablation but optimises for box
+    coverage rather than top-1 win rate. Positive delta = removing the
+    feature improves trifecta box hit rate (harmful feature). Field size
+    must be >= 7 (consistent with exotic model training).
+    """
+    _check_admin(x_cron_secret)
+    from horse_engine.prediction.features import FEATURE_NAMES
+    from horse_engine.prediction.clean_features import (
+        AggregateIndex, recompute_clean_feature_vector, fallback_feature_vector,
+    )
+
+    today = date.today()
+    holdout_cutoff = (today - timedelta(days=holdout_days)).isoformat()
+
+    async with get_session() as session:
+        exotic_weights = await load_exotic_model_weights(session)
+        all_hr = (await session.execute(select(HistoricalResultRow))).scalars().all()
+        # Match exotic calibration sweep filters so the ablation measures
+        # the same distribution the model trained on.
+        all_pred = (await session.execute(
+            select(RunnerPredictionHistoryRow)
+            .where(RunnerPredictionHistoryRow.enriched_json.isnot(None))
+            .where(RunnerPredictionHistoryRow.cancelled.is_(False) | RunnerPredictionHistoryRow.cancelled.is_(None))
+            .where(RunnerPredictionHistoryRow.source.in_(("live", "backfill")))
+        )).scalars().all()
+
+    model = ExoticModel.from_weights_dict(exotic_weights) if exotic_weights else ExoticModel()
+    index = AggregateIndex(all_hr)
+    pred_by_key = {(p.race_id, p.horse_name): p for p in all_pred}
+
+    # Build holdout per race: result rows + feature vectors per runner.
+    # Same clean-recompute chain as the calibration sweep.
+    holdout_race_results: dict[str, list[HistoricalResultRow]] = {}
+    for r in all_hr:
+        if r.race_id >= holdout_cutoff and r.position is not None:
+            holdout_race_results.setdefault(r.race_id, []).append(r)
+
+    holdout_fvs: dict[str, list[tuple]] = {}  # race_id → [(result_row, feature_vector)]
+    for race_id, result_rows in holdout_race_results.items():
+        if len(result_rows) < 7:  # exotic model only trained on field_size >= 7
+            continue
+        runner_fvs = []
+        for r in result_rows:
+            pred = pred_by_key.get((race_id, r.horse_name))
+            if not pred:
+                continue
+            fv = recompute_clean_feature_vector(pred, index)
+            if fv is None:
+                fv = fallback_feature_vector(pred)
+            if fv is None:
+                continue
+            runner_fvs.append((r, fv))
+        if len(runner_fvs) >= 7:
+            holdout_fvs[race_id] = runner_fvs
+
+    def _tri_box_hit_rate(fv_sets):
+        tri_hits = tri_races = 0
+        for race_id, runner_fvs in fv_sets.items():
+            scores = [model.raw_score(fv) for _, fv in runner_fvs]
+            ranked = sorted(range(len(runner_fvs)), key=lambda i: scores[i], reverse=True)
+            actual_top3 = {runner_fvs[i][0].position for i in range(len(runner_fvs))
+                           if runner_fvs[i][0].position in (1, 2, 3)}
+            predicted_top3 = {runner_fvs[ranked[i]][0].position for i in range(3)
+                              if runner_fvs[ranked[i]][0].position is not None}
+            if len(actual_top3) == 3:
+                tri_races += 1
+                if predicted_top3 == actual_top3:
+                    tri_hits += 1
+        return round(tri_hits / tri_races * 100, 2) if tri_races else 0.0, tri_races
+
+    baseline_rate, total_races = _tri_box_hit_rate(holdout_fvs)
+
+    ablation = []
+    for feat_idx, feat_name in enumerate(FEATURE_NAMES):
+        zeroed = {}
+        for race_id, runner_fvs in holdout_fvs.items():
+            zeroed[race_id] = [
+                (r, [v if i != feat_idx else 0.0 for i, v in enumerate(fv)])
+                for r, fv in runner_fvs
+            ]
+        ablated_rate, _ = _tri_box_hit_rate(zeroed)
+        delta = round(ablated_rate - baseline_rate, 2)
+        ablation.append({
+            "feature": feat_name,
+            "weight": round(model.weights[feat_idx] if feat_idx < len(model.weights) else 0.0, 4),
+            "baseline_tri_box_rate": baseline_rate,
+            "ablated_tri_box_rate": ablated_rate,
+            "delta": delta,
+            "verdict": "valuable" if delta < -0.5 else ("noisy/harmful" if delta > 0.5 else "neutral"),
+        })
+
+    ablation.sort(key=lambda x: x["delta"])
+    return {
+        "holdout_races": total_races,
+        "holdout_days": holdout_days,
+        "baseline_tri_box_rate_pct": baseline_rate,
+        "feature_ablation": ablation,
+    }
+
+
 @app.get("/api/admin/backtest-place")
 async def backtest_place(
     holdout_days: int = Query(14, ge=7, le=60),
