@@ -2005,6 +2005,19 @@ async def lifespan(app: FastAPI):
     # Enrich today on startup
     asyncio.create_task(_scheduled_enrich())
 
+    # Pre-warm the /api/edge response cache so users don't pay the 25-30s
+    # cold-cache cost. Cache TTL is 300s; we refresh every 180-270s (jittered
+    # so we don't slam RA at predictable intervals). Worst case is 4.5 min
+    # between pre-warms, still inside the 5-min TTL.
+    async def _prewarm_edge_cache():
+        while True:
+            await asyncio.sleep(180 + random.uniform(0, 90))
+            try:
+                await get_edge_picks()
+            except Exception as e:
+                log.warning("[edge-prewarm] failed: %s", e)
+    asyncio.create_task(_prewarm_edge_cache())
+
     # Backfill last 3 days — catch up on any missed enrichments/results
     async def _startup_backfill():
         client = get_tab_client()
