@@ -9465,11 +9465,22 @@ async def _run_calibration_sweep(holdout_days: int = 14) -> dict:
 
     async with get_session() as session:
         all_hr = (await session.execute(select(HistoricalResultRow))).scalars().all()
+        # Calibration deliberately includes source IN ('live', 'snapshot') here.
+        # 'source="live"' alone produces only ~15K rows heavily skewed to the
+        # last few weeks, and the 14-day holdout eats most of them — every
+        # window dropped to <50 training races. Including 'snapshot' rows
+        # (backfilled history from older races) unlocks the full 9-month
+        # training horizon. The 'snapshot' rows can contain BUG-18-contaminated
+        # aggregates BUT recompute_clean_feature_vector rebuilds those fields
+        # from the date-safe AggregateIndex on the fly, so contamination is
+        # neutralised at training time. 'validation' source is still excluded —
+        # those rows come from _run_validation_backtest and would leak
+        # backtest-fit signal into the model.
         all_pred = (await session.execute(
             select(RunnerPredictionHistoryRow)
             .where(RunnerPredictionHistoryRow.enriched_json.isnot(None))
             .where(RunnerPredictionHistoryRow.cancelled.is_(False) | RunnerPredictionHistoryRow.cancelled.is_(None))
-            .where(RunnerPredictionHistoryRow.source == "live")
+            .where(RunnerPredictionHistoryRow.source.in_(("live", "snapshot")))
         )).scalars().all()
 
     # BUG-18-clean aggregate index, built once over full HR pool.
@@ -9808,11 +9819,13 @@ async def _run_place_calibration_sweep(holdout_days: int = 14) -> dict:
 
     async with get_session() as session:
         all_hr = (await session.execute(select(HistoricalResultRow))).scalars().all()
+        # See _run_calibration_sweep — same source IN ('live', 'snapshot')
+        # widening so the place sweep also has access to backfilled history.
         all_pred = (await session.execute(
             select(RunnerPredictionHistoryRow)
             .where(RunnerPredictionHistoryRow.enriched_json.isnot(None))
             .where(RunnerPredictionHistoryRow.cancelled.is_(False) | RunnerPredictionHistoryRow.cancelled.is_(None))
-            .where(RunnerPredictionHistoryRow.source == "live")
+            .where(RunnerPredictionHistoryRow.source.in_(("live", "snapshot")))
         )).scalars().all()
 
     index = AggregateIndex(all_hr)
