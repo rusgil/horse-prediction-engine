@@ -11,16 +11,12 @@ class Settings(BaseSettings):
     tab_base_url: str = "https://api.tab.com.au/v1/tab-info-service"
     tab_jurisdiction: str = "NSW"  # default jurisdiction for single-jurisdiction calls
 
-    # Betfair Exchange API credentials
-    betfair_app_key: str = ""
-    betfair_username: str = ""
-    betfair_password: str = ""
-    # Hard kill switch — defaults to disabled. Betfair's identitysso.betfair.com.au
-    # has been 403'ing our login attempts (account/IP block), so the stream client
-    # was hitting it every 30 seconds with failed auth — exactly the API hammering
-    # we forbid in feedback_no_api_hammer.md. Set BETFAIR_ENABLED=true in env vars
-    # only when access has been confirmed working.
-    betfair_enabled: bool = False
+    # Betfair clients were removed 2026-06-13. RA + OddsPro cover everything
+    # the model trains on; the Betfair-derived features (steam_60, steam_30,
+    # drift_flag, odds_velocity, late_money, odds_movement_norm) ablated to
+    # ~0 or net-harmful on the win model. extra="ignore" means leftover
+    # BETFAIR_* env vars on Railway are silently ignored — feel free to
+    # delete them from the Railway dashboard at your leisure.
 
     @property
     def async_database_url(self) -> str:

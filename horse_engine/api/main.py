@@ -14,8 +14,7 @@ Endpoints:
 
 Data sources:
   Racing Australia — meeting / race-card / results feed (primary)
-  OddsPro          — multi-book live odds + steam/drift inputs
-  Betfair          — optional REST metadata + live streaming odds (when credentials set)
+  OddsPro          — multi-book live odds
   TAB direct API   — fallback odds lookup for picks not covered by OddsPro
 
 Venue codes are lowercase venue slugs, e.g. "werribee", "randwick", "flemington".
@@ -1011,7 +1010,7 @@ _MIN_HORSE_SAMPLES = 5
 async def _inject_accumulated_stats(race, session) -> None:
     """
     Inject real jockey/trainer/career win rates from historical_results into Race runners.
-    Runs after parse_race() so it overrides the flat 10.0 defaults from RA/Betfair.
+    Runs after parse_race() so it overrides the flat 10.0 defaults from RA.
     Only updates fields where we have >= MIN_SAMPLES observations.
 
     All aggregates exclude historical_results rows on or after race.date so that
@@ -5401,7 +5400,7 @@ async def cancel_runner(
 
 @app.get("/api/admin/debug-odds")
 async def debug_odds(venue: str = "", date: str = "", x_cron_secret: Optional[str] = Header(None)):
-    """Probe OddsPro + Betfair for a venue. Returns raw odds data for diagnosis."""
+    """Probe OddsPro + TAB for a venue. Returns raw odds data for diagnosis."""
     _check_admin(x_cron_secret)
     from horse_engine.clients.oddspro import OddsProClient
     target_date = date or _today_aest().isoformat()
@@ -5464,68 +5463,7 @@ async def debug_odds(venue: str = "", date: str = "", x_cron_secret: Optional[st
     except Exception as e:
         result["tab_error"] = str(e)
 
-    # Betfair
-    try:
-        from horse_engine.config import settings
-        result["bf_credentials"] = bool(settings.betfair_app_key and settings.betfair_username and settings.betfair_password)
-        if result["bf_credentials"]:
-            from horse_engine.clients.betfair import BetfairClient
-            bf = BetfairClient()
-            login_ok = await bf._login()
-            result["bf_login"] = login_ok
-            if login_ok:
-                meetings = await bf.get_meetings(target_date)
-                result["bf_meetings"] = [{"slug": m["slug"], "name": m["name"]} for m in meetings]
-    except Exception as e:
-        result["bf_error"] = str(e)
-
     return result
-
-
-@app.get("/api/admin/debug-betfair")
-async def debug_betfair(date: str = "", x_cron_secret: Optional[str] = Header(None)):
-    """Test Betfair connection: credentials, auth, market count, and meeting slugs."""
-    _check_admin(x_cron_secret)
-    from horse_engine.config import settings
-    target_date = date or _today_aest().isoformat()
-
-    info: dict = {
-        "date": target_date,
-        "credentials_set": bool(settings.betfair_app_key and settings.betfair_username and settings.betfair_password),
-        "app_key_prefix": settings.betfair_app_key[:4] + "..." if settings.betfair_app_key else None,
-    }
-    if not info["credentials_set"]:
-        return info
-
-    try:
-        import httpx as _httpx
-        from horse_engine.config import settings as _s
-        async with _httpx.AsyncClient(timeout=15.0) as _c:
-            _r = await _c.post(
-                "https://identitysso.betfair.com.au/api/login",
-                data={"username": _s.betfair_username, "password": _s.betfair_password},
-                headers={"X-Application": _s.betfair_app_key, "Accept": "application/json",
-                         "Content-Type": "application/x-www-form-urlencoded"},
-            )
-            _body = _r.json()
-            info["login_status"] = _body.get("status")
-            info["login_error"] = _body.get("error")
-            info["login_ok"] = _body.get("status") == "SUCCESS"
-        if not info["login_ok"]:
-            return info
-        from horse_engine.clients.betfair import BetfairClient
-        bf = BetfairClient()
-        bf._session_token = _body.get("token")
-        login_ok = True
-
-        markets = await bf._load_catalogue(target_date)
-        info["market_count"] = len(markets)
-        meetings = await bf.get_meetings(target_date)
-        info["meetings"] = [{"slug": m["slug"], "name": m["name"], "state": m["state"]} for m in meetings]
-    except Exception as e:
-        info["error"] = str(e)
-
-    return info
 
 
 @app.get("/api/admin/probe-tab")
@@ -7540,118 +7478,6 @@ async def backfill_odds_from_sp(x_cron_secret: Optional[str] = Header(None)):
 
     log.info("[backfill-odds] Patched %d live rows, %d history rows from SP", updated_live, updated_hist)
     return {"status": "ok", "updated_live": updated_live, "updated_history": updated_hist}
-
-
-@app.post("/api/admin/patch-betfair-bsp")
-async def patch_betfair_bsp(
-    payload: dict,
-    x_cron_secret: Optional[str] = Header(None),
-):
-    """
-    Accept a batch of Betfair BSP + LTP snapshot data and patch the DB.
-
-    Payload:
-        {
-          "races": [
-            {
-              "race_id": "2026-05-15_warwick-farm_R3",
-              "runners": [
-                {
-                  "name": "Dark Fox",
-                  "bsp": 4.2,
-                  "snapshots": [
-                    {"minutes_to_jump": 62.1, "snapshotted_at": "2026-05-15T02:00:00Z", "win_odds": 5.5},
-                    ...
-                  ]
-                },
-                ...
-              ]
-            },
-            ...
-          ]
-        }
-
-    Idempotent: skips rows that already have starting_price set; skips snapshots
-    that already exist within 2 minutes of the stored time.
-    """
-    from sqlalchemy import text
-    _check_admin(x_cron_secret)
-    races = payload.get("races") or []
-    bsp_patched = bsp_skipped = pred_patched = snap_inserted = 0
-
-    _debug_err = None
-    async with get_session() as session:
-        for race in races:
-            race_id = race.get("race_id", "")
-            for runner in race.get("runners") or []:
-                name = runner.get("name", "")
-                bsp = runner.get("bsp")
-                snapshots = runner.get("snapshots") or []
-
-                # Wrap each runner in a savepoint so an error only rolls back that runner
-                try:
-                    async with session.begin_nested():
-                        if bsp:
-                            # Patch historical_results.starting_price
-                            res = await session.execute(text(
-                                "UPDATE historical_results SET starting_price = :bsp "
-                                "WHERE race_id = :rid AND LOWER(horse_name) = LOWER(:name) "
-                                "AND (starting_price IS NULL OR starting_price = 0)"
-                            ), {"bsp": float(bsp), "rid": race_id, "name": name})
-                            if res.rowcount:
-                                bsp_patched += res.rowcount
-                            else:
-                                bsp_skipped += 1
-
-                            # Patch runner_prediction_history.best_available_odds
-                            res2 = await session.execute(text(
-                                "UPDATE runner_prediction_history SET best_available_odds = :bsp "
-                                "WHERE race_id = :rid AND LOWER(horse_name) = LOWER(:name) "
-                                "AND (best_available_odds IS NULL OR best_available_odds = 0)"
-                            ), {"bsp": float(bsp), "rid": race_id, "name": name})
-                            pred_patched += res2.rowcount
-
-                        for snap in snapshots:
-                            mtj = int(round(float(snap.get("minutes_to_jump") or 0)))
-                            snap_at_str = snap.get("snapshotted_at", "")
-                            win_odds_val = snap.get("win_odds")
-                            if not (snap_at_str and win_odds_val):
-                                continue
-                            try:
-                                snap_dt = datetime.fromisoformat(snap_at_str.replace("Z", "+00:00"))
-                                snap_dt = snap_dt.replace(tzinfo=None)
-                            except Exception:
-                                continue
-                            dup = (await session.execute(text(
-                                "SELECT 1 FROM odds_snapshots "
-                                "WHERE race_id = :rid AND LOWER(horse_name) = LOWER(:name) "
-                                "AND minutes_to_jump BETWEEN :lo AND :hi LIMIT 1"
-                            ), {"rid": race_id, "name": name, "lo": mtj - 2, "hi": mtj + 2})).fetchone()
-                            if dup:
-                                continue
-                            await session.execute(text(
-                                "INSERT INTO odds_snapshots "
-                                "(race_id, horse_name, snapshotted_at, minutes_to_jump, win_odds, source) "
-                                "VALUES (:rid, :name, :snap_dt, :mtj, :odds, 'betfair_ltp')"
-                            ), {"rid": race_id, "name": name, "snap_dt": snap_dt,
-                                "mtj": mtj, "odds": float(win_odds_val)})
-                            snap_inserted += 1
-                except Exception as _runner_err:
-                    _debug_err = repr(_runner_err)
-                    log.warning("[patch-betfair-bsp] runner error (savepoint rolled back): %s", _runner_err)
-
-        await session.commit()
-
-    log.info("[patch-betfair-bsp] bsp=%d skipped=%d pred=%d snaps=%d",
-             bsp_patched, bsp_skipped, pred_patched, snap_inserted)
-    return {
-        "status": "ok",
-        "bsp_patched": bsp_patched,
-        "bsp_skipped": bsp_skipped,
-        "pred_patched": pred_patched,
-        "snap_inserted": snap_inserted,
-        "debug_err": _debug_err,
-    }
 
 
 _validation_bt_state: dict = {"running": False, "status": "idle", "result": None}
