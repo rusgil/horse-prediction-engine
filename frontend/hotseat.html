@@ -621,10 +621,12 @@
       if (p.starts_last_10 != null && p.starts_last_10 > 0) {
         const starts = p.starts_last_10;
         const wins = p.wins_last_10 ?? 0;
-        const places = p.places_last_10 ?? 0;
-        const winPct = Math.round((wins / starts) * 100);
-        const placePct = Math.round((places / starts) * 100);
-        horseMeta.push(`Last ${starts}: ${winPct}% win / ${placePct}% place`);
+        // places_last_10 = top-3 finishes (INCLUDES wins per
+        // EnrichedRunner schema). Subtract wins to get the count of
+        // non-win placings the way punters say it ('won' vs 'placed').
+        const topThree = p.places_last_10 ?? 0;
+        const places = Math.max(0, topThree - wins);
+        horseMeta.push(`Last ${starts} races: ${wins} win / ${places} place`);
       }
 
       return `
