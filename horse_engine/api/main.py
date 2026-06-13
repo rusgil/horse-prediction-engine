@@ -2024,6 +2024,15 @@ async def lifespan(app: FastAPI):
     # worst-case 6-min prewarm interval still has 1 min safety margin
     # before the cache would go cold for a real user.
     async def _prewarm_edge_cache():
+        # Warm immediately on startup so the first user after a redeploy doesn't
+        # hit a cold-cache 60s timeout. Then jittered loop. Brief 5s buffer
+        # before the first fetch so other init tasks (DB pool, etc.) settle.
+        await asyncio.sleep(5)
+        try:
+            await get_edge_picks()
+            log.info("[edge-prewarm] Initial cache warm complete")
+        except Exception as e:
+            log.warning("[edge-prewarm] Initial warm failed: %s", e)
         while True:
             await asyncio.sleep(240 + random.uniform(0, 120))
             try:
