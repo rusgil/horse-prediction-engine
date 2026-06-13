@@ -49,7 +49,16 @@ class CompositeClient:
         if self._bf is None:
             try:
                 from horse_engine.config import settings
-                if settings.betfair_app_key and settings.betfair_username and settings.betfair_password:
+                # Both credentials AND the kill switch must be true. Default is
+                # disabled — see feedback_no_api_hammer.md. The stream client
+                # was hitting identitysso.betfair.com.au every 30s with failed
+                # auth before this guard.
+                if (
+                    settings.betfair_enabled
+                    and settings.betfair_app_key
+                    and settings.betfair_username
+                    and settings.betfair_password
+                ):
                     from horse_engine.clients.betfair import BetfairClient
                     self._bf = BetfairClient()
                     log.info("BetfairClient activated for odds + metadata enrichment")
@@ -58,11 +67,16 @@ class CompositeClient:
         return self._bf
 
     async def _get_stream(self):
-        """Return BetfairStreamClient, starting it once if credentials are present."""
+        """Return BetfairStreamClient, starting it once if enabled + credentials are present."""
         if self._stream is None:
             try:
                 from horse_engine.config import settings
-                if settings.betfair_app_key and settings.betfair_username and settings.betfair_password:
+                if (
+                    settings.betfair_enabled
+                    and settings.betfair_app_key
+                    and settings.betfair_username
+                    and settings.betfair_password
+                ):
                     from horse_engine.clients.betfair_stream import BetfairStreamClient
                     self._stream = BetfairStreamClient(
                         app_key=settings.betfair_app_key,
