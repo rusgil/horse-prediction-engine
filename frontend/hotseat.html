@@ -128,6 +128,43 @@
       transform: scale(0.96);
     }
 
+    /* Track selector */
+    .track-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-top: 10px;
+    }
+    .track-label {
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--text-dim);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    .track-select {
+      flex: 1;
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      color: var(--text);
+      padding: 8px 32px 8px 12px;
+      border-radius: 8px;
+      font-family: inherit;
+      font-size: 14px;
+      font-weight: 500;
+      cursor: pointer;
+      appearance: none;
+      -webkit-appearance: none;
+      background-image: url("data:image/svg+xml;charset=UTF-8,%3csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3e%3cpath fill='none' stroke='%238a93a8' stroke-width='1.6' d='M2.5 4.5l3.5 3.5 3.5-3.5'/%3e%3c/svg%3e");
+      background-repeat: no-repeat;
+      background-position: right 10px center;
+      max-width: 280px;
+    }
+    .track-select:focus {
+      outline: none;
+      border-color: var(--gold);
+    }
+
     /* Main list */
     main {
       padding: 12px 12px 80px;
@@ -342,6 +379,12 @@
       <button class="filter-pill" data-filter="standard">≥30% Standard+</button>
       <button class="filter-pill" data-filter="hot">≥40% Hot picks</button>
     </div>
+    <div class="track-row">
+      <label for="venueFilter" class="track-label">Track</label>
+      <select id="venueFilter" class="track-select">
+        <option value="all">All tracks</option>
+      </select>
+    </div>
   </header>
 
   <main id="list">
@@ -356,6 +399,7 @@
   let state = {
     picks: [],
     filter: 'all',
+    venue: 'all',
     lastFetch: 0,
   };
 
@@ -417,12 +461,15 @@
     return new Date(iso).getTime() > Date.now() - 90 * 1000;  // 90s grace period after jump
   }
 
-  function applyFilters(picks, filter) {
+  function applyFilters(picks, filter, venue) {
     let out = picks.filter(p => isUpcoming(p.scheduled_time));
     if (filter === 'standard') {
       out = out.filter(p => p.model_pct >= 30);
     } else if (filter === 'hot') {
       out = out.filter(p => p.model_pct >= 40);
+    }
+    if (venue && venue !== 'all') {
+      out = out.filter(p => p.venue === venue);
     }
     // default 'all' shows everything the API returns (>= 20% from /api/edge)
     out.sort((a, b) => {
@@ -433,9 +480,34 @@
     return out;
   }
 
+  function populateVenueOptions() {
+    // Build a unique sorted list of venue codes among UPCOMING picks only
+    // (no point offering a track filter for races that already ran).
+    const venues = new Set();
+    for (const p of state.picks) {
+      if (p.venue && isUpcoming(p.scheduled_time)) venues.add(p.venue);
+    }
+    const sel = document.getElementById('venueFilter');
+    if (!sel) return;
+    const prevValue = sel.value || state.venue || 'all';
+    const sortedVenues = Array.from(venues).sort();
+    sel.innerHTML = '<option value="all">All tracks (' + venues.size + ')</option>' +
+      sortedVenues.map(v => {
+        const label = v.replace(/-/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+        return `<option value="${v}">${label}</option>`;
+      }).join('');
+    // Preserve current selection if it's still in the list, else reset to 'all'
+    if (prevValue !== 'all' && venues.has(prevValue)) {
+      sel.value = prevValue;
+    } else {
+      sel.value = 'all';
+      state.venue = 'all';
+    }
+  }
+
   function renderList() {
     const main = document.getElementById('list');
-    const picks = applyFilters(state.picks, state.filter);
+    const picks = applyFilters(state.picks, state.filter, state.venue);
 
     if (!picks.length) {
       main.innerHTML = `
@@ -517,6 +589,7 @@
       const data = await r.json();
       state.picks = data.picks || [];
       state.lastFetch = Date.now();
+      populateVenueOptions();
       renderList();
     } catch (e) {
       console.error(e);
@@ -553,6 +626,12 @@
       state.filter = btn.dataset.filter;
       renderList();
     });
+  });
+
+  // Track selector
+  document.getElementById('venueFilter').addEventListener('change', (e) => {
+    state.venue = e.target.value;
+    renderList();
   });
 
   loadPicks();
