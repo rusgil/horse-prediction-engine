@@ -674,7 +674,8 @@
       <div class="action-bar">
         <button class="btn" onclick="loadDashboard()">Refresh Dashboard</button>
         <button class="btn" id="reenrichBtn" onclick="triggerReenrich('reenrichBtn', 'winStatus')">Re-enrich Today</button>
-        <button class="btn primary" id="retrainBtn" onclick="triggerRetrain()">Run Calibration Now</button>
+        <button class="btn" id="calibrateBtn" onclick="triggerRetrain()">Run Calibration Now</button>
+        <button class="btn primary" id="retrainProdBtn" onclick="triggerRetrainProd()">Retrain Production</button>
         <span class="btn-status" id="winStatus"></span>
       </div>
       <div class="action-bar" style="margin-top:10px;align-items:center;gap:8px">
@@ -694,7 +695,11 @@
         </div>
         <div class="action-explain">
           <strong>Run Calibration Now</strong>
-          <span>Retrains the model weights using all stored historical results. <strong>No external API calls</strong> — reads only from the local database. Takes 10–30 seconds. Normally runs automatically at 2am AEST nightly. Use this after seeding a batch of new results if you want the model to update immediately rather than waiting overnight. Avoid running multiple times in quick succession — each run overwrites the previous weights.</span>
+          <span>Runs the calibration sweep — trains a fresh model on each candidate window (60/90/180/270 days) and reports win rate, ROI, and drift status per window. <strong>Measurement only — does NOT update production weights.</strong> Takes ~14 min. Normally runs automatically at 2am AEST nightly. Use this after a model change to see how a fresh-window retrain would compare.</span>
+        </div>
+        <div class="action-explain">
+          <strong>Retrain Production</strong>
+          <span>Retrains the production win model on <strong>all stored data</strong> (not a window — this is what serves live predictions). No external API calls. Takes ~2–5 min. Run this after the calibration sweep shows a meaningful win-rate gap between windows and full-data, or after a feature/mask change. Avoid running more than once per day — production updates ripple through predictions and stats.</span>
         </div>
         <div class="action-explain">
           <strong>Reseed Results</strong>
@@ -1419,6 +1424,26 @@
       status.textContent = 'Error: ' + e.message;
     } finally {
       btn.disabled = false;
+    }
+  }
+
+  async function triggerRetrainProd() {
+    const btn    = document.getElementById('retrainProdBtn');
+    const status = document.getElementById('winStatus');
+    if (!confirm('Retrain production win model on all stored data?\n\nThis updates the live serving model and takes 2–5 minutes. Predictions made during this window may use slightly stale weights.')) return;
+    btn.disabled = true;
+    status.textContent = 'Production retrain started (background)…';
+    try {
+      const res = await fetch(`${API}/api/retrain?days=0`, {
+        method: 'POST',
+        headers: { 'x-cron-secret': adminSecret }
+      });
+      const data = await res.json();
+      status.textContent = data.message || 'Retrain started — refresh in a few minutes.';
+    } catch (e) {
+      status.textContent = 'Error: ' + e.message;
+    } finally {
+      setTimeout(() => { btn.disabled = false; }, 10000);
     }
   }
 
