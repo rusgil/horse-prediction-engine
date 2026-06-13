@@ -199,6 +199,40 @@
       background: linear-gradient(135deg, var(--bg-card) 0%, rgba(232,160,32,0.06) 100%);
     }
 
+    /* Finished-race banner (shown for the 3-min post-jump grace period) */
+    .result-banner {
+      margin: -14px -14px 10px;
+      padding: 8px 14px;
+      font-family: 'Barlow Condensed', sans-serif;
+      font-weight: 700;
+      font-size: 14px;
+      letter-spacing: 0.5px;
+      text-transform: uppercase;
+    }
+    .result-banner.won {
+      background: linear-gradient(90deg, rgba(34,197,94,0.18) 0%, rgba(34,197,94,0.05) 100%);
+      color: var(--green-bright);
+      border-bottom: 1px solid rgba(34,197,94,0.3);
+    }
+    .result-banner.placed {
+      background: linear-gradient(90deg, rgba(232,160,32,0.18) 0%, rgba(232,160,32,0.05) 100%);
+      color: var(--gold);
+      border-bottom: 1px solid rgba(232,160,32,0.3);
+    }
+    .result-banner.lost {
+      background: linear-gradient(90deg, rgba(248,113,113,0.12) 0%, rgba(248,113,113,0.03) 100%);
+      color: var(--red);
+      border-bottom: 1px solid rgba(248,113,113,0.2);
+    }
+    .result-banner.pending {
+      background: var(--bg-elevated);
+      color: var(--text-dim);
+      border-bottom: 1px solid var(--border);
+      font-weight: 500;
+    }
+    .pick.finished { opacity: 0.92; }
+    .pick.finished .countdown { color: var(--text-muted); }
+
     /* Timer bar: thin progress strip at top of card. Fills 100% when race is
        >30 min away, drains linearly to 0 at jump. Hidden if race is >60 min
        away (no urgency yet) or already passed. Updates every second via JS. */
@@ -458,7 +492,16 @@
   function isUpcoming(iso) {
     if (!iso) return false;
     if (typeof iso === 'string' && /T00:00:00/.test(iso)) return false;
-    return new Date(iso).getTime() > Date.now() - 90 * 1000;  // 90s grace period after jump
+    // 3 min grace period after jump — keeps just-finished races visible so
+    // the user can see the result on a card before it drops off the list.
+    return new Date(iso).getTime() > Date.now() - 180 * 1000;
+  }
+
+  function isFinished(iso) {
+    // A race that ran but is still within the visibility window.
+    if (!iso) return false;
+    if (typeof iso === 'string' && /T00:00:00/.test(iso)) return false;
+    return new Date(iso).getTime() <= Date.now();
   }
 
   function applyFilters(picks, filter, venue) {
@@ -528,6 +571,28 @@
       const isImminent = cd.cls === 'imminent' || cd.cls === 'now';
       const isNow = cd.cls === 'now';
       const isHot = p.model_pct >= 40;
+      const finished = isFinished(p.scheduled_time);
+
+      // Result banner (only shown for finished races within the 3-min window).
+      // Picks data is annotated by /api/edge: won, placed, actual_position, sp.
+      let resultBanner = '';
+      if (finished) {
+        const pos = p.actual_position;
+        if (pos != null) {
+          const posLabel = pos === 1 ? '1st' : pos === 2 ? '2nd' : pos === 3 ? '3rd' : `${pos}th`;
+          if (p.won) {
+            const sp = p.sp ? ` · SP $${p.sp.toFixed(2)}` : '';
+            resultBanner = `<div class="result-banner won">✓ WON · ${posLabel}${sp}</div>`;
+          } else if (p.placed) {
+            resultBanner = `<div class="result-banner placed">◐ Placed · ${posLabel}</div>`;
+          } else {
+            resultBanner = `<div class="result-banner lost">✗ Missed · ${posLabel}</div>`;
+          }
+        } else {
+          // Race ran but results haven't been seeded yet
+          resultBanner = '<div class="result-banner pending">Race over · results loading…</div>';
+        }
+      }
       const winColor = p.model_pct >= 35 ? 'win high' : 'win';
       const oddsTxt = p.best_available_odds && p.best_available_odds > 1.0
         ? '$' + p.best_available_odds.toFixed(2) : '—';
@@ -546,9 +611,10 @@
       }
 
       return `
-        <div class="pick ${isImminent ? 'imminent' : ''} ${isNow ? 'now' : ''} ${isHot ? 'hot' : ''}">
+        <div class="pick ${isImminent ? 'imminent' : ''} ${isNow ? 'now' : ''} ${isHot ? 'hot' : ''} ${finished ? 'finished' : ''}">
           ${barPct >= 0 ? `<div class="timer-bar"><div class="timer-bar-fill" style="width:${barPct}%"></div></div>` : ''}
-          ${isPremium ? '<div class="badge">Premium</div>' : ''}
+          ${resultBanner}
+          ${isPremium && !finished ? '<div class="badge">Premium</div>' : ''}
           <div class="pick-top">
             <div>
               <div class="countdown ${cd.cls}">${cd.text}</div>

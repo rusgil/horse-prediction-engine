@@ -2024,21 +2024,34 @@ async def lifespan(app: FastAPI):
     # worst-case 6-min prewarm interval still has 1 min safety margin
     # before the cache would go cold for a real user.
     async def _prewarm_edge_cache():
-        # Warm immediately on startup so the first user after a redeploy doesn't
-        # hit a cold-cache 60s timeout. Then jittered loop. Brief 5s buffer
-        # before the first fetch so other init tasks (DB pool, etc.) settle.
+        """Keep the /api/edge response cache warm. Cache TTL is 7 min; we
+        refresh every 4-6 min jittered so users never hit a cold-cache
+        25-60s recompute. On failure, retry after 30s (not the full 4-6 min)
+        so a transient hiccup doesn't leave the cache stale for 5+ minutes."""
+        # Warm immediately on startup so the first user after a redeploy
+        # doesn't hit a cold-cache timeout. 5s buffer for DB pool init.
         await asyncio.sleep(5)
-        try:
-            await get_edge_picks()
-            log.info("[edge-prewarm] Initial cache warm complete")
-        except Exception as e:
-            log.warning("[edge-prewarm] Initial warm failed: %s", e)
+        consecutive_failures = 0
         while True:
-            await asyncio.sleep(240 + random.uniform(0, 120))
             try:
-                await get_edge_picks()
+                body = await get_edge_picks()
+                picks_count = len(body.get("picks", []))
+                if consecutive_failures > 0:
+                    log.info("[edge-prewarm] Recovered — cache warm with %d picks", picks_count)
+                else:
+                    log.info("[edge-prewarm] Cache warm with %d picks", picks_count)
+                consecutive_failures = 0
             except Exception as e:
-                log.warning("[edge-prewarm] failed: %s", e)
+                consecutive_failures += 1
+                log.warning("[edge-prewarm] failed (consecutive=%d): %s", consecutive_failures, e)
+            # On failure, retry in 30s. On success, normal 4-6 min jittered.
+            # Cap consecutive-failure backoff at 5 min so we don't hammer a
+            # truly broken backend, but stay snappier than the normal cadence.
+            if consecutive_failures == 0:
+                await asyncio.sleep(240 + random.uniform(0, 120))  # 4-6 min
+            else:
+                retry_delay = min(30 * consecutive_failures, 300)
+                await asyncio.sleep(retry_delay)
     asyncio.create_task(_prewarm_edge_cache())
 
     # Backfill last 3 days — catch up on any missed enrichments/results.
