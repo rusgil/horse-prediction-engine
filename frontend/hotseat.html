@@ -490,11 +490,20 @@
   }
 
   function isUpcoming(iso) {
+    // Show all races for today's date (Australia/Sydney). Keeps finished
+    // races visible until midnight so the user can see results all day,
+    // not just the 3-min post-jump window. Race-date check uses the date
+    // portion of the ISO string (which is already in the venue's local
+    // timezone since the backend builds it with venue offsets).
     if (!iso) return false;
     if (typeof iso === 'string' && /T00:00:00/.test(iso)) return false;
-    // 3 min grace period after jump — keeps just-finished races visible so
-    // the user can see the result on a card before it drops off the list.
-    return new Date(iso).getTime() > Date.now() - 180 * 1000;
+    const today = new Date().toLocaleDateString('en-AU', {
+      timeZone: 'Australia/Sydney', year: 'numeric', month: '2-digit', day: '2-digit'
+    });
+    // 'DD/MM/YYYY' → 'YYYY-MM-DD'
+    const parts = today.split('/');
+    const isoToday = `${parts[2]}-${parts[1]}-${parts[0]}`;
+    return typeof iso === 'string' && iso.startsWith(isoToday);
   }
 
   function isFinished(iso) {

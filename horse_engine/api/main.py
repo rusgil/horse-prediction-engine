@@ -2044,11 +2044,12 @@ async def lifespan(app: FastAPI):
             except Exception as e:
                 consecutive_failures += 1
                 log.warning("[edge-prewarm] failed (consecutive=%d): %s", consecutive_failures, e)
-            # On failure, retry in 30s. On success, normal 4-6 min jittered.
-            # Cap consecutive-failure backoff at 5 min so we don't hammer a
-            # truly broken backend, but stay snappier than the normal cadence.
+            # On success: refresh every 60-90s (1-1.5 min) so finished-race
+            # RESULTS surface on Hot Seat cards within ~3 min of the race
+            # ending. Faster than the 120s TTL so users never hit a cold cache.
+            # On failure: retry in 30s × consecutive failures (cap 5 min).
             if consecutive_failures == 0:
-                await asyncio.sleep(240 + random.uniform(0, 120))  # 4-6 min
+                await asyncio.sleep(60 + random.uniform(0, 30))
             else:
                 retry_delay = min(30 * consecutive_failures, 300)
                 await asyncio.sleep(retry_delay)
@@ -2224,15 +2225,18 @@ _edge_odds_cache: dict[str, tuple[datetime, dict[str, float]]] = {}  # race_id �
 # resets every 60s on first failure so a short TTL (60s) means every
 # minute one user pays the slow cost.
 #
-# 420s (7 min) gives the prewarmer (4-6 min jittered interval) a 1-min
-# safety margin — worst-case prewarm fires at 6 min, cache still valid
-# until 7 min, so real users never hit a cold cache. 7 min of staleness
-# is still fine for race-day data (odds shift on minute+ scale, field
-# changes caught by the 15-min scheduler).
-_EDGE_RESPONSE_TTL = 420
+# 120s (2 min) keeps finished-race RESULTS fresh on Hot Seat — the
+# /api/edge response includes won/placed/actual_position annotations
+# for finished picks, but a cache only refreshes when it expires.
+# At 120s TTL + 60-90s prewarm interval, results land on cards within
+# ~3 minutes of the race finishing (race ends → seed-on-demand fires
+# on next compute → next compute happens within TTL → users see).
+# Cost: more recomputes per hour, but each one is fast (~200ms after
+# the gather settles) and the prewarmer absorbs all of it.
+_EDGE_RESPONSE_TTL = 120
 # Bump _EDGE_CACHE_VERSION whenever threshold or response shape changes so
 # old cached responses are invalidated on deploy without a manual restart.
-_EDGE_CACHE_VERSION = 2  # 2026-06-13: threshold 29.5% -> 20%
+_EDGE_CACHE_VERSION = 3  # 2026-06-14: TTL 7min -> 2min for fresher results
 _edge_response_cache: tuple[datetime, dict, int] | None = None
 
 # Cache full list_meetings response for 10 min (weather + RA calls are expensive)
