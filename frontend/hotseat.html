@@ -363,11 +363,15 @@
       font-weight: 500;
     }
 
-    /* Badge for premium (place_rank >= 2) */
+    /* Badge for premium (place_rank >= 2). Inline above pick-top so it
+       doesn't collide with the venue/race-number text on narrow mobile
+       screens. Right-aligned strip on its own line. */
+    .badge-row {
+      display: flex;
+      justify-content: flex-end;
+      margin-bottom: 6px;
+    }
     .badge {
-      position: absolute;
-      top: 10px;
-      right: 12px;
       font-size: 10px;
       font-weight: 700;
       text-transform: uppercase;
@@ -627,7 +631,7 @@
         <div class="pick ${isImminent ? 'imminent' : ''} ${isNow ? 'now' : ''} ${isHot ? 'hot' : ''} ${finished ? 'finished' : ''}">
           ${barPct >= 0 ? `<div class="timer-bar"><div class="timer-bar-fill" style="width:${barPct}%"></div></div>` : ''}
           ${resultBanner}
-          ${isPremium && !finished ? '<div class="badge">Premium</div>' : ''}
+          ${isPremium && !finished ? '<div class="badge-row"><span class="badge">Premium</span></div>' : ''}
           <div class="pick-top">
             <div>
               <div class="countdown ${cd.cls}">${cd.text}</div>
