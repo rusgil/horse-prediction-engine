@@ -1842,7 +1842,10 @@
 
   function fmtTime(t) {
     if (!t) return '';
-    // Handle ISO datetime or time string
+    // Strings ending in T00:00:00 (any tz) are placeholder midnight values
+    // written when the upstream feed gave us a race name but no actual time.
+    // Don't render them — "12:00 AM" would be misleading.
+    if (typeof t === 'string' && /T00:00:00/.test(t)) return '';
     try {
       const d = new Date(t);
       if (!isNaN(d)) return d.toLocaleTimeString('en-AU', { hour:'2-digit', minute:'2-digit', hour12: true, timeZone: 'Australia/Sydney' });

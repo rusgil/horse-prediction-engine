@@ -2638,7 +2638,13 @@ async def get_edge_picks():
                 "race_name": None,
                 "distance": None,
                 "track_condition": None,
-                "scheduled_time": race_times.get(runner_row.race_id) or runner_row.scheduled_time,
+                # Placeholder T00:00:00 values are written when the upstream
+                # had a race name but no real start time — treat as missing
+                # so the frontend doesn't render "12:00 AM" or run a bogus
+                # countdown timer.
+                "scheduled_time": (lambda s: None if (isinstance(s, str) and "T00:00:00" in s) else s)(
+                    race_times.get(runner_row.race_id) or runner_row.scheduled_time
+                ),
                 "horse_name": runner_row.horse_name,
                 "jockey": runner_row.jockey,
                 "trainer": runner_row.trainer,

@@ -1779,6 +1779,9 @@
 
   function formatTime(iso) {
     if (!iso) return '';
+    // Placeholder midnight times (T00:00:00...) are written when the upstream
+    // had a race name but no actual start time. Suppress "12:00 AM" display.
+    if (typeof iso === 'string' && /T00:00:00/.test(iso)) return '';
     try {
       const d = new Date(iso);
       return d.toLocaleTimeString('en-AU', { hour: '2-digit', minute: '2-digit', hour12: true, timeZone: 'Australia/Sydney' });
