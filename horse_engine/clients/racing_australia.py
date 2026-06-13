@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import random
 import re
 from datetime import date, datetime
@@ -28,6 +29,33 @@ log = logging.getLogger(__name__)
 
 _BASE = "https://www.racingaustralia.horse/FreeFields"
 _IF_BASE = "https://www.racingaustralia.horse/InteractiveForm"
+
+# When RA_PROXY_URL is set, all upstream requests are routed through that proxy
+# instead of hitting racingaustralia.horse directly. The proxy is a tiny
+# FastAPI app on a DigitalOcean droplet (see droplet-proxy/ in repo root) —
+# its IP isn't on RA's WAF blocklist, so this bypasses the block. Auth via
+# X-Proxy-Secret header, which the proxy validates before forwarding.
+#
+# Both env vars must be set to enable; if RA_PROXY_URL is empty the client
+# behaves exactly as before (direct to RA).
+_RA_PROXY_URL = os.environ.get("RA_PROXY_URL", "").rstrip("/")
+_RA_PROXY_SECRET = os.environ.get("RA_PROXY_SECRET", "")
+_RA_PROXY_ACTIVE = bool(_RA_PROXY_URL and _RA_PROXY_SECRET)
+if _RA_PROXY_ACTIVE:
+    log.info("[RA] Proxy enabled — routing through %s", _RA_PROXY_URL)
+
+
+def _proxied(url: str) -> str:
+    """Rewrite an RA URL to go through the configured proxy.
+    https://www.racingaustralia.horse/FreeFields/Calendar.aspx?State=NSW
+       -> {RA_PROXY_URL}/proxy/FreeFields/Calendar.aspx?State=NSW
+    No-op when the proxy isn't configured."""
+    if not _RA_PROXY_ACTIVE:
+        return url
+    prefix = "https://www.racingaustralia.horse/"
+    if url.startswith(prefix):
+        return f"{_RA_PROXY_URL}/proxy/{url[len(prefix):]}"
+    return url
 _AU_STATES = ["NSW", "VIC", "QLD", "SA", "WA", "TAS", "NT", "ACT"]
 _MONTH_NAMES = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"]
 
@@ -730,8 +758,16 @@ class RacingAustraliaClient:
             # tight; combined with Semaphore(3) it produced ~10 req/s sustained.
             await asyncio.sleep(0.6 + random.random() * 0.6)
             headers = _build_headers(referer=referer)
+            fetch_url = _proxied(url)
+            if _RA_PROXY_ACTIVE and fetch_url != url:
+                # Proxy auth header (validated by the droplet proxy before
+                # forwarding to RA). Doesn't replace UA/Referer — those still
+                # get applied at the proxy layer when it talks to RA.
+                headers["X-Proxy-Secret"] = _RA_PROXY_SECRET
+                if referer:
+                    headers["X-Proxy-Referer"] = referer
             async with httpx.AsyncClient(headers=headers, timeout=timeout, follow_redirects=True) as client:
-                resp = await client.get(url)
+                resp = await client.get(fetch_url)
                 if resp.status_code == 403:
                     self._trip_breaker()
                     resp.raise_for_status()
