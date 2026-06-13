@@ -9762,9 +9762,12 @@ async def _run_calibration_sweep(holdout_days: int = 14) -> dict:
     if not best_weights:
         return {"error": "no valid windows", "window_results": window_results}
 
-    # Save best weights
-    async with get_session() as session:
-        await save_model_weights(session, best_weights)
+    # NOTE: deliberately NOT saving best_weights to production. Calibration
+    # is a MEASUREMENT tool, not a deployment tool. Saving here used to
+    # overwrite production weights nightly with a fresh-window retrain
+    # that almost always scored lower than the all-data production model
+    # (e.g. 21% vs 37% on 2026-06-13). To update production weights, fire
+    # POST /api/retrain?days=0 explicitly.
 
     # Drift detection: compare vs last 4 calibrations
     best_result = next((r for r in window_results if r.get("window_days") == best_window), {})
@@ -10046,8 +10049,8 @@ async def _run_place_calibration_sweep(holdout_days: int = 14) -> dict:
     if not best_weights:
         return {"error": "no valid windows", "window_results": window_results}
 
-    async with get_session() as session:
-        await save_place_model_weights(session, best_weights)
+    # Measurement only — see _run_calibration_sweep for full rationale.
+    # To update production place weights, fire POST /api/admin/retrain-place.
 
     best_result = next((r for r in window_results if r.get("window_days") == best_window), {})
     drift_flag = False
@@ -10293,8 +10296,10 @@ async def _run_exotic_calibration_sweep(holdout_days: int = 14) -> dict:
     if not best_weights:
         return {"error": "no valid windows", "window_results": window_results}
 
-    async with get_session() as session:
-        await save_exotic_model_weights(session, best_weights)
+    # Measurement only — see _run_calibration_sweep for full rationale.
+    # To update production exotic weights, fire POST /api/admin/retrain-exotic
+    # (or wait for the 03:00 AEST _scheduled_exotic_retrain cron, which trains
+    # on all data the right way).
 
     best_result = next((r for r in window_results if r.get("window_days") == best_window), {})
     drift_flag = False
