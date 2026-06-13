@@ -52,6 +52,17 @@ _request_lock = asyncio.Lock()
 _last_request_at = 0.0
 _MIN_INTERVAL = 0.7  # seconds; with jitter, ~0.7-1.2s between RA calls
 
+# Daily cap — 5000 RA fetches per rolling 24h is well above any sane real
+# use (~5 req/min sustained) and well below RA's plausible scraper-detection
+# thresholds. Belt-and-braces against runaway callers.
+_DAILY_CAP = 5000
+_daily_count = 0
+_daily_window_start = 0.0  # set on first request
+
+# Track RA 403s through the proxy. If RA blocks us, this jumps and the
+# CRITICAL log lines surface in journalctl -u ra-proxy.
+_recent_403_count = 0
+
 app = FastAPI(title="ra-proxy")
 
 
@@ -82,12 +93,27 @@ async def health():
 async def proxy(path: str, request: Request):
     """Forward GET to {UPSTREAM_BASE}/{path}?{query} and return upstream
     body + status verbatim. Caller must send X-Proxy-Secret."""
-    global _last_request_at
+    global _last_request_at, _daily_count, _daily_window_start, _recent_403_count
 
     # Auth — fail closed.
     secret = request.headers.get("x-proxy-secret", "")
     if secret != PROXY_SECRET:
         raise HTTPException(status_code=403, detail="Forbidden")
+
+    # Daily cap — rolling 24h window. Hard 503 when exceeded so a runaway
+    # caller can't drain the budget overnight without anyone noticing.
+    now = time.monotonic()
+    if _daily_window_start == 0.0 or (now - _daily_window_start) > 86400:
+        _daily_count = 0
+        _recent_403_count = 0
+        _daily_window_start = now
+    if _daily_count >= _DAILY_CAP:
+        import logging as _l
+        _l.getLogger("ra-proxy").warning(
+            "Daily cap reached (%d requests in current 24h window) — refusing further calls",
+            _daily_count,
+        )
+        raise HTTPException(status_code=503, detail="Daily request cap reached")
 
     # Build upstream URL preserving query string.
     qs = request.url.query
@@ -108,6 +134,17 @@ async def proxy(path: str, request: Request):
             except httpx.RequestError as e:
                 raise HTTPException(status_code=502, detail=f"Upstream error: {e}")
         _last_request_at = time.monotonic()
+        _daily_count += 1
+
+    # CRITICAL: RA returned 403 to the proxy. Source IP may be WAF-flagged.
+    # Log loudly so it surfaces in `journalctl -u ra-proxy`.
+    if resp.status_code == 403:
+        _recent_403_count += 1
+        import logging as _l
+        _l.getLogger("ra-proxy").critical(
+            "RA returned 403 (count=%d/cap=%d daily window) — droplet IP may be WAF-blocked. url=%s",
+            _recent_403_count, _daily_count, upstream_url[:200],
+        )
 
     # Return upstream body unchanged. Filter hop-by-hop headers so httpx
     # downstream doesn't get confused.

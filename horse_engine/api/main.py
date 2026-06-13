@@ -2032,14 +2032,30 @@ async def lifespan(app: FastAPI):
                 log.warning("[edge-prewarm] failed: %s", e)
     asyncio.create_task(_prewarm_edge_cache())
 
-    # Backfill last 3 days — catch up on any missed enrichments/results
+    # Backfill last 3 days — catch up on any missed enrichments/results.
+    # Throttled per-date: skip dates whose latest enriched_at is < 12h old.
+    # Without this, every Railway redeploy (often several per day during
+    # active work) would re-enrich the same 3 days, burning ~60 req/min on
+    # the RA proxy for tens of minutes per deploy. The throttle reads
+    # MAX(enriched_at) from RunnerPredictionRow — no new schema needed.
     async def _startup_backfill():
         client = get_tab_client()
         async with get_session() as session:
             model = await _load_model(session)
+        from sqlalchemy import func as _func
+        skip_if_within = timedelta(hours=12)
         for offset in (-3, -2, -1):
             seed_date = (_today_aest() + timedelta(days=offset)).isoformat()
             try:
+                async with get_session() as session:
+                    last_enriched = (await session.execute(
+                        select(_func.max(RunnerPredictionRow.enriched_at))
+                        .where(RunnerPredictionRow.race_id.like(f"{seed_date}_%"))
+                    )).scalar()
+                if last_enriched and (datetime.utcnow() - last_enriched) < skip_if_within:
+                    age_h = round((datetime.utcnow() - last_enriched).total_seconds() / 3600, 1)
+                    log.info("[startup] Skipping backfill for %s — last enriched %sh ago", seed_date, age_h)
+                    continue
                 await _enrich_date(seed_date, client, model)
                 n = await _seed_results_for_date(seed_date)
                 if n:
