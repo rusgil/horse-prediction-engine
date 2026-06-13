@@ -665,7 +665,7 @@
             <div class="stat-card-sub">Training days</div>
           </div>
           <div class="stat-card">
-            <div class="stat-card-num">${latest.total_races.toLocaleString()}</div>
+            <div class="stat-card-num">${(latest.total_races ?? latest.window_results?.find(w => !w.skipped)?.holdout_races ?? 0).toLocaleString()}</div>
             <div class="stat-card-label">Races Tested</div>
             <div class="stat-card-sub">Holdout sample</div>
           </div>
@@ -722,14 +722,25 @@
     let windowHtml = '';
     if (latest?.window_results?.length) {
       const rows = latest.window_results.map(w => {
+        // Skipped windows have minimal fields — render a single-cell explanation
+        if (w.skipped) {
+          return `<tr><td>${w.window_days}d</td><td colspan="5" style="color:var(--text-dim);font-style:italic">${w.reason || 'skipped'}</td></tr>`;
+        }
         const isBest = w.window_days === latest.best_window;
+        // training_examples (place model) OR training_races+training_runners (win/exotic)
+        const trainCount = w.training_examples ?? w.training_runners ?? w.training_races;
+        const trainAcc = w.training_accuracy != null ? (w.training_accuracy * 100).toFixed(1) + '%'
+                       : w.training_top1_hit_rate != null ? (w.training_top1_hit_rate * 100).toFixed(1) + '%'
+                       : '—';
+        const winRate = w.win_rate != null ? (w.win_rate * 100).toFixed(1) + '%' : '—';
+        const valueRoi = w.value_roi != null ? w.value_roi.toFixed(2) + '%' : '—';
         return `<tr class="${isBest ? 'best' : ''}">
           <td>${w.window_days}d${isBest ? '<span class="best-badge">Best</span>' : ''}</td>
-          <td>${w.training_examples.toLocaleString()}</td>
-          <td>${(w.training_accuracy * 100).toFixed(1)}%</td>
-          <td>${(w.win_rate * 100).toFixed(1)}%</td>
-          <td>${w.value_roi.toFixed(2)}%</td>
-          <td>${w.value_bets}</td>
+          <td>${trainCount != null ? trainCount.toLocaleString() : '—'}</td>
+          <td>${trainAcc}</td>
+          <td>${winRate}</td>
+          <td>${valueRoi}</td>
+          <td>${w.value_bets ?? '—'}</td>
         </tr>`;
       }).join('');
       windowHtml = `
@@ -753,11 +764,11 @@
       const rows = analysisData.thresholds.filter(t => t.threshold_pct >= 25).map(t => `
         <tr>
           <td>≥${t.threshold_pct}%</td>
-          <td>${t.bets.toLocaleString()}</td>
-          <td>${t.win_pct.toFixed(1)}%</td>
-          <td>${t.roi_pct.toFixed(1)}%</td>
-          <td>$${t.avg_sp.toFixed(2)}</td>
-          <td style="color:var(--text-dim);font-size:0.7rem">${t.live_bets.toLocaleString()} live / ${t.backtest_bets} backtest</td>
+          <td>${t.bets?.toLocaleString() ?? '—'}</td>
+          <td>${t.win_pct != null ? t.win_pct.toFixed(1) + '%' : '—'}</td>
+          <td>${t.roi_pct != null ? t.roi_pct.toFixed(1) + '%' : '—'}</td>
+          <td>${t.avg_sp != null ? '$' + t.avg_sp.toFixed(2) : '—'}</td>
+          <td style="color:var(--text-dim);font-size:0.7rem">${t.live_bets?.toLocaleString() ?? '—'} live / ${t.backtest_bets ?? '—'} backtest</td>
         </tr>`).join('');
       thresholdHtml = `
         <div class="section">
