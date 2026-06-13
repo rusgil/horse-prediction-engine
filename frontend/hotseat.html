@@ -440,7 +440,10 @@
   async function loadPicks() {
     document.getElementById('refreshLabel').textContent = 'Refreshing…';
     try {
-      const r = await fetch(`${API}/api/edge`, { credentials: 'include' });
+      // Backend sends 'Access-Control-Allow-Origin: *' which is incompatible
+      // with credentials: 'include' — the browser rejects the response.
+      // Same pattern as edge.html: plain cross-origin fetch, no credentials.
+      const r = await fetch(`${API}/api/edge`);
       const data = await r.json();
       state.picks = data.picks || [];
       state.lastFetch = Date.now();
