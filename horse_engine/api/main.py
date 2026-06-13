@@ -3603,52 +3603,57 @@ async def get_edge_trifectas():
 
 @app.get("/api/track-record")
 async def get_track_record():
-    """Public endpoint — tier win rates from 30-day backtest."""
-    cutoff = (date.today() - timedelta(days=30)).isoformat()
-    async with get_session() as session:
-        hr_result = await session.execute(
-            select(HistoricalResultRow).where(HistoricalResultRow.race_id >= cutoff)
-        )
-        hr_map = {(r.race_id, _normalize_horse(r.horse_name)): r for r in hr_result.scalars().all()}
+    """Public endpoint — tier win rates from the unified all-time backtest +
+    live dataset (the same source /api/admin/backtest/analysis uses).
 
-        # History table — written once pre-race, never overwritten by re-enrichments.
-        # Filter cancelled (BUG-31) so scratched horses don't surface as the tier
-        # pick; exclude validation-backtest rows; dedup-in-Python on latest
-        # enriched_at to avoid the BUG-09 exact-timestamp drop.
-        hist_picks = (await session.execute(
+    Previously this was a 30-day live-only window which produced tiny per-tier
+    samples (e.g. 6 picks in the Hot tier, 1 win, 17% — pure noise). Switched
+    to all-time on 2026-06-13. Now scales with stored history (3,000+ picks
+    in the unified set) so the tier numbers are statistically meaningful."""
+    async with get_session() as session:
+        # Retroactive backtest rows (built via the offline backtest pipeline)
+        bt_rows = (await session.execute(
+            select(BacktestResultRow).where(BacktestResultRow.source == "backtest")
+        )).scalars().all()
+
+        # Live: history rank-1 joined with historical_results — dedup on
+        # latest enriched_at per race.
+        hr_result = await session.execute(select(HistoricalResultRow))
+        hr_map = {(r.race_id, r.horse_name): r for r in hr_result.scalars().all()}
+
+        live_result = await session.execute(
             select(RunnerPredictionHistoryRow)
-            .where(RunnerPredictionHistoryRow.race_id >= cutoff)
             .where(RunnerPredictionHistoryRow.model_rank == 1)
-            .where(RunnerPredictionHistoryRow.win_probability.isnot(None))
             .where(RunnerPredictionHistoryRow.cancelled.is_(False) | RunnerPredictionHistoryRow.cancelled.is_(None))
             .where(RunnerPredictionHistoryRow.source == "live")
             .order_by(RunnerPredictionHistoryRow.enriched_at.desc())
-        )).scalars().all()
+        )
+        live_top_picks: dict[str, RunnerPredictionHistoryRow] = {}
+        for p in live_result.scalars().all():
+            if p.race_id not in live_top_picks:
+                live_top_picks[p.race_id] = p
+        live_rows = list(live_top_picks.values())
 
-        top_picks: dict[str, RunnerPredictionHistoryRow] = {}
-        for r in hist_picks:
-            if r.race_id not in top_picks:
-                top_picks[r.race_id] = r
-
-        all_rows = []
-        for r in top_picks.values():
-            hr = hr_map.get((r.race_id, _normalize_horse(r.horse_name)))
-            if hr:
-                all_rows.append({
-                    "win_prob": r.win_probability,
-                    "winner": hr.position == 1,
-                })
+    # Build unified row list (same shape as /api/admin/backtest/analysis)
+    unified = []
+    for r in bt_rows:
+        if r.win_probability is not None:
+            unified.append({"win_prob": r.win_probability, "winner": bool(r.winner)})
+    for r in live_rows:
+        hr = hr_map.get((r.race_id, r.horse_name))
+        if hr and r.win_probability is not None:
+            unified.append({"win_prob": r.win_probability, "winner": hr.position == 1})
 
     tiers = [
-        {"badge": "hot",      "min": 0.45, "max": 1.0,  "conf_min": 45, "conf_max": None},
+        {"badge": "hot",      "min": 0.45, "max": 1.01, "conf_min": 45, "conf_max": None},
         {"badge": "high",     "min": 0.35, "max": 0.45, "conf_min": 35, "conf_max": 45},
         {"badge": "standard", "min": 0.30, "max": 0.35, "conf_min": 30, "conf_max": 35},
     ]
     output = []
     for tier in tiers:
-        picks = [r for r in all_rows if tier["min"] <= r["win_prob"] < tier["max"]]
-        wins  = [r for r in picks if r["winner"]]
-        win_pct = round(len(wins) / len(picks) * 100) if picks else 0
+        picks = [r for r in unified if tier["min"] <= r["win_prob"] < tier["max"]]
+        wins  = sum(1 for r in picks if r["winner"])
+        win_pct = round(wins / len(picks) * 100) if picks else 0
         output.append({
             "badge":    tier["badge"],
             "win_pct":  win_pct,
@@ -3658,7 +3663,7 @@ async def get_track_record():
         })
     return {
         "tiers": output,
-        "total_races": len(all_rows),
+        "total_races": len(unified),
         "generated_at": datetime.utcnow().isoformat(),
     }
 
