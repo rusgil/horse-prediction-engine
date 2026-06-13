@@ -508,7 +508,7 @@
 
   async function loadDashboard() {
     try {
-      const [calRes, perfRes, analysisRes, prodRes] = await Promise.all([
+      const [calRes, perfRes, analysisRes, prodRes, premRes] = await Promise.all([
         fetch(`${API}/api/admin/calibration/history?limit=14`, { headers: { 'x-cron-secret': adminSecret } }),
         fetch(`${API}/api/performance?days=30`),
         fetch(`${API}/api/admin/backtest/analysis`, { headers: { 'x-cron-secret': adminSecret } }),
@@ -516,6 +516,8 @@
         // Different number from the calibration sweep because production
         // trains on all data (days=0), not a fixed window.
         fetch(`${API}/api/admin/backtest/feature-ablation?holdout_days=14`, { headers: { 'x-cron-secret': adminSecret } }),
+        // Live premium tier performance — what users actually see.
+        fetch(`${API}/api/performance/premium/public`),
       ]);
 
       if (calRes.status === 403) {
@@ -530,17 +532,18 @@
       const perfData     = perfRes.ok     ? await perfRes.json()     : null;
       const analysisData = analysisRes.ok ? await analysisRes.json() : null;
       const prodData     = prodRes.ok     ? await prodRes.json()     : null;
+      const premData     = premRes.ok     ? await premRes.json()     : null;
 
       sessionStorage.setItem(SECRET_KEY, adminSecret);
-      renderShell(calData, perfData, analysisData, prodData);
+      renderShell(calData, perfData, analysisData, prodData, premData);
     } catch (e) {
       document.getElementById('dashContent').innerHTML =
         `<div class="loading"><div style="font-size:1.5rem;margin-bottom:10px">⚠️</div>${e.message}</div>`;
     }
   }
 
-  function renderShell(calData, perfData, analysisData, prodData) {
-    const winContent  = buildWinContent(calData, perfData, analysisData, prodData);
+  function renderShell(calData, perfData, analysisData, prodData, premData) {
+    const winContent  = buildWinContent(calData, perfData, analysisData, prodData, premData);
     const exoContent  = buildExoticPlaceholder();
 
     document.getElementById('dashContent').innerHTML = `
@@ -559,36 +562,61 @@
      WIN & PLACEMENT TAB
   ══════════════════════════════════════════════════════════ */
 
-  function buildWinContent(calData, perfData, analysisData, prodData) {
+  function buildWinContent(calData, perfData, analysisData, prodData, premData) {
     const cals   = calData?.calibrations || [];
     const latest = cals[0] || null;
 
-    // Production model card — actual win rate of the deployed weights.
-    // Different from calibration win_rate because production trains on all
-    // data (days=0) while calibration sweep trains on a fixed window.
+    // ── Live Performance card — the only numbers that reflect what users see.
+    //   - Production win rate (actual deployed weights, from feature-ablation)
+    //   - Premium tier ROI / PnL / win rate (rolling 30d, what users would bet)
+    //   - High-confidence threshold (≥30%) win rate / ROI from backtest analysis
     let productionHtml = '';
-    if (prodData?.baseline_win_rate_pct != null) {
-      const winPct = prodData.baseline_win_rate_pct;
-      const races  = prodData.holdout_races;
-      const colour = winPct >= 30 ? 'var(--green-bright)'
-                   : winPct >= 25 ? 'var(--gold-light)'
-                   : '#f87171';
+    if (prodData?.baseline_win_rate_pct != null || premData?.win_pct != null) {
+      const winPct  = prodData?.baseline_win_rate_pct;
+      const races   = prodData?.holdout_races;
+      const winCol  = winPct == null ? 'var(--text-dim)'
+                    : winPct >= 30   ? 'var(--green-bright)'
+                    : winPct >= 25   ? 'var(--gold-light)' : '#f87171';
+      const premRoi = premData?.roi_pct;
+      const premCol = premRoi == null ? 'var(--text-dim)'
+                    : premRoi >= 10   ? 'var(--green-bright)'
+                    : premRoi >= 0    ? 'var(--gold-light)' : '#f87171';
+      // Find the ≥30% threshold row for a "high-confidence" lift card
+      const t30 = (analysisData?.thresholds || []).find(t => t.threshold_pct === 30);
+      const t30Col = t30?.roi_pct == null ? 'var(--text-dim)'
+                   : t30.roi_pct >= 10    ? 'var(--green-bright)'
+                   : t30.roi_pct >= 0     ? 'var(--gold-light)' : '#f87171';
+
       productionHtml = `
         <div class="section">
-          <div class="section-title">Production Model — Currently Deployed Weights</div>
+          <div class="section-title">Live Performance — What Users See</div>
           <div class="stat-grid">
+            ${winPct != null ? `
             <div class="stat-card">
-              <div class="stat-card-num" style="color:${colour}">${winPct.toFixed(1)}%</div>
-              <div class="stat-card-label">Top-1 Win Rate</div>
-              <div class="stat-card-sub">${races?.toLocaleString() ?? '—'} holdout races (last 14 days)</div>
+              <div class="stat-card-num" style="color:${winCol}">${winPct.toFixed(1)}%</div>
+              <div class="stat-card-label">Production Win Rate</div>
+              <div class="stat-card-sub">Top-1 pick · ${races?.toLocaleString() ?? '—'} holdout races · last 14d</div>
+            </div>` : ''}
+            ${premData ? `
+            <div class="stat-card">
+              <div class="stat-card-num" style="color:${premCol}">${premRoi != null ? premRoi.toFixed(1) + '%' : '—'}</div>
+              <div class="stat-card-label">Premium Tier ROI</div>
+              <div class="stat-card-sub">${premData.bets ?? 0} picks · ${premData.win_pct?.toFixed(1) ?? '—'}% win · last 30d</div>
             </div>
-            <div class="stat-card" style="background:rgba(96,165,250,0.06)">
-              <div class="stat-card-num" style="color:var(--blue);font-size:1rem;line-height:1.4">Calibration vs Production</div>
-              <div class="stat-card-label" style="font-size:0.72rem;color:var(--text-dim);line-height:1.45;text-transform:none">
-                Calibration below trains a fresh model on a fixed window (60–270d) to find the best training horizon.
-                Production trains on ALL data and typically scores higher (~10pp). Both numbers are honest — just different models.
-              </div>
-            </div>
+            <div class="stat-card">
+              <div class="stat-card-num" style="color:${premData.pnl_at_10 >= 0 ? 'var(--green-bright)' : '#f87171'}">$${(premData.pnl_at_10 ?? 0).toFixed(0)}</div>
+              <div class="stat-card-label">Premium PnL @ \$10 stake</div>
+              <div class="stat-card-sub">Last 30d · avg SP $${premData.avg_sp?.toFixed(2) ?? '—'}</div>
+            </div>` : ''}
+            ${t30 ? `
+            <div class="stat-card">
+              <div class="stat-card-num" style="color:${t30Col}">${t30.roi_pct?.toFixed(1) ?? '—'}%</div>
+              <div class="stat-card-label">≥30% Conf ROI</div>
+              <div class="stat-card-sub">${t30.bets?.toLocaleString() ?? '—'} bets all-time · ${t30.win_pct?.toFixed(1) ?? '—'}% win</div>
+            </div>` : ''}
+          </div>
+          <div style="font-size:0.7rem;color:var(--text-dim);margin-top:8px;line-height:1.5">
+            These are the user-facing metrics. The calibration section below shows the model's training-time numbers (fresh retrain on a fixed window) — useful for understanding model behaviour but NOT what users experience.
           </div>
         </div>`;
     }
@@ -677,7 +705,10 @@
     // Latest stats
     const latestStatsHtml = latest ? `
       <div class="section">
-        <div class="section-title">Latest Calibration — ${fmtDateTime(latest.ran_at)}</div>
+        <div class="section-title">Latest Calibration (training-time metric) — ${fmtDateTime(latest.ran_at)}</div>
+        <div style="font-size:0.7rem;color:var(--text-dim);margin-bottom:10px;line-height:1.5">
+          Win rate and Value ROI here are from a <em>fresh retrain</em> on a fixed window (60–270d), not the production model. The Live Performance section above is what users actually see.
+        </div>
         <div class="stat-grid">
           <div class="stat-card">
             <div class="stat-card-num" style="color:var(--green-bright)">${pct(latest.win_rate)}</div>
