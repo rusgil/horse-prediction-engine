@@ -10632,6 +10632,166 @@ async def force_restore(
     }
 
 
+@app.get("/api/admin/scratched-trifecta-edge")
+async def scratched_trifecta_edge(
+    days: int = Query(default=30, ge=7, le=180),
+    x_cron_secret: Optional[str] = Header(None),
+):
+    """
+    Measures whether the model's POST-SCRATCHING top-3 trifecta box hits
+    at a higher rate than the model's ORIGINAL (pre-scratching) top-3.
+
+    For each settled race in the last `days` days where 1+ of the original
+    top-3 picks (from the history snapshot) was later cancelled in mutable,
+    we compute:
+      - Original (history snapshot) trifecta box hit rate
+      - Post-scratching (mutable at race time) trifecta box hit rate
+
+    A meaningful lift on the second number (vs the first AND vs the unfiltered
+    baseline) would confirm the pattern the user spotted on
+    2026-06-13_newcastle_R8: BELLEVUE/ALL MACHIAVELLIAN/OAKFIELD NEPTUNE was
+    the original trifecta, BELLEVUE + ALL MACHIAVELLIAN got scratched, and
+    the new top-3 (HIDDEN STAR/OAKFIELD NEPTUNE/COSY CORNERS) box-hit.
+
+    Trifecta box definition matches the edge page:
+        leg 1 = model_rank=1 (the win pick)
+        legs 2,3 = top 2 place_model_rank picks excluding the win pick
+    """
+    _check_admin(x_cron_secret)
+    cutoff = (date.today() - timedelta(days=days)).isoformat()
+
+    async with get_session() as session:
+        # All settled races in the window
+        hr_rows = (await session.execute(
+            select(HistoricalResultRow)
+            .where(HistoricalResultRow.race_id >= cutoff)
+            .where(HistoricalResultRow.position.isnot(None))
+        )).scalars().all()
+        # History snapshot — top-3 picks per race (pre-cancellation state)
+        hist_rows = (await session.execute(
+            select(RunnerPredictionHistoryRow)
+            .where(RunnerPredictionHistoryRow.race_id >= cutoff)
+            .where(RunnerPredictionHistoryRow.source == "live")
+            .order_by(RunnerPredictionHistoryRow.enriched_at.desc())
+        )).scalars().all()
+        # Mutable — what the model thinks NOW (after any re-enrichments/cancellations)
+        mut_rows = (await session.execute(
+            select(RunnerPredictionRow)
+            .where(RunnerPredictionRow.race_id >= cutoff)
+        )).scalars().all()
+
+    # Group results by race_id → {position: horse_name (normalised)}
+    actual_top3: dict[str, set] = {}
+    for r in hr_rows:
+        if r.position in (1, 2, 3):
+            actual_top3.setdefault(r.race_id, set()).add(_normalize_horse(r.horse_name))
+
+    def _build_top3(rows: list, race_id: str, include_cancelled: bool) -> tuple[set, int]:
+        """Return (top-3 normalised horse names, count cancelled in those 3)."""
+        race_runners = [r for r in rows if r.race_id == race_id]
+        if not race_runners:
+            return set(), 0
+        # Win pick = model_rank=1
+        win_pick = next((r for r in race_runners if r.model_rank == 1), None)
+        if not win_pick:
+            return set(), 0
+        # Place legs = top 2 place_model_rank not equal to win pick
+        place_candidates = sorted(
+            [r for r in race_runners
+             if r.place_model_rank is not None and r.horse_name != win_pick.horse_name],
+            key=lambda r: r.place_model_rank
+        )[:2]
+        top3 = [win_pick] + place_candidates
+        if len(top3) < 3:
+            return set(), 0
+        cancelled_n = sum(1 for r in top3 if r.cancelled) if not include_cancelled else 0
+        names = {_normalize_horse(r.horse_name) for r in top3}
+        return names, cancelled_n
+
+    # Walk every settled race
+    hist_by_race_top3: dict[str, set] = {}
+    races_with_scratched_orig = []
+    for rid in actual_top3.keys():
+        hist_top3, _ = _build_top3(hist_rows, rid, include_cancelled=True)
+        if len(hist_top3) < 3:
+            continue
+        hist_by_race_top3[rid] = hist_top3
+        # Count how many of those 3 are cancelled in MUTABLE (the late-scratching signal)
+        scratched_n = 0
+        for nm in hist_top3:
+            mut = next(
+                (m for m in mut_rows
+                 if m.race_id == rid and _normalize_horse(m.horse_name) == nm),
+                None,
+            )
+            if mut and mut.cancelled:
+                scratched_n += 1
+        if scratched_n > 0:
+            races_with_scratched_orig.append((rid, scratched_n))
+
+    # Baseline: trifecta box hit rate on ALL settled races (history snapshot)
+    base_total = base_hits = 0
+    for rid, hist_t3 in hist_by_race_top3.items():
+        actual_t3 = actual_top3.get(rid) or set()
+        if len(actual_t3) < 3:
+            continue
+        base_total += 1
+        if hist_t3 == actual_t3:
+            base_hits += 1
+
+    # Affected races (1+ of original top-3 was scratched): compare history vs mutable top-3
+    orig_hits = mut_hits = affected_total = 0
+    by_scratch_count: dict[int, dict] = {}  # {n_scratched: {races, orig_hits, mut_hits}}
+    for rid, scratched_n in races_with_scratched_orig:
+        actual_t3 = actual_top3.get(rid) or set()
+        if len(actual_t3) < 3:
+            continue
+        orig_t3 = hist_by_race_top3.get(rid) or set()
+        mut_t3, _ = _build_top3(mut_rows, rid, include_cancelled=True)
+        if len(orig_t3) < 3 or len(mut_t3) < 3:
+            continue
+        affected_total += 1
+        orig_hit = orig_t3 == actual_t3
+        mut_hit = mut_t3 == actual_t3
+        if orig_hit:
+            orig_hits += 1
+        if mut_hit:
+            mut_hits += 1
+        b = by_scratch_count.setdefault(scratched_n, {"races": 0, "orig_hits": 0, "mut_hits": 0})
+        b["races"] += 1
+        if orig_hit:
+            b["orig_hits"] += 1
+        if mut_hit:
+            b["mut_hits"] += 1
+
+    return {
+        "window_days": days,
+        "cutoff_from": cutoff,
+        "baseline": {
+            "description": "All settled races — trifecta box hit rate using the original history snapshot's top-3",
+            "races": base_total,
+            "hits": base_hits,
+            "hit_pct": round(base_hits / base_total * 100, 1) if base_total else None,
+        },
+        "affected_races": {
+            "description": "Races where 1+ of the original (history) top-3 was later cancelled in mutable",
+            "races": affected_total,
+            "original_top3_hit_pct": round(orig_hits / affected_total * 100, 1) if affected_total else None,
+            "post_scratching_top3_hit_pct": round(mut_hits / affected_total * 100, 1) if affected_total else None,
+            "lift_pp": round((mut_hits - orig_hits) / affected_total * 100, 1) if affected_total else None,
+        },
+        "by_scratch_count": [
+            {
+                "scratched_from_original_top3": n,
+                "races": b["races"],
+                "original_hit_pct": round(b["orig_hits"] / b["races"] * 100, 1) if b["races"] else None,
+                "post_scratching_hit_pct": round(b["mut_hits"] / b["races"] * 100, 1) if b["races"] else None,
+            }
+            for n, b in sorted(by_scratch_count.items())
+        ],
+    }
+
+
 @app.get("/api/admin/trifecta-model-comparison")
 async def trifecta_model_comparison(
     holdout_days: int = Query(default=14, ge=7, le=30),
