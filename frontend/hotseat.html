@@ -614,9 +614,13 @@
       if (p.barrier) horseMeta.push(`B${p.barrier}`);
       if (p.weight) horseMeta.push(`${p.weight}kg`);
       if (p.jockey) horseMeta.push(`J: ${escHtml(p.jockey)}`);
-      if (p.starts_last_10 != null) {
-        const label = p.starts_last_10 < 10 ? `L${p.starts_last_10}` : 'L10';
-        horseMeta.push(`${label}: ${p.wins_last_10 ?? 0}W/${p.places_last_10 ?? 0}p`);
+      if (p.starts_last_10 != null && p.starts_last_10 > 0) {
+        const starts = p.starts_last_10;
+        const wins = p.wins_last_10 ?? 0;
+        const places = p.places_last_10 ?? 0;
+        const winPct = Math.round((wins / starts) * 100);
+        const placePct = Math.round((places / starts) * 100);
+        horseMeta.push(`Last ${starts}: ${winPct}% win / ${placePct}% place`);
       }
 
       return `
@@ -689,9 +693,10 @@
     updateRefreshLabel();
   }, 1000);
 
-  // Fetch new picks every 30 seconds (the /api/edge cache is 5 min + prewarmed,
-  // so this just refreshes our local state — almost always hits warm cache)
-  setInterval(loadPicks, 30000);
+  // Fetch new picks every 30-40s. Per-user randomized interval so multiple
+  // Hot Seat sessions don't synchronize their backend hits (no-API-hammer
+  // rule). Each user lands on a slightly different cadence.
+  setInterval(loadPicks, 30000 + Math.random() * 10000);
 
   // Filter pills
   document.querySelectorAll('.filter-pill').forEach(btn => {

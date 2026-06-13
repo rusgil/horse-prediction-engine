@@ -1106,7 +1106,9 @@
       } catch (e) { /* silent */ }
     };
     tick();
-    S.liveOddsTimer = setInterval(tick, 120_000);
+    // Per-user randomized interval (2-2:30 min) so concurrent race-detail
+    // viewers don't synchronize their live-odds backend hits.
+    S.liveOddsTimer = setInterval(tick, 120_000 + Math.random() * 30_000);
   }
 
   function stopLiveOddsPolling() {
