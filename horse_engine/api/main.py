@@ -2208,7 +2208,10 @@ _edge_odds_cache: dict[str, tuple[datetime, dict[str, float]]] = {}  # race_id â
 # is still fine for race-day data (odds shift on minute+ scale, field
 # changes caught by the 15-min scheduler).
 _EDGE_RESPONSE_TTL = 420
-_edge_response_cache: tuple[datetime, dict] | None = None
+# Bump _EDGE_CACHE_VERSION whenever threshold or response shape changes so
+# old cached responses are invalidated on deploy without a manual restart.
+_EDGE_CACHE_VERSION = 2  # 2026-06-13: threshold 29.5% -> 20%
+_edge_response_cache: tuple[datetime, dict, int] | None = None
 
 # Cache full list_meetings response for 10 min (weather + RA calls are expensive)
 _list_meetings_cache: dict[str, tuple[datetime, dict]] = {}  # date â†’ (ts, response)
@@ -2368,15 +2371,20 @@ def _compute_hedge(pick_odds: float, field_size: int, hedge_horses: list[dict]) 
 
 @app.get("/api/edge")
 async def get_edge_picks():
-    """High-confidence picks for today + next 3 days. Threshold: model win_probability >= 29.5% (rounds to 30%)."""
+    """All picks for today + next 3 days with model win_probability >= 20%.
+
+    Lowered from 29.5% to 20% on 2026-06-13 to support the Hot Seat view
+    (mobile live-picks list for at-the-TAB use). Edge.html and Hot Seat
+    both filter further client-side via display tiers / filter pills, so
+    the API just returns the union and the UIs slice as needed."""
     global _edge_response_cache
     # Response cache: serve a fully-assembled response if it's <_EDGE_RESPONSE_TTL old.
     # First user pays the slow cost, everyone else for the TTL window is instant.
     if _edge_response_cache is not None:
-        ts, body = _edge_response_cache
-        if (datetime.utcnow() - ts).total_seconds() < _EDGE_RESPONSE_TTL:
+        ts, body, version = _edge_response_cache
+        if version == _EDGE_CACHE_VERSION and (datetime.utcnow() - ts).total_seconds() < _EDGE_RESPONSE_TTL:
             return body
-    threshold = 0.295
+    threshold = 0.20
     picks = []
     today = _today_aest()
     client = get_tab_client()
@@ -2737,7 +2745,7 @@ async def get_edge_picks():
         "threshold_pct": int(threshold * 100),
         "picks": picks,
     }
-    _edge_response_cache = (datetime.utcnow(), body)
+    _edge_response_cache = (datetime.utcnow(), body, _EDGE_CACHE_VERSION)
     return body
 
 

@@ -298,8 +298,8 @@
       </div>
     </div>
     <div class="filter-row">
-      <button class="filter-pill active" data-filter="all">All ≥30%</button>
-      <button class="filter-pill" data-filter="premium">Premium only</button>
+      <button class="filter-pill active" data-filter="all">All ≥20%</button>
+      <button class="filter-pill" data-filter="standard">≥30% Standard+</button>
       <button class="filter-pill" data-filter="hot">≥40% Hot picks</button>
     </div>
   </header>
@@ -356,14 +356,12 @@
 
   function applyFilters(picks, filter) {
     let out = picks.filter(p => isUpcoming(p.scheduled_time));
-    if (filter === 'premium') {
-      // Premium = place_model_rank >= 2 (the win/place ensemble rule we shipped 2026-06-12)
-      // /api/edge doesn't expose place_model_rank directly, so approximate with
-      // model_pct >= 30 AND a high calibrated rate.
-      out = out.filter(p => p.model_pct >= 30 && p.calibrated_win_rate >= 45);
+    if (filter === 'standard') {
+      out = out.filter(p => p.model_pct >= 30);
     } else if (filter === 'hot') {
       out = out.filter(p => p.model_pct >= 40);
     }
+    // default 'all' shows everything the API returns (>= 20% from /api/edge)
     out.sort((a, b) => {
       const at = new Date(a.scheduled_time).getTime();
       const bt = new Date(b.scheduled_time).getTime();
@@ -397,7 +395,8 @@
         ? '$' + p.best_available_odds.toFixed(2) : '—';
       const placeTxt = p.place_probability != null ? p.place_probability.toFixed(0) + '%' : '—';
       const venueLabel = p.venue ? p.venue.replace(/-/g, ' ').toUpperCase() : '—';
-      const isPremium = p.model_pct >= 30 && p.calibrated_win_rate >= 45;
+      // "Premium" badge = high model confidence + high calibrated rate
+      const isPremium = p.model_pct >= 30 && (p.calibrated_win_rate ?? 0) >= 45;
 
       const horseMeta = [];
       if (p.barrier) horseMeta.push(`B${p.barrier}`);
