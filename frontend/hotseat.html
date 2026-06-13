@@ -162,6 +162,37 @@
       background: linear-gradient(135deg, var(--bg-card) 0%, rgba(232,160,32,0.06) 100%);
     }
 
+    /* Timer bar: thin progress strip at top of card. Fills 100% when race is
+       >30 min away, drains linearly to 0 at jump. Hidden if race is >60 min
+       away (no urgency yet) or already passed. Updates every second via JS. */
+    .timer-bar {
+      position: absolute;
+      top: 0;
+      left: 0;
+      right: 0;
+      height: 3px;
+      background: rgba(96,165,250,0.08);
+      overflow: hidden;
+      pointer-events: none;
+    }
+    .timer-bar-fill {
+      height: 100%;
+      background: linear-gradient(90deg, var(--blue), var(--blue));
+      transition: width 0.9s linear;
+    }
+    .pick.imminent .timer-bar-fill {
+      background: linear-gradient(90deg, var(--gold), var(--gold-light, #f5b83a));
+      animation: timer-pulse 1.5s ease-in-out infinite;
+    }
+    .pick.now .timer-bar-fill {
+      background: var(--red);
+      animation: timer-pulse 0.8s ease-in-out infinite;
+    }
+    @keyframes timer-pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.55; }
+    }
+
     /* Top row: countdown + meta */
     .pick-top {
       display: flex;
@@ -181,6 +212,15 @@
     }
     .countdown.imminent { color: var(--gold); }
     .countdown.now { color: var(--red); animation: pulse 1.5s ease-in-out infinite; }
+    .jump-time {
+      font-size: 11px;
+      font-weight: 500;
+      color: var(--text-muted);
+      margin-top: 3px;
+      letter-spacing: 0.3px;
+      font-variant-numeric: tabular-nums;
+    }
+    .pick.imminent .jump-time { color: var(--text-dim); }
     .race-meta {
       text-align: right;
       font-size: 12px;
@@ -348,6 +388,29 @@
     return { text: `${hours}h ${rmins}m`, cls };
   }
 
+  function formatJumpTime(scheduledIso) {
+    if (!scheduledIso) return '';
+    if (typeof scheduledIso === 'string' && /T00:00:00/.test(scheduledIso)) return '';
+    try {
+      return new Date(scheduledIso).toLocaleTimeString('en-AU', {
+        hour: '2-digit', minute: '2-digit', hour12: true, timeZone: 'Australia/Sydney'
+      });
+    } catch (e) {
+      return '';
+    }
+  }
+
+  function progressPct(scheduledIso) {
+    if (!scheduledIso) return -1;
+    if (typeof scheduledIso === 'string' && /T00:00:00/.test(scheduledIso)) return -1;
+    const jumpMs = new Date(scheduledIso).getTime();
+    const remainingMs = jumpMs - Date.now();
+    if (remainingMs <= 0) return -1;
+    // Fill 100% when race is >30 min away; drain linearly to 0 at jump.
+    if (remainingMs > 30 * 60 * 1000) return 100;
+    return (remainingMs / (30 * 60 * 1000)) * 100;
+  }
+
   function isUpcoming(iso) {
     if (!iso) return false;
     if (typeof iso === 'string' && /T00:00:00/.test(iso)) return false;
@@ -388,7 +451,10 @@
 
     main.innerHTML = picks.map(p => {
       const cd = formatCountdown(p.scheduled_time);
+      const jumpTime = formatJumpTime(p.scheduled_time);
+      const barPct = progressPct(p.scheduled_time);
       const isImminent = cd.cls === 'imminent' || cd.cls === 'now';
+      const isNow = cd.cls === 'now';
       const isHot = p.model_pct >= 40;
       const winColor = p.model_pct >= 35 ? 'win high' : 'win';
       const oddsTxt = p.best_available_odds && p.best_available_odds > 1.0
@@ -408,10 +474,14 @@
       }
 
       return `
-        <div class="pick ${isImminent ? 'imminent' : ''} ${isHot ? 'hot' : ''}">
+        <div class="pick ${isImminent ? 'imminent' : ''} ${isNow ? 'now' : ''} ${isHot ? 'hot' : ''}">
+          ${barPct >= 0 ? `<div class="timer-bar"><div class="timer-bar-fill" style="width:${barPct}%"></div></div>` : ''}
           ${isPremium ? '<div class="badge">Premium</div>' : ''}
           <div class="pick-top">
-            <div class="countdown ${cd.cls}">${cd.text}</div>
+            <div>
+              <div class="countdown ${cd.cls}">${cd.text}</div>
+              ${jumpTime ? `<div class="jump-time">${jumpTime}</div>` : ''}
+            </div>
             <div class="race-meta">
               <strong>${escHtml(venueLabel)} R${p.race_number}</strong>
               ${p.distance ? escHtml(p.distance) + 'm · ' : ''}${p.track_condition ? escHtml(p.track_condition) : ''}
