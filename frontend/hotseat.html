@@ -25,6 +25,8 @@
       --bg-elevated:  #1a2035;
       --border:       #1e2840;
       --gold:         #e8a020;
+      --purple:        #a855f7;
+      --purple-bright: #c084fc;
       --green:        #22c55e;
       --green-bright: #4ade80;
       --blue:         #60a5fa;
@@ -283,6 +285,7 @@
     }
     .countdown.imminent { color: var(--gold); }
     .countdown.now { color: var(--red); animation: pulse 1.5s ease-in-out infinite; }
+    .countdown.done { color: var(--text-muted); font-size: 22px; }
     .jump-time {
       font-size: 11px;
       font-weight: 500;
@@ -378,9 +381,9 @@
       letter-spacing: 0.5px;
       padding: 3px 7px;
       border-radius: 4px;
-      background: rgba(232,160,32,0.18);
-      color: var(--gold);
-      border: 1px solid var(--gold);
+      background: rgba(168,85,247,0.18);
+      color: var(--purple-bright);
+      border: 1px solid var(--purple);
     }
 
     /* Desktop: slightly bigger */
@@ -456,7 +459,10 @@
     const jumpMs = new Date(scheduledIso).getTime();
     const now = Date.now();
     const diffSec = Math.floor((jumpMs - now) / 1000);
-    if (diffSec <= -60) return { text: 'OFF', cls: 'now' };
+    // Race done — static label, no pulse. Result banner shows the outcome.
+    if (diffSec <= -480) return { text: 'Done', cls: 'done' };
+    // Race in progress: pulse for ~8 min after jump (covers race + protest/photo)
+    if (diffSec <= -60) return { text: 'Running', cls: 'now' };
     if (diffSec <= 0) return { text: 'NOW', cls: 'now' };
     const mins = Math.floor(diffSec / 60);
     const secs = diffSec % 60;
