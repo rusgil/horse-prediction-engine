@@ -3164,11 +3164,22 @@ async def refresh_edge_results(request: Request):
         return {"seeded": 0, "cached": False, "error": str(e)}
 
 
+_yesterday_response_cache: dict[str, tuple[datetime, dict]] = {}
+_YESTERDAY_CACHE_TTL = 300  # 5 min — yesterday's results don't change once settled
+
 @app.get("/api/edge/yesterday")
 async def get_edge_yesterday(for_date: Optional[str] = Query(None, alias="date")):
     """Qualifying picks with actual results and SP odds from Racing Australia.
     Accepts ?date=YYYY-MM-DD (defaults to yesterday)."""
     target_date = for_date or (_today_aest() - timedelta(days=1)).isoformat()
+    # Response cache — past-date results are stable. Was a 30s+ cold-cache
+    # cost (the synchronous _seed_race_results_on_demand call inside) which
+    # blocked the edge page load on every visit.
+    cached = _yesterday_response_cache.get(target_date)
+    if cached is not None:
+        ts, body = cached
+        if (datetime.utcnow() - ts).total_seconds() < _YESTERDAY_CACHE_TTL:
+            return body
     threshold = 0.295
     prefix = f"{target_date}_"
     stake = 10
@@ -3191,7 +3202,9 @@ async def get_edge_yesterday(for_date: Optional[str] = Query(None, alias="date")
         picks = [p for p in picks if not re.search(r"-(trial|trail|jumpout)s?[_-]", p.race_id, re.IGNORECASE)]
 
         if not picks:
-            return {"date": target_date, "picks": [], "summary": None}
+            empty_body = {"date": target_date, "picks": [], "summary": None}
+            _yesterday_response_cache[target_date] = (datetime.utcnow(), empty_body)
+            return empty_body
 
         # Batch-fetch place model runners for trifecta legs — same filters so
         # scratched horses or validation rows don't appear as trifecta legs.
@@ -3213,9 +3226,14 @@ async def get_edge_yesterday(for_date: Optional[str] = Query(None, alias="date")
     for key in yst_trifecta_map:
         yst_trifecta_map[key].sort(key=lambda r: r.place_model_rank)
 
-    # Seed any missing results on first load, then query DB
+    # Seed any missing results — wrapped in a 10s timeout so a slow upstream
+    # can't block the whole page load. Anything not seeded in time will just
+    # appear as 'no_result' on the response, which the frontend handles.
     all_race_ids = list({p.race_id for p in picks} | {pr.race_id for pr in yst_place_rows})
-    await _seed_race_results_on_demand(all_race_ids)
+    try:
+        await asyncio.wait_for(_seed_race_results_on_demand(all_race_ids), timeout=10)
+    except asyncio.TimeoutError:
+        log.warning("[edge/yesterday] seed timeout for %s (%d races) — proceeding with stored data", target_date, len(all_race_ids))
     async with get_session() as session:
         hr_result = await session.execute(
             select(HistoricalResultRow)
@@ -3347,7 +3365,7 @@ async def get_edge_yesterday(for_date: Optional[str] = Query(None, alias="date")
     total_returns = sum(o["payout"] for o in active)
     pnl = round(total_returns - total_staked, 2)
 
-    return {
+    response_body = {
         "date": target_date,
         "picks": output,
         "summary": {
@@ -3363,6 +3381,8 @@ async def get_edge_yesterday(for_date: Optional[str] = Query(None, alias="date")
             "roi_pct": round((pnl / total_staked) * 100, 1) if total_staked else 0,
         },
     }
+    _yesterday_response_cache[target_date] = (datetime.utcnow(), response_body)
+    return response_body
 
 
 def _assign_trifecta_tiers(picks: list[dict]) -> None:
