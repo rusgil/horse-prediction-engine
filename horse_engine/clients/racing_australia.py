@@ -869,7 +869,12 @@ class RacingAustraliaClient:
     async def _fetch_state_calendar(self, state: str, race_date: str) -> list[dict]:
         cache_key = f"{race_date}:{state}"
         cached = self._calendar_cache.get(cache_key)
-        if cached and (datetime.utcnow() - cached[0]).total_seconds() < 600:
+        # 1-hour TTL (was 600s). Calendars are published days in advance — new
+        # meetings appearing intra-hour is rare. Bumping from 10min → 60min
+        # cuts Calendar.aspx hits 6x, the dominant proxy-budget consumer.
+        # The slug→key map (_slug_to_key) is persistent in-memory and survives
+        # cache expiry, so meeting lookups remain fast between refreshes.
+        if cached and (datetime.utcnow() - cached[0]).total_seconds() < 3600:
             return cached[1]
 
         ra_date = _ra_date(race_date)
