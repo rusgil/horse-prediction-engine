@@ -2556,6 +2556,21 @@ async def get_edge_picks():
                     .group_by(RunnerPredictionRow.race_id)
                 )).fetchall()))
 
+            # Full field per race — Hot Seat's expansion view shows every
+            # runner with win/place %s + odds. ~10 rows/race × ~30 races =
+            # ~300 rows extra; one batched query per source.
+            field_runner_rows: list = []
+            if hist_race_ids:
+                field_runner_rows.extend((await session.execute(
+                    select(RunnerPredictionHistoryRow)
+                    .where(RunnerPredictionHistoryRow.race_id.in_(hist_race_ids))
+                )).scalars().all())
+            if mut_race_ids_list:
+                field_runner_rows.extend((await session.execute(
+                    select(RunnerPredictionRow)
+                    .where(RunnerPredictionRow.race_id.in_(mut_race_ids_list))
+                )).scalars().all())
+
         # Build place-model lookup: race_id -> sorted list by place_model_rank
         trifecta_map: dict[str, list] = {}
         for pr in place_rows_list:
@@ -2575,6 +2590,20 @@ async def get_edge_picks():
             hedge_map.setdefault(hr.race_id, []).append(hr)
         for key in hedge_map:
             hedge_map[key].sort(key=lambda r: r.model_rank)
+
+        # Full field per race for the Hot Seat expansion view
+        field_map: dict[str, list[dict]] = {}
+        for fr in field_runner_rows:
+            field_map.setdefault(fr.race_id, []).append({
+                "rank": fr.model_rank,
+                "horse_name": fr.horse_name,
+                "win_pct": round((fr.win_probability or 0) * 100, 1),
+                "place_pct": round((fr.place_probability or 0) * 100, 1) if fr.place_probability else None,
+                "odds": fr.best_available_odds,
+                "scratched": bool(fr.cancelled),
+            })
+        for key in field_map:
+            field_map[key].sort(key=lambda r: r["rank"] or 999)
 
         # Fetch scheduled times per unique meeting in parallel
         unique_venues = {_parse_race_id(r.race_id)[1] for r in rows}
@@ -2714,6 +2743,7 @@ async def get_edge_picks():
                 "starts_last_10": starts_last_10,
                 "trifecta": trifecta,
                 "hedge": hedge,
+                "field": field_map.get(runner_row.race_id, []),
             })
 
     # Annotate finished picks with actual race results

@@ -389,6 +389,47 @@
       font-weight: 500;
     }
 
+    /* Field expansion — tap to see all runners */
+    .field-toggle {
+      margin-top: 10px;
+      text-align: center;
+      font-size: 11px;
+      color: var(--text-dim);
+      cursor: pointer;
+      user-select: none;
+      padding: 4px 0;
+      border-top: 1px dashed var(--border);
+    }
+    .field-toggle:active { color: var(--text); }
+    .field-table {
+      margin-top: 8px;
+      font-size: 11px;
+      width: 100%;
+      border-collapse: collapse;
+      font-variant-numeric: tabular-nums;
+    }
+    .field-table th {
+      text-align: right;
+      font-weight: 600;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.4px;
+      font-size: 9px;
+      padding: 4px 4px;
+      border-bottom: 1px solid var(--border);
+    }
+    .field-table th.l { text-align: left; }
+    .field-table td {
+      padding: 3px 4px;
+      border-bottom: 1px solid rgba(255,255,255,0.04);
+      color: var(--text-dim);
+    }
+    .field-table td.name { text-align: left; color: var(--text); font-weight: 500; }
+    .field-table td.r { text-align: right; }
+    .field-table tr.scratched td { text-decoration: line-through; color: var(--text-muted); opacity: 0.6; }
+    .field-table tr.rank1 td { color: var(--green-bright); font-weight: 600; }
+    .field-table tr.rank1 td.name { color: var(--green-bright); }
+
     /* Badge for premium (place_rank >= 2). Inline above pick-top so it
        doesn't collide with the venue/race-number text on narrow mobile
        screens. Right-aligned strip on its own line. */
@@ -477,6 +518,7 @@
     winFilter: 'all',
     placeFilter: 'all',
     venue: 'all',
+    expanded: new Set(),  // race_ids whose field is shown
     lastFetch: 0,
   };
 
@@ -557,6 +599,43 @@
     if (!iso) return false;
     if (typeof iso === 'string' && /T00:00:00/.test(iso)) return false;
     return new Date(iso).getTime() <= Date.now();
+  }
+
+  function renderFieldExpansion(p) {
+    const field = Array.isArray(p.field) ? p.field : [];
+    if (!field.length) return '';
+    const isOpen = state.expanded.has(p.race_id);
+    if (!isOpen) {
+      return `<div class="field-toggle" data-race="${escHtml(p.race_id)}">Full field (${field.length}) ▾</div>`;
+    }
+    const rows = field.map(f => {
+      const oddsTxt = f.odds && f.odds > 1.0 ? '$' + f.odds.toFixed(2) : '—';
+      const placeTxt = f.place_pct != null ? f.place_pct.toFixed(0) + '%' : '—';
+      const rankCls = f.rank === 1 ? 'rank1' : '';
+      const scrCls = f.scratched ? 'scratched' : '';
+      return `
+        <tr class="${rankCls} ${scrCls}">
+          <td class="r">${f.rank ?? '—'}</td>
+          <td class="name">${escHtml(f.horse_name)}</td>
+          <td class="r">${f.win_pct.toFixed(1)}%</td>
+          <td class="r">${placeTxt}</td>
+          <td class="r">${oddsTxt}</td>
+        </tr>`;
+    }).join('');
+    return `
+      <div class="field-toggle" data-race="${escHtml(p.race_id)}">Hide full field ▴</div>
+      <table class="field-table">
+        <thead>
+          <tr>
+            <th class="r">#</th>
+            <th class="l">Horse</th>
+            <th class="r">Win</th>
+            <th class="r">Place</th>
+            <th class="r">Odds</th>
+          </tr>
+        </thead>
+        <tbody>${rows}</tbody>
+      </table>`;
   }
 
   function applyFilters(picks, winFilter, placeFilter, venue) {
@@ -711,6 +790,7 @@
               <div class="stat-label">Odds</div>
             </div>
           </div>
+          ${renderFieldExpansion(p)}
         </div>`;
     }).join('');
   }
@@ -779,6 +859,16 @@
   // Track selector
   document.getElementById('venueFilter').addEventListener('change', (e) => {
     state.venue = e.target.value;
+    renderList();
+  });
+
+  // Field-expansion toggle (delegated — cards re-render every second).
+  document.getElementById('list').addEventListener('click', (e) => {
+    const t = e.target.closest('.field-toggle');
+    if (!t) return;
+    const raceId = t.dataset.race;
+    if (state.expanded.has(raceId)) state.expanded.delete(raceId);
+    else state.expanded.add(raceId);
     renderList();
   });
 
