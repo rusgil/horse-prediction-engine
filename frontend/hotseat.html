@@ -197,6 +197,10 @@
       border-color: var(--gold);
       box-shadow: 0 0 0 1px var(--gold);
     }
+    .pick.premium {
+      border-color: rgba(168,85,247,0.5);
+      box-shadow: 0 0 0 1px rgba(168,85,247,0.35);
+    }
     .pick.hot {
       background: linear-gradient(135deg, var(--bg-card) 0%, rgba(232,160,32,0.06) 100%);
     }
@@ -636,7 +640,7 @@
       }
 
       return `
-        <div class="pick ${isImminent ? 'imminent' : ''} ${isNow ? 'now' : ''} ${isHot ? 'hot' : ''} ${finished ? 'finished' : ''}">
+        <div class="pick ${isImminent ? 'imminent' : ''} ${isNow ? 'now' : ''} ${isHot ? 'hot' : ''} ${isPremium && !finished ? 'premium' : ''} ${finished ? 'finished' : ''}">
           ${barPct >= 0 ? `<div class="timer-bar"><div class="timer-bar-fill" style="width:${barPct}%"></div></div>` : ''}
           ${resultBanner}
           ${isPremium && !finished ? '<div class="badge-row"><span class="badge">Premium</span></div>' : ''}
@@ -677,13 +681,19 @@
       // with credentials: 'include' — the browser rejects the response.
       // Same pattern as edge.html: plain cross-origin fetch, no credentials.
       const r = await fetch(`${API}/api/edge`);
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
       const data = await r.json();
-      state.picks = data.picks || [];
+      // Guard: a non-edge response (rate-limit body, error JSON) has no
+      // picks key. Don't clobber the previously rendered list in that case
+      // — leave state.picks alone so the user keeps seeing the last good
+      // refresh instead of an empty page until the next interval.
+      if (!Array.isArray(data.picks)) throw new Error('invalid edge payload');
+      state.picks = data.picks;
       state.lastFetch = Date.now();
       populateVenueOptions();
       renderList();
     } catch (e) {
-      console.error(e);
+      console.error('[hotseat] refresh failed:', e);
     } finally {
       updateRefreshLabel();
     }
