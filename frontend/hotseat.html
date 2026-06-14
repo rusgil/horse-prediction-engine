@@ -100,15 +100,34 @@
       50% { opacity: 0.3; }
     }
 
+    /* Filter help text */
+    .filter-help {
+      margin-top: 10px;
+      font-size: 11px;
+      color: var(--text-dim);
+      line-height: 1.5;
+    }
+    .filter-help strong { color: var(--text); font-weight: 600; }
+
     /* Filter pills */
     .filter-row {
       display: flex;
+      align-items: center;
       gap: 8px;
-      margin-top: 12px;
+      margin-top: 8px;
       overflow-x: auto;
       scrollbar-width: none;
     }
     .filter-row::-webkit-scrollbar { display: none; }
+    .filter-axis-label {
+      flex: 0 0 auto;
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--text-dim);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      min-width: 52px;
+    }
     .filter-pill {
       flex: 0 0 auto;
       padding: 6px 12px;
@@ -419,10 +438,22 @@
         <div style="margin-top:4px;text-align:right"><a href="/edge.html" class="dash-link">Edge view →</a></div>
       </div>
     </div>
+    <div class="filter-help">
+      <strong>Win %</strong> = model's chance the horse wins ·
+      <strong>Place %</strong> = chance of finishing top 3
+    </div>
     <div class="filter-row">
-      <button class="filter-pill active" data-filter="all">All ≥20%</button>
-      <button class="filter-pill" data-filter="standard">≥30% Standard+</button>
-      <button class="filter-pill" data-filter="hot">≥40% Hot picks</button>
+      <span class="filter-axis-label">Win %</span>
+      <button class="filter-pill active" data-axis="win" data-filter="all">All ≥20%</button>
+      <button class="filter-pill" data-axis="win" data-filter="win30">≥30%</button>
+      <button class="filter-pill" data-axis="win" data-filter="win40">≥40%</button>
+    </div>
+    <div class="filter-row">
+      <span class="filter-axis-label">Place %</span>
+      <button class="filter-pill active" data-axis="place" data-filter="all">All</button>
+      <button class="filter-pill" data-axis="place" data-filter="place40">≥40%</button>
+      <button class="filter-pill" data-axis="place" data-filter="place55">≥55%</button>
+      <button class="filter-pill" data-axis="place" data-filter="place70">≥70%</button>
     </div>
     <div class="track-row">
       <label for="venueFilter" class="track-label">Track</label>
@@ -443,7 +474,8 @@
   const API = 'https://web-production-dec62.up.railway.app';
   let state = {
     picks: [],
-    filter: 'all',
+    winFilter: 'all',
+    placeFilter: 'all',
     venue: 'all',
     lastFetch: 0,
   };
@@ -527,17 +559,26 @@
     return new Date(iso).getTime() <= Date.now();
   }
 
-  function applyFilters(picks, filter, venue) {
+  function applyFilters(picks, winFilter, placeFilter, venue) {
     let out = picks.filter(p => isUpcoming(p.scheduled_time));
-    if (filter === 'standard') {
+    // Win threshold (model's predicted win probability)
+    if (winFilter === 'win30') {
       out = out.filter(p => p.model_pct >= 30);
-    } else if (filter === 'hot') {
+    } else if (winFilter === 'win40') {
       out = out.filter(p => p.model_pct >= 40);
+    }
+    // Place threshold (model's top-3 finish probability) — independent of
+    // win filter so a place-focused multi-day bet can ignore win confidence.
+    if (placeFilter === 'place40') {
+      out = out.filter(p => (p.place_probability ?? 0) >= 40);
+    } else if (placeFilter === 'place55') {
+      out = out.filter(p => (p.place_probability ?? 0) >= 55);
+    } else if (placeFilter === 'place70') {
+      out = out.filter(p => (p.place_probability ?? 0) >= 70);
     }
     if (venue && venue !== 'all') {
       out = out.filter(p => p.venue === venue);
     }
-    // default 'all' shows everything the API returns (>= 20% from /api/edge)
     out.sort((a, b) => {
       const at = new Date(a.scheduled_time).getTime();
       const bt = new Date(b.scheduled_time).getTime();
@@ -573,7 +614,7 @@
 
   function renderList() {
     const main = document.getElementById('list');
-    const picks = applyFilters(state.picks, state.filter, state.venue);
+    const picks = applyFilters(state.picks, state.winFilter, state.placeFilter, state.venue);
 
     if (!picks.length) {
       main.innerHTML = `
@@ -720,12 +761,17 @@
   // rule). Each user lands on a slightly different cadence.
   setInterval(loadPicks, 30000 + Math.random() * 10000);
 
-  // Filter pills
+  // Filter pills — two independent axes (win / place). Each pill carries
+  // data-axis to scope the active state to its own row, so picking a place
+  // threshold doesn't deactivate the win threshold.
   document.querySelectorAll('.filter-pill').forEach(btn => {
     btn.addEventListener('click', () => {
-      document.querySelectorAll('.filter-pill').forEach(b => b.classList.remove('active'));
+      const axis = btn.dataset.axis;
+      document.querySelectorAll(`.filter-pill[data-axis="${axis}"]`)
+        .forEach(b => b.classList.remove('active'));
       btn.classList.add('active');
-      state.filter = btn.dataset.filter;
+      if (axis === 'win') state.winFilter = btn.dataset.filter;
+      else if (axis === 'place') state.placeFilter = btn.dataset.filter;
       renderList();
     });
   });
