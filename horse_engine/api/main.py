@@ -4018,12 +4018,25 @@ async def list_bet_races(days: int = 7):
             "hits": sum(1 for b in bets if b.is_hit),
         })
     # Sort: upcoming first (soonest to jump at top), past races after
-    # (most recent at top of that block).
-    now_iso = datetime.utcnow().isoformat()
-    upcoming = [r for r in races if (r.get("scheduled_time") or "") > now_iso]
-    past = [r for r in races if (r.get("scheduled_time") or "") <= now_iso]
-    upcoming.sort(key=lambda r: r.get("scheduled_time") or "")
-    past.sort(key=lambda r: r.get("scheduled_time") or "", reverse=True)
+    # (most recent at top of that block). Parse the scheduled_time as a
+    # tz-aware datetime — string compare against UTC.isoformat() would
+    # break because AEST offsets push '12:30+10:00' lexically above the
+    # current UTC clock.
+    now_utc = datetime.utcnow().replace(tzinfo=timezone.utc)
+
+    def _jump_dt(r):
+        st = r.get("scheduled_time")
+        if not st:
+            return None
+        try:
+            return datetime.fromisoformat(str(st).replace("Z", "+00:00"))
+        except (ValueError, TypeError):
+            return None
+
+    upcoming = [r for r in races if (_jump_dt(r) or now_utc) > now_utc]
+    past = [r for r in races if (_jump_dt(r) or now_utc) <= now_utc]
+    upcoming.sort(key=lambda r: _jump_dt(r) or now_utc)
+    past.sort(key=lambda r: _jump_dt(r) or now_utc, reverse=True)
     return {"days": days, "races": upcoming + past}
 
 
