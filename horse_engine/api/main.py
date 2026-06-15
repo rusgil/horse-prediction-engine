@@ -2015,11 +2015,15 @@ async def lifespan(app: FastAPI):
     scheduler.add_job(_scheduled_enrich, CronTrigger(hour=10, minute=0, timezone="Australia/Sydney"))
     scheduler.add_job(_scheduled_enrich, CronTrigger(hour=13, minute=0, timezone="Australia/Sydney"))
     scheduler.add_job(_scheduled_prerace_snapshot, CronTrigger(hour=9, minute=0, timezone="Australia/Sydney"))
-    scheduler.add_job(_scheduled_seed_results, CronTrigger(hour=14, minute=0, timezone="Australia/Sydney"))
-    scheduler.add_job(_scheduled_seed_results, CronTrigger(hour=15, minute=0, timezone="Australia/Sydney"))
-    scheduler.add_job(_scheduled_seed_results, CronTrigger(hour=17, minute=0, timezone="Australia/Sydney"))
-    scheduler.add_job(_scheduled_seed_results, CronTrigger(hour=19, minute=0, timezone="Australia/Sydney"))
-    scheduler.add_job(_scheduled_seed_results, CronTrigger(hour=23, minute=0, timezone="Australia/Sydney"))
+    # Results seeding — every 30 min during racing hours. Previously only
+    # fired at sparse hours (14/15/17/19/23), meaning a 16:00 race would
+    # wait until 17:00 to be seeded. Settlement also self-seeds, but this
+    # cadence keeps the historical_results table fresh for other readers
+    # (edge/yesterday, dashboard, premium-perf, etc.).
+    scheduler.add_job(
+        _scheduled_seed_results,
+        CronTrigger(hour="14-23", minute="0,30", timezone="Australia/Sydney")
+    )
     scheduler.add_job(_scheduled_calibrate,      CronTrigger(hour=2,  minute=0, timezone="Australia/Sydney"))
     scheduler.add_job(_scheduled_exotic_retrain, CronTrigger(hour=3,  minute=0, timezone="Australia/Sydney"))
     scheduler.add_job(
@@ -3598,17 +3602,56 @@ async def _settle_bets_for_race(race_id: str) -> int:
 
 async def _scheduled_settle_bets():
     """Sweep all unsettled bets whose races have historical results and a
-    trifecta dividend. Runs after results-seeding crons during 14-23 AEST."""
+    trifecta dividend. Pre-seeds results per pending date so settlement
+    doesn't have to wait for the separate seed-results cron to fire."""
+    from datetime import timezone as _tz
+    now_utc = datetime.utcnow().replace(tzinfo=_tz.utc)
     try:
         async with get_session() as session:
-            race_ids = (await session.execute(
+            unsettled_rows = (await session.execute(
                 select(BetRecommendationRow.race_id).distinct()
                 .where(BetRecommendationRow.settled.is_(False))
             )).scalars().all()
-        if not race_ids:
+        if not unsettled_rows:
             return
+
+        # Only attempt to settle races that have actually jumped. Look up
+        # scheduled_time so we don't waste RA calls seeding future races.
+        async with get_session() as session:
+            sched_map = dict((await session.execute(
+                select(RunnerPredictionRow.race_id, func.max(RunnerPredictionRow.scheduled_time))
+                .where(RunnerPredictionRow.race_id.in_(unsettled_rows))
+                .group_by(RunnerPredictionRow.race_id)
+            )).fetchall())
+
+        def _has_jumped(race_id: str) -> bool:
+            st = sched_map.get(race_id)
+            if not st:
+                return True  # no scheduled_time → assume past
+            try:
+                return datetime.fromisoformat(str(st).replace("Z", "+00:00")) <= now_utc
+            except (ValueError, TypeError):
+                return True
+
+        pending_race_ids = [rid for rid in unsettled_rows if _has_jumped(rid)]
+        if not pending_race_ids:
+            return
+
+        # Pre-seed: run _seed_results_for_date once per pending date.
+        # _seed_results_for_date skips already-seeded races, so this is
+        # bounded and idempotent. Without this, settlement would have to
+        # wait for the separate seed-results cron to fire.
+        dates = sorted({rid.split("_", 1)[0] for rid in pending_race_ids if "_" in rid})
+        for d in dates:
+            try:
+                seeded = await _seed_results_for_date(d)
+                if seeded:
+                    log.info("[bets] pre-settlement seed for %s: %d", d, seeded)
+            except Exception as e:
+                log.debug("[bets] seed failed for %s: %s", d, e)
+
         total = 0
-        for rid in race_ids:
+        for rid in pending_race_ids:
             try:
                 total += await _settle_bets_for_race(rid)
             except Exception as e:
@@ -4061,6 +4104,14 @@ async def admin_generate_bets(
     _check_admin(x_cron_secret)
     n = await _generate_bets_for_race(race_id, regenerate=regenerate)
     return {"race_id": race_id, "inserted": n, "regenerate": regenerate}
+
+
+@app.post("/api/admin/bets/settle")
+async def admin_settle_bets(x_cron_secret: Optional[str] = Header(None)):
+    """Manually fire the settlement sweep (pre-seeds results then settles)."""
+    _check_admin(x_cron_secret)
+    await _scheduled_settle_bets()
+    return {"ok": True}
 
 
 @app.get("/api/track-record")
