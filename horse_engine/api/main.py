@@ -66,6 +66,7 @@ from horse_engine.models.database import (
     save_race_predictions,
 )
 from horse_engine.bets import (
+    STRATEGY_REGISTRY as _BET_STRATEGIES,
     compute_payout as _bet_compute_payout,
     generate_recommendations as _build_bet_basket,
     is_trifecta_hit as _bet_is_hit,
@@ -4601,6 +4602,133 @@ async def backtest_formula(
     )
     summary["window_days"] = days
     return summary
+
+
+@app.get("/api/admin/bets/strategy-shootout")
+async def strategy_shootout(
+    days: int = 60,
+    x_cron_secret: Optional[str] = Header(None),
+):
+    """Backtest every strategy in bets.STRATEGY_REGISTRY side-by-side
+    against the last N days of settled racing. Returns per-strategy
+    race-coverage, hit rate, total boxes generated and effective
+    cost-per-hit (a proxy for ROI in the absence of dividend data).
+
+    Use to compare alternative trifecta formulas against the current
+    5-box baseline before promoting any to production."""
+    _check_admin(x_cron_secret)
+    days = max(1, min(int(days), 120))
+    cutoff_date = (_today_aest() - timedelta(days=days)).isoformat()
+
+    # Pull all races with top-3 results + prediction history (same shape
+    # as the existing backtest endpoint).
+    async with get_session() as session:
+        result_rows = (await session.execute(
+            select(HistoricalResultRow.race_id, HistoricalResultRow.position,
+                   HistoricalResultRow.tab_number, HistoricalResultRow.horse_name)
+            .where(HistoricalResultRow.race_id >= f"{cutoff_date}_")
+            .where(HistoricalResultRow.position.in_([1, 2, 3]))
+        )).fetchall()
+        results_by_race: dict[str, list] = {}
+        for rid, pos, tab, name in result_rows:
+            results_by_race.setdefault(rid, []).append((pos, tab, name))
+        complete = [rid for rid, items in results_by_race.items() if len(items) >= 3]
+
+        pred_rows = (await session.execute(
+            select(RunnerPredictionHistoryRow)
+            .where(RunnerPredictionHistoryRow.race_id.in_(complete))
+            .where(RunnerPredictionHistoryRow.cancelled.is_(False) | RunnerPredictionHistoryRow.cancelled.is_(None))
+        )).scalars().all() if complete else []
+
+    preds_by_race: dict[str, list] = {}
+    for p in pred_rows:
+        preds_by_race.setdefault(p.race_id, []).append(p)
+
+    # Resolve actual top-3 tab numbers (fall back to name lookup).
+    tab_per_race: dict[str, dict[str, int]] = {}
+    for rid, pruns in preds_by_race.items():
+        tab_per_race[rid] = {
+            _normalize_horse(p.horse_name): p.tab_number
+            for p in pruns if p.tab_number is not None
+        }
+    resolved_top3: dict[str, list[int]] = {}
+    for rid in complete:
+        items = sorted(results_by_race[rid], key=lambda x: x[0])[:3]
+        tabs = []
+        for pos, tab, name in items:
+            t = tab if tab is not None else tab_per_race.get(rid, {}).get(_normalize_horse(name))
+            tabs.append(t)
+        if all(t is not None for t in tabs):
+            resolved_top3[rid] = tabs
+
+    total_universe = len(resolved_top3)
+
+    strategies = list(_BET_STRATEGIES.items())
+    strategy_results: list[dict] = []
+    for label, gen in strategies:
+        races_evaluated = 0
+        races_hit = 0
+        total_boxes = 0
+        total_perms = 0
+        boxes_hit = 0
+        for rid, top3 in resolved_top3.items():
+            pruns = preds_by_race.get(rid, [])
+            if len(pruns) < 7:
+                continue
+            runners = [{
+                "tab_number": p.tab_number,
+                "horse_name": p.horse_name,
+                "win_probability": p.win_probability,
+                "place_probability": p.place_probability,
+                "model_rank": p.model_rank,
+                "place_model_rank": p.place_model_rank,
+                "exotic_model_rank": p.exotic_model_rank,
+                "cancelled": bool(p.cancelled),
+            } for p in pruns]
+            try:
+                bets = gen(runners)
+            except Exception:
+                continue
+            if not bets:
+                continue
+            races_evaluated += 1
+            race_hit = False
+            for b in bets:
+                total_boxes += 1
+                total_perms += b.get("num_permutations") or 0
+                if _bet_is_hit(b["box_horses"], top3):
+                    boxes_hit += 1
+                    race_hit = True
+            if race_hit:
+                races_hit += 1
+        cost_per_race = round(total_perms * 2 / races_evaluated / max(1, total_boxes // races_evaluated), 2) if races_evaluated else 0
+        # Total paper stake across the window = total_perms * (stake/perms)
+        # but for flexi boxes the user-set stake is per BOX not per perm.
+        # Approximate total stake as boxes × $2.
+        total_stake = total_boxes * DEFAULT_STAKE if False else total_boxes * 2.0
+        cost_per_hit = round(total_stake / boxes_hit, 2) if boxes_hit else None
+        cost_per_race_hit = round(total_stake / races_hit, 2) if races_hit else None
+        strategy_results.append({
+            "strategy": label,
+            "races_evaluated": races_evaluated,
+            "coverage_pct": round(races_evaluated / total_universe * 100, 1) if total_universe else 0,
+            "races_hit": races_hit,
+            "race_hit_rate_pct": round(races_hit / races_evaluated * 100, 1) if races_evaluated else 0,
+            "total_boxes": total_boxes,
+            "boxes_hit": boxes_hit,
+            "box_hit_rate_pct": round(boxes_hit / total_boxes * 100, 1) if total_boxes else 0,
+            "avg_boxes_per_race": round(total_boxes / races_evaluated, 2) if races_evaluated else 0,
+            "total_stake_dollars": round(total_stake, 2),
+            "stake_per_race_hit": cost_per_race_hit,
+        })
+    # Sort: most race hits per dollar staked first (effective hit rate / cost).
+    strategy_results.sort(key=lambda s: (s["stake_per_race_hit"] or 1e9))
+    return {
+        "window_days": days,
+        "races_in_universe": total_universe,
+        "strategies": strategy_results,
+        "note": "stake_per_race_hit = total_stake / races_hit (lower = better). Use ranking column.",
+    }
 
 
 @app.post("/api/admin/bets/settle-only")

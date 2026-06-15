@@ -96,6 +96,138 @@ def generate_recommendations(runners: list[dict], stake: float = DEFAULT_STAKE) 
     return bets
 
 
+# ── Alternative strategies for backtest comparison ───────────────────────
+#
+# Each generator follows the same shape as generate_recommendations: take
+# the list of runners, return a list of bets. Filter rules (min field,
+# trap zone, etc.) are applied per-strategy so each can have its own
+# selectivity criteria.
+
+def _sorted_active(runners: list[dict], rank_key: str = "model_rank") -> list[dict]:
+    active = [r for r in runners if not r.get("cancelled")
+              and r.get(rank_key) is not None and r.get("tab_number") is not None]
+    active.sort(key=lambda r: r[rank_key])
+    return active
+
+
+def strategy_tight_top3(runners: list[dict], stake: float = DEFAULT_STAKE) -> list[dict]:
+    """Single 3-horse box of the model's top 3 by win rank.
+    Tightest, cheapest box ($12/race). Hits when all three favourites
+    fill the placings — high precision, lower recall than the 5-box
+    basket."""
+    active = _sorted_active(runners, "model_rank")
+    if not (MIN_FIELD_SIZE <= len(active) <= MAX_FIELD_SIZE):
+        return []
+    w1 = (active[0].get("win_probability") or 0) * 100
+    if w1 < MIN_TOP1_WIN_PCT or (TRAP_ZONE_LO <= w1 < TRAP_ZONE_HI):
+        return []
+    top3 = active[:3]
+    return [{
+        "strategy_label": "tight_top3",
+        "box_horses": [h["tab_number"] for h in top3],
+        "box_horse_names": [h["horse_name"] for h in top3],
+        "num_permutations": _perms(3),
+        "stake_dollars": stake,
+    }]
+
+
+def strategy_wide_top5(runners: list[dict], stake: float = DEFAULT_STAKE) -> list[dict]:
+    """Single 5-horse box of top 5 by win rank ($120/race at $2 flexi).
+    Widest single box — covers more ground but pays out less per hit.
+    Tests whether breadth beats the multi-box basket's depth."""
+    active = _sorted_active(runners, "model_rank")
+    if not (MIN_FIELD_SIZE <= len(active) <= MAX_FIELD_SIZE) or len(active) < 5:
+        return []
+    w1 = (active[0].get("win_probability") or 0) * 100
+    if w1 < MIN_TOP1_WIN_PCT or (TRAP_ZONE_LO <= w1 < TRAP_ZONE_HI):
+        return []
+    top5 = active[:5]
+    return [{
+        "strategy_label": "wide_top5",
+        "box_horses": [h["tab_number"] for h in top5],
+        "box_horse_names": [h["horse_name"] for h in top5],
+        "num_permutations": _perms(5),
+        "stake_dollars": stake,
+    }]
+
+
+def strategy_place_top4(runners: list[dict], stake: float = DEFAULT_STAKE) -> list[dict]:
+    """4-horse box ranked by place_model_rank (not win_model_rank).
+    The place model is trained specifically for top-3 finishes — should
+    align better with trifecta hit conditions than the win model."""
+    active = _sorted_active(runners, "place_model_rank")
+    if not (MIN_FIELD_SIZE <= len(active) <= MAX_FIELD_SIZE) or len(active) < 4:
+        return []
+    # Still gate on win-model conviction so we don't bet noise races.
+    win_sorted = _sorted_active(runners, "model_rank")
+    if win_sorted:
+        w1 = (win_sorted[0].get("win_probability") or 0) * 100
+        if w1 < MIN_TOP1_WIN_PCT or (TRAP_ZONE_LO <= w1 < TRAP_ZONE_HI):
+            return []
+    top4 = active[:4]
+    return [{
+        "strategy_label": "place_top4",
+        "box_horses": [h["tab_number"] for h in top4],
+        "box_horse_names": [h["horse_name"] for h in top4],
+        "num_permutations": _perms(4),
+        "stake_dollars": stake,
+    }]
+
+
+def strategy_exotic_top3(runners: list[dict], stake: float = DEFAULT_STAKE) -> list[dict]:
+    """3-horse box ranked by exotic_model_rank (the dedicated exotic-bet
+    model). Cheapest place-aware variant — tests if exotic model's top 3
+    differs meaningfully from win-model top 3."""
+    active = _sorted_active(runners, "exotic_model_rank")
+    if not (MIN_FIELD_SIZE <= len(active) <= MAX_FIELD_SIZE):
+        return []
+    win_sorted = _sorted_active(runners, "model_rank")
+    if win_sorted:
+        w1 = (win_sorted[0].get("win_probability") or 0) * 100
+        if w1 < MIN_TOP1_WIN_PCT or (TRAP_ZONE_LO <= w1 < TRAP_ZONE_HI):
+            return []
+    top3 = active[:3]
+    return [{
+        "strategy_label": "exotic_top3",
+        "box_horses": [h["tab_number"] for h in top3],
+        "box_horse_names": [h["horse_name"] for h in top3],
+        "num_permutations": _perms(3),
+        "stake_dollars": stake,
+    }]
+
+
+def strategy_small_field_only(runners: list[dict], stake: float = DEFAULT_STAKE) -> list[dict]:
+    """Single 3-horse box of top 3 by win — ONLY for races with field ≤ 9
+    (where the backtest showed 32-48% race-level hit rates). Bets very
+    sparingly but only on the strongest setups."""
+    active = _sorted_active(runners, "model_rank")
+    if not (MIN_FIELD_SIZE <= len(active) <= 9):
+        return []
+    w1 = (active[0].get("win_probability") or 0) * 100
+    if w1 < MIN_TOP1_WIN_PCT or (TRAP_ZONE_LO <= w1 < TRAP_ZONE_HI):
+        return []
+    top3 = active[:3]
+    return [{
+        "strategy_label": "small_field_top3",
+        "box_horses": [h["tab_number"] for h in top3],
+        "box_horse_names": [h["horse_name"] for h in top3],
+        "num_permutations": _perms(3),
+        "stake_dollars": stake,
+    }]
+
+
+# Registry — keys map to a function (runners, stake) -> list[bets].
+# Used by the backtest endpoint to evaluate strategies side-by-side.
+STRATEGY_REGISTRY = {
+    "baseline_5box": generate_recommendations,
+    "tight_top3": strategy_tight_top3,
+    "wide_top5": strategy_wide_top5,
+    "place_top4": strategy_place_top4,
+    "exotic_top3": strategy_exotic_top3,
+    "small_field_top3": strategy_small_field_only,
+}
+
+
 def is_trifecta_hit(box_horses: list[int], actual_top3: list[int]) -> bool:
     """Top-3 finishers must all be in the box (order doesn't matter)."""
     if len(actual_top3) < 3:
