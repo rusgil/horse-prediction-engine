@@ -47,6 +47,7 @@ from horse_engine.config import settings
 from horse_engine.models.database import (
     BacktestResultRow,
     BacktestStateRow,
+    BetRecommendationRow,
     CalibrationRow,
     ExoticBacktestRow,
     HistoricalResultRow,
@@ -64,6 +65,7 @@ from horse_engine.models.database import (
     save_exotic_model_weights,
     save_race_predictions,
 )
+from horse_engine.bets import generate_recommendations as _build_bet_basket
 from horse_engine.models.enriched import EnrichedRunner
 from horse_engine.pipeline import enrich_and_predict_race, enrich_meeting
 from horse_engine.prediction.engine import _value_rating
@@ -2028,6 +2030,12 @@ async def lifespan(app: FastAPI):
         _scheduled_live_odds_refresh,
         CronTrigger(hour="9-20", minute="0,20,40", timezone="Australia/Sydney")
     )
+    # Paper-trading trifecta recommender — runs hourly during racing hours
+    # to lock-in pre-race recommendations for the day's qualifying races.
+    scheduler.add_job(
+        _scheduled_generate_bets,
+        CronTrigger(hour="6-21", minute=5, timezone="Australia/Sydney")
+    )
     scheduler.start()
     log.info("[scheduler] Cron jobs scheduled")
 
@@ -3431,6 +3439,101 @@ async def get_edge_yesterday(for_date: Optional[str] = Query(None, alias="date")
     return response_body
 
 
+# ─── Bet recommender (paper-trading trifecta ledger) ──────────────────────
+async def _generate_bets_for_race(race_id: str, *, regenerate: bool = False) -> int:
+    """Create bet recommendations for a single race. No-op if rows already
+    exist unless regenerate=True. Returns rows inserted."""
+    async with get_session() as session:
+        if not regenerate:
+            existing = (await session.execute(
+                select(func.count()).select_from(BetRecommendationRow)
+                .where(BetRecommendationRow.race_id == race_id)
+            )).scalar() or 0
+            if existing:
+                return 0
+        # Pull runners from the mutable table (pre-race) — falls back to
+        # history if mutable was already cleared.
+        rows = (await session.execute(
+            select(RunnerPredictionRow)
+            .where(RunnerPredictionRow.race_id == race_id)
+        )).scalars().all()
+        if not rows:
+            rows = (await session.execute(
+                select(RunnerPredictionHistoryRow)
+                .where(RunnerPredictionHistoryRow.race_id == race_id)
+            )).scalars().all()
+        if not rows:
+            return 0
+
+        runners = [{
+            "tab_number": getattr(r, "tab_number", None),
+            "horse_name": r.horse_name,
+            "win_probability": r.win_probability,
+            "place_probability": r.place_probability,
+            "model_rank": r.model_rank,
+            "cancelled": bool(r.cancelled),
+        } for r in rows]
+
+        bets = _build_bet_basket(runners)
+        if not bets:
+            return 0
+        if regenerate:
+            await session.execute(
+                __import__("sqlalchemy").delete(BetRecommendationRow)
+                .where(BetRecommendationRow.race_id == race_id)
+                .where(BetRecommendationRow.settled.is_(False))
+            )
+        for b in bets:
+            session.add(BetRecommendationRow(
+                race_id=race_id,
+                strategy_label=b["strategy_label"],
+                box_horses_json=json.dumps(b["box_horses"]),
+                box_horse_names_json=json.dumps(b["box_horse_names"]),
+                num_permutations=b["num_permutations"],
+                stake_dollars=b["stake_dollars"],
+            ))
+        try:
+            await session.commit()
+            return len(bets)
+        except Exception as e:
+            await session.rollback()
+            log.debug("[bets] insert raced (probably dup): %s", e)
+            return 0
+
+
+async def _scheduled_generate_bets():
+    """Hourly during racing hours — find upcoming races without bets and
+    generate them. Runs after enrichment has populated runner predictions."""
+    now_utc = datetime.utcnow().replace(tzinfo=timezone.utc)
+    horizon = now_utc + timedelta(hours=8)
+    today = _today_aest().isoformat()
+    try:
+        async with get_session() as session:
+            # Distinct race_ids for today + tomorrow that have prediction rows
+            # but no bet rows yet.
+            candidate_ids = (await session.execute(
+                select(RunnerPredictionRow.race_id).distinct()
+                .where(RunnerPredictionRow.race_id.like(f"{today}_%")
+                       | RunnerPredictionRow.race_id.like(
+                           f"{(_today_aest() + timedelta(days=1)).isoformat()}_%"))
+            )).scalars().all()
+            with_bets = set((await session.execute(
+                select(BetRecommendationRow.race_id).distinct()
+            )).scalars().all())
+            todo = [rid for rid in candidate_ids if rid not in with_bets]
+        log.info("[bets] generating for %d races", len(todo))
+        total = 0
+        for rid in todo:
+            try:
+                total += await _generate_bets_for_race(rid)
+            except Exception as e:
+                log.debug("[bets] generate failed for %s: %s", rid, e)
+        if total:
+            log.info("[bets] inserted %d rows across %d races", total, len(todo))
+    except Exception as e:
+        log.exception("[bets] scheduled generation failed: %s", e)
+
+
 def _assign_trifecta_tiers(picks: list[dict]) -> None:
     """
     Assign Hot/High/Strong tiers by percentile rank within the pick list,
@@ -3699,6 +3802,90 @@ async def get_edge_trifectas():
                     p["first_four_hit"] = ff_positions == {1, 2, 3, 4}
 
     return {"generated_at": datetime.utcnow().isoformat(), "picks": picks}
+
+
+# ─── Bet recommender endpoints (paper-trading) ────────────────────────────
+def _row_to_bet_dict(b: BetRecommendationRow) -> dict:
+    return {
+        "id": b.id,
+        "race_id": b.race_id,
+        "strategy_label": b.strategy_label,
+        "box_horses": json.loads(b.box_horses_json) if b.box_horses_json else [],
+        "box_horse_names": json.loads(b.box_horse_names_json) if b.box_horse_names_json else [],
+        "num_permutations": b.num_permutations,
+        "stake_dollars": b.stake_dollars,
+        "recommended_at": b.recommended_at.isoformat() if b.recommended_at else None,
+        "settled": bool(b.settled),
+        "is_hit": b.is_hit,
+        "actual_top3": json.loads(b.actual_top3_json) if b.actual_top3_json else None,
+        "trifecta_dividend": b.trifecta_dividend,
+        "payout_dollars": b.payout_dollars,
+        "pnl_dollars": b.pnl_dollars,
+        "settled_at": b.settled_at.isoformat() if b.settled_at else None,
+    }
+
+
+@app.get("/api/bets/{race_id}")
+async def get_bets_for_race(race_id: str):
+    """Paper-trading bet recommendations for a single race."""
+    async with get_session() as session:
+        rows = (await session.execute(
+            select(BetRecommendationRow)
+            .where(BetRecommendationRow.race_id == race_id)
+            .order_by(BetRecommendationRow.id)
+        )).scalars().all()
+    return {"race_id": race_id, "bets": [_row_to_bet_dict(b) for b in rows]}
+
+
+@app.get("/api/bets")
+async def list_bet_races(days: int = 7):
+    """Race-by-race paper-trading ledger. Returns one row per race with
+    aggregated stake/payout/pnl across all bets for that race. Settlement
+    status: 'pending' if any bet is unsettled, otherwise 'settled'."""
+    days = max(1, min(int(days), 60))
+    cutoff = datetime.utcnow() - timedelta(days=days)
+    async with get_session() as session:
+        rows = (await session.execute(
+            select(BetRecommendationRow)
+            .where(BetRecommendationRow.recommended_at >= cutoff)
+            .order_by(BetRecommendationRow.recommended_at.desc())
+        )).scalars().all()
+    by_race: dict[str, list[BetRecommendationRow]] = {}
+    for r in rows:
+        by_race.setdefault(r.race_id, []).append(r)
+    races = []
+    for race_id, bets in by_race.items():
+        date, venue, race_num = _parse_race_id(race_id)
+        total_stake = sum((b.stake_dollars or 0) for b in bets)
+        total_payout = sum((b.payout_dollars or 0) for b in bets if b.settled)
+        any_unsettled = any(not b.settled for b in bets)
+        pnl = round(total_payout - total_stake, 2) if not any_unsettled else None
+        races.append({
+            "race_id": race_id,
+            "date": date,
+            "venue": venue,
+            "race_number": race_num,
+            "num_bets": len(bets),
+            "total_stake": round(total_stake, 2),
+            "total_payout": round(total_payout, 2) if not any_unsettled else None,
+            "pnl": pnl,
+            "status": "pending" if any_unsettled else "settled",
+            "hits": sum(1 for b in bets if b.is_hit),
+        })
+    races.sort(key=lambda r: (r["date"] or "", r["race_id"]), reverse=True)
+    return {"days": days, "races": races}
+
+
+@app.post("/api/admin/bets/generate/{race_id}")
+async def admin_generate_bets(
+    race_id: str,
+    regenerate: bool = False,
+    x_cron_secret: Optional[str] = Header(None),
+):
+    """Manual trigger to (re)generate bet recommendations for one race."""
+    _check_admin(x_cron_secret)
+    n = await _generate_bets_for_race(race_id, regenerate=regenerate)
+    return {"race_id": race_id, "inserted": n, "regenerate": regenerate}
 
 
 @app.get("/api/track-record")

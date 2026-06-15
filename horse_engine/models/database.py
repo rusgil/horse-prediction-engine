@@ -286,6 +286,31 @@ class RunnerPredictionHistoryRow(Base):
     batch_id = Column(String, nullable=True, index=True)    # UUID shared by all runners in one enrichment run
 
 
+class BetRecommendationRow(Base):
+    """One row per recommended trifecta box bet. Paper-trading ledger —
+    no real money. Settled after the race using the trifecta dividend
+    parsed from RA's Results.aspx."""
+    __tablename__ = "bet_recommendations"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    race_id = Column(String, index=True, nullable=False)
+    strategy_label = Column(String, nullable=False)  # core_top3 / core_top4 / value_runner1 / value_runner2 / no_favourite_hedge
+    box_horses_json = Column(Text, nullable=False)   # JSON array of tab numbers
+    box_horse_names_json = Column(Text, nullable=False)  # JSON array of names — display only
+    num_permutations = Column(Integer, nullable=False)
+    stake_dollars = Column(Float, nullable=False, default=2.0)
+    recommended_at = Column(DateTime, default=datetime.utcnow, index=True)
+
+    # Settlement (filled by settlement job after results land)
+    settled = Column(Boolean, default=False, index=True)
+    is_hit = Column(Boolean, nullable=True)
+    actual_top3_json = Column(Text, nullable=True)  # JSON array of tab numbers in finishing order
+    trifecta_dividend = Column(Float, nullable=True)  # listed pool dividend
+    payout_dollars = Column(Float, nullable=True)     # (stake / num_perms) * dividend if hit
+    pnl_dollars = Column(Float, nullable=True)        # payout - stake
+    settled_at = Column(DateTime, nullable=True)
+
+
 async def init_db() -> None:
     import logging as _logging
     _log = _logging.getLogger(__name__)
@@ -323,6 +348,8 @@ async def init_db() -> None:
         "CREATE INDEX IF NOT EXISTS ix_hist_source_race_cancelled ON runner_prediction_history (source, race_id, cancelled)",
         "CREATE INDEX IF NOT EXISTS ix_hist_results_race_winner ON historical_results (race_id, winner)",
         "CREATE INDEX IF NOT EXISTS ix_hist_results_race_placed ON historical_results (race_id, placed)",
+        "CREATE UNIQUE INDEX IF NOT EXISTS uq_bet_reco_race_strategy ON bet_recommendations (race_id, strategy_label)",
+        "CREATE INDEX IF NOT EXISTS ix_bet_reco_settled ON bet_recommendations (settled)",
         "ALTER TABLE historical_results ADD COLUMN IF NOT EXISTS jockey TEXT",
         "ALTER TABLE historical_results ADD COLUMN IF NOT EXISTS trainer TEXT",
         "ALTER TABLE historical_results ADD COLUMN IF NOT EXISTS venue TEXT",
