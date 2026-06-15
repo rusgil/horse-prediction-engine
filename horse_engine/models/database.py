@@ -446,10 +446,48 @@ async def save_race_predictions(session: AsyncSession, race_id: str, predictions
             except (ValueError, TypeError):
                 pass
 
+    # Preserve known-good market data across re-enrichment. The save below
+    # is a delete-then-insert (line 482), so if the upstream odds source
+    # was unreachable this cycle, p["best_available_odds"] arrives as 0
+    # and would clobber a perfectly good prior value. Capture per-horse
+    # odds/derived fields before the delete and restore them if the new
+    # values are empty — the next live-odds refresh will overwrite with
+    # fresh data when upstream recovers.
+    existing_market: dict[str, dict] = {}
+    existing_rows = (await session.execute(
+        select(
+            RunnerPredictionRow.horse_name,
+            RunnerPredictionRow.best_available_odds,
+            RunnerPredictionRow.market_rank,
+            RunnerPredictionRow.overlay,
+            RunnerPredictionRow.value_rating,
+        ).where(RunnerPredictionRow.race_id == race_id)
+    )).fetchall()
+    for horse_name, bao, mrank, overlay, vrating in existing_rows:
+        if bao and bao > 1.0:
+            existing_market[horse_name] = {
+                "best_available_odds": bao,
+                "market_rank": mrank,
+                "overlay": overlay,
+                "value_rating": vrating,
+            }
+
     # Write to mutable table
     await session.execute(delete(RunnerPredictionRow).where(RunnerPredictionRow.race_id == race_id))
     rows = []
     for p in predictions:
+        new_odds = p.get("best_available_odds") or 0
+        if new_odds <= 1.0:
+            prev = existing_market.get(p.get("horse_name"))
+            if prev:
+                p = dict(p)
+                p["best_available_odds"] = prev["best_available_odds"]
+                if prev.get("market_rank") is not None:
+                    p["market_rank"] = prev["market_rank"]
+                if prev.get("overlay") is not None:
+                    p["overlay"] = prev["overlay"]
+                if prev.get("value_rating") is not None:
+                    p["value_rating"] = prev["value_rating"]
         row = RunnerPredictionRow(**p)
         session.add(row)
         rows.append(row)
