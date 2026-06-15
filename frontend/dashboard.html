@@ -588,6 +588,12 @@
                    : t30.roi_pct >= 0     ? 'var(--gold-light)' : '#f87171';
 
       productionHtml = `
+        <div class="section" id="tomorrowPicksSection">
+          <div class="section-title">📊 Tomorrow's Top Trifecta Boxes
+            <span style="font-size:0.65rem;color:var(--text-dim);font-weight:400;margin-left:8px">paper-trading · ranked by 60-day backtest</span>
+          </div>
+          <div id="tomorrowPicksContent" style="font-size:0.78rem;color:var(--text-dim)">Loading picks…</div>
+        </div>
         <div class="section">
           <div class="section-title">Live Performance — What Users See</div>
           <div class="stat-grid">
@@ -1470,9 +1476,80 @@
     }
   }
 
+  // Tomorrow's top trifecta-box candidates from the backtest-derived scorer.
+  // Runs independently of loadDashboard so it doesn't block the rest of the
+  // page, and survives admin-secret misses (the endpoint is public).
+  async function loadTomorrowPicks() {
+    const target = document.getElementById('tomorrowPicksContent');
+    if (!target) return;
+    try {
+      const r = await fetch(`${API}/api/bet-insights/tomorrow?limit=5`);
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      const d = await r.json();
+      const cands = d.tomorrow_candidates || [];
+      const prof = d.today_profile || {};
+      const profLine = (prof.races_settled && prof.races_settled > 0)
+        ? `Today so far: ${prof.hit_races}/${prof.races_settled} races landed a box`
+        : `No settled paper-trading races yet today.`;
+      if (!cands.length) {
+        target.innerHTML = `
+          <div style="padding:8px 0;color:var(--text-muted)">No qualifying races for tomorrow yet — they appear once enrichment completes.</div>
+          <div style="font-size:0.7rem;margin-top:6px">${escHtml(profLine)}</div>`;
+        return;
+      }
+      const rows = cands.map((c, i) => {
+        const jump = c.scheduled_time ? c.scheduled_time.substring(11, 16) : '—';
+        const venue = (c.venue || '').replace(/-/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+        const hitCol = c.predicted_hit_rate_pct >= 40 ? 'var(--green-bright)'
+                     : c.predicted_hit_rate_pct >= 35 ? 'var(--gold-light)'
+                     : 'var(--text-dim)';
+        return `
+          <tr>
+            <td style="text-align:right;color:var(--text-muted);font-weight:600">${i + 1}</td>
+            <td style="font-weight:600">${escHtml(venue)} R${c.race_number}</td>
+            <td style="color:var(--text-dim);font-family:tabular-nums">${jump}</td>
+            <td style="text-align:right;color:var(--text-dim)">${c.field_size}</td>
+            <td style="text-align:right">${c.rank1_win_pct.toFixed(1)}%</td>
+            <td style="text-align:right;color:var(--text-dim)">${c.top3_sum_pct.toFixed(1)}%</td>
+            <td style="text-align:right;color:${hitCol};font-weight:700">${c.predicted_hit_rate_pct.toFixed(1)}%</td>
+          </tr>`;
+      }).join('');
+      target.innerHTML = `
+        <table style="width:100%;border-collapse:collapse;font-size:0.78rem">
+          <thead>
+            <tr style="color:var(--text-muted);text-transform:uppercase;letter-spacing:0.4px;font-size:0.62rem;border-bottom:1px solid var(--border)">
+              <th style="text-align:right;padding:4px 6px">#</th>
+              <th style="text-align:left;padding:4px 6px">Race</th>
+              <th style="text-align:left;padding:4px 6px">Jump</th>
+              <th style="text-align:right;padding:4px 6px">Field</th>
+              <th style="text-align:right;padding:4px 6px">Rank-1 win</th>
+              <th style="text-align:right;padding:4px 6px">Top-3 Σ</th>
+              <th style="text-align:right;padding:4px 6px">Pred. hit</th>
+            </tr>
+          </thead>
+          <tbody>${rows}</tbody>
+        </table>
+        <div style="font-size:0.65rem;margin-top:8px;color:var(--text-muted);line-height:1.4">
+          ${escHtml(profLine)} ·
+          Predicted hit rate = average of historical hit rates (60-day backtest) for the race's rank-1 / field-size / top-3-sum buckets.
+        </div>`;
+    } catch (e) {
+      console.error('[tomorrowPicks]', e);
+      target.innerHTML = `<div style="color:var(--text-muted)">Could not load — ${escHtml(e.message)}</div>`;
+    }
+  }
+
+  // Tiny escape used by loadTomorrowPicks — the rest of the dashboard uses
+  // its own; defining a local one here keeps the snippet self-contained.
+  function escHtml(s) {
+    return (s == null ? '' : String(s))
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  }
+
   // Init
   if (adminSecret) {
     loadDashboard();
+    loadTomorrowPicks();
   } else {
     document.getElementById('dashContent').style.display = 'none';
     document.getElementById('loginGate').style.display = '';
