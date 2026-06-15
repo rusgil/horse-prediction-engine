@@ -497,17 +497,34 @@
     });
   }
 
+  // Races still 'Running' (jumped but within ~8 min) should stay at the
+  // very top of Next-race — they're the live ones the user cares about.
+  // Mirrors the 480s Running window in formatCountdown.
+  const RUNNING_WINDOW_MS = 8 * 60 * 1000;
+
   function applySort(races) {
     const now = Date.now();
     if (state.sort === 'next') {
-      // Parse scheduled_time as a Date (it includes the TZ offset) so
-      // upcoming/past is compared on the real instant in time, not on
-      // lexical strings — '12:30+10:00' is not lexically before now-UTC.
-      const upcoming = races.filter(r => { const t = _jumpMs(r); return t != null && t > now; });
-      const past = races.filter(r => { const t = _jumpMs(r); return t == null || t <= now; });
+      // Parse scheduled_time as a Date (includes TZ offset) so upcoming
+      // vs past compares on the real instant. Running races (jumped, but
+      // still inside the Running window) lead, then truly upcoming
+      // sorted by soonest jump, then finished sorted most-recent-first.
+      const running = races.filter(r => {
+        const t = _jumpMs(r);
+        return t != null && t <= now && t > now - RUNNING_WINDOW_MS;
+      });
+      const upcoming = races.filter(r => {
+        const t = _jumpMs(r);
+        return t != null && t > now;
+      });
+      const past = races.filter(r => {
+        const t = _jumpMs(r);
+        return t == null || t <= now - RUNNING_WINDOW_MS;
+      });
+      running.sort((a, b) => (_jumpMs(b) || 0) - (_jumpMs(a) || 0));
       upcoming.sort((a, b) => (_jumpMs(a) || 0) - (_jumpMs(b) || 0));
       past.sort((a, b) => (_jumpMs(b) || 0) - (_jumpMs(a) || 0));
-      return [...upcoming, ...past];
+      return [...running, ...upcoming, ...past];
     }
     if (state.sort === 'recent') {
       // 'Just ran' — past races first (most recently finished at top),

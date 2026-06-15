@@ -4017,12 +4017,13 @@ async def list_bet_races(days: int = 7):
             "status": "pending" if any_unsettled else "settled",
             "hits": sum(1 for b in bets if b.is_hit),
         })
-    # Sort: upcoming first (soonest to jump at top), past races after
-    # (most recent at top of that block). Parse the scheduled_time as a
-    # tz-aware datetime — string compare against UTC.isoformat() would
-    # break because AEST offsets push '12:30+10:00' lexically above the
-    # current UTC clock.
+    # Sort: currently-running races (jumped but within ~8 min) lead,
+    # then truly upcoming sorted by soonest jump, then past sorted by
+    # most-recent first. Parse scheduled_time as a tz-aware datetime —
+    # string compare against UTC.isoformat() would break because AEST
+    # offsets push '12:30+10:00' lexically above the current UTC clock.
     now_utc = datetime.utcnow().replace(tzinfo=timezone.utc)
+    running_threshold = now_utc - timedelta(minutes=8)
 
     def _jump_dt(r):
         st = r.get("scheduled_time")
@@ -4033,11 +4034,21 @@ async def list_bet_races(days: int = 7):
         except (ValueError, TypeError):
             return None
 
-    upcoming = [r for r in races if (_jump_dt(r) or now_utc) > now_utc]
-    past = [r for r in races if (_jump_dt(r) or now_utc) <= now_utc]
+    running, upcoming, past = [], [], []
+    for r in races:
+        dt = _jump_dt(r)
+        if dt is None:
+            past.append(r)
+        elif dt > now_utc:
+            upcoming.append(r)
+        elif dt > running_threshold:
+            running.append(r)
+        else:
+            past.append(r)
+    running.sort(key=lambda r: _jump_dt(r) or now_utc, reverse=True)
     upcoming.sort(key=lambda r: _jump_dt(r) or now_utc)
     past.sort(key=lambda r: _jump_dt(r) or now_utc, reverse=True)
-    return {"days": days, "races": upcoming + past}
+    return {"days": days, "races": running + upcoming + past}
 
 
 @app.post("/api/admin/bets/generate/{race_id}")
