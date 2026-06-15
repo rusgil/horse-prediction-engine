@@ -38,6 +38,7 @@ from typing import Any, Optional
 from fastapi import BackgroundTasks, Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, Response
+from pydantic import BaseModel
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import func, select
 
@@ -4729,6 +4730,127 @@ async def strategy_shootout(
         "strategies": strategy_results,
         "note": "stake_per_race_hit = total_stake / races_hit (lower = better). Use ranking column.",
     }
+
+
+class DividendEntry(BaseModel):
+    trifecta: float
+
+
+@app.post("/api/admin/bets/dividend/{race_id}")
+async def admin_set_dividend(
+    race_id: str,
+    body: DividendEntry,
+    x_cron_secret: Optional[str] = Header(None),
+):
+    """Manually attach a trifecta dividend to a race's bet rows. Used as a
+    stopgap until an automated dividend source comes online. Operates on
+    any row in the race regardless of settled status — sets the dividend,
+    recomputes payout + P&L from is_hit, flips settled=true.
+
+    Body: {"trifecta": 234.50}
+    """
+    _check_admin(x_cron_secret)
+    if body.trifecta is None or body.trifecta <= 0:
+        raise HTTPException(400, "trifecta must be > 0")
+
+    async with get_session() as session:
+        rows = (await session.execute(
+            select(BetRecommendationRow)
+            .where(BetRecommendationRow.race_id == race_id)
+        )).scalars().all()
+        if not rows:
+            raise HTTPException(404, f"No bets found for {race_id}")
+        # If is_hit hasn't been populated yet, settle from the existing
+        # HistoricalResultRow first so we don't have to ask the caller to
+        # do two steps.
+        needs_settle = any(r.is_hit is None for r in rows)
+        if needs_settle:
+            try:
+                await _settle_bets_for_race(race_id)
+                rows = (await session.execute(
+                    select(BetRecommendationRow)
+                    .where(BetRecommendationRow.race_id == race_id)
+                )).scalars().all()
+            except Exception as e:
+                log.debug("[bets] pre-settle for dividend failed: %s", e)
+
+        updated = 0
+        total_pnl = 0.0
+        hits = 0
+        for r in rows:
+            row = await session.get(BetRecommendationRow, r.id)
+            if row.is_hit is None:
+                continue  # still missing top-3 results
+            payout, pnl = _bet_compute_payout(
+                row.stake_dollars, row.num_permutations, body.trifecta, bool(row.is_hit)
+            )
+            row.trifecta_dividend = body.trifecta
+            row.payout_dollars = payout
+            row.pnl_dollars = pnl
+            if not row.settled:
+                row.settled = True
+                row.settled_at = datetime.utcnow()
+            if row.is_hit:
+                hits += 1
+            total_pnl += pnl
+            updated += 1
+        await session.commit()
+    return {
+        "race_id": race_id,
+        "trifecta": body.trifecta,
+        "rows_updated": updated,
+        "hits": hits,
+        "total_pnl_dollars": round(total_pnl, 2),
+    }
+
+
+@app.get("/api/admin/bets/needing-dividend")
+async def admin_needing_dividend(
+    days: int = 3,
+    x_cron_secret: Optional[str] = Header(None),
+):
+    """List recent races with settled bets but no dividend attached —
+    the work queue for manual dividend entry. Returns one row per race
+    with venue, race #, scheduled_time, hit count, and links to make
+    entry quick."""
+    _check_admin(x_cron_secret)
+    days = max(1, min(int(days), 14))
+    cutoff = datetime.utcnow() - timedelta(days=days)
+    async with get_session() as session:
+        rows = (await session.execute(
+            select(BetRecommendationRow)
+            .where(BetRecommendationRow.recommended_at >= cutoff)
+            .where(BetRecommendationRow.settled.is_(True))
+            .where(BetRecommendationRow.trifecta_dividend.is_(None))
+            .where(BetRecommendationRow.is_hit.is_(True))
+            .order_by(BetRecommendationRow.race_id)
+        )).scalars().all()
+        # Pull scheduled_time per race
+        race_ids = list({r.race_id for r in rows})
+        sched: dict[str, str] = {}
+        if race_ids:
+            for rid, st in (await session.execute(
+                select(RunnerPredictionRow.race_id, func.max(RunnerPredictionRow.scheduled_time))
+                .where(RunnerPredictionRow.race_id.in_(race_ids))
+                .group_by(RunnerPredictionRow.race_id)
+            )).fetchall():
+                if st:
+                    sched[rid] = st
+    by_race: dict[str, int] = {}
+    for r in rows:
+        by_race[r.race_id] = by_race.get(r.race_id, 0) + 1
+    items = []
+    for rid, hit_count in by_race.items():
+        _, vc, race_num = _parse_race_id(rid)
+        items.append({
+            "race_id": rid,
+            "venue": vc,
+            "race_number": race_num,
+            "scheduled_time": sched.get(rid),
+            "hit_bets": hit_count,
+        })
+    items.sort(key=lambda x: x.get("scheduled_time") or "", reverse=True)
+    return {"days": days, "races_needing_dividend": items}
 
 
 @app.post("/api/admin/bets/settle-only")
