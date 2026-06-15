@@ -805,11 +805,24 @@
       const r = await fetch(`${API}/api/edge`);
       if (!r.ok) throw new Error(`HTTP ${r.status}`);
       const data = await r.json();
-      // Guard: a non-edge response (rate-limit body, error JSON) has no
-      // picks key. Don't clobber the previously rendered list in that case
-      // — leave state.picks alone so the user keeps seeing the last good
-      // refresh instead of an empty page until the next interval.
+      // Guard 1: a non-edge response (rate-limit body, error JSON) has no
+      // picks key. Don't clobber the previously rendered list in that
+      // case — leave state.picks alone.
       if (!Array.isArray(data.picks)) throw new Error('invalid edge payload');
+      // Guard 2: empty array AFTER having picks. Happens briefly during
+      // cache version bumps / cold-start when the DB scan races the
+      // enrich pipeline. If our previous render had picks and the last
+      // successful refresh was recent (< 10 min), keep them — isUpcoming()
+      // will naturally age them out at midnight. Only overwrite if the
+      // user has been viewing an empty state already, or we have nothing
+      // cached at all.
+      if (data.picks.length === 0 && state.picks.length > 0
+          && state.lastFetch && (Date.now() - state.lastFetch) < 10 * 60 * 1000) {
+        console.warn('[hotseat] /api/edge returned empty, keeping previous', state.picks.length, 'picks');
+        state.lastFetch = Date.now();
+        updateRefreshLabel();
+        return;
+      }
       state.picks = data.picks;
       state.lastFetch = Date.now();
       populateVenueOptions();
