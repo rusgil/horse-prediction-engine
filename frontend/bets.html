@@ -164,6 +164,85 @@
       letter-spacing: 0.3px;
     }
 
+    /* Bet detail expansion */
+    .bet-toggle {
+      margin-top: 10px;
+      text-align: center;
+      font-size: 11px;
+      color: var(--text-dim);
+      cursor: pointer;
+      user-select: none;
+      padding: 6px 0;
+      border-top: 1px dashed var(--border);
+    }
+    .bet-toggle:active { color: var(--text); }
+    .bet-list {
+      margin-top: 8px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .bet-row {
+      background: var(--bg-elevated);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 8px 10px;
+      font-size: 11px;
+    }
+    .bet-row.hit {
+      border-color: rgba(74,222,128,0.45);
+      background: rgba(74,222,128,0.06);
+    }
+    .bet-row-top {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      gap: 8px;
+      margin-bottom: 4px;
+    }
+    .bet-strategy {
+      font-weight: 600;
+      color: var(--text);
+      text-transform: uppercase;
+      letter-spacing: 0.4px;
+      font-size: 10px;
+    }
+    .bet-result {
+      font-family: 'Barlow Condensed', sans-serif;
+      font-weight: 700;
+      font-size: 13px;
+      font-variant-numeric: tabular-nums;
+    }
+    .bet-result.hit { color: var(--green-bright); }
+    .bet-result.miss { color: var(--text-muted); }
+    .bet-result.pending { color: var(--purple-bright); }
+    .bet-horses {
+      color: var(--text);
+      line-height: 1.5;
+    }
+    .bet-horses .tab {
+      display: inline-block;
+      min-width: 18px;
+      padding: 1px 5px;
+      margin-right: 4px;
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      font-weight: 700;
+      text-align: center;
+      font-size: 10px;
+    }
+    .bet-horses .name {
+      color: var(--text-dim);
+      margin-right: 8px;
+    }
+    .bet-meta {
+      color: var(--text-muted);
+      font-size: 10px;
+      margin-top: 4px;
+    }
+    .bet-loading { color: var(--text-muted); padding: 8px 0; font-size: 11px; text-align: center; }
+
     .empty {
       text-align: center;
       padding: 40px 20px;
@@ -189,6 +268,16 @@
 
 <script>
   const API = 'https://web-production-dec62.up.railway.app';
+  const STRATEGY_LABELS = {
+    core_top3: 'Top 3 box',
+    core_top4: 'Top 4 box',
+    value_runner1: 'Top 2 + value #1',
+    value_runner2: 'Top 2 + value #2',
+    no_favourite_hedge: 'No-favourite hedge',
+  };
+
+  // race_id -> bool (expanded?); race_id -> array of bet rows (cached fetch)
+  const state = { expanded: new Set(), detail: {}, lastData: null };
 
   function fmtPnl(v) {
     if (v == null) return null;
@@ -201,7 +290,58 @@
       .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
   }
 
+  function renderBetDetail(raceId) {
+    const bets = state.detail[raceId];
+    if (bets === undefined) return `<div class="bet-loading">Loading bets…</div>`;
+    if (!bets || !bets.length) return `<div class="bet-loading">No bets recorded.</div>`;
+    return `<div class="bet-list">${bets.map(b => {
+      const label = STRATEGY_LABELS[b.strategy_label] || b.strategy_label;
+      const horses = (b.box_horses || []).map((tab, i) => {
+        const name = (b.box_horse_names || [])[i] || '';
+        return `<span><span class="tab">${tab}</span><span class="name">${escHtml(name)}</span></span>`;
+      }).join('');
+      let resultEl, cls = '';
+      if (b.settled) {
+        if (b.is_hit) {
+          cls = 'hit';
+          resultEl = `<span class="bet-result hit">HIT · +$${(b.payout_dollars || 0).toFixed(2)}</span>`;
+        } else {
+          resultEl = `<span class="bet-result miss">Miss</span>`;
+        }
+      } else {
+        resultEl = `<span class="bet-result pending">Pending</span>`;
+      }
+      const meta = b.settled
+        ? `${b.num_permutations} perms · stake $${(b.stake_dollars||0).toFixed(2)} · ${b.is_hit ? `div $${(b.trifecta_dividend||0).toFixed(2)}` : 'no dividend hit'}`
+        : `${b.num_permutations} perms · stake $${(b.stake_dollars||0).toFixed(2)}`;
+      return `
+        <div class="bet-row ${cls}">
+          <div class="bet-row-top">
+            <span class="bet-strategy">${escHtml(label)}</span>
+            ${resultEl}
+          </div>
+          <div class="bet-horses">${horses}</div>
+          <div class="bet-meta">${escHtml(meta)}</div>
+        </div>`;
+    }).join('')}</div>`;
+  }
+
+  async function fetchBetDetail(raceId) {
+    if (state.detail[raceId] !== undefined) return;
+    try {
+      const r = await fetch(`${API}/api/bets/${encodeURIComponent(raceId)}`);
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      const data = await r.json();
+      state.detail[raceId] = data.bets || [];
+    } catch (e) {
+      console.error('[bets] detail fetch failed:', e);
+      state.detail[raceId] = [];
+    }
+    if (state.lastData) render(state.lastData);
+  }
+
   function render(data) {
+    state.lastData = data;
     const races = data.races || [];
     const summary = document.getElementById('summary');
     const settled = races.filter(r => r.status === 'settled');
@@ -266,6 +406,9 @@
               <span class="race-stat-label">Payout</span>
             </div>
           </div>
+          ${state.expanded.has(r.race_id)
+            ? `<div class="bet-toggle" data-race="${escHtml(r.race_id)}">Hide bets ▴</div>${renderBetDetail(r.race_id)}`
+            : `<div class="bet-toggle" data-race="${escHtml(r.race_id)}">Show ${r.num_bets} bets ▾</div>`}
         </div>`;
     }).join('');
   }
@@ -281,6 +424,22 @@
         <div class="empty">Could not load ledger: ${escHtml(e.message)}</div>`;
     }
   }
+
+  // Delegated click for the expand toggle — cards re-render on refresh.
+  document.getElementById('races').addEventListener('click', (e) => {
+    const t = e.target.closest('.bet-toggle');
+    if (!t) return;
+    const raceId = t.dataset.race;
+    if (state.expanded.has(raceId)) {
+      state.expanded.delete(raceId);
+    } else {
+      state.expanded.add(raceId);
+      if (state.detail[raceId] === undefined) {
+        fetchBetDetail(raceId);
+      }
+    }
+    if (state.lastData) render(state.lastData);
+  });
 
   // Refresh every 60s + jitter
   setInterval(load, 60000 + Math.random() * 15000);
