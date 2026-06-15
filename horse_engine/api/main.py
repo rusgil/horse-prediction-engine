@@ -3549,38 +3549,88 @@ async def _generate_bets_for_race(race_id: str, *, regenerate: bool = False) -> 
         return len(bets)
 
 
-async def _fetch_trifecta_dividend(race_id: str) -> Optional[float]:
-    """Pull the trifecta dividend for a race from RA's Results.aspx via the proxy.
-    Returns the dollar dividend or None if not available. Uses the same
-    cache path as Results.aspx — repeated calls within the RA client
-    TTL are free."""
+async def _fetch_race_raw_from_tab(race_id: str) -> Optional[dict]:
+    """Fetch raw TAB race detail (post-result) via the TAB client.
+    Used by dividend extraction and the debug endpoint."""
     date_str, venue_code, race_num = _parse_race_id(race_id)
     if not (date_str and venue_code and race_num):
         return None
     client = get_tab_client()
-    ra = getattr(client, "_ra", None)
-    if ra is None:
-        return None
-    # Resolve venue → ra_key. The slug→key cache (_slug_to_key) is shared
-    # with the prediction path; if it's not warmed yet we accept the cost
-    # of a single calendar fetch — that's bounded by the 1h TTL.
-    slug = _meeting_slug(venue_code, date_str)
-    if slug not in ra._slug_to_key:
+    # The composite client wraps RA; the actual TAB client lives at ._tab
+    # if present. Fall back to a direct httpx call if not available.
+    tab = getattr(client, "_tab", None)
+    if tab is not None and hasattr(tab, "_get_race_by_code"):
         try:
-            await ra.get_meetings(date_str)
-        except Exception:
-            return None
-    ra_key = ra._slug_to_key.get(slug)
-    if not ra_key:
+            # _get_race_by_code expects a TAB venue code (often uppercase).
+            # Try our stored venue_code uppercased — TAB tends to use forms
+            # like 'NOW' (Nowra), 'TAM' (Tamworth) so a direct uppercase
+            # often works for AU venues.
+            return await tab._get_race_by_code(date_str, venue_code.upper(), int(race_num))
+        except Exception as e:
+            log.debug("[bets] tab._get_race_by_code failed for %s: %s", race_id, e)
+    return None
+
+
+def _extract_trifecta_from_tab_response(raw: dict) -> Optional[float]:
+    """Best-effort trifecta dividend extraction. TAB's payload shape varies
+    between endpoints; check a few likely keys."""
+    if not isinstance(raw, dict):
         return None
-    try:
-        results = await ra.get_results(ra_key)
-    except Exception as e:
-        log.debug("[bets] get_results failed for %s: %s", ra_key, e)
+    # Shape 1: top-level 'dividends' array of {poolName, price, ...}
+    for d in raw.get("dividends") or []:
+        if not isinstance(d, dict):
+            continue
+        name = (d.get("poolName") or d.get("name") or "").upper()
+        if "TRIFECTA" in name and "FIRST" not in name:  # exclude 'First Four'
+            for key in ("price", "amount", "dividend"):
+                v = d.get(key)
+                if isinstance(v, (int, float)) and v > 0:
+                    return float(v)
+                if isinstance(v, str):
+                    try:
+                        return float(v.replace(",", "").replace("$", ""))
+                    except ValueError:
+                        pass
+            # Some shapes nest the value under 'results' / 'finalDividend'
+            for nested_key in ("finalDividend", "result", "results"):
+                nv = d.get(nested_key)
+                if isinstance(nv, (int, float)) and nv > 0:
+                    return float(nv)
+                if isinstance(nv, str):
+                    try:
+                        return float(nv.replace(",", "").replace("$", ""))
+                    except ValueError:
+                        pass
+                if isinstance(nv, list) and nv:
+                    for item in nv:
+                        if isinstance(item, dict):
+                            for k in ("price", "dividend", "amount"):
+                                v = item.get(k)
+                                if isinstance(v, (int, float)) and v > 0:
+                                    return float(v)
+    # Shape 2: 'results' object with named pools
+    for pool_key in ("results", "pools", "exoticPools"):
+        pools = raw.get(pool_key)
+        if isinstance(pools, dict):
+            for k, v in pools.items():
+                if "TRIFECTA" in str(k).upper() and "FIRST" not in str(k).upper():
+                    if isinstance(v, (int, float)) and v > 0:
+                        return float(v)
+                    if isinstance(v, dict):
+                        for inner_k in ("dividend", "price", "amount"):
+                            iv = v.get(inner_k)
+                            if isinstance(iv, (int, float)) and iv > 0:
+                                return float(iv)
+    return None
+
+
+async def _fetch_trifecta_dividend(race_id: str) -> Optional[float]:
+    """Pull the trifecta dividend via TAB's race endpoint. RA's Results.aspx
+    does not include exotic dividends so we go to TAB directly."""
+    raw = await _fetch_race_raw_from_tab(race_id)
+    if raw is None:
         return None
-    race_data = (results or {}).get(int(race_num)) or {}
-    dividends = race_data.get("dividends") or {}
-    return dividends.get("trifecta")
+    return _extract_trifecta_from_tab_response(raw)
 
 
 async def _settle_bets_for_race(race_id: str) -> int:
@@ -4181,6 +4231,26 @@ async def admin_settle_bets(x_cron_secret: Optional[str] = Header(None)):
     _check_admin(x_cron_secret)
     await _scheduled_settle_bets()
     return {"ok": True}
+
+
+@app.get("/api/admin/bets/debug-dividend/{race_id}")
+async def admin_debug_dividend(race_id: str, x_cron_secret: Optional[str] = Header(None)):
+    """Inspect TAB's raw payload + the extracted trifecta dividend for a race.
+    Use to verify the dividend-extraction logic against real TAB data."""
+    _check_admin(x_cron_secret)
+    raw = await _fetch_race_raw_from_tab(race_id)
+    if raw is None:
+        return {"race_id": race_id, "fetched": False, "trifecta": None}
+    extracted = _extract_trifecta_from_tab_response(raw)
+    return {
+        "race_id": race_id,
+        "fetched": True,
+        "trifecta": extracted,
+        "raw_keys": list(raw.keys())[:30] if isinstance(raw, dict) else None,
+        "raw_sample": {k: (str(v)[:200] if not isinstance(v, (dict, list)) else
+                            (v[:3] if isinstance(v, list) else dict(list(v.items())[:5])))
+                       for k, v in (raw.items() if isinstance(raw, dict) else [])}
+    }
 
 
 @app.get("/api/track-record")
