@@ -4375,9 +4375,29 @@ async def get_tomorrow_picks(limit: int = 5):
         "miss_avg_top3_sum_pct": _avg(miss_t3),
     }
 
-    # ── Score tomorrow's races against the hit profile ──
-    # Sweet spot: rank-1 in 15-25%, field 10-12, top-3 sum near hit avg.
-    target_top3 = _avg(hit_t3) or 46.0
+    # ── Score tomorrow's races against historical hit rates ──
+    # Hit-rate lookups derived from /api/admin/bets/backtest-formula run on
+    # 60 days of data. We score each race by averaging the historical hit
+    # rate for its bucket in each of (rank-1 win, field size, top-3 sum).
+    def _rank1_hit_rate(w: float) -> float:
+        if w < 20: return 0.0  # below filter threshold
+        if 20 <= w < 25: return 34.3
+        if 25 <= w < 30: return 0.0  # trap zone — recommender skips
+        if 30 <= w < 40: return 40.0
+        return 45.5  # 40%+
+    def _field_hit_rate(n: int) -> float:
+        if n <= 7: return 48.7
+        if n <= 9: return 32.5
+        if n <= 11: return 24.7
+        if n <= 13: return 34.3
+        return 22.2
+    def _top3_hit_rate(s: float) -> float:
+        if s < 40: return 10.0
+        if s < 50: return 26.2
+        if s < 60: return 36.6
+        if s < 70: return 50.0
+        return 43.8
+
     candidates: list[dict] = []
     async with get_session() as session:
         # Use mutable (RunnerPredictionRow) for tomorrow since history is
@@ -4400,19 +4420,16 @@ async def get_tomorrow_picks(limit: int = 5):
 
     for rid, runners in race_runners.items():
         runners = sorted([x for x in runners if x.model_rank], key=lambda x: x.model_rank)
-        if len(runners) < 8:
+        if len(runners) < 7 or len(runners) > 13:
             continue
         w1 = (runners[0].win_probability or 0) * 100
+        if w1 < 20 or (25 <= w1 < 30):
+            continue  # below threshold or in the trap zone
         w2 = (runners[1].win_probability or 0) * 100
         w3 = (runners[2].win_probability or 0) * 100
         top3_sum = w1 + w2 + w3
-        # Score: sweet-spot rank-1 (15-25), field ~11, top3 sum near hit avg.
-        sweet_penalty = 0
-        if w1 < 15:
-            sweet_penalty = (15 - w1) * 2
-        elif w1 > 25:
-            sweet_penalty = (w1 - 25) * 2
-        score = 100 - sweet_penalty - abs(len(runners) - 11) * 3 - abs(top3_sum - target_top3) * 0.5
+        # Combined predicted hit-rate score = average of three bucket lookups
+        score = round((_rank1_hit_rate(w1) + _field_hit_rate(len(runners)) + _top3_hit_rate(top3_sum)) / 3, 1)
         _, vc, race_num = _parse_race_id(rid)
         candidates.append({
             "race_id": rid,
@@ -4423,14 +4440,19 @@ async def get_tomorrow_picks(limit: int = 5):
             "rank1_win_pct": round(w1, 1),
             "rank2_win_pct": round(w2, 1),
             "top3_sum_pct": round(top3_sum, 1),
-            "score": round(score, 1),
+            "predicted_hit_rate_pct": score,
+            "score": score,
         })
     candidates.sort(key=lambda c: -c["score"])
     return {
         "today_profile": profile,
         "tomorrow_candidates": candidates[:limit],
         "tomorrow_analysed": len(candidates),
-        "scoring_rule": "Target rank-1 win 15-25%, field 10-12, top-3 sum near today's hit average",
+        "scoring_rule": (
+            "Skips field<7 or >13, rank-1<20% or in 25-30% trap zone. "
+            "Predicted hit rate = avg of historical (60-day backtest) hit "
+            "rates for the race's rank-1 / field-size / top-3-sum buckets."
+        ),
     }
 
 

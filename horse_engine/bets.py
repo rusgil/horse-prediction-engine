@@ -16,8 +16,14 @@ box_horses. Payout = (stake / num_permutations) * trifecta_dividend.
 from typing import Optional
 
 DEFAULT_STAKE = 2.0
-MIN_FIELD_SIZE = 7        # trifecta payouts get thin in small fields
+MIN_FIELD_SIZE = 7        # 60d backtest: field=7 hits 48.7%, sweet spot
+MAX_FIELD_SIZE = 13       # 14+ runners drops to 22% hit rate — skip
 MIN_TOP1_WIN_PCT = 20.0   # below this, the model has nothing to say
+# 60d backtest trap zone: rank-1 25-30% hits only 27% (vs 34% at 20-25%
+# and 40%+ at 30-40%). Skip races in this band — the model has a weak
+# favourite that's been wrong more often than the neighbouring buckets.
+TRAP_ZONE_LO = 25.0
+TRAP_ZONE_HI = 30.0
 
 
 def _perms(n: int) -> int:
@@ -41,12 +47,14 @@ def generate_recommendations(runners: list[dict], stake: float = DEFAULT_STAKE) 
     """
     active = [r for r in runners if not r.get("cancelled")]
     active = [r for r in active if r.get("model_rank") is not None and r.get("tab_number") is not None]
-    if len(active) < MIN_FIELD_SIZE:
+    if not (MIN_FIELD_SIZE <= len(active) <= MAX_FIELD_SIZE):
         return []
 
     active.sort(key=lambda r: r["model_rank"])
     top1_win_pct = (active[0].get("win_probability") or 0) * 100
     if top1_win_pct < MIN_TOP1_WIN_PCT:
+        return []
+    if TRAP_ZONE_LO <= top1_win_pct < TRAP_ZONE_HI:
         return []
 
     def slot(i: int) -> Optional[dict]:
