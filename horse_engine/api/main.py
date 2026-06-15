@@ -891,6 +891,11 @@ async def _scheduled_live_odds_refresh():
 
         op = OddsProClient()
         tracks = await op.get_tracks(today)
+        # Full-market odds for every AU thoroughbred runner today, used as a
+        # fallback when the movers feed (which only includes horses whose
+        # odds have moved recently) doesn't return a runner. Without this,
+        # firm-priced favourites silently fall through to 0 in the DB.
+        meeting_odds_by_track: dict[str, dict] = await op.get_meeting_odds(today)
 
         by_venue: dict[str, list[RunnerPredictionRow]] = {}
         for row in upcoming:
@@ -906,7 +911,8 @@ async def _scheduled_live_odds_refresh():
                 continue
 
             odds_map = await op.get_track_odds(op_track)
-            if not odds_map:
+            full_market_map = meeting_odds_by_track.get(op_track.lower(), {})
+            if not odds_map and not full_market_map:
                 log.debug("[live-odds] Empty odds for track '%s'", op_track)
                 continue
 
@@ -923,15 +929,25 @@ async def _scheduled_live_odds_refresh():
                         name_lower = row.horse_name.lower()
                         norm_name = _normalize_horse(row.horse_name)
                         op_runner = odds_map.get((race_num, name_lower)) or odds_map.get((race_num, norm_name))
-                        if not op_runner:
+                        if op_runner:
+                            raw = op_runner.get("currentBestOdds")
+                            try:
+                                val = float(raw) if raw else 0.0
+                                if val > 1.0:
+                                    new_odds[row.id] = val
+                            except (TypeError, ValueError):
+                                pass
+                        else:
+                            # Movers feed missed this runner — fall back to the
+                            # full-market feed (no steam features but at least
+                            # a current price).
+                            fm_price = (
+                                full_market_map.get((race_num, name_lower))
+                                or full_market_map.get((race_num, norm_name))
+                            )
+                            if fm_price and fm_price > 1.0:
+                                new_odds[row.id] = fm_price
                             continue
-                        raw = op_runner.get("currentBestOdds")
-                        try:
-                            val = float(raw) if raw else 0.0
-                            if val > 1.0:
-                                new_odds[row.id] = val
-                        except (TypeError, ValueError):
-                            pass
                         # Compute steam/drift from firstPrice vs currentBestOdds
                         try:
                             first = float(op_runner.get("firstPrice") or 0)
