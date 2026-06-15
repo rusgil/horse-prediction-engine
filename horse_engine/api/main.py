@@ -2003,6 +2003,11 @@ async def _scheduled_prerace_snapshot():
         log.exception("[scheduler] Pre-race snapshot failed: %s", e)
 
 
+# Module-level scheduler — assigned during lifespan() startup. Lets other
+# code paths (e.g. bet-recommender) schedule per-race one-off jobs.
+_scheduler = None
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await init_db()
@@ -2010,7 +2015,9 @@ async def lifespan(app: FastAPI):
     from apscheduler.schedulers.asyncio import AsyncIOScheduler
     from apscheduler.triggers.cron import CronTrigger
 
+    global _scheduler
     scheduler = AsyncIOScheduler(timezone="Australia/Sydney")
+    _scheduler = scheduler
     scheduler.add_job(_scheduled_enrich, CronTrigger(hour=6,  minute=0, timezone="Australia/Sydney"))
     scheduler.add_job(_scheduled_enrich, CronTrigger(hour=10, minute=0, timezone="Australia/Sydney"))
     scheduler.add_job(_scheduled_enrich, CronTrigger(hour=13, minute=0, timezone="Australia/Sydney"))
@@ -3507,11 +3514,39 @@ async def _generate_bets_for_race(race_id: str, *, regenerate: bool = False) -> 
             ))
         try:
             await session.commit()
-            return len(bets)
         except Exception as e:
             await session.rollback()
             log.debug("[bets] insert raced (probably dup): %s", e)
             return 0
+        # Schedule a one-off settlement job for 5min + jitter past jump.
+        # Survives across the (idempotent) 30-min bulk settle cron — if the
+        # one-off misses (e.g. Railway redeploy drops in-memory jobs), the
+        # cron picks up the unsettled rows on its next tick.
+        sched_str = next((r.scheduled_time for r in rows
+                          if getattr(r, "scheduled_time", None)), None)
+        if sched_str and _scheduler is not None:
+            try:
+                sched_dt = datetime.fromisoformat(str(sched_str).replace("Z", "+00:00"))
+                # 5 min cushion + 0-60s jitter so concurrent races don't
+                # serialise on the same minute.
+                fire_at = sched_dt + timedelta(minutes=5, seconds=random.uniform(0, 60))
+                # Only schedule if it's in the future — past races settle on
+                # next cron tick anyway.
+                if fire_at > datetime.now(timezone.utc):
+                    from apscheduler.triggers.date import DateTrigger
+                    _scheduler.add_job(
+                        _settle_one_race_with_seed,
+                        DateTrigger(run_date=fire_at),
+                        args=[race_id],
+                        id=f"settle-{race_id}",
+                        replace_existing=True,
+                        misfire_grace_time=600,
+                    )
+                    log.info("[bets] scheduled per-race settlement for %s at %s",
+                             race_id, fire_at.isoformat())
+            except Exception as e:
+                log.debug("[bets] per-race schedule failed for %s: %s", race_id, e)
+        return len(bets)
 
 
 async def _fetch_trifecta_dividend(race_id: str) -> Optional[float]:
@@ -3598,6 +3633,23 @@ async def _settle_bets_for_race(race_id: str) -> int:
     if updated:
         log.info("[bets] settled %d bets for %s (div=$%.2f)", updated, race_id, dividend)
     return updated
+
+
+async def _settle_one_race_with_seed(race_id: str) -> int:
+    """Per-race settlement entry point — used by the one-off APScheduler
+    job fired 5min + jitter after a race's scheduled jump. Seeds results
+    for the date (idempotent, cheap on repeated calls) then settles the
+    bets for the race."""
+    date_str = race_id.split("_", 1)[0]
+    try:
+        await _seed_results_for_date(date_str)
+    except Exception as e:
+        log.debug("[bets] per-race seed failed for %s: %s", date_str, e)
+    try:
+        return await _settle_bets_for_race(race_id)
+    except Exception as e:
+        log.debug("[bets] per-race settle failed for %s: %s", race_id, e)
+        return 0
 
 
 async def _scheduled_settle_bets():
@@ -4012,6 +4064,22 @@ async def list_bet_races(days: int = 7):
             .order_by(BetRecommendationRow.recommended_at.desc())
         )).scalars().all()
         race_ids = list({r.race_id for r in rows})
+        # Top-3 results per race (for the winning-combination strip on
+        # settled cards). Pull tab + horse name + position; group below.
+        top3_map: dict[str, list[dict]] = {}
+        if race_ids:
+            top3_rows = (await session.execute(
+                select(HistoricalResultRow.race_id, HistoricalResultRow.position,
+                       HistoricalResultRow.tab_number, HistoricalResultRow.horse_name)
+                .where(HistoricalResultRow.race_id.in_(race_ids))
+                .where(HistoricalResultRow.position.in_([1, 2, 3]))
+            )).fetchall()
+            for rid, pos, tab, name in top3_rows:
+                top3_map.setdefault(rid, []).append({
+                    "position": pos, "tab_number": tab, "horse_name": name,
+                })
+            for rid in top3_map:
+                top3_map[rid].sort(key=lambda x: x["position"])
         # Scheduled time per race — pulled from mutable first (newer odds-
         # refresh enrichments may have set it), falling back to history.
         sched_map: dict[str, str] = {}
@@ -4059,6 +4127,7 @@ async def list_bet_races(days: int = 7):
             "pnl": pnl,
             "status": "pending" if any_unsettled else "settled",
             "hits": sum(1 for b in bets if b.is_hit),
+            "top3": top3_map.get(race_id) or None,
         })
     # Sort: currently-running races (jumped but within ~8 min) lead,
     # then truly upcoming sorted by soonest jump, then past sorted by

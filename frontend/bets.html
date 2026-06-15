@@ -169,6 +169,54 @@
       font-size: 11px;
       color: var(--text-dim);
     }
+    /* Winning trifecta strip (settled races only) */
+    .winning-strip {
+      margin: 8px 0 0;
+      padding: 6px 10px;
+      background: rgba(45,212,191,0.08);
+      border: 1px solid rgba(45,212,191,0.25);
+      border-radius: 8px;
+      font-size: 11px;
+      display: flex;
+      align-items: baseline;
+      gap: 6px;
+      flex-wrap: wrap;
+    }
+    .winning-strip .trophy { color: var(--gold); }
+    .winning-strip .label {
+      color: var(--teal-bright);
+      font-weight: 700;
+      letter-spacing: 0.3px;
+      text-transform: uppercase;
+      font-size: 10px;
+    }
+    .winning-strip .leg {
+      display: inline-flex;
+      align-items: baseline;
+      gap: 3px;
+    }
+    .winning-strip .pos {
+      color: var(--text-muted);
+      font-weight: 600;
+      font-size: 10px;
+    }
+    .winning-strip .tab {
+      display: inline-block;
+      min-width: 16px;
+      padding: 1px 4px;
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 3px;
+      font-weight: 700;
+      text-align: center;
+      font-size: 10px;
+    }
+    .winning-strip .name {
+      color: var(--text);
+      font-weight: 500;
+    }
+    .winning-strip .sep { color: var(--text-muted); margin: 0 2px; }
+
     .race-time {
       display: flex;
       align-items: baseline;
@@ -614,6 +662,19 @@
       const timeRow = jt
         ? `<div class="race-time"><span class="jump-time">🕐 ${jt}</span><span class="countdown ${cd ? cd.cls : ''}">${cd ? cd.text : ''}</span></div>`
         : '';
+      const top3 = Array.isArray(r.top3) ? r.top3 : null;
+      const winningStrip = top3 && top3.length === 3
+        ? `<div class="winning-strip">
+             <span class="trophy">🏆</span>
+             <span class="label">Result</span>
+             ${top3.map((leg, i) => `
+               <span class="leg">
+                 <span class="pos">${leg.position === 1 ? '1st' : leg.position === 2 ? '2nd' : '3rd'}</span>
+                 <span class="tab">${leg.tab_number ?? '—'}</span>
+                 <span class="name">${escHtml(leg.horse_name || '')}</span>
+               </span>${i < 2 ? '<span class="sep">·</span>' : ''}`).join('')}
+           </div>`
+        : '';
       return `${divider}
         <div class="race ${cls}">
           <div class="race-top">
@@ -642,6 +703,7 @@
               <span class="race-stat-label">Payout</span>
             </div>
           </div>
+          ${winningStrip}
           ${state.expanded.has(r.race_id)
             ? `<div class="bet-toggle" data-race="${escHtml(r.race_id)}">Hide bets ▴</div>${renderBetDetail(r.race_id)}`
             : `<div class="bet-toggle" data-race="${escHtml(r.race_id)}">Show ${r.num_bets} bets ▾</div>`}
