@@ -4306,7 +4306,7 @@ async def admin_settle_bets(x_cron_secret: Optional[str] = Header(None)):
     return {"ok": True, "queued": True}
 
 
-@app.get("/api/bets/tomorrow-picks")
+@app.get("/api/bet-insights/tomorrow")
 async def get_tomorrow_picks(limit: int = 5):
     """Insight endpoint for the dashboard: profile today's hit-vs-miss
     races by model conviction, then score tomorrow's races against the
