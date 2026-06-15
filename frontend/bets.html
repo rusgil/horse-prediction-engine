@@ -1,0 +1,290 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <style>body{visibility:hidden}</style>
+  <script>
+    fetch('/api/check', {credentials:'include'})
+      .then(function(r){
+        if(r.ok){ document.body.style.visibility='visible'; }
+        else{ window.location.replace('/login?next='+encodeURIComponent(location.pathname)); }
+      })
+      .catch(function(){ document.body.style.visibility='visible'; });
+  </script>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <meta name="theme-color" content="#07090f" />
+  <title>📊 Bet Ledger — Paper Trading | FunkyIQ</title>
+  <meta name="robots" content="noindex" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700;800&family=Outfit:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --bg-base:      #07090f;
+      --bg-card:      #0e1220;
+      --bg-elevated:  #1a2035;
+      --border:       #1e2840;
+      --green:        #22c55e;
+      --green-bright: #4ade80;
+      --red:          #f87171;
+      --gold:         #e8a020;
+      --purple:       #a855f7;
+      --purple-bright:#c084fc;
+      --text:         #e6e9f0;
+      --text-dim:     #8a93a8;
+      --text-muted:   #5c6478;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      padding: 12px 12px 60px;
+      background: var(--bg-base);
+      color: var(--text);
+      font-family: 'Outfit', system-ui, sans-serif;
+      font-size: 14px;
+      line-height: 1.4;
+    }
+    header { margin-bottom: 14px; }
+    .title-row {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 12px;
+    }
+    .title {
+      font-family: 'Barlow Condensed', sans-serif;
+      font-weight: 800;
+      font-size: 28px;
+      letter-spacing: 0.5px;
+      margin: 0;
+      line-height: 1;
+    }
+    .subtitle {
+      color: var(--text-dim);
+      font-size: 12px;
+      margin-top: 4px;
+    }
+    .nav-back {
+      display: inline-block;
+      padding: 6px 10px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      font-size: 12px;
+      color: var(--text-dim);
+      text-decoration: none;
+    }
+
+    .summary {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 8px;
+      margin: 12px 0;
+    }
+    .summary-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 10px 8px;
+      text-align: center;
+    }
+    .summary-num {
+      font-family: 'Barlow Condensed', sans-serif;
+      font-weight: 800;
+      font-size: 22px;
+      font-variant-numeric: tabular-nums;
+    }
+    .summary-num.pos { color: var(--green-bright); }
+    .summary-num.neg { color: var(--red); }
+    .summary-label {
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      color: var(--text-muted);
+      margin-top: 2px;
+    }
+
+    .race {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 12px;
+      margin-bottom: 8px;
+    }
+    .race.settled-hit { border-color: rgba(74,222,128,0.4); }
+    .race.settled-miss { opacity: 0.85; }
+    .race.pending { border-color: rgba(168,85,247,0.4); }
+    .race-top {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      gap: 10px;
+      margin-bottom: 6px;
+    }
+    .race-id {
+      font-family: 'Barlow Condensed', sans-serif;
+      font-weight: 700;
+      font-size: 16px;
+      letter-spacing: 0.3px;
+    }
+    .race-pnl {
+      font-family: 'Barlow Condensed', sans-serif;
+      font-weight: 800;
+      font-size: 20px;
+      font-variant-numeric: tabular-nums;
+    }
+    .race-pnl.pos { color: var(--green-bright); }
+    .race-pnl.neg { color: var(--red); }
+    .race-pnl.pending { color: var(--purple-bright); font-size: 13px; font-weight: 600; }
+    .race-meta {
+      font-size: 11px;
+      color: var(--text-dim);
+    }
+    .race-stats {
+      margin-top: 8px;
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr 1fr;
+      gap: 6px;
+      font-size: 11px;
+    }
+    .race-stat {
+      text-align: center;
+      padding: 4px;
+      background: var(--bg-elevated);
+      border-radius: 6px;
+    }
+    .race-stat-num {
+      font-weight: 700;
+      color: var(--text);
+      display: block;
+      font-variant-numeric: tabular-nums;
+    }
+    .race-stat-label {
+      color: var(--text-muted);
+      font-size: 9px;
+      text-transform: uppercase;
+      letter-spacing: 0.3px;
+    }
+
+    .empty {
+      text-align: center;
+      padding: 40px 20px;
+      color: var(--text-muted);
+    }
+    .loading { text-align: center; padding: 40px; color: var(--text-dim); }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="title-row">
+      <div>
+        <h1 class="title">📊 Bet Ledger</h1>
+        <div class="subtitle">Paper-trading · $2 flexi-box trifectas · 5 bets per qualifying race</div>
+      </div>
+      <a href="/hotseat" class="nav-back">🔥 Hot Seat →</a>
+    </div>
+    <div id="summary" class="summary"></div>
+  </header>
+  <main id="races">
+    <div class="loading">Loading ledger…</div>
+  </main>
+
+<script>
+  const API = 'https://web-production-dec62.up.railway.app';
+
+  function fmtPnl(v) {
+    if (v == null) return null;
+    const s = v >= 0 ? '+' : '−';
+    return s + '$' + Math.abs(v).toFixed(2);
+  }
+
+  function escHtml(s) {
+    return (s == null ? '' : String(s))
+      .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  }
+
+  function render(data) {
+    const races = data.races || [];
+    const summary = document.getElementById('summary');
+    const settled = races.filter(r => r.status === 'settled');
+    const totalStakeAll = races.reduce((a, r) => a + (r.total_stake || 0), 0);
+    const totalPnl = settled.reduce((a, r) => a + (r.pnl || 0), 0);
+    const totalHits = races.reduce((a, r) => a + (r.hits || 0), 0);
+    summary.innerHTML = `
+      <div class="summary-card">
+        <div class="summary-num">${races.length}</div>
+        <div class="summary-label">Races</div>
+      </div>
+      <div class="summary-card">
+        <div class="summary-num ${totalPnl >= 0 ? 'pos' : 'neg'}">${fmtPnl(totalPnl) || '—'}</div>
+        <div class="summary-label">Settled P/L</div>
+      </div>
+      <div class="summary-card">
+        <div class="summary-num">${totalHits}</div>
+        <div class="summary-label">Trifecta hits</div>
+      </div>`;
+
+    const main = document.getElementById('races');
+    if (!races.length) {
+      main.innerHTML = `
+        <div class="empty">
+          <div style="font-size:28px;margin-bottom:8px">📭</div>
+          <div>No paper-trading bets yet — they generate hourly during racing hours.</div>
+        </div>`;
+      return;
+    }
+    main.innerHTML = races.map(r => {
+      const pending = r.status === 'pending';
+      const pnl = r.pnl;
+      const cls = pending ? 'pending' : (pnl >= 0 ? 'settled-hit' : 'settled-miss');
+      const pnlEl = pending
+        ? `<div class="race-pnl pending">Pending</div>`
+        : `<div class="race-pnl ${pnl >= 0 ? 'pos' : 'neg'}">${fmtPnl(pnl)}</div>`;
+      const venue = (r.venue || '').replace(/-/g,' ').toUpperCase();
+      return `
+        <div class="race ${cls}">
+          <div class="race-top">
+            <div>
+              <div class="race-id">${escHtml(venue)} R${r.race_number}</div>
+              <div class="race-meta">${escHtml(r.date || '')} · ${r.num_bets} bets · stake $${r.total_stake.toFixed(2)}</div>
+            </div>
+            ${pnlEl}
+          </div>
+          <div class="race-stats">
+            <div class="race-stat">
+              <span class="race-stat-num">${r.num_bets}</span>
+              <span class="race-stat-label">Bets</span>
+            </div>
+            <div class="race-stat">
+              <span class="race-stat-num">${r.hits || 0}</span>
+              <span class="race-stat-label">Hits</span>
+            </div>
+            <div class="race-stat">
+              <span class="race-stat-num">$${r.total_stake.toFixed(2)}</span>
+              <span class="race-stat-label">Stake</span>
+            </div>
+            <div class="race-stat">
+              <span class="race-stat-num">${r.total_payout != null ? '$' + r.total_payout.toFixed(2) : '—'}</span>
+              <span class="race-stat-label">Payout</span>
+            </div>
+          </div>
+        </div>`;
+    }).join('');
+  }
+
+  async function load() {
+    try {
+      const r = await fetch(`${API}/api/bets?days=14`);
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      const data = await r.json();
+      render(data);
+    } catch (e) {
+      document.getElementById('races').innerHTML = `
+        <div class="empty">Could not load ledger: ${escHtml(e.message)}</div>`;
+    }
+  }
+
+  // Refresh every 60s + jitter
+  setInterval(load, 60000 + Math.random() * 15000);
+  load();
+</script>
+</body>
+</html>

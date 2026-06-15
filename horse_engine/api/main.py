@@ -65,7 +65,11 @@ from horse_engine.models.database import (
     save_exotic_model_weights,
     save_race_predictions,
 )
-from horse_engine.bets import generate_recommendations as _build_bet_basket
+from horse_engine.bets import (
+    compute_payout as _bet_compute_payout,
+    generate_recommendations as _build_bet_basket,
+    is_trifecta_hit as _bet_is_hit,
+)
 from horse_engine.models.enriched import EnrichedRunner
 from horse_engine.pipeline import enrich_and_predict_race, enrich_meeting
 from horse_engine.prediction.engine import _value_rating
@@ -2036,6 +2040,11 @@ async def lifespan(app: FastAPI):
         _scheduled_generate_bets,
         CronTrigger(hour="6-21", minute=5, timezone="Australia/Sydney")
     )
+    # Settlement sweep — runs every 30 min during the results window.
+    scheduler.add_job(
+        _scheduled_settle_bets,
+        CronTrigger(hour="14-23", minute="10,40", timezone="Australia/Sydney")
+    )
     scheduler.start()
     log.info("[scheduler] Cron jobs scheduled")
 
@@ -3499,6 +3508,115 @@ async def _generate_bets_for_race(race_id: str, *, regenerate: bool = False) -> 
             await session.rollback()
             log.debug("[bets] insert raced (probably dup): %s", e)
             return 0
+
+
+async def _fetch_trifecta_dividend(race_id: str) -> Optional[float]:
+    """Pull the trifecta dividend for a race from RA's Results.aspx via the proxy.
+    Returns the dollar dividend or None if not available. Uses the same
+    cache path as Results.aspx — repeated calls within the RA client
+    TTL are free."""
+    date_str, venue_code, race_num = _parse_race_id(race_id)
+    if not (date_str and venue_code and race_num):
+        return None
+    client = get_tab_client()
+    ra = getattr(client, "_ra", None)
+    if ra is None:
+        return None
+    # Resolve venue → ra_key. The slug→key cache (_slug_to_key) is shared
+    # with the prediction path; if it's not warmed yet we accept the cost
+    # of a single calendar fetch — that's bounded by the 1h TTL.
+    slug = _meeting_slug(venue_code, date_str)
+    if slug not in ra._slug_to_key:
+        try:
+            await ra.get_meetings(date_str)
+        except Exception:
+            return None
+    ra_key = ra._slug_to_key.get(slug)
+    if not ra_key:
+        return None
+    try:
+        results = await ra.get_results(ra_key)
+    except Exception as e:
+        log.debug("[bets] get_results failed for %s: %s", ra_key, e)
+        return None
+    race_data = (results or {}).get(int(race_num)) or {}
+    dividends = race_data.get("dividends") or {}
+    return dividends.get("trifecta")
+
+
+async def _settle_bets_for_race(race_id: str) -> int:
+    """Settle every unsettled BetRecommendationRow for one race. Returns
+    the number of rows updated. No-op if the race has no historical
+    results or no trifecta dividend yet."""
+    async with get_session() as session:
+        # Top-3 finishers by tab_number
+        results = (await session.execute(
+            select(HistoricalResultRow.tab_number, HistoricalResultRow.position)
+            .where(HistoricalResultRow.race_id == race_id)
+            .where(HistoricalResultRow.position.in_([1, 2, 3]))
+        )).fetchall()
+        if len(results) < 3 or any(r.tab_number is None for r in results):
+            return 0
+        actual_top3 = [tab for tab, _ in sorted(results, key=lambda r: r[1])]
+
+        unsettled = (await session.execute(
+            select(BetRecommendationRow)
+            .where(BetRecommendationRow.race_id == race_id)
+            .where(BetRecommendationRow.settled.is_(False))
+        )).scalars().all()
+        if not unsettled:
+            return 0
+
+    dividend = await _fetch_trifecta_dividend(race_id)
+    if dividend is None:
+        # Results landed but dividend not parsed (could be intra-race
+        # Results.aspx state). Leave as pending — settlement retries next tick.
+        return 0
+
+    async with get_session() as session:
+        updated = 0
+        for b in unsettled:
+            row = await session.get(BetRecommendationRow, b.id)
+            if row is None or row.settled:
+                continue
+            box = json.loads(row.box_horses_json or "[]")
+            hit = _bet_is_hit(box, actual_top3)
+            payout, pnl = _bet_compute_payout(row.stake_dollars, row.num_permutations, dividend, hit)
+            row.is_hit = hit
+            row.actual_top3_json = json.dumps(actual_top3)
+            row.trifecta_dividend = dividend
+            row.payout_dollars = payout
+            row.pnl_dollars = pnl
+            row.settled = True
+            row.settled_at = datetime.utcnow()
+            updated += 1
+        await session.commit()
+    if updated:
+        log.info("[bets] settled %d bets for %s (div=$%.2f)", updated, race_id, dividend)
+    return updated
+
+
+async def _scheduled_settle_bets():
+    """Sweep all unsettled bets whose races have historical results and a
+    trifecta dividend. Runs after results-seeding crons during 14-23 AEST."""
+    try:
+        async with get_session() as session:
+            race_ids = (await session.execute(
+                select(BetRecommendationRow.race_id).distinct()
+                .where(BetRecommendationRow.settled.is_(False))
+            )).scalars().all()
+        if not race_ids:
+            return
+        total = 0
+        for rid in race_ids:
+            try:
+                total += await _settle_bets_for_race(rid)
+            except Exception as e:
+                log.debug("[bets] settle failed for %s: %s", rid, e)
+        if total:
+            log.info("[bets] settlement sweep: %d rows", total)
+    except Exception as e:
+        log.exception("[bets] scheduled settlement failed: %s", e)
 
 
 async def _scheduled_generate_bets():

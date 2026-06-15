@@ -611,10 +611,46 @@ def _parse_acceptances_page(html: str, ra_key: str, race_date: str, state: str) 
 
 # ── Results parser ────────────────────────────────────────────────────────────
 
+_DIVIDEND_LABELS = {
+    "trifecta": "trifecta",
+    "exacta": "exacta",
+    "quinella": "quinella",
+    "first four": "first_four",
+    "first 4": "first_four",
+}
+
+
+def _parse_dividends_from_text(text: str) -> dict[str, float]:
+    """Extract exotic dividends from a 'Race Dividends' table-cell text blob.
+
+    RA's Results.aspx lays out dividends in many shapes — most commonly
+    "Trifecta 10-11-2 $324.40" on a single line, sometimes split across
+    cells. Greedy regex over the whole block, label-prefixed dollar amount.
+    Returns: {trifecta: float, exacta: float, ...} for any labels found.
+    """
+    out: dict[str, float] = {}
+    if not text:
+        return out
+    # Capture "<label> ... $<amount>" with the amount possibly comma-grouped.
+    for label, key in _DIVIDEND_LABELS.items():
+        m = re.search(
+            rf"{re.escape(label)}\b[^\$]{{0,80}}\$([\d,]+(?:\.\d+)?)",
+            text,
+            re.IGNORECASE,
+        )
+        if m:
+            try:
+                out[key] = float(m.group(1).replace(",", ""))
+            except ValueError:
+                pass
+    return out
+
+
 def _parse_results_page(html: str) -> dict[int, dict]:
     """
     Parse a Results.aspx page.
-    Returns {race_number: {'track_condition': str, 'runners': {name_lower: {'position', 'margin', 'sp'}}}}
+    Returns {race_number: {'track_condition': str, 'dividends': dict,
+             'runners': {name_lower: {'position', 'margin', 'sp'}}}}
     """
     soup = BeautifulSoup(html, "html.parser")
     tables = soup.find_all("table")
@@ -632,8 +668,16 @@ def _parse_results_page(html: str) -> dict[int, dict]:
         m = re.match(r"Race\s+(\d+)\s*-", first_text, re.IGNORECASE)
         if m:
             current_race_num = int(m.group(1))
-            results[current_race_num] = {"track_condition": "", "runners": {}}
+            results[current_race_num] = {"track_condition": "", "dividends": {}, "runners": {}}
             continue
+
+        # Dividend block — contains text like 'Trifecta 10-11-2 $324.40'.
+        # Match any cell whose text starts with one of the dividend labels.
+        if current_race_num is not None:
+            full_text = table.get_text(" ", strip=True)
+            divs = _parse_dividends_from_text(full_text)
+            if divs:
+                results[current_race_num].setdefault("dividends", {}).update(divs)
 
         # Race details: "Of $50,000 ... Track Condition:Heavy 8 ..."
         if first_text.startswith("Of $") and current_race_num is not None:
