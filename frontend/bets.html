@@ -574,10 +574,10 @@
       let divider = '';
       if (dateKey !== lastDateKey) {
         const label = _dayLabel(dateKey);
-        const isToday = label === 'Today';
+        const isStrong = label === 'Today' || label === 'Tomorrow';
         divider = `
           <div class="day-divider">
-            <span class="${isToday ? 'label-strong' : ''}">${escHtml(label)}</span>
+            <span class="${isStrong ? 'label-strong' : ''}">${escHtml(label)}</span>
             <hr/>
             <span class="count">${dayCounts[dateKey]} race${dayCounts[dateKey] === 1 ? '' : 's'}</span>
           </div>`;
