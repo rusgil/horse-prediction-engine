@@ -3549,25 +3549,34 @@ async def _generate_bets_for_race(race_id: str, *, regenerate: bool = False) -> 
         return len(bets)
 
 
+# Lazy TABClient singleton used for dividend lookups only — the rest of
+# the engine talks to RA via the composite client.
+_tab_client_for_dividends = None
+
+
+def _get_tab_client_for_dividends():
+    global _tab_client_for_dividends
+    if _tab_client_for_dividends is None:
+        from horse_engine.clients.tab import TABClient
+        _tab_client_for_dividends = TABClient()
+    return _tab_client_for_dividends
+
+
 async def _fetch_race_raw_from_tab(race_id: str) -> Optional[dict]:
-    """Fetch raw TAB race detail (post-result) via the TAB client.
-    Used by dividend extraction and the debug endpoint."""
+    """Fetch raw TAB race detail (post-result) used for trifecta dividend
+    extraction. TAB resolves meetings by slug; we map our race_id's venue
+    code into the slug format TAB's client expects."""
     date_str, venue_code, race_num = _parse_race_id(race_id)
     if not (date_str and venue_code and race_num):
         return None
-    client = get_tab_client()
-    # The composite client wraps RA; the actual TAB client lives at ._tab
-    # if present. Fall back to a direct httpx call if not available.
-    tab = getattr(client, "_tab", None)
-    if tab is not None and hasattr(tab, "_get_race_by_code"):
-        try:
-            # _get_race_by_code expects a TAB venue code (often uppercase).
-            # Try our stored venue_code uppercased — TAB tends to use forms
-            # like 'NOW' (Nowra), 'TAM' (Tamworth) so a direct uppercase
-            # often works for AU venues.
-            return await tab._get_race_by_code(date_str, venue_code.upper(), int(race_num))
-        except Exception as e:
-            log.debug("[bets] tab._get_race_by_code failed for %s: %s", race_id, e)
+    tab = _get_tab_client_for_dividends()
+    # TAB slug = venueSlug-YYYYMMDD. Our venue_code is the same slug shape
+    # we use elsewhere ("nowra", "tamworth"), so this maps directly.
+    slug = f"{venue_code}-{date_str.replace('-', '')}"
+    try:
+        return await tab.get_race(slug, int(race_num))
+    except Exception as e:
+        log.debug("[bets] tab.get_race failed for %s: %s", race_id, e)
     return None
 
 
