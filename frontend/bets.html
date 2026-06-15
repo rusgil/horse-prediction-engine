@@ -296,6 +296,33 @@
     }
     .bet-loading { color: var(--text-muted); padding: 8px 0; font-size: 11px; text-align: center; }
 
+    /* Day section header */
+    .day-divider {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      margin: 18px 4px 8px;
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.6px;
+      color: var(--text-dim);
+    }
+    .day-divider:first-child { margin-top: 4px; }
+    .day-divider .label-strong { color: var(--teal-bright); }
+    .day-divider .count {
+      color: var(--text-muted);
+      font-weight: 500;
+      font-size: 10px;
+    }
+    .day-divider hr {
+      flex: 1;
+      border: 0;
+      border-top: 1px solid var(--border);
+      margin: 0;
+    }
+
     .empty {
       text-align: center;
       padding: 40px 20px;
@@ -429,6 +456,45 @@
     return isNaN(t) ? null : t;
   }
 
+  function _aestDateKey(r) {
+    // Return the race-day key in Australia/Sydney (YYYY-MM-DD). Prefer
+    // scheduled_time if present; fall back to the stored date column.
+    if (r.scheduled_time) {
+      const d = new Date(r.scheduled_time);
+      if (!isNaN(d.getTime())) {
+        const parts = d.toLocaleDateString('en-AU', {
+          timeZone: 'Australia/Sydney', year: 'numeric', month: '2-digit', day: '2-digit',
+        }).split('/');
+        return `${parts[2]}-${parts[1]}-${parts[0]}`;
+      }
+    }
+    return r.date || '';
+  }
+
+  function _todayAestKey() {
+    const parts = new Date().toLocaleDateString('en-AU', {
+      timeZone: 'Australia/Sydney', year: 'numeric', month: '2-digit', day: '2-digit',
+    }).split('/');
+    return `${parts[2]}-${parts[1]}-${parts[0]}`;
+  }
+
+  function _dayLabel(dateKey) {
+    if (!dateKey) return 'Other';
+    const today = _todayAestKey();
+    if (dateKey === today) return 'Today';
+    // Compute tomorrow in AEST
+    const [y, m, d] = today.split('-').map(Number);
+    const t = new Date(Date.UTC(y, m - 1, d) + 24 * 60 * 60 * 1000);
+    const tomorrow = `${t.getUTCFullYear()}-${String(t.getUTCMonth()+1).padStart(2,'0')}-${String(t.getUTCDate()).padStart(2,'0')}`;
+    if (dateKey === tomorrow) return 'Tomorrow';
+    // Past or further future → use weekday + day
+    const parsed = new Date(`${dateKey}T12:00:00+10:00`);
+    if (isNaN(parsed.getTime())) return dateKey;
+    return parsed.toLocaleDateString('en-AU', {
+      timeZone: 'Australia/Sydney', weekday: 'short', day: 'numeric', month: 'short',
+    });
+  }
+
   function applySort(races) {
     const now = Date.now();
     if (state.sort === 'next') {
@@ -494,7 +560,29 @@
         </div>`;
       return;
     }
+    // Group runs by AEST date so we can insert section dividers as the
+    // date changes from one card to the next. The sort already groups
+    // same-date races contiguously (within upcoming/past blocks).
+    const dayCounts = {};
+    races.forEach(r => {
+      const k = _aestDateKey(r);
+      dayCounts[k] = (dayCounts[k] || 0) + 1;
+    });
+    let lastDateKey = null;
     main.innerHTML = races.map(r => {
+      const dateKey = _aestDateKey(r);
+      let divider = '';
+      if (dateKey !== lastDateKey) {
+        const label = _dayLabel(dateKey);
+        const isToday = label === 'Today';
+        divider = `
+          <div class="day-divider">
+            <span class="${isToday ? 'label-strong' : ''}">${escHtml(label)}</span>
+            <hr/>
+            <span class="count">${dayCounts[dateKey]} race${dayCounts[dateKey] === 1 ? '' : 's'}</span>
+          </div>`;
+        lastDateKey = dateKey;
+      }
       const pending = r.status === 'pending';
       const pnl = r.pnl;
       const cls = pending ? 'pending' : (pnl >= 0 ? 'settled-hit' : 'settled-miss');
@@ -507,7 +595,7 @@
       const timeRow = jt
         ? `<div class="race-time"><span class="jump-time">🕐 ${jt}</span><span class="countdown ${cd ? cd.cls : ''}">${cd ? cd.text : ''}</span></div>`
         : '';
-      return `
+      return `${divider}
         <div class="race ${cls}">
           <div class="race-top">
             <div>
