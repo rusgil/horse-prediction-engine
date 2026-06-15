@@ -1451,6 +1451,10 @@ async def _seed_results_for_date(race_date: str) -> int:
                         winner=pos == 1,
                         placed=pos <= 3,
                         starting_price=rd.get("sp"),
+                        # tab_number is required by the bet-settlement path —
+                        # without it, hit/miss can't be evaluated. Pull from
+                        # the matched prediction row (same race + horse).
+                        tab_number=getattr(matched, "tab_number", None) if matched else None,
                         feature_vector_json=matched.enriched_json if matched else None,
                     ))
                     ra_seeded_total += 1
@@ -3647,15 +3651,40 @@ async def _settle_bets_for_race(race_id: str) -> int:
     the number of rows updated. No-op if the race has no historical
     results or no trifecta dividend yet."""
     async with get_session() as session:
-        # Top-3 finishers by tab_number
+        # Top-3 finishers — fetch tab + horse_name so we can backfill
+        # tab_number from the prediction tables when seed didn't capture
+        # it (older HistoricalResultRow rows have tab_number = NULL).
         results = (await session.execute(
-            select(HistoricalResultRow.tab_number, HistoricalResultRow.position)
+            select(HistoricalResultRow.tab_number, HistoricalResultRow.position,
+                   HistoricalResultRow.horse_name)
             .where(HistoricalResultRow.race_id == race_id)
             .where(HistoricalResultRow.position.in_([1, 2, 3]))
         )).fetchall()
-        if len(results) < 3 or any(r.tab_number is None for r in results):
+        if len(results) < 3:
             return 0
-        actual_top3 = [tab for tab, _ in sorted(results, key=lambda r: r[1])]
+
+        # Fill missing tab numbers from the prediction rows for this race.
+        if any(r.tab_number is None for r in results):
+            tab_lookup: dict[str, int] = {}
+            for src in (RunnerPredictionRow, RunnerPredictionHistoryRow):
+                rows = (await session.execute(
+                    select(src.horse_name, src.tab_number)
+                    .where(src.race_id == race_id)
+                    .where(src.tab_number.isnot(None))
+                )).fetchall()
+                for name, tab in rows:
+                    tab_lookup[_normalize_horse(name)] = tab
+            filled: list = []
+            for r in results:
+                tab = r.tab_number
+                if tab is None:
+                    tab = tab_lookup.get(_normalize_horse(r.horse_name))
+                filled.append((tab, r.position))
+            if any(t is None for t, _ in filled):
+                return 0
+            actual_top3 = [tab for tab, _ in sorted(filled, key=lambda x: x[1])]
+        else:
+            actual_top3 = [r.tab_number for r in sorted(results, key=lambda r: r.position)]
 
         unsettled = (await session.execute(
             select(BetRecommendationRow)
@@ -4139,6 +4168,25 @@ async def list_bet_races(days: int = 7):
                 top3_map.setdefault(rid, []).append({
                     "position": pos, "tab_number": tab, "horse_name": name,
                 })
+            # Backfill missing tab numbers per race from prediction tables.
+            needs_backfill = {rid for rid, items in top3_map.items()
+                              if any(it["tab_number"] is None for it in items)}
+            if needs_backfill:
+                for src in (RunnerPredictionRow, RunnerPredictionHistoryRow):
+                    rows_with_tab = (await session.execute(
+                        select(src.race_id, src.horse_name, src.tab_number)
+                        .where(src.race_id.in_(needs_backfill))
+                        .where(src.tab_number.isnot(None))
+                    )).fetchall()
+                    lookups: dict[tuple, int] = {}
+                    for rid, name, tab in rows_with_tab:
+                        lookups[(rid, _normalize_horse(name))] = tab
+                    for rid in list(needs_backfill):
+                        for it in top3_map.get(rid, []):
+                            if it["tab_number"] is None:
+                                t = lookups.get((rid, _normalize_horse(it["horse_name"])))
+                                if t is not None:
+                                    it["tab_number"] = t
             for rid in top3_map:
                 top3_map[rid].sort(key=lambda x: x["position"])
         # Scheduled time per race — pulled from mutable first (newer odds-
