@@ -344,6 +344,57 @@
     }
     .bet-loading { color: var(--text-muted); padding: 8px 0; font-size: 11px; text-align: center; }
 
+    /* Inline dividend entry */
+    .dividend-row {
+      margin-top: 8px;
+      padding: 6px 10px;
+      background: rgba(45,212,191,0.06);
+      border: 1px dashed rgba(45,212,191,0.35);
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 11px;
+    }
+    .dividend-row .label {
+      color: var(--text-dim);
+      font-weight: 600;
+    }
+    .dividend-row input {
+      flex: 1;
+      background: var(--bg-base);
+      border: 1px solid var(--border);
+      color: var(--text);
+      padding: 4px 8px;
+      border-radius: 6px;
+      font-size: 12px;
+      font-family: 'Outfit', sans-serif;
+      font-variant-numeric: tabular-nums;
+      min-width: 60px;
+    }
+    .dividend-row input:focus {
+      outline: none;
+      border-color: var(--teal);
+    }
+    .dividend-row button {
+      background: var(--teal);
+      border: 0;
+      color: var(--bg-base);
+      padding: 4px 10px;
+      border-radius: 6px;
+      font-weight: 700;
+      font-size: 11px;
+      cursor: pointer;
+    }
+    .dividend-row button:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+    .dividend-row .err {
+      color: var(--red);
+      font-size: 10px;
+    }
+
     /* Day section header */
     .day-divider {
       display: flex;
@@ -404,6 +455,12 @@
 
 <script>
   const API = 'https://web-production-dec62.up.railway.app';
+  // Reuse the dashboard's admin-secret slot — if the user has logged in
+  // on /dashboard, the secret is cached in sessionStorage and the inline
+  // dividend entry shows up. Otherwise hidden (no public exposure).
+  const ADMIN_KEY = 'fiq_admin_secret';
+  const adminSecret = (typeof sessionStorage !== 'undefined' && sessionStorage.getItem(ADMIN_KEY)) || '';
+  const isAdmin = !!adminSecret;
   const STRATEGY_LABELS = {
     core_top3: 'Top 3 box',
     core_top4: 'Top 4 box',
@@ -729,6 +786,13 @@
             </div>
           </div>
           ${winningStrip}
+          ${(noDiv && isAdmin) ? `
+            <div class="dividend-row" data-divrow="${escHtml(r.race_id)}">
+              <span class="label">Trifecta $</span>
+              <input type="number" step="0.01" min="0.01" placeholder="e.g. 234.50"
+                     data-divinput="${escHtml(r.race_id)}" />
+              <button data-divsave="${escHtml(r.race_id)}">Save</button>
+            </div>` : ''}
           ${state.expanded.has(r.race_id)
             ? `<div class="bet-toggle" data-race="${escHtml(r.race_id)}">Hide bets ▴</div>${renderBetDetail(r.race_id)}`
             : `<div class="bet-toggle" data-race="${escHtml(r.race_id)}">Show ${r.num_bets} bets ▾</div>`}
@@ -758,8 +822,43 @@
     });
   });
 
-  // Delegated click for the expand toggle — cards re-render on refresh.
-  document.getElementById('races').addEventListener('click', (e) => {
+  // Delegated click handler — handles both the expand toggle and the
+  // inline dividend save button. Cards re-render on refresh so all
+  // listeners must be delegated from a stable parent.
+  document.getElementById('races').addEventListener('click', async (e) => {
+    // Dividend save
+    const saveBtn = e.target.closest('button[data-divsave]');
+    if (saveBtn) {
+      const raceId = saveBtn.dataset.divsave;
+      const input = document.querySelector(`input[data-divinput="${CSS.escape(raceId)}"]`);
+      if (!input) return;
+      const val = parseFloat(input.value);
+      if (!val || val <= 0) {
+        input.style.borderColor = 'var(--red)';
+        input.focus();
+        return;
+      }
+      saveBtn.disabled = true; saveBtn.textContent = 'Saving…';
+      try {
+        const r = await fetch(`${API}/api/admin/bets/dividend/${encodeURIComponent(raceId)}`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'X-Cron-Secret': adminSecret },
+          body: JSON.stringify({ trifecta: val }),
+        });
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        // Invalidate the per-race bet-detail cache so the expanded view
+        // re-fetches with the new payout numbers.
+        delete state.detail[raceId];
+        await load();
+      } catch (err) {
+        saveBtn.disabled = false; saveBtn.textContent = 'Save';
+        input.style.borderColor = 'var(--red)';
+        input.title = err.message;
+      }
+      return;
+    }
+
+    // Expand/collapse
     const t = e.target.closest('.bet-toggle');
     if (!t) return;
     const raceId = t.dataset.race;
