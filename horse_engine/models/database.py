@@ -286,6 +286,21 @@ class RunnerPredictionHistoryRow(Base):
     batch_id = Column(String, nullable=True, index=True)    # UUID shared by all runners in one enrichment run
 
 
+class RaCalendarCacheRow(Base):
+    """Persistent cache for RA Calendar.aspx HTML + the slug→ra_key map
+    it produces. Survives Railway redeploys so we don't fanout 32 RA
+    requests on every cold start. Each row is one (date, state).
+    """
+    __tablename__ = "ra_calendar_cache"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    race_date = Column(String, index=True, nullable=False)  # YYYY-MM-DD
+    state = Column(String, nullable=False)                  # NSW / VIC / etc.
+    meetings_json = Column(Text, nullable=False)            # list of meeting dicts
+    slug_to_key_json = Column(Text, nullable=False)         # {slug: ra_key}
+    fetched_at = Column(DateTime, default=datetime.utcnow, index=True)
+
+
 class BetRecommendationRow(Base):
     """One row per recommended trifecta box bet. Paper-trading ledger —
     no real money. Settled after the race using the trifecta dividend
@@ -350,6 +365,7 @@ async def init_db() -> None:
         "CREATE INDEX IF NOT EXISTS ix_hist_results_race_placed ON historical_results (race_id, placed)",
         "CREATE UNIQUE INDEX IF NOT EXISTS uq_bet_reco_race_strategy ON bet_recommendations (race_id, strategy_label)",
         "CREATE INDEX IF NOT EXISTS ix_bet_reco_settled ON bet_recommendations (settled)",
+        "CREATE UNIQUE INDEX IF NOT EXISTS uq_ra_calendar_date_state ON ra_calendar_cache (race_date, state)",
         "ALTER TABLE historical_results ADD COLUMN IF NOT EXISTS jockey TEXT",
         "ALTER TABLE historical_results ADD COLUMN IF NOT EXISTS trainer TEXT",
         "ALTER TABLE historical_results ADD COLUMN IF NOT EXISTS venue TEXT",

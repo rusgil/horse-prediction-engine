@@ -734,6 +734,70 @@ def _parse_results_page(html: str) -> dict[int, dict]:
     return results
 
 
+# Persistent calendar cache helpers — keyed by (race_date, state). Loaded
+# on cold start so Railway redeploys don't trigger a fresh 32-Calendar
+# fanout. TTL is the same 1h as the in-memory cache.
+_PERSIST_TTL_SECONDS = 3600
+
+
+async def _load_calendar_from_db(race_date: str, state: str):
+    """Return (meetings, slug_to_key_kvs) if a fresh cache row exists,
+    else None. Imports DB models lazily to avoid a circular import."""
+    try:
+        from horse_engine.models.database import RaCalendarCacheRow
+        from horse_engine.api.database import get_session
+        from sqlalchemy import select as _select
+        import json as _json
+        async with get_session() as session:
+            row = (await session.execute(
+                _select(RaCalendarCacheRow)
+                .where(RaCalendarCacheRow.race_date == race_date)
+                .where(RaCalendarCacheRow.state == state)
+            )).scalars().first()
+        if row is None:
+            return None
+        age = (datetime.utcnow() - row.fetched_at).total_seconds()
+        if age > _PERSIST_TTL_SECONDS:
+            return None
+        meetings = _json.loads(row.meetings_json or "[]")
+        slug_kvs = _json.loads(row.slug_to_key_json or "{}")
+        return meetings, slug_kvs
+    except Exception as e:
+        log.debug("calendar DB load failed for %s/%s: %s", race_date, state, e)
+        return None
+
+
+async def _persist_calendar_to_db(race_date: str, state: str, meetings: list, slug_kvs: dict):
+    """Upsert the (race_date, state) cache row. Best-effort — never raises
+    upward."""
+    if not meetings:
+        return
+    try:
+        from horse_engine.models.database import RaCalendarCacheRow
+        from horse_engine.api.database import get_session
+        from sqlalchemy import select as _select
+        import json as _json
+        async with get_session() as session:
+            row = (await session.execute(
+                _select(RaCalendarCacheRow)
+                .where(RaCalendarCacheRow.race_date == race_date)
+                .where(RaCalendarCacheRow.state == state)
+            )).scalars().first()
+            if row is None:
+                session.add(RaCalendarCacheRow(
+                    race_date=race_date, state=state,
+                    meetings_json=_json.dumps(meetings),
+                    slug_to_key_json=_json.dumps(slug_kvs),
+                ))
+            else:
+                row.meetings_json = _json.dumps(meetings)
+                row.slug_to_key_json = _json.dumps(slug_kvs)
+                row.fetched_at = datetime.utcnow()
+            await session.commit()
+    except Exception as e:
+        log.debug("calendar DB persist failed for %s/%s: %s", race_date, state, e)
+
+
 # ── Client ────────────────────────────────────────────────────────────────────
 
 class RacingAustraliaClient:
@@ -921,6 +985,17 @@ class RacingAustraliaClient:
         if cached and (datetime.utcnow() - cached[0]).total_seconds() < 3600:
             return cached[1]
 
+        # Persistent DB cache — survives Railway redeploys. Without this we
+        # re-fanout 32 Calendar requests on every cold start, burning the
+        # 5000/day proxy budget. Try DB before hitting RA; only fall through
+        # to a live fetch when the DB row is missing or stale.
+        db_hit = await _load_calendar_from_db(race_date, state)
+        if db_hit is not None:
+            meetings, slug_kvs = db_hit
+            self._calendar_cache[cache_key] = (datetime.utcnow(), meetings)
+            self._slug_to_key.update(slug_kvs)
+            return meetings
+
         ra_date = _ra_date(race_date)
         try:
             html = await self._get(f"{_BASE}/Calendar.aspx?State={state}")
@@ -963,6 +1038,14 @@ class RacingAustraliaClient:
             })
 
         self._calendar_cache[cache_key] = (datetime.utcnow(), meetings)
+        # Persist the slugs for this (date, state) so a cold-start instance
+        # can rehydrate without re-fetching from RA.
+        date_compact = race_date.replace("-", "")
+        slug_subset = {
+            k: v for k, v in self._slug_to_key.items()
+            if k.endswith(f"-{date_compact}") or k.startswith(f"{race_date}:{state}:")
+        }
+        await _persist_calendar_to_db(race_date, state, meetings, slug_subset)
         return meetings
 
     # ── Acceptances ───────────────────────────────────────────────────────────
