@@ -464,16 +464,27 @@
       if (b.settled) {
         if (b.is_hit) {
           cls = 'hit';
-          resultEl = `<span class="bet-result hit">HIT · +$${(b.payout_dollars || 0).toFixed(2)}</span>`;
+          const payoutTxt = (b.payout_dollars != null)
+            ? `+$${b.payout_dollars.toFixed(2)}`
+            : `(dividend pending)`;
+          resultEl = `<span class="bet-result hit">HIT · ${payoutTxt}</span>`;
         } else {
           resultEl = `<span class="bet-result miss">Miss</span>`;
         }
       } else {
         resultEl = `<span class="bet-result pending">Pending</span>`;
       }
-      const meta = b.settled
-        ? `${b.num_permutations} perms · stake $${(b.stake_dollars||0).toFixed(2)} · ${b.is_hit ? `div $${(b.trifecta_dividend||0).toFixed(2)}` : 'no dividend hit'}`
-        : `${b.num_permutations} perms · stake $${(b.stake_dollars||0).toFixed(2)}`;
+      let meta;
+      if (b.settled) {
+        if (b.is_hit) {
+          const divTxt = (b.trifecta_dividend != null) ? `div $${b.trifecta_dividend.toFixed(2)}` : `dividend not yet available`;
+          meta = `${b.num_permutations} perms · stake $${(b.stake_dollars||0).toFixed(2)} · ${divTxt}`;
+        } else {
+          meta = `${b.num_permutations} perms · stake $${(b.stake_dollars||0).toFixed(2)} · top-3 outside box`;
+        }
+      } else {
+        meta = `${b.num_permutations} perms · stake $${(b.stake_dollars||0).toFixed(2)}`;
+      }
       return `
         <div class="bet-row ${cls}">
           <div class="bet-row-top">
@@ -651,11 +662,19 @@
         lastDateKey = dateKey;
       }
       const pending = r.status === 'pending';
+      const noDiv = r.status === 'settled_no_dividend';
       const pnl = r.pnl;
-      const cls = pending ? 'pending' : (pnl >= 0 ? 'settled-hit' : 'settled-miss');
-      const pnlEl = pending
-        ? `<div class="race-pnl pending">Pending</div>`
-        : `<div class="race-pnl ${pnl >= 0 ? 'pos' : 'neg'}">${fmtPnl(pnl)}</div>`;
+      const cls = pending || noDiv ? 'pending' : (pnl >= 0 ? 'settled-hit' : 'settled-miss');
+      let pnlEl;
+      if (pending) {
+        pnlEl = `<div class="race-pnl pending">Pending</div>`;
+      } else if (noDiv) {
+        const hitsTxt = (r.hits || 0) + ' hit' + (r.hits === 1 ? '' : 's');
+        const hitCls = (r.hits || 0) > 0 ? 'pos' : 'neg';
+        pnlEl = `<div class="race-pnl ${hitCls}" style="font-size:13px;font-weight:600">${hitsTxt}</div>`;
+      } else {
+        pnlEl = `<div class="race-pnl ${pnl >= 0 ? 'pos' : 'neg'}">${fmtPnl(pnl)}</div>`;
+      }
       const venue = (r.venue || '').replace(/-/g,' ').toUpperCase();
       const jt = formatJumpTime(r.scheduled_time);
       const cd = formatCountdown(r.scheduled_time);

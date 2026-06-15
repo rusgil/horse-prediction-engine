@@ -3665,11 +3665,11 @@ async def _settle_bets_for_race(race_id: str) -> int:
         if not unsettled:
             return 0
 
+    # Dividend may be None — TAB API no longer resolves and RA Results.aspx
+    # doesn't carry exotic dividends. Settle anyway with hit/miss + winning
+    # trifecta so the ledger shows actionable info; payout / P&L populate
+    # later if/when a dividend source comes online.
     dividend = await _fetch_trifecta_dividend(race_id)
-    if dividend is None:
-        # Results landed but dividend not parsed (could be intra-race
-        # Results.aspx state). Leave as pending — settlement retries next tick.
-        return 0
 
     async with get_session() as session:
         updated = 0
@@ -3679,18 +3679,20 @@ async def _settle_bets_for_race(race_id: str) -> int:
                 continue
             box = json.loads(row.box_horses_json or "[]")
             hit = _bet_is_hit(box, actual_top3)
-            payout, pnl = _bet_compute_payout(row.stake_dollars, row.num_permutations, dividend, hit)
             row.is_hit = hit
             row.actual_top3_json = json.dumps(actual_top3)
-            row.trifecta_dividend = dividend
-            row.payout_dollars = payout
-            row.pnl_dollars = pnl
+            row.trifecta_dividend = dividend  # None when source missing
+            if dividend is not None:
+                payout, pnl = _bet_compute_payout(row.stake_dollars, row.num_permutations, dividend, hit)
+                row.payout_dollars = payout
+                row.pnl_dollars = pnl
             row.settled = True
             row.settled_at = datetime.utcnow()
             updated += 1
         await session.commit()
     if updated:
-        log.info("[bets] settled %d bets for %s (div=$%.2f)", updated, race_id, dividend)
+        log.info("[bets] settled %d bets for %s (div=%s)", updated, race_id,
+                 f"${dividend:.2f}" if dividend else "unknown")
     return updated
 
 
@@ -4168,9 +4170,20 @@ async def list_bet_races(days: int = 7):
     for race_id, bets in by_race.items():
         date, venue, race_num = _parse_race_id(race_id)
         total_stake = sum((b.stake_dollars or 0) for b in bets)
-        total_payout = sum((b.payout_dollars or 0) for b in bets if b.settled)
+        total_payout = sum((b.payout_dollars or 0) for b in bets if b.settled and b.payout_dollars is not None)
         any_unsettled = any(not b.settled for b in bets)
-        pnl = round(total_payout - total_stake, 2) if not any_unsettled else None
+        has_dividend = any(b.settled and b.trifecta_dividend is not None for b in bets)
+        # P&L only computable when we actually have dividend data. Settled
+        # races without a dividend show 'dividend pending'.
+        pnl = round(total_payout - total_stake, 2) if (not any_unsettled and has_dividend) else None
+        # Status: pending (race hasn't been processed), settled-no-div (hits
+        # known but dividend missing), or settled (full P&L available).
+        if any_unsettled:
+            status = "pending"
+        elif has_dividend:
+            status = "settled"
+        else:
+            status = "settled_no_dividend"
         sched = sched_map.get(race_id)
         if isinstance(sched, str) and "T00:00:00" in sched:
             sched = None  # placeholder midnight = unknown
@@ -4182,9 +4195,9 @@ async def list_bet_races(days: int = 7):
             "scheduled_time": sched,
             "num_bets": len(bets),
             "total_stake": round(total_stake, 2),
-            "total_payout": round(total_payout, 2) if not any_unsettled else None,
+            "total_payout": round(total_payout, 2) if (not any_unsettled and has_dividend) else None,
             "pnl": pnl,
-            "status": "pending" if any_unsettled else "settled",
+            "status": status,
             "hits": sum(1 for b in bets if b.is_hit),
             "top3": top3_map.get(race_id) or None,
         })
