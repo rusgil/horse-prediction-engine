@@ -4297,10 +4297,33 @@ async def admin_generate_bets(
 
 @app.post("/api/admin/bets/settle")
 async def admin_settle_bets(x_cron_secret: Optional[str] = Header(None)):
-    """Manually fire the settlement sweep (pre-seeds results then settles)."""
+    """Fire the settlement sweep in the background and return immediately.
+    The bulk sweep can take >60s (one RA call per pending date for the
+    pre-seed step), so doing it synchronously trips Railway's request
+    timeout. The work still happens — just not under this HTTP request."""
     _check_admin(x_cron_secret)
-    await _scheduled_settle_bets()
-    return {"ok": True}
+    asyncio.create_task(_scheduled_settle_bets())
+    return {"ok": True, "queued": True}
+
+
+@app.post("/api/admin/bets/settle-only")
+async def admin_settle_only(x_cron_secret: Optional[str] = Header(None)):
+    """Settle bets using whatever results are already in the DB — no
+    re-seeding. Fast (~1s), useful when results are confirmed populated
+    and you just need the bet rows flipped to 'settled'."""
+    _check_admin(x_cron_secret)
+    async with get_session() as session:
+        race_ids = (await session.execute(
+            select(BetRecommendationRow.race_id).distinct()
+            .where(BetRecommendationRow.settled.is_(False))
+        )).scalars().all()
+    total = 0
+    for rid in race_ids:
+        try:
+            total += await _settle_bets_for_race(rid)
+        except Exception as e:
+            log.debug("[bets] settle-only failed for %s: %s", rid, e)
+    return {"ok": True, "settled": total, "races_examined": len(race_ids)}
 
 
 @app.get("/api/admin/bets/debug-dividend/{race_id}")

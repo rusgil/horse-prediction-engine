@@ -664,14 +664,20 @@
       const pending = r.status === 'pending';
       const noDiv = r.status === 'settled_no_dividend';
       const pnl = r.pnl;
-      const cls = pending || noDiv ? 'pending' : (pnl >= 0 ? 'settled-hit' : 'settled-miss');
+      const hits = r.hits || 0;
+      // Card class drives the outline colour: green border if any bet hit
+      // (whether or not we have a dividend), red/dimmed if all missed.
+      const cls = pending ? 'pending' : (hits > 0 ? 'settled-hit' : 'settled-miss');
       let pnlEl;
       if (pending) {
         pnlEl = `<div class="race-pnl pending">Pending</div>`;
       } else if (noDiv) {
-        const hitsTxt = (r.hits || 0) + ' hit' + (r.hits === 1 ? '' : 's');
-        const hitCls = (r.hits || 0) > 0 ? 'pos' : 'neg';
-        pnlEl = `<div class="race-pnl ${hitCls}" style="font-size:13px;font-weight:600">${hitsTxt}</div>`;
+        // No dividend yet — show binary Correct / Missed instead of a
+        // misleading P&L number. Hit count visible inside the expanded
+        // bet detail.
+        const label = hits > 0 ? `✓ Correct (${hits})` : '✗ Missed';
+        const labelCls = hits > 0 ? 'pos' : 'neg';
+        pnlEl = `<div class="race-pnl ${labelCls}" style="font-size:14px;font-weight:700">${label}</div>`;
       } else {
         pnlEl = `<div class="race-pnl ${pnl >= 0 ? 'pos' : 'neg'}">${fmtPnl(pnl)}</div>`;
       }
