@@ -317,7 +317,7 @@
     <div class="sort-row">
       <span class="sort-label">Sort</span>
       <button class="sort-pill active" data-sort="next">Next race</button>
-      <button class="sort-pill" data-sort="recent">Most recent</button>
+      <button class="sort-pill" data-sort="recent">Just ran</button>
       <button class="sort-pill" data-sort="pnl">Best P/L</button>
     </div>
   </header>
@@ -442,7 +442,14 @@
       return [...upcoming, ...past];
     }
     if (state.sort === 'recent') {
-      return [...races].sort((a, b) => (_jumpMs(b) || 0) - (_jumpMs(a) || 0));
+      // 'Just ran' — past races first (most recently finished at top),
+      // then upcoming races below sorted by soonest jump.
+      const now = Date.now();
+      const past = races.filter(r => { const t = _jumpMs(r); return t == null || t <= now; });
+      const upcoming = races.filter(r => { const t = _jumpMs(r); return t != null && t > now; });
+      past.sort((a, b) => (_jumpMs(b) || 0) - (_jumpMs(a) || 0));
+      upcoming.sort((a, b) => (_jumpMs(a) || 0) - (_jumpMs(b) || 0));
+      return [...past, ...upcoming];
     }
     if (state.sort === 'pnl') {
       return [...races].sort((a, b) => {
