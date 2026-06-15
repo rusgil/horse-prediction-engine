@@ -4306,6 +4306,281 @@ async def admin_settle_bets(x_cron_secret: Optional[str] = Header(None)):
     return {"ok": True, "queued": True}
 
 
+@app.get("/api/bets/tomorrow-picks")
+async def get_tomorrow_picks(limit: int = 5):
+    """Insight endpoint for the dashboard: profile today's hit-vs-miss
+    races by model conviction, then score tomorrow's races against the
+    hit profile and return the top N candidates.
+
+    Pattern observed from initial paper-trading data: boxes hit on OPEN
+    races (rank-1 win ~15-25%) rather than favourite-heavy ones (>30%)
+    because the 5-strategy basket banks rank 1+2 in 4 of 5 boxes — a
+    favourite collapse kills most of the bets at once.
+    """
+    limit = max(1, min(int(limit), 12))
+    today_str = _today_aest().isoformat()
+    tomorrow_str = (_today_aest() + timedelta(days=1)).isoformat()
+
+    # ── Profile today: avg win1 / top3-sum for hit vs miss races ──
+    hit_w1, hit_t3, miss_w1, miss_t3 = [], [], [], []
+    today_settled = 0
+    today_hit_races = 0
+    async with get_session() as session:
+        bet_rows = (await session.execute(
+            select(BetRecommendationRow.race_id, BetRecommendationRow.is_hit,
+                   BetRecommendationRow.settled)
+            .where(BetRecommendationRow.race_id.like(f"{today_str}_%"))
+            .where(BetRecommendationRow.settled.is_(True))
+        )).fetchall()
+        by_race: dict[str, list[bool]] = {}
+        for rid, hit, _ in bet_rows:
+            by_race.setdefault(rid, []).append(bool(hit))
+        race_ids = list(by_race.keys())
+        today_settled = len(race_ids)
+        today_hit_races = sum(1 for hits in by_race.values() if any(hits))
+        # Pull rank-1..3 win prob per race (history first, mutable fallback).
+        if race_ids:
+            for src in (RunnerPredictionHistoryRow, RunnerPredictionRow):
+                runner_rows = (await session.execute(
+                    select(src.race_id, src.model_rank, src.win_probability)
+                    .where(src.race_id.in_(race_ids))
+                    .where(src.model_rank.in_([1, 2, 3]))
+                )).fetchall()
+                top_map: dict[str, dict[int, float]] = {}
+                for rid, rank, win_p in runner_rows:
+                    if rank and win_p is not None:
+                        top_map.setdefault(rid, {})[rank] = (win_p or 0) * 100
+                for rid in race_ids:
+                    tops = top_map.get(rid, {})
+                    if 1 not in tops:
+                        continue
+                    w1 = tops[1]
+                    t3 = sum(tops.get(i, 0) for i in (1, 2, 3))
+                    if any(by_race[rid]):
+                        hit_w1.append(w1); hit_t3.append(t3)
+                    else:
+                        miss_w1.append(w1); miss_t3.append(t3)
+                if hit_w1 or miss_w1:
+                    break  # got data from this source, no fallback needed
+
+    def _avg(xs):
+        return round(sum(xs) / len(xs), 1) if xs else None
+    profile = {
+        "races_settled": today_settled,
+        "hit_races": today_hit_races,
+        "miss_races": today_settled - today_hit_races,
+        "hit_avg_rank1_win_pct": _avg(hit_w1),
+        "hit_avg_top3_sum_pct": _avg(hit_t3),
+        "miss_avg_rank1_win_pct": _avg(miss_w1),
+        "miss_avg_top3_sum_pct": _avg(miss_t3),
+    }
+
+    # ── Score tomorrow's races against the hit profile ──
+    # Sweet spot: rank-1 in 15-25%, field 10-12, top-3 sum near hit avg.
+    target_top3 = _avg(hit_t3) or 46.0
+    candidates: list[dict] = []
+    async with get_session() as session:
+        # Use mutable (RunnerPredictionRow) for tomorrow since history is
+        # only written pre-race, but the bet generator writes mutable on
+        # enrich. Filter cancelled.
+        tomorrow_runners = (await session.execute(
+            select(RunnerPredictionRow)
+            .where(RunnerPredictionRow.race_id.like(f"{tomorrow_str}_%"))
+            .where(RunnerPredictionRow.cancelled.is_(False) | RunnerPredictionRow.cancelled.is_(None))
+        )).scalars().all()
+        sched_lookup: dict[str, str] = {}
+        venue_lookup: dict[str, str] = {}
+        race_runners: dict[str, list] = {}
+        for r in tomorrow_runners:
+            race_runners.setdefault(r.race_id, []).append(r)
+            if r.scheduled_time and r.race_id not in sched_lookup:
+                sched_lookup[r.race_id] = r.scheduled_time
+            if r.venue and r.race_id not in venue_lookup:
+                venue_lookup[r.race_id] = r.venue
+
+    for rid, runners in race_runners.items():
+        runners = sorted([x for x in runners if x.model_rank], key=lambda x: x.model_rank)
+        if len(runners) < 8:
+            continue
+        w1 = (runners[0].win_probability or 0) * 100
+        w2 = (runners[1].win_probability or 0) * 100
+        w3 = (runners[2].win_probability or 0) * 100
+        top3_sum = w1 + w2 + w3
+        # Score: sweet-spot rank-1 (15-25), field ~11, top3 sum near hit avg.
+        sweet_penalty = 0
+        if w1 < 15:
+            sweet_penalty = (15 - w1) * 2
+        elif w1 > 25:
+            sweet_penalty = (w1 - 25) * 2
+        score = 100 - sweet_penalty - abs(len(runners) - 11) * 3 - abs(top3_sum - target_top3) * 0.5
+        _, vc, race_num = _parse_race_id(rid)
+        candidates.append({
+            "race_id": rid,
+            "venue": venue_lookup.get(rid, vc),
+            "race_number": race_num,
+            "scheduled_time": sched_lookup.get(rid),
+            "field_size": len(runners),
+            "rank1_win_pct": round(w1, 1),
+            "rank2_win_pct": round(w2, 1),
+            "top3_sum_pct": round(top3_sum, 1),
+            "score": round(score, 1),
+        })
+    candidates.sort(key=lambda c: -c["score"])
+    return {
+        "today_profile": profile,
+        "tomorrow_candidates": candidates[:limit],
+        "tomorrow_analysed": len(candidates),
+        "scoring_rule": "Target rank-1 win 15-25%, field 10-12, top-3 sum near today's hit average",
+    }
+
+
+@app.get("/api/admin/bets/backtest-formula")
+async def backtest_formula(
+    days: int = 60,
+    x_cron_secret: Optional[str] = Header(None),
+):
+    """Backtest the 5-box trifecta basket + the 'open races' filter rule
+    against the last N days of settled racing.
+
+    For every race in the window where we have BOTH a prediction history
+    snapshot AND top-3 historical results: reconstruct the 5 boxes (same
+    algorithm the live recommender uses), check which boxes hit, then
+    bucket the races by rank-1 win% and field size to surface where
+    the strategy actually performs.
+
+    Returns hit rate by rank-1 win bucket, by field size, and the
+    overall counts. No dividend data is required."""
+    _check_admin(x_cron_secret)
+    days = max(1, min(int(days), 120))
+    cutoff_date = (_today_aest() - timedelta(days=days)).isoformat()
+
+    async with get_session() as session:
+        # All settled races in window: must have HistoricalResultRow for
+        # top-3 AND must have RunnerPredictionHistoryRow for prediction
+        # reconstruction.
+        result_rows = (await session.execute(
+            select(HistoricalResultRow.race_id, HistoricalResultRow.position,
+                   HistoricalResultRow.tab_number, HistoricalResultRow.horse_name)
+            .where(HistoricalResultRow.race_id >= f"{cutoff_date}_")
+            .where(HistoricalResultRow.position.in_([1, 2, 3]))
+        )).fetchall()
+        results_by_race: dict[str, list] = {}
+        for rid, pos, tab, name in result_rows:
+            results_by_race.setdefault(rid, []).append((pos, tab, name))
+
+        complete_race_ids = [rid for rid, items in results_by_race.items() if len(items) >= 3]
+        # Pull prediction snapshots for these races (history rows — pre-race).
+        pred_rows = (await session.execute(
+            select(RunnerPredictionHistoryRow)
+            .where(RunnerPredictionHistoryRow.race_id.in_(complete_race_ids))
+            .where(RunnerPredictionHistoryRow.cancelled.is_(False) | RunnerPredictionHistoryRow.cancelled.is_(None))
+        )).scalars().all() if complete_race_ids else []
+
+    # Group by race_id
+    preds_by_race: dict[str, list] = {}
+    for p in pred_rows:
+        preds_by_race.setdefault(p.race_id, []).append(p)
+
+    # Build tab-number lookup for tab-less results.
+    tab_lookup_per_race: dict[str, dict[str, int]] = {}
+    for rid, pruns in preds_by_race.items():
+        tab_lookup_per_race[rid] = {
+            _normalize_horse(p.horse_name): p.tab_number
+            for p in pruns if p.tab_number is not None
+        }
+
+    summary = {
+        "total_eligible_races": 0,
+        "races_with_any_hit": 0,
+        "boxes_evaluated": 0,
+        "boxes_hit": 0,
+        "by_rank1_bucket": {},   # "15-20%": {races, hits, hit_rate}
+        "by_field_size": {},
+        "by_top3_sum_bucket": {},
+    }
+
+    rank1_buckets = [(0, 15), (15, 20), (20, 25), (25, 30), (30, 40), (40, 100)]
+    field_buckets = [(0, 8), (8, 10), (10, 12), (12, 14), (14, 99)]
+    top3_buckets  = [(0, 40), (40, 50), (50, 60), (60, 70), (70, 100)]
+
+    def _bucket_label(rng: tuple, val: float) -> str:
+        return f"{rng[0]}-{rng[1]}%"
+
+    for rid, pruns in preds_by_race.items():
+        if len(pruns) < 7:
+            continue
+        runners = [{
+            "tab_number": p.tab_number,
+            "horse_name": p.horse_name,
+            "win_probability": p.win_probability,
+            "place_probability": p.place_probability,
+            "model_rank": p.model_rank,
+            "cancelled": bool(p.cancelled),
+        } for p in pruns]
+        bets = _build_bet_basket(runners)
+        if not bets:
+            continue
+        # Resolve actual top-3 tab numbers (fall back to name lookup).
+        items = sorted(results_by_race[rid], key=lambda x: x[0])[:3]
+        actual_top3: list = []
+        tab_lookup = tab_lookup_per_race.get(rid, {})
+        for pos, tab, name in items:
+            t = tab
+            if t is None:
+                t = tab_lookup.get(_normalize_horse(name))
+            actual_top3.append(t)
+        if any(t is None for t in actual_top3):
+            continue
+
+        race_hit_any = False
+        for b in bets:
+            summary["boxes_evaluated"] += 1
+            if _bet_is_hit(b["box_horses"], actual_top3):
+                summary["boxes_hit"] += 1
+                race_hit_any = True
+        summary["total_eligible_races"] += 1
+        if race_hit_any:
+            summary["races_with_any_hit"] += 1
+
+        # Bucket race for analysis
+        runners_sorted = sorted(pruns, key=lambda p: p.model_rank or 99)
+        w1 = (runners_sorted[0].win_probability or 0) * 100
+        t3 = sum((runners_sorted[i].win_probability or 0) * 100 for i in range(min(3, len(runners_sorted))))
+        for lo, hi in rank1_buckets:
+            if lo <= w1 < hi:
+                k = _bucket_label((lo, hi), w1)
+                d = summary["by_rank1_bucket"].setdefault(k, {"races": 0, "hits": 0})
+                d["races"] += 1
+                if race_hit_any: d["hits"] += 1
+                break
+        for lo, hi in field_buckets:
+            fs = len(pruns)
+            if lo <= fs < hi:
+                k = f"{lo}-{hi-1}"
+                d = summary["by_field_size"].setdefault(k, {"races": 0, "hits": 0})
+                d["races"] += 1
+                if race_hit_any: d["hits"] += 1
+                break
+        for lo, hi in top3_buckets:
+            if lo <= t3 < hi:
+                k = _bucket_label((lo, hi), t3)
+                d = summary["by_top3_sum_bucket"].setdefault(k, {"races": 0, "hits": 0})
+                d["races"] += 1
+                if race_hit_any: d["hits"] += 1
+                break
+
+    # Compute hit rates
+    for grouping in ("by_rank1_bucket", "by_field_size", "by_top3_sum_bucket"):
+        for k, d in summary[grouping].items():
+            d["hit_rate_pct"] = round(d["hits"] / d["races"] * 100, 1) if d["races"] else 0
+    summary["overall_hit_rate_pct"] = (
+        round(summary["races_with_any_hit"] / summary["total_eligible_races"] * 100, 1)
+        if summary["total_eligible_races"] else 0
+    )
+    summary["window_days"] = days
+    return summary
+
+
 @app.post("/api/admin/bets/settle-only")
 async def admin_settle_only(x_cron_secret: Optional[str] = Header(None)):
     """Settle bets using whatever results are already in the DB — no
