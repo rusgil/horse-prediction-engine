@@ -3968,6 +3968,29 @@ async def list_bet_races(days: int = 7):
             .where(BetRecommendationRow.recommended_at >= cutoff)
             .order_by(BetRecommendationRow.recommended_at.desc())
         )).scalars().all()
+        race_ids = list({r.race_id for r in rows})
+        # Scheduled time per race — pulled from mutable first (newer odds-
+        # refresh enrichments may have set it), falling back to history.
+        sched_map: dict[str, str] = {}
+        if race_ids:
+            for raceid, st in (await session.execute(
+                select(RunnerPredictionRow.race_id, func.max(RunnerPredictionRow.scheduled_time))
+                .where(RunnerPredictionRow.race_id.in_(race_ids))
+                .where(RunnerPredictionRow.scheduled_time.isnot(None))
+                .group_by(RunnerPredictionRow.race_id)
+            )).fetchall():
+                if st:
+                    sched_map[raceid] = st
+            missing = [r for r in race_ids if r not in sched_map]
+            if missing:
+                for raceid, st in (await session.execute(
+                    select(RunnerPredictionHistoryRow.race_id, func.max(RunnerPredictionHistoryRow.scheduled_time))
+                    .where(RunnerPredictionHistoryRow.race_id.in_(missing))
+                    .where(RunnerPredictionHistoryRow.scheduled_time.isnot(None))
+                    .group_by(RunnerPredictionHistoryRow.race_id)
+                )).fetchall():
+                    if st:
+                        sched_map[raceid] = st
     by_race: dict[str, list[BetRecommendationRow]] = {}
     for r in rows:
         by_race.setdefault(r.race_id, []).append(r)
@@ -3978,11 +4001,15 @@ async def list_bet_races(days: int = 7):
         total_payout = sum((b.payout_dollars or 0) for b in bets if b.settled)
         any_unsettled = any(not b.settled for b in bets)
         pnl = round(total_payout - total_stake, 2) if not any_unsettled else None
+        sched = sched_map.get(race_id)
+        if isinstance(sched, str) and "T00:00:00" in sched:
+            sched = None  # placeholder midnight = unknown
         races.append({
             "race_id": race_id,
             "date": date,
             "venue": venue,
             "race_number": race_num,
+            "scheduled_time": sched,
             "num_bets": len(bets),
             "total_stake": round(total_stake, 2),
             "total_payout": round(total_payout, 2) if not any_unsettled else None,
@@ -3990,8 +4017,14 @@ async def list_bet_races(days: int = 7):
             "status": "pending" if any_unsettled else "settled",
             "hits": sum(1 for b in bets if b.is_hit),
         })
-    races.sort(key=lambda r: (r["date"] or "", r["race_id"]), reverse=True)
-    return {"days": days, "races": races}
+    # Sort: upcoming first (soonest to jump at top), past races after
+    # (most recent at top of that block).
+    now_iso = datetime.utcnow().isoformat()
+    upcoming = [r for r in races if (r.get("scheduled_time") or "") > now_iso]
+    past = [r for r in races if (r.get("scheduled_time") or "") <= now_iso]
+    upcoming.sort(key=lambda r: r.get("scheduled_time") or "")
+    past.sort(key=lambda r: r.get("scheduled_time") or "", reverse=True)
+    return {"days": days, "races": upcoming + past}
 
 
 @app.post("/api/admin/bets/generate/{race_id}")

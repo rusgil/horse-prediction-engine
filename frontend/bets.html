@@ -73,6 +73,37 @@
       text-decoration: none;
     }
 
+    /* Sort selector */
+    .sort-row {
+      display: flex;
+      gap: 6px;
+      margin: 10px 0;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+    .sort-label {
+      font-size: 10px;
+      font-weight: 600;
+      color: var(--text-dim);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    .sort-pill {
+      padding: 5px 10px;
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      color: var(--text-dim);
+      font-size: 12px;
+      font-weight: 500;
+      cursor: pointer;
+    }
+    .sort-pill.active {
+      background: rgba(45,212,191,0.12);
+      border-color: var(--teal);
+      color: var(--teal-bright);
+    }
+
     .summary {
       display: grid;
       grid-template-columns: repeat(3, 1fr);
@@ -138,6 +169,28 @@
       font-size: 11px;
       color: var(--text-dim);
     }
+    .race-time {
+      display: flex;
+      align-items: baseline;
+      gap: 8px;
+      margin-top: 4px;
+      font-size: 12px;
+    }
+    .jump-time {
+      color: var(--text);
+      font-weight: 600;
+      font-variant-numeric: tabular-nums;
+    }
+    .countdown {
+      font-family: 'Barlow Condensed', sans-serif;
+      font-weight: 700;
+      letter-spacing: 0.3px;
+      color: var(--text-dim);
+    }
+    .countdown.soon { color: var(--gold); }
+    .countdown.now { color: var(--red); animation: pulse 1.5s ease-in-out infinite; }
+    .countdown.done { color: var(--text-muted); }
+    @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.45} }
     .race-stats {
       margin-top: 8px;
       display: grid;
@@ -261,6 +314,12 @@
       <a href="/hotseat" class="nav-back">🔥 Hot Seat →</a>
     </div>
     <div id="summary" class="summary"></div>
+    <div class="sort-row">
+      <span class="sort-label">Sort</span>
+      <button class="sort-pill active" data-sort="next">Next race</button>
+      <button class="sort-pill" data-sort="recent">Most recent</button>
+      <button class="sort-pill" data-sort="pnl">Best P/L</button>
+    </div>
   </header>
   <main id="races">
     <div class="loading">Loading ledger…</div>
@@ -277,12 +336,36 @@
   };
 
   // race_id -> bool (expanded?); race_id -> array of bet rows (cached fetch)
-  const state = { expanded: new Set(), detail: {}, lastData: null };
+  const state = { expanded: new Set(), detail: {}, lastData: null, sort: 'next' };
 
   function fmtPnl(v) {
     if (v == null) return null;
     const s = v >= 0 ? '+' : '−';
     return s + '$' + Math.abs(v).toFixed(2);
+  }
+
+  function formatJumpTime(iso) {
+    if (!iso) return null;
+    const d = new Date(iso);
+    if (isNaN(d.getTime())) return null;
+    return d.toLocaleTimeString('en-AU', {
+      hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'Australia/Sydney',
+    });
+  }
+
+  function formatCountdown(iso) {
+    if (!iso) return null;
+    const t = new Date(iso).getTime();
+    if (isNaN(t)) return null;
+    const diff = Math.floor((t - Date.now()) / 1000);
+    if (diff <= -480) return { text: 'Done', cls: 'done' };
+    if (diff <= -60) return { text: 'Running', cls: 'now' };
+    if (diff <= 0) return { text: 'NOW', cls: 'now' };
+    const mins = Math.floor(diff / 60);
+    if (mins < 60) return { text: `in ${mins}m`, cls: mins < 5 ? 'soon' : '' };
+    const hrs = Math.floor(mins / 60);
+    const rem = mins % 60;
+    return { text: `in ${hrs}h ${rem.toString().padStart(2,'0')}m`, cls: '' };
   }
 
   function escHtml(s) {
@@ -340,9 +423,35 @@
     if (state.lastData) render(state.lastData);
   }
 
+  function applySort(races) {
+    const nowIso = new Date().toISOString();
+    if (state.sort === 'next') {
+      const upcoming = races.filter(r => (r.scheduled_time || '') > nowIso);
+      const past = races.filter(r => (r.scheduled_time || '') <= nowIso);
+      upcoming.sort((a, b) => (a.scheduled_time || '').localeCompare(b.scheduled_time || ''));
+      past.sort((a, b) => (b.scheduled_time || '').localeCompare(a.scheduled_time || ''));
+      return [...upcoming, ...past];
+    }
+    if (state.sort === 'recent') {
+      return [...races].sort((a, b) =>
+        (b.scheduled_time || b.date || '').localeCompare(a.scheduled_time || a.date || '')
+      );
+    }
+    if (state.sort === 'pnl') {
+      return [...races].sort((a, b) => {
+        // pending races last, then by pnl desc
+        const ap = a.pnl == null ? 1 : 0;
+        const bp = b.pnl == null ? 1 : 0;
+        if (ap !== bp) return ap - bp;
+        return (b.pnl || 0) - (a.pnl || 0);
+      });
+    }
+    return races;
+  }
+
   function render(data) {
     state.lastData = data;
-    const races = data.races || [];
+    const races = applySort(data.races || []);
     const summary = document.getElementById('summary');
     const settled = races.filter(r => r.status === 'settled');
     const totalStakeAll = races.reduce((a, r) => a + (r.total_stake || 0), 0);
@@ -379,12 +488,18 @@
         ? `<div class="race-pnl pending">Pending</div>`
         : `<div class="race-pnl ${pnl >= 0 ? 'pos' : 'neg'}">${fmtPnl(pnl)}</div>`;
       const venue = (r.venue || '').replace(/-/g,' ').toUpperCase();
+      const jt = formatJumpTime(r.scheduled_time);
+      const cd = formatCountdown(r.scheduled_time);
+      const timeRow = jt
+        ? `<div class="race-time"><span class="jump-time">🕐 ${jt}</span><span class="countdown ${cd ? cd.cls : ''}">${cd ? cd.text : ''}</span></div>`
+        : '';
       return `
         <div class="race ${cls}">
           <div class="race-top">
             <div>
               <div class="race-id">${escHtml(venue)} R${r.race_number}</div>
               <div class="race-meta">${escHtml(r.date || '')} · ${r.num_bets} bets · stake $${r.total_stake.toFixed(2)}</div>
+              ${timeRow}
             </div>
             ${pnlEl}
           </div>
@@ -425,6 +540,16 @@
     }
   }
 
+  // Sort pills
+  document.querySelectorAll('.sort-pill').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.sort-pill').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      state.sort = btn.dataset.sort;
+      if (state.lastData) render(state.lastData);
+    });
+  });
+
   // Delegated click for the expand toggle — cards re-render on refresh.
   document.getElementById('races').addEventListener('click', (e) => {
     const t = e.target.closest('.bet-toggle');
@@ -440,6 +565,11 @@
     }
     if (state.lastData) render(state.lastData);
   });
+
+  // Re-render every second so countdowns tick — uses cached data, no API call
+  setInterval(() => {
+    if (state.lastData) render(state.lastData);
+  }, 1000);
 
   // Refresh every 60s + jitter
   setInterval(load, 60000 + Math.random() * 15000);
