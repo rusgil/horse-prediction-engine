@@ -403,29 +403,6 @@ def strategy_small_field_only(runners: list[dict], stake: float = DEFAULT_STAKE)
     }]
 
 
-# Registry — keys map to a function (runners, stake) -> list[bets].
-# Used by the backtest endpoint to evaluate strategies side-by-side.
-STRATEGY_REGISTRY = {
-    "baseline_5box": generate_recommendations,
-    "tight_top3": strategy_tight_top3,
-    "wide_top5": strategy_wide_top5,
-    "place_top4": strategy_place_top4,
-    "exotic_top3": strategy_exotic_top3,
-    "small_field_top3": strategy_small_field_only,
-    "anchor": strategy_anchor,
-    "net": strategy_net,
-    "blend": strategy_blend,
-    "sniper": strategy_sniper,
-    "pocket": strategy_pocket,
-    # Premium-precision contenders (target: >40% hit rate)
-    "surgeon": strategy_surgeon,
-    "first4_place": strategy_first4_place,
-    "hybrid": strategy_hybrid,
-    "tight": strategy_tight,
-    "premium_first4": strategy_premium_first4,
-}
-
-
 def is_trifecta_hit(box_horses: list[int], actual_top3: list[int]) -> bool:
     """Top-3 finishers must all be in the box (order doesn't matter)."""
     if len(actual_top3) < 3:
@@ -589,3 +566,27 @@ def compute_payout(stake: float, num_permutations: int, dividend: float, is_hit:
         return 0.0, -stake
     payout = round((stake / num_permutations) * dividend, 2)
     return payout, round(payout - stake, 2)
+
+
+# Registry — must be at end of file so all strategy functions above are
+# bound by the time this dict is built (Python evaluates module body
+# top-to-bottom; referencing a function before its def raises NameError).
+STRATEGY_REGISTRY = {
+    "baseline_5box": generate_recommendations,
+    "tight_top3": strategy_tight_top3,
+    "wide_top5": strategy_wide_top5,
+    "place_top4": strategy_place_top4,
+    "exotic_top3": strategy_exotic_top3,
+    "small_field_top3": strategy_small_field_only,
+    "anchor": strategy_anchor,
+    "net": strategy_net,
+    "blend": strategy_blend,
+    "sniper": strategy_sniper,
+    "pocket": strategy_pocket,
+    # Premium-precision contenders (target: >40% hit rate)
+    "surgeon": strategy_surgeon,
+    "first4_place": strategy_first4_place,
+    "hybrid": strategy_hybrid,
+    "tight": strategy_tight,
+    "premium_first4": strategy_premium_first4,
+}
