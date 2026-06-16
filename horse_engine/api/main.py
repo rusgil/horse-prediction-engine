@@ -4341,10 +4341,12 @@ async def admin_settle_bets(x_cron_secret: Optional[str] = Header(None)):
 
 @app.get("/api/bet-insights/strategy-stats")
 async def get_strategy_stats(days: int = 14):
-    """Per-strategy-group aggregate stats for the strategy selector cards
-    on The Lab. Returns races bet, race hit rate, total stake, total
-    payout (where dividend known), P&L and ROI for each group."""
-    days = max(1, min(int(days), 60))
+    """Per-strategy-group aggregate stats. Used by The Lab's selector
+    pills and the Dashboard hit-stats table. Returns races bet, race
+    hit rate, total stake, total payout (where dividend known), P&L
+    and ROI per group. Cap raised to 365 days so the dashboard table
+    can ask for 'all-time' in a single call."""
+    days = max(1, min(int(days), 365))
     cutoff = datetime.utcnow() - timedelta(days=days)
     async with get_session() as session:
         rows = (await session.execute(
