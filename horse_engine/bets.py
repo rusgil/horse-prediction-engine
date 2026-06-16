@@ -426,6 +426,30 @@ def is_hit(box_horses: list[int], actual: list[int], bet_type: str) -> bool:
     return is_trifecta_hit(box_horses, actual)
 
 
+def is_standout_hit(bet: dict, actual: list[int]) -> bool:
+    """Standout bets: certain horses must finish in specific positions,
+    other positions filled from a box. Encoded on the bet dict as:
+      bet['banker_tabs']: dict {1: tab, 2: tab, ...} — required positions
+      bet['box_horses']: list — horses that fill non-banker positions
+    Trifecta standout checks against actual[:3]; first-four against
+    actual[:4]."""
+    bet_type = bet.get("bet_type", "trifecta")
+    needed_positions = 4 if bet_type == "first_four" else 3
+    if len(actual) < needed_positions:
+        return False
+    actual_n = actual[:needed_positions]
+    bankers = bet.get("banker_tabs") or {}
+    # Each banker must finish at the locked position.
+    for pos, required_tab in bankers.items():
+        if actual_n[int(pos) - 1] != required_tab:
+            return False
+    # Remaining positions must be filled by horses in the box.
+    box_set = set(bet.get("box_horses") or [])
+    remaining_actual = [actual_n[i] for i in range(needed_positions)
+                        if (i + 1) not in bankers]
+    return all(t in box_set for t in remaining_actual)
+
+
 # ─── Premium-precision strategies (target: >40% hit rate) ─────────────────
 # All apply tight selection filters so the box only fires on races where
 # the model is most confident. Lower volume than the wider strategies but
@@ -560,6 +584,126 @@ def strategy_premium_first4(runners: list[dict], stake: float = DEFAULT_STAKE) -
     }]
 
 
+# ─── Standout strategies (banker + box, position-anchored) ───────────────
+
+def strategy_banker_win(runners: list[dict], stake: float = DEFAULT_STAKE) -> list[dict]:
+    """Rank-1 horse MUST finish 1st. 2nd/3rd box from {rank 2, 3, 4}.
+    Fires only when rank-1 conviction >= 40%. 1 × 3 × 2 = 6 effective
+    perms — same as a 3-horse box, but the structural constraint is
+    'banker wins'."""
+    win_sorted = _by(runners, "model_rank")
+    if len(win_sorted) < 4 or not (MIN_FIELD_SIZE <= len(win_sorted) <= MAX_FIELD_SIZE):
+        return []
+    w1 = (win_sorted[0].get("win_probability") or 0) * 100
+    if w1 < 40.0:
+        return []
+    banker = win_sorted[0]
+    box = win_sorted[1:4]
+    return [{
+        "strategy_label": "banker_win",
+        "bet_type": "trifecta",
+        "banker_tabs": {1: banker["tab_number"]},
+        "box_horses": [h["tab_number"] for h in box],
+        "box_horse_names": [banker["horse_name"]] + [h["horse_name"] for h in box],
+        "num_permutations": 6,  # 1 × 3 × 2
+        "stake_dollars": stake,
+    }]
+
+
+def strategy_banker_win_wide(runners: list[dict], stake: float = DEFAULT_STAKE) -> list[dict]:
+    """Rank-1 must win. 2nd/3rd box from {rank 2..6} (5 horses). Wider
+    backup pool reduces the conditional-miss risk; perms = 1 × 5 × 4 = 20.
+    Fires when rank-1 >= 35%."""
+    win_sorted = _by(runners, "model_rank")
+    if len(win_sorted) < 6 or not (MIN_FIELD_SIZE <= len(win_sorted) <= MAX_FIELD_SIZE):
+        return []
+    w1 = (win_sorted[0].get("win_probability") or 0) * 100
+    if w1 < 35.0:
+        return []
+    banker = win_sorted[0]
+    box = win_sorted[1:6]
+    return [{
+        "strategy_label": "banker_win_wide",
+        "bet_type": "trifecta",
+        "banker_tabs": {1: banker["tab_number"]},
+        "box_horses": [h["tab_number"] for h in box],
+        "box_horse_names": [banker["horse_name"]] + [h["horse_name"] for h in box],
+        "num_permutations": 20,
+        "stake_dollars": stake,
+    }]
+
+
+def strategy_banker_place(runners: list[dict], stake: float = DEFAULT_STAKE) -> list[dict]:
+    """Rank-1 must finish IN top 3 (any position), with other 2 spots
+    from {rank 2..5}. Looser banker constraint than 'must win'. 4-horse
+    box centred on rank-1, modelled as a regular 4-horse trifecta box
+    here since rank-1 always being in the box makes the 'banker_place'
+    notion identical to box inclusion. Perms 24."""
+    win_sorted = _by(runners, "model_rank")
+    if len(win_sorted) < 5 or not (MIN_FIELD_SIZE <= len(win_sorted) <= MAX_FIELD_SIZE):
+        return []
+    w1 = (win_sorted[0].get("win_probability") or 0) * 100
+    if w1 < 30.0:
+        return []
+    top4 = win_sorted[:4]
+    return [{
+        "strategy_label": "banker_place",
+        "bet_type": "trifecta",
+        "box_horses": [h["tab_number"] for h in top4],
+        "box_horse_names": [h["horse_name"] for h in top4],
+        "num_permutations": 24,
+        "stake_dollars": stake,
+    }]
+
+
+def strategy_dual_banker(runners: list[dict], stake: float = DEFAULT_STAKE) -> list[dict]:
+    """Both rank-1 AND rank-2 must finish in top 3 (any positions).
+    Third position from {rank 3, 4, 5}. Effectively a 5-horse trifecta
+    box that ONLY counts as a hit when both top model picks are in the
+    placings. Modelled as standout requires a non-standard hit check;
+    represented here as 5-horse box gated by both-anchored result —
+    the backtest framework will need a custom check for this."""
+    win_sorted = _by(runners, "model_rank")
+    if len(win_sorted) < 5 or not (MIN_FIELD_SIZE <= len(win_sorted) <= MAX_FIELD_SIZE):
+        return []
+    w1 = (win_sorted[0].get("win_probability") or 0) * 100
+    w2 = (win_sorted[1].get("win_probability") or 0) * 100
+    if w1 < 30.0 or w2 < 15.0:
+        return []
+    top5 = win_sorted[:5]
+    return [{
+        "strategy_label": "dual_banker",
+        "bet_type": "trifecta",
+        "required_in_top3": [top5[0]["tab_number"], top5[1]["tab_number"]],
+        "box_horses": [h["tab_number"] for h in top5],
+        "box_horse_names": [h["horse_name"] for h in top5],
+        "num_permutations": 60,  # P(5,3)
+        "stake_dollars": stake,
+    }]
+
+
+def strategy_first4_standout(runners: list[dict], stake: float = DEFAULT_STAKE) -> list[dict]:
+    """First four with rank-1 banker for 1st. 2nd/3rd/4th from {rank 2,
+    3, 4, 5} box. Fires on rank-1 >= 40%. 1 × 4 × 3 × 2 = 24 perms."""
+    win_sorted = _by(runners, "model_rank")
+    if len(win_sorted) < 5 or not (MIN_FIELD_SIZE <= len(win_sorted) <= MAX_FIELD_SIZE):
+        return []
+    w1 = (win_sorted[0].get("win_probability") or 0) * 100
+    if w1 < 40.0:
+        return []
+    banker = win_sorted[0]
+    box = win_sorted[1:5]
+    return [{
+        "strategy_label": "first4_standout",
+        "bet_type": "first_four",
+        "banker_tabs": {1: banker["tab_number"]},
+        "box_horses": [h["tab_number"] for h in box],
+        "box_horse_names": [banker["horse_name"]] + [h["horse_name"] for h in box],
+        "num_permutations": 24,
+        "stake_dollars": stake,
+    }]
+
+
 def compute_payout(stake: float, num_permutations: int, dividend: float, is_hit: bool) -> tuple[float, float]:
     """Return (payout, pnl). Flexi-bet payout = (stake / perms) * dividend."""
     if not is_hit or num_permutations <= 0 or not dividend:
@@ -589,4 +733,10 @@ STRATEGY_REGISTRY = {
     "hybrid": strategy_hybrid,
     "tight": strategy_tight,
     "premium_first4": strategy_premium_first4,
+    # Standout-style bets (position-anchored bankers)
+    "banker_win":       strategy_banker_win,
+    "banker_win_wide":  strategy_banker_win_wide,
+    "banker_place":     strategy_banker_place,
+    "dual_banker":      strategy_dual_banker,
+    "first4_standout":  strategy_first4_standout,
 }

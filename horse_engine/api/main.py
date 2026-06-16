@@ -4881,10 +4881,20 @@ async def strategy_shootout(
                 total_boxes += 1
                 total_perms += b.get("num_permutations") or 0
                 bt = b.get("bet_type", "trifecta")
-                if bt == "first_four":
-                    actual = resolved_top4.get(rid) or []
-                    if len(actual) < 4 or any(t is None for t in actual):
-                        continue  # race doesn't have top-4 data — skip box
+                actual = (resolved_top4.get(rid) or []) if bt == "first_four" else top3
+                if bt == "first_four" and (len(actual) < 4 or any(t is None for t in actual)):
+                    continue
+                # Dispatch by structure: standout (banker_tabs),
+                # required-in-top3 set, or plain box.
+                if b.get("banker_tabs"):
+                    from horse_engine.bets import is_standout_hit
+                    box_hit = is_standout_hit(b, actual)
+                elif b.get("required_in_top3"):
+                    required = set(b["required_in_top3"])
+                    box_set = set(b["box_horses"])
+                    box_hit = (required.issubset(set(top3)) and
+                               all(t in box_set for t in top3))
+                elif bt == "first_four":
                     box_hit = _bet_is_hit_typed(b["box_horses"], actual, "first_four")
                 else:
                     box_hit = _bet_is_hit(b["box_horses"], top3)
