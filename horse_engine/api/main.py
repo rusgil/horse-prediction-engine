@@ -3735,27 +3735,44 @@ async def _settle_bets_for_race(race_id: str) -> int:
             if row is None or row.settled:
                 continue
             box = json.loads(row.box_horses_json or "[]")
-            box_has_scratched = any(t in scratched_tabs for t in box)
-            hit = (not box_has_scratched) and _bet_is_hit(box, actual_top3)
-            row.is_hit = hit
-            row.voided = box_has_scratched
+            # When a box contains a scratched horse, real-world TAB
+            # collapses the bet onto the remaining horses (not a refund
+            # unless < 3 remain). Mirror that here: compute effective_box
+            # = box minus scratched, then hit-check + payout on that.
+            box_set = set(box)
+            scratched_in_box = box_set & scratched_tabs
+            effective_box = sorted(box_set - scratched_tabs)
             row.actual_top3_json = json.dumps(actual_top3)
-            row.trifecta_dividend = dividend  # None when source missing
-            if box_has_scratched:
+            row.trifecta_dividend = dividend
+            if len(effective_box) < 3:
+                # Box dead — full refund. Real bettor gets stake back.
+                row.is_hit = False
+                row.voided = True
                 row.payout_dollars = 0.0
                 row.pnl_dollars = 0.0
                 voided_count += 1
-            elif dividend is not None:
-                payout, pnl = _bet_compute_payout(row.stake_dollars, row.num_permutations, dividend, hit)
-                row.payout_dollars = payout
-                row.pnl_dollars = pnl
+            else:
+                row.voided = False
+                hit = _bet_is_hit(effective_box, actual_top3)
+                row.is_hit = hit
+                if dividend is not None:
+                    # Payout is now based on the effective permutation
+                    # count of the SHRUNK box, not the original. This
+                    # approximates TAB's deductions for scratchings.
+                    eff_perms = (len(effective_box) *
+                                 (len(effective_box) - 1) *
+                                 (len(effective_box) - 2))
+                    payout, pnl = _bet_compute_payout(row.stake_dollars, eff_perms, dividend, hit)
+                    row.payout_dollars = payout
+                    row.pnl_dollars = pnl
             row.settled = True
             row.settled_at = datetime.utcnow()
             updated += 1
         await session.commit()
     if updated:
-        log.info("[bets] settled %d bets for %s (div=%s, voided=%d)", updated, race_id,
-                 f"${dividend:.2f}" if dividend else "unknown", voided_count)
+        log.info("[bets] settled %d bets for %s (div=%s, voided=%d, scratched_seen=%d)",
+                 updated, race_id, f"${dividend:.2f}" if dividend else "unknown",
+                 voided_count, len(scratched_tabs))
     return updated
 
 
