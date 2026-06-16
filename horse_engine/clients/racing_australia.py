@@ -1052,7 +1052,11 @@ class RacingAustraliaClient:
 
     async def _fetch_meeting(self, ra_key: str, race_date: str, state: str) -> dict | None:
         cached = self._meeting_cache.get(ra_key)
-        if cached and (datetime.utcnow() - cached[0]).total_seconds() < 300:
+        # 15-min TTL — matches the pre-race enrich cron's clear cadence, so
+        # the in-memory cache fully covers the gap between cron ticks. Was
+        # 5min, which meant 3× the Acceptances hits per cron cycle without
+        # any added freshness benefit.
+        if cached and (datetime.utcnow() - cached[0]).total_seconds() < 900:
             return cached[1]
         from urllib.parse import quote
         url = f"{_BASE}/Acceptances.aspx?Key={quote(ra_key, safe='')}"

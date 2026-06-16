@@ -2657,19 +2657,19 @@ async def get_edge_picks():
         for key in field_map:
             field_map[key].sort(key=lambda r: r["rank"] or 999)
 
-        # Fetch scheduled times per unique meeting in parallel
+        # Fetch scheduled times per unique meeting — we used to issue a
+        # parallel _fetch_race_times call to RA's Acceptances.aspx for
+        # every (venue × 4 dates), burning ~30 calls per /api/edge cache
+        # miss. The runner rows already carry scheduled_time from the
+        # last enrich; they update on the 15-min pre-race cron, which is
+        # plenty fresh for jump-time display. So skip the external fetch
+        # and let the existing `runner_row.scheduled_time` fallback below
+        # do the work. Saves several hundred Acceptances/day.
         unique_venues = {_parse_race_id(r.race_id)[1] for r in rows}
         slug_map = {v: _meeting_slug(v, target_date) for v in unique_venues}
-        # Skip both external-fetch gathers when RA breaker is open — picks
-        # still display, just without live race times / odds overrides.
         race_times: dict[str, str | None] = {}
         live_odds_by_race: dict[str, dict[str, float]] = {}
         if not ra_blocked:
-            time_results = await asyncio.gather(*[_fetch_race_times(client, slug) for slug in slug_map.values()])
-            for venue, times in zip(slug_map.keys(), time_results):
-                for race_num, start_time in times.items():
-                    race_times[f"{target_date}_{venue}_R{race_num}"] = start_time
-
             # For races where rank-2/3 hedge candidates have 0 odds, fetch live odds in parallel
             races_needing_live_odds = [
                 r.race_id for r in rows
