@@ -3472,13 +3472,15 @@ async def _generate_bets_for_race(race_id: str, *, regenerate: bool = False) -> 
     """Create bet recommendations for a single race. No-op if rows already
     exist unless regenerate=True. Returns rows inserted."""
     async with get_session() as session:
-        if not regenerate:
-            existing = (await session.execute(
-                select(func.count()).select_from(BetRecommendationRow)
+        # Find existing strategy_labels for this race — additive insert by
+        # default so newly-added strategies (e.g. wide_top5) get backfilled
+        # on already-generated races without touching the existing rows.
+        existing_labels: set[str] = set(
+            (await session.execute(
+                select(BetRecommendationRow.strategy_label)
                 .where(BetRecommendationRow.race_id == race_id)
-            )).scalar() or 0
-            if existing:
-                return 0
+            )).scalars().all()
+        )
         # Pull runners from the mutable table (pre-race) — falls back to
         # history if mutable was already cleared.
         rows = (await session.execute(
@@ -3511,7 +3513,14 @@ async def _generate_bets_for_race(race_id: str, *, regenerate: bool = False) -> 
                 .where(BetRecommendationRow.race_id == race_id)
                 .where(BetRecommendationRow.settled.is_(False))
             )
-        for b in bets:
+            existing_labels = set()  # cleared above
+        # Additive insert: only add strategy_labels that don't already exist.
+        # Lets us backfill new strategies (The Sweep on already-spread races)
+        # without disturbing rows that may already be settled.
+        new_bets = [b for b in bets if b["strategy_label"] not in existing_labels]
+        if not new_bets:
+            return 0
+        for b in new_bets:
             session.add(BetRecommendationRow(
                 race_id=race_id,
                 strategy_label=b["strategy_label"],
@@ -3526,6 +3535,7 @@ async def _generate_bets_for_race(race_id: str, *, regenerate: bool = False) -> 
             await session.rollback()
             log.debug("[bets] insert raced (probably dup): %s", e)
             return 0
+        inserted_count = len(new_bets)
         # Schedule a one-off settlement job for 5min + jitter past jump.
         # Survives across the (idempotent) 30-min bulk settle cron — if the
         # one-off misses (e.g. Railway redeploy drops in-memory jobs), the
@@ -3554,7 +3564,7 @@ async def _generate_bets_for_race(race_id: str, *, regenerate: bool = False) -> 
                              race_id, fire_at.isoformat())
             except Exception as e:
                 log.debug("[bets] per-race schedule failed for %s: %s", race_id, e)
-        return len(bets)
+        return inserted_count
 
 
 # Lazy TABClient singleton used for dividend lookups only — the rest of
@@ -3824,10 +3834,10 @@ async def _scheduled_generate_bets():
                        | RunnerPredictionRow.race_id.like(
                            f"{(_today_aest() + timedelta(days=1)).isoformat()}_%"))
             )).scalars().all()
-            with_bets = set((await session.execute(
-                select(BetRecommendationRow.race_id).distinct()
-            )).scalars().all())
-            todo = [rid for rid in candidate_ids if rid not in with_bets]
+            # Process every candidate — _generate_bets_for_race is now
+            # additive (only inserts missing strategy_labels), so this also
+            # backfills new strategies onto already-generated races.
+            todo = list(candidate_ids)
         log.info("[bets] generating for %d races", len(todo))
         total = 0
         for rid in todo:
