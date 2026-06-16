@@ -18,6 +18,32 @@ from typing import Optional
 DEFAULT_STAKE = 2.0
 MIN_FIELD_SIZE = 7        # 60d backtest: field=7 hits 48.7%, sweet spot
 MAX_FIELD_SIZE = 13       # 14+ runners drops to 22% hit rate — skip
+
+# Metro meeting filter — box trifectas only get profitable when the
+# dividend pool is big enough. Country/provincial trifectas average
+# $50-130 (below The Spread's 4-horse-box breakeven of ~$80); metro
+# Saturday meetings typically clear $200+. Filtering here means we
+# stake $10/race only on the venues where the math works.
+METRO_VENUES: set[str] = {
+    # NSW
+    "randwick", "royal-randwick", "rosehill", "rosehill-gardens",
+    "canterbury-park", "warwick-farm",
+    # VIC
+    "caulfield", "caulfield-heath", "flemington", "moonee-valley",
+    "sandown", "sandown-lakeside", "sandown-hillside", "the-valley",
+    # QLD
+    "doomben", "eagle-farm",
+    # SA
+    "morphettville", "morphettville-parks",
+    # WA
+    "ascot", "belmont",
+}
+
+
+def is_metro_venue(venue_code: str) -> bool:
+    """True if the given venue slug is a registered metro track."""
+    return (venue_code or "").lower() in METRO_VENUES
+
 MIN_TOP1_WIN_PCT = 20.0   # below this, the model has nothing to say
 # 60d backtest trap zone: rank-1 25-30% hits only 27% (vs 34% at 20-25%
 # and 40%+ at 30-40%). Skip races in this band — the model has a weak

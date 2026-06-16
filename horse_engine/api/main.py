@@ -72,6 +72,7 @@ from horse_engine.bets import (
     STRATEGY_REGISTRY as _BET_STRATEGIES,
     compute_payout as _bet_compute_payout,
     generate_recommendations as _build_bet_basket,
+    is_metro_venue as _is_metro_venue,
     is_trifecta_hit as _bet_is_hit,
 )
 from horse_engine.models.enriched import EnrichedRunner
@@ -3470,7 +3471,15 @@ async def get_edge_yesterday(for_date: Optional[str] = Query(None, alias="date")
 # ─── Bet recommender (paper-trading trifecta ledger) ──────────────────────
 async def _generate_bets_for_race(race_id: str, *, regenerate: bool = False) -> int:
     """Create bet recommendations for a single race. No-op if rows already
-    exist unless regenerate=True. Returns rows inserted."""
+    exist unless regenerate=True. Returns rows inserted.
+
+    Metro filter: only generates bets for races at metro venues — box
+    trifectas need ~$200+ dividends to be profitable, and country/
+    provincial trifectas typically clear $50-130. The filter keeps
+    paper-trading stakes on races where the math actually works."""
+    _date_str, venue_code, _race_num = _parse_race_id(race_id)
+    if venue_code and not _is_metro_venue(venue_code):
+        return 0
     async with get_session() as session:
         # Find existing strategy_labels for this race — additive insert by
         # default so newly-added strategies (e.g. wide_top5) get backfilled
@@ -4552,6 +4561,11 @@ async def _get_picks_for_date(for_date: str, upcoming_only: bool, limit: int):
                 venue_lookup[r.race_id] = r.venue
 
     for rid, runners in race_runners.items():
+        # Metro-only filter to match the recommender — only score races
+        # we'd actually generate bets for.
+        _, venue_code, _ = _parse_race_id(rid)
+        if venue_code and not _is_metro_venue(venue_code):
+            continue
         runners = sorted([x for x in runners if x.model_rank], key=lambda x: x.model_rank)
         if len(runners) < 7 or len(runners) > 13:
             continue
