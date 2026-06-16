@@ -417,6 +417,12 @@ STRATEGY_REGISTRY = {
     "blend": strategy_blend,
     "sniper": strategy_sniper,
     "pocket": strategy_pocket,
+    # Premium-precision contenders (target: >40% hit rate)
+    "surgeon": strategy_surgeon,
+    "first4_place": strategy_first4_place,
+    "hybrid": strategy_hybrid,
+    "tight": strategy_tight,
+    "premium_first4": strategy_premium_first4,
 }
 
 
@@ -426,6 +432,155 @@ def is_trifecta_hit(box_horses: list[int], actual_top3: list[int]) -> bool:
         return False
     box_set = set(box_horses)
     return all(t in box_set for t in actual_top3[:3])
+
+
+def is_first_four_hit(box_horses: list[int], actual_top4: list[int]) -> bool:
+    """Top-4 finishers must all be in the box (order doesn't matter)."""
+    if len(actual_top4) < 4:
+        return False
+    box_set = set(box_horses)
+    return all(t in box_set for t in actual_top4[:4])
+
+
+def is_hit(box_horses: list[int], actual: list[int], bet_type: str) -> bool:
+    """Dispatch hit check by bet type. Used in settlement + backtest."""
+    if bet_type == "first_four":
+        return is_first_four_hit(box_horses, actual)
+    return is_trifecta_hit(box_horses, actual)
+
+
+# ─── Premium-precision strategies (target: >40% hit rate) ─────────────────
+# All apply tight selection filters so the box only fires on races where
+# the model is most confident. Lower volume than the wider strategies but
+# the goal here is hit rate, not coverage.
+
+def _by(runners: list[dict], key: str) -> list[dict]:
+    return sorted(
+        [r for r in runners
+         if not r.get("cancelled")
+         and r.get(key) is not None
+         and r.get("tab_number") is not None],
+        key=lambda r: r[key],
+    )
+
+
+def strategy_surgeon(runners: list[dict], stake: float = DEFAULT_STAKE) -> list[dict]:
+    """3-horse trifecta box of the model's top 3 by PLACE rank.
+    Only fires when top-3 place probabilities sum to ≥ 60% — the place
+    model is high-conviction. Uses the place-trained model since
+    trifecta hit = top-3 finish (which is what the place model is for).
+    """
+    place_sorted = _by(runners, "place_model_rank")
+    if len(place_sorted) < 3 or not (MIN_FIELD_SIZE <= len(place_sorted) <= MAX_FIELD_SIZE):
+        return []
+    top3 = place_sorted[:3]
+    place_sum = sum((r.get("place_probability") or 0) * 100 for r in top3)
+    if place_sum < 60.0:
+        return []
+    return [{
+        "strategy_label": "surgeon",
+        "bet_type": "trifecta",
+        "box_horses": [h["tab_number"] for h in top3],
+        "box_horse_names": [h["horse_name"] for h in top3],
+        "num_permutations": _perms(3),
+        "stake_dollars": stake,
+    }]
+
+
+def strategy_first4_place(runners: list[dict], stake: float = DEFAULT_STAKE) -> list[dict]:
+    """4-horse FIRST FOUR box of top 4 by place rank. Top-4 place sum ≥ 70%.
+    First four pays better per perm than trifecta on similar dividends —
+    smaller pool, fewer winning tickets."""
+    place_sorted = _by(runners, "place_model_rank")
+    if len(place_sorted) < 4 or not (MIN_FIELD_SIZE <= len(place_sorted) <= MAX_FIELD_SIZE):
+        return []
+    top4 = place_sorted[:4]
+    place_sum = sum((r.get("place_probability") or 0) * 100 for r in top4)
+    if place_sum < 70.0:
+        return []
+    return [{
+        "strategy_label": "first4_place",
+        "bet_type": "first_four",
+        "box_horses": [h["tab_number"] for h in top4],
+        "box_horse_names": [h["horse_name"] for h in top4],
+        "num_permutations": _perms(4) * (len(top4) - 3),  # 4×3×2×1 = 24 perms for first four
+        "stake_dollars": stake,
+    }]
+
+
+def strategy_hybrid(runners: list[dict], stake: float = DEFAULT_STAKE) -> list[dict]:
+    """3-horse trifecta box from a 50/50 blended win+place ranking.
+    Captures horses the place model loves that the win model under-rates.
+    Rank-1 win ≥ 30% to ensure a real favourite anchors the box."""
+    active = [r for r in runners
+              if not r.get("cancelled")
+              and r.get("tab_number") is not None
+              and r.get("win_probability") is not None
+              and r.get("place_probability") is not None]
+    if not (MIN_FIELD_SIZE <= len(active) <= MAX_FIELD_SIZE):
+        return []
+    win_sorted = sorted(active, key=lambda r: -(r["win_probability"] or 0))
+    if (win_sorted[0]["win_probability"] or 0) * 100 < 30.0:
+        return []
+    # Blended score: 0.5 × win_prob + 0.5 × place_prob
+    blended = sorted(active, key=lambda r: -(0.5 * (r["win_probability"] or 0)
+                                              + 0.5 * (r["place_probability"] or 0)))
+    top3 = blended[:3]
+    return [{
+        "strategy_label": "hybrid",
+        "bet_type": "trifecta",
+        "box_horses": [h["tab_number"] for h in top3],
+        "box_horse_names": [h["horse_name"] for h in top3],
+        "num_permutations": _perms(3),
+        "stake_dollars": stake,
+    }]
+
+
+def strategy_tight(runners: list[dict], stake: float = DEFAULT_STAKE) -> list[dict]:
+    """3-horse trifecta box of model's top 3 by win, ONLY for small
+    fields (7-8) where top-3 win sum is concentrated (≥ 65%). Tight
+    + concentrated = the model's strongest signal."""
+    win_sorted = _by(runners, "model_rank")
+    if not (7 <= len(win_sorted) <= 8):
+        return []
+    if len(win_sorted) < 3:
+        return []
+    top3 = win_sorted[:3]
+    win_sum = sum((r.get("win_probability") or 0) * 100 for r in top3)
+    if win_sum < 65.0:
+        return []
+    return [{
+        "strategy_label": "tight",
+        "bet_type": "trifecta",
+        "box_horses": [h["tab_number"] for h in top3],
+        "box_horse_names": [h["horse_name"] for h in top3],
+        "num_permutations": _perms(3),
+        "stake_dollars": stake,
+    }]
+
+
+def strategy_premium_first4(runners: list[dict], stake: float = DEFAULT_STAKE) -> list[dict]:
+    """4-horse first four box of top 4 by win. Premium gate:
+    rank-1 ≥ 35% AND top-3 win sum ≥ 70%. Only fires on races where the
+    model has high conviction across the placings."""
+    win_sorted = _by(runners, "model_rank")
+    if len(win_sorted) < 4 or not (MIN_FIELD_SIZE <= len(win_sorted) <= MAX_FIELD_SIZE):
+        return []
+    w1 = (win_sorted[0].get("win_probability") or 0) * 100
+    if w1 < 35.0:
+        return []
+    top3_sum = sum((win_sorted[i].get("win_probability") or 0) * 100 for i in range(3))
+    if top3_sum < 70.0:
+        return []
+    top4 = win_sorted[:4]
+    return [{
+        "strategy_label": "premium_first4",
+        "bet_type": "first_four",
+        "box_horses": [h["tab_number"] for h in top4],
+        "box_horse_names": [h["horse_name"] for h in top4],
+        "num_permutations": 24,  # P(4,4) = 24 perms for first four
+        "stake_dollars": stake,
+    }]
 
 
 def compute_payout(stake: float, num_permutations: int, dividend: float, is_hit: bool) -> tuple[float, float]:

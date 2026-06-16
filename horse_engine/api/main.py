@@ -72,6 +72,7 @@ from horse_engine.bets import (
     STRATEGY_REGISTRY as _BET_STRATEGIES,
     compute_payout as _bet_compute_payout,
     generate_recommendations as _build_bet_basket,
+    is_hit as _bet_is_hit_typed,
     is_metro_venue as _is_metro_venue,
     is_trifecta_hit as _bet_is_hit,
 )
@@ -4786,14 +4787,13 @@ async def strategy_shootout(
                 excluded_dows.add(dow_name_to_int[t])
     cutoff_date = (_today_aest() - timedelta(days=days)).isoformat()
 
-    # Pull all races with top-3 results + prediction history (same shape
-    # as the existing backtest endpoint).
+    # Pull positions 1-4 so we can evaluate first-four boxes too.
     async with get_session() as session:
         result_rows = (await session.execute(
             select(HistoricalResultRow.race_id, HistoricalResultRow.position,
                    HistoricalResultRow.tab_number, HistoricalResultRow.horse_name)
             .where(HistoricalResultRow.race_id >= f"{cutoff_date}_")
-            .where(HistoricalResultRow.position.in_([1, 2, 3]))
+            .where(HistoricalResultRow.position.in_([1, 2, 3, 4]))
         )).fetchall()
         results_by_race: dict[str, list] = {}
         for rid, pos, tab, name in result_rows:
@@ -4810,24 +4810,29 @@ async def strategy_shootout(
     for p in pred_rows:
         preds_by_race.setdefault(p.race_id, []).append(p)
 
-    # Resolve actual top-3 tab numbers (fall back to name lookup).
+    # Resolve actual top-4 tab numbers (fall back to name lookup). Top-3
+    # is a slice of this — first-four hit checks use the full 4.
     tab_per_race: dict[str, dict[str, int]] = {}
     for rid, pruns in preds_by_race.items():
         tab_per_race[rid] = {
             _normalize_horse(p.horse_name): p.tab_number
             for p in pruns if p.tab_number is not None
         }
-    resolved_top3: dict[str, list[int]] = {}
+    resolved_top4: dict[str, list[int]] = {}
     for rid in complete:
-        items = sorted(results_by_race[rid], key=lambda x: x[0])[:3]
+        items = sorted(results_by_race[rid], key=lambda x: x[0])[:4]
         tabs = []
         for pos, tab, name in items:
             t = tab if tab is not None else tab_per_race.get(rid, {}).get(_normalize_horse(name))
             tabs.append(t)
-        if all(t is not None for t in tabs):
-            resolved_top3[rid] = tabs
+        # Trifecta strategies only need top-3, first-four needs top-4.
+        # Skip races where top-3 isn't fully resolved (a hole there
+        # invalidates both bet types).
+        if len(tabs) >= 3 and all(t is not None for t in tabs[:3]):
+            resolved_top4[rid] = tabs
 
-    total_universe = len(resolved_top3)
+    total_universe = len(resolved_top4)
+    resolved_top3 = {rid: tabs[:3] for rid, tabs in resolved_top4.items()}
 
     strategies = list(_BET_STRATEGIES.items())
     strategy_results: list[dict] = []
@@ -4875,7 +4880,15 @@ async def strategy_shootout(
             for b in bets:
                 total_boxes += 1
                 total_perms += b.get("num_permutations") or 0
-                if _bet_is_hit(b["box_horses"], top3):
+                bt = b.get("bet_type", "trifecta")
+                if bt == "first_four":
+                    actual = resolved_top4.get(rid) or []
+                    if len(actual) < 4 or any(t is None for t in actual):
+                        continue  # race doesn't have top-4 data — skip box
+                    box_hit = _bet_is_hit_typed(b["box_horses"], actual, "first_four")
+                else:
+                    box_hit = _bet_is_hit(b["box_horses"], top3)
+                if box_hit:
                     boxes_hit += 1
                     race_hit = True
             if race_hit:
