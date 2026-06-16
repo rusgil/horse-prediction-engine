@@ -556,6 +556,11 @@
     `;
 
     mountWinCharts(calData, perfData);
+    // Tomorrow's picks lives in the Exotic panel — call it AFTER innerHTML
+    // is set so the target div exists. The panel is hidden on initial
+    // load (Win tab is default) but the data populates underneath so it's
+    // ready when the user clicks Exotics.
+    loadTomorrowPicks();
   }
 
   /* ═══════════════════════════════════════════════════════
@@ -588,12 +593,6 @@
                    : t30.roi_pct >= 0     ? 'var(--gold-light)' : '#f87171';
 
       productionHtml = `
-        <div class="section" id="tomorrowPicksSection">
-          <div class="section-title">📊 Tomorrow's Top Trifecta Boxes
-            <span style="font-size:0.65rem;color:var(--text-dim);font-weight:400;margin-left:8px">paper-trading · ranked by 60-day backtest</span>
-          </div>
-          <div id="tomorrowPicksContent" style="font-size:0.78rem;color:var(--text-dim)">Loading picks…</div>
-        </div>
         <div class="section">
           <div class="section-title">Live Performance — What Users See</div>
           <div class="stat-grid">
@@ -1079,6 +1078,12 @@
 
   function buildExoticPlaceholder() {
     return `
+      <div class="section" id="tomorrowPicksSection">
+        <div class="section-title">📊 Tomorrow's Top Trifecta Boxes
+          <span style="font-size:0.65rem;color:var(--text-dim);font-weight:400;margin-left:8px">paper-trading · ranked by 60-day backtest</span>
+        </div>
+        <div id="tomorrowPicksContent" style="font-size:0.78rem;color:var(--text-dim)">Loading picks…</div>
+      </div>
       <div class="action-bar">
         <button class="btn" id="eReenrichBtn" onclick="triggerReenrich('eReenrichBtn', 'exoticStatus')">Re-enrich Today</button>
         <button class="btn" id="eRetrainBtn" onclick="triggerExoticRetrain()">Retrain Exotic Model</button>
@@ -1549,7 +1554,6 @@
   // Init
   if (adminSecret) {
     loadDashboard();
-    loadTomorrowPicks();
   } else {
     document.getElementById('dashContent').style.display = 'none';
     document.getElementById('loginGate').style.display = '';
