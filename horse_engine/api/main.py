@@ -4951,6 +4951,17 @@ async def admin_needing_dividend(
     return {"days": days, "races_needing_dividend": items}
 
 
+@app.post("/api/admin/bets/generate-all")
+async def admin_generate_all(x_cron_secret: Optional[str] = Header(None)):
+    """Fire the hourly bet-generation sweep immediately. Additive — only
+    inserts strategy_labels that don't already exist per race, so it's
+    safe to call repeatedly and lets newly-added strategies backfill
+    onto already-generated races without waiting for the next cron tick."""
+    _check_admin(x_cron_secret)
+    asyncio.create_task(_scheduled_generate_bets())
+    return {"ok": True, "queued": True}
+
+
 @app.post("/api/admin/bets/settle-only")
 async def admin_settle_only(x_cron_secret: Optional[str] = Header(None)):
     """Settle bets using whatever results are already in the DB — no
