@@ -4308,20 +4308,34 @@ async def admin_settle_bets(x_cron_secret: Optional[str] = Header(None)):
     return {"ok": True, "queued": True}
 
 
+@app.get("/api/bet-insights/today")
+async def get_today_picks(limit: int = 5):
+    """Top picks for today, filtered to upcoming (not-yet-jumped) races."""
+    return await _get_picks_for_date(
+        for_date=_today_aest().isoformat(),
+        upcoming_only=True,
+        limit=limit,
+    )
+
+
 @app.get("/api/bet-insights/tomorrow")
 async def get_tomorrow_picks(limit: int = 5):
-    """Insight endpoint for the dashboard: profile today's hit-vs-miss
-    races by model conviction, then score tomorrow's races against the
-    hit profile and return the top N candidates.
+    """Score tomorrow's races by predicted hit rate from the 60-day backtest."""
+    return await _get_picks_for_date(
+        for_date=(_today_aest() + timedelta(days=1)).isoformat(),
+        upcoming_only=False,
+        limit=limit,
+    )
 
-    Pattern observed from initial paper-trading data: boxes hit on OPEN
-    races (rank-1 win ~15-25%) rather than favourite-heavy ones (>30%)
-    because the 5-strategy basket banks rank 1+2 in 4 of 5 boxes — a
-    favourite collapse kills most of the bets at once.
-    """
+
+async def _get_picks_for_date(for_date: str, upcoming_only: bool, limit: int):
+    """Shared implementation: profile today's settled paper-trading
+    results, then score the candidate races for `for_date` against the
+    60-day backtest hit-rate buckets. If upcoming_only=True, drop races
+    whose scheduled_time has already passed."""
     limit = max(1, min(int(limit), 12))
     today_str = _today_aest().isoformat()
-    tomorrow_str = (_today_aest() + timedelta(days=1)).isoformat()
+    target_date_str = for_date
 
     # ── Profile today: avg win1 / top3-sum for hit vs miss races ──
     hit_w1, hit_t3, miss_w1, miss_t3 = [], [], [], []
@@ -4400,20 +4414,18 @@ async def get_tomorrow_picks(limit: int = 5):
         if s < 70: return 50.0
         return 43.8
 
+    now_utc = datetime.utcnow().replace(tzinfo=timezone.utc)
     candidates: list[dict] = []
     async with get_session() as session:
-        # Use mutable (RunnerPredictionRow) for tomorrow since history is
-        # only written pre-race, but the bet generator writes mutable on
-        # enrich. Filter cancelled.
-        tomorrow_runners = (await session.execute(
+        runner_rows = (await session.execute(
             select(RunnerPredictionRow)
-            .where(RunnerPredictionRow.race_id.like(f"{tomorrow_str}_%"))
+            .where(RunnerPredictionRow.race_id.like(f"{target_date_str}_%"))
             .where(RunnerPredictionRow.cancelled.is_(False) | RunnerPredictionRow.cancelled.is_(None))
         )).scalars().all()
         sched_lookup: dict[str, str] = {}
         venue_lookup: dict[str, str] = {}
         race_runners: dict[str, list] = {}
-        for r in tomorrow_runners:
+        for r in runner_rows:
             race_runners.setdefault(r.race_id, []).append(r)
             if r.scheduled_time and r.race_id not in sched_lookup:
                 sched_lookup[r.race_id] = r.scheduled_time
@@ -4424,6 +4436,16 @@ async def get_tomorrow_picks(limit: int = 5):
         runners = sorted([x for x in runners if x.model_rank], key=lambda x: x.model_rank)
         if len(runners) < 7 or len(runners) > 13:
             continue
+        # Upcoming-only filter for the today view — drop already-jumped races.
+        if upcoming_only:
+            st = sched_lookup.get(rid)
+            if not st:
+                continue
+            try:
+                if datetime.fromisoformat(str(st).replace("Z", "+00:00")) <= now_utc:
+                    continue
+            except (ValueError, TypeError):
+                continue
         w1 = (runners[0].win_probability or 0) * 100
         if w1 < 20 or (25 <= w1 < 30):
             continue  # below threshold or in the trap zone

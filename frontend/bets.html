@@ -13,7 +13,7 @@
   </script>
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
   <meta name="theme-color" content="#07090f" />
-  <title>📊 Bet Ledger — Paper Trading | FunkyIQ</title>
+  <title>🧪 The Lab — Paper Trading Trifectas | FunkyIQ</title>
   <meta name="robots" content="noindex" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700;800&family=Outfit:wght@400;500;600;700&display=swap" rel="stylesheet" />
@@ -102,6 +102,71 @@
       background: rgba(45,212,191,0.12);
       border-color: var(--teal);
       color: var(--teal-bright);
+    }
+
+    /* Today's best pick hero */
+    .hero-pick {
+      margin-bottom: 14px;
+      padding: 14px 16px;
+      border: 1px solid rgba(45,212,191,0.4);
+      border-radius: 14px;
+      background: linear-gradient(135deg, rgba(45,212,191,0.08), rgba(45,212,191,0.02));
+      box-shadow: 0 0 0 1px rgba(45,212,191,0.18);
+    }
+    .hero-pick.empty {
+      opacity: 0.65;
+      background: var(--bg-card);
+      border-color: var(--border);
+      box-shadow: none;
+    }
+    .hero-label {
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 0.6px;
+      text-transform: uppercase;
+      color: var(--teal-bright);
+      margin-bottom: 6px;
+    }
+    .hero-race {
+      font-family: 'Barlow Condensed', sans-serif;
+      font-weight: 800;
+      font-size: 26px;
+      line-height: 1;
+      letter-spacing: 0.4px;
+      color: var(--text);
+    }
+    .hero-jump {
+      font-family: 'Barlow Condensed', sans-serif;
+      font-size: 16px;
+      font-weight: 600;
+      color: var(--text-dim);
+      margin-left: 10px;
+    }
+    .hero-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 8px;
+      font-size: 11px;
+    }
+    .hero-stat {
+      display: flex;
+      align-items: baseline;
+      gap: 4px;
+      color: var(--text-dim);
+      background: var(--bg-elevated);
+      padding: 4px 8px;
+      border-radius: 6px;
+    }
+    .hero-stat strong {
+      color: var(--text);
+      font-weight: 700;
+      font-variant-numeric: tabular-nums;
+    }
+    .hero-hit {
+      color: var(--green-bright) !important;
+      font-weight: 800 !important;
+      font-size: 12px;
     }
 
     .summary {
@@ -436,11 +501,12 @@
   <header>
     <div class="title-row">
       <div>
-        <h1 class="title">📊 Bet Ledger</h1>
+        <h1 class="title">🧪 The Lab</h1>
         <div class="subtitle">Paper-trading · $2 flexi-box trifectas · 5 bets per qualifying race</div>
       </div>
       <a href="/hotseat" class="nav-back">🔥 Hot Seat →</a>
     </div>
+    <div id="heroPick"></div>
     <div id="summary" class="summary"></div>
     <div class="sort-row">
       <span class="sort-label">Sort</span>
@@ -812,6 +878,44 @@
     }
   }
 
+  async function loadHeroPick() {
+    const target = document.getElementById('heroPick');
+    if (!target) return;
+    try {
+      const r = await fetch(`${API}/api/bet-insights/today?limit=1`);
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      const d = await r.json();
+      const cand = (d.tomorrow_candidates && d.tomorrow_candidates[0]) || null;
+      if (!cand) {
+        target.innerHTML = `
+          <div class="hero-pick empty">
+            <div class="hero-label">Today's Best Pick</div>
+            <div style="font-size:12px;color:var(--text-muted)">No qualifying upcoming races right now. Algorithm filters: field 7-13, rank-1 win outside 25-30%.</div>
+          </div>`;
+        return;
+      }
+      const venue = (cand.venue || '').replace(/-/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+      const jump = cand.scheduled_time ? cand.scheduled_time.substring(11, 16) : '—';
+      target.innerHTML = `
+        <div class="hero-pick">
+          <div class="hero-label">🎯 Today's Best Pick · predicted ${cand.predicted_hit_rate_pct.toFixed(0)}% hit</div>
+          <div>
+            <span class="hero-race">${escHtml(venue)} R${cand.race_number}</span>
+            <span class="hero-jump">🕐 ${jump}</span>
+          </div>
+          <div class="hero-row">
+            <span class="hero-stat">Field <strong>${cand.field_size}</strong></span>
+            <span class="hero-stat">Rank-1 <strong>${cand.rank1_win_pct.toFixed(1)}%</strong></span>
+            <span class="hero-stat">Top-3 Σ <strong>${cand.top3_sum_pct.toFixed(1)}%</strong></span>
+            <span class="hero-stat hero-hit">Pred. hit ${cand.predicted_hit_rate_pct.toFixed(1)}%</span>
+          </div>
+        </div>`;
+    } catch (e) {
+      console.error('[heroPick]', e);
+      target.innerHTML = '';
+    }
+  }
+
   // Sort pills
   document.querySelectorAll('.sort-pill').forEach(btn => {
     btn.addEventListener('click', () => {
@@ -880,7 +984,11 @@
 
   // Refresh every 60s + jitter
   setInterval(load, 60000 + Math.random() * 15000);
+  // Hero pick refreshes a bit faster — the upcoming-only filter naturally
+  // promotes the next race as races jump throughout the day.
+  setInterval(loadHeroPick, 90000 + Math.random() * 20000);
   load();
+  loadHeroPick();
 </script>
 </body>
 </html>
