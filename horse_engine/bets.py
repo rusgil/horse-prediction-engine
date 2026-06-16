@@ -133,6 +133,18 @@ def generate_recommendations(runners: list[dict], stake: float = DEFAULT_STAKE) 
     if t4:
         _add("quad_only", [t1, t2, t3, t4])
 
+    # 8. The Stack — 5 different 3-horse trifecta boxes per race.
+    # 270d portfolio sim: 15.7% race hit rate, +8.6% ROI at $200 avg
+    # dividend, +$19.5k total profit (highest absolute dollars of any
+    # portfolio tested at metro divs). 5 boxes × $2 = $10/race stake.
+    # Each box targets a different miss pattern.
+    if t5 and t4 and t3:
+        _add("stack_top3",   [t1, t2, t3])  # all favourites land
+        _add("stack_skip3",  [t1, t2, t4])  # rank-3 misses
+        _add("stack_skip2",  [t1, t3, t4])  # rank-2 misses
+        _add("stack_no_fav", [t2, t3, t4])  # favourite collapses
+        _add("stack_value",  [t1, t2, t5])  # value runner places
+
     return bets
 
 
@@ -151,6 +163,12 @@ STRATEGY_GROUP = {
     "wide_top6": "net",
     "trio_only": "trio",
     "quad_only": "quad",
+    # The Stack — 5 × 3-horse trifecta boxes per race.
+    "stack_top3":   "stack",
+    "stack_skip3":  "stack",
+    "stack_skip2":  "stack",
+    "stack_no_fav": "stack",
+    "stack_value":  "stack",
 }
 STRATEGY_GROUP_LABELS = {
     "spread": "The Spread",
@@ -158,6 +176,7 @@ STRATEGY_GROUP_LABELS = {
     "net":   "The Net",
     "trio":  "The Trio",
     "quad":  "The Quad",
+    "stack": "The Stack",
 }
 
 
