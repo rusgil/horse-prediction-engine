@@ -1505,8 +1505,9 @@
           data[s.strategy].windows[w.key] = s;
         }
       });
-      // Stable order — spread then sweep, then any new strategy
-      const order = { spread: 0, sweep: 1 };
+      // Stable order — Trio (default/recommended) first, then Quad,
+      // then Spread, then legacy strategies.
+      const order = { trio: 0, quad: 1, spread: 2, sweep: 10, net: 11 };
       const strategyKeys = Object.keys(data).sort((a, b) =>
         (order[a] ?? 99) - (order[b] ?? 99)
       );

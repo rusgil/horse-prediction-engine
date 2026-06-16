@@ -586,7 +586,10 @@
   const STRATEGY_KEY = 'fiq_strategy';
   const state = {
     expanded: new Set(), detail: {}, lastData: null, sort: 'next',
-    strategy: (typeof sessionStorage !== 'undefined' && sessionStorage.getItem(STRATEGY_KEY)) || 'spread',
+    // Default: trio (single 3-horse box). 270d sim showed +41.6% ROI at
+    // $200 avg dividend, while wider portfolios were -7% to -53% on
+    // the same data — fewer boxes is structurally more profitable.
+    strategy: (typeof sessionStorage !== 'undefined' && sessionStorage.getItem(STRATEGY_KEY)) || 'trio',
     strategyStats: [],
   };
 
@@ -934,26 +937,31 @@
     const row = document.getElementById('strategyRow');
     if (!row) return;
     const CANONICAL = [
-      { strategy: 'spread', label: 'The Spread' },
-      { strategy: 'trio',   label: 'The Trio' },
-      { strategy: 'quad',   label: 'The Quad' },
+      { strategy: 'trio',   label: 'The Trio',   tagline: '1 box · best ROI' },
+      { strategy: 'quad',   label: 'The Quad',   tagline: '1 box · wider' },
+      { strategy: 'spread', label: 'The Spread', tagline: '5 boxes · widest' },
     ];
     const byKey = {};
     for (const s of (state.strategyStats || [])) byKey[s.strategy] = s;
-    const groups = CANONICAL.map(c => byKey[c.strategy] || { ...c, meta: 'Loading…' });
+    const groups = CANONICAL.map(c => ({ ...c, ...(byKey[c.strategy] || {}) }));
     row.innerHTML = groups.map(g => {
       const isActive = state.strategy === g.strategy;
+      const isDefault = g.strategy === 'trio';  // recommended by 270d backtest
       const races = g.races_bet ?? 0;
       const hitRate = (g.race_hit_rate_pct != null) ? g.race_hit_rate_pct.toFixed(0) + '%' : '—';
       const roi = (g.roi_pct != null)
         ? `<span class="stat ${g.roi_pct >= 0 ? 'pos' : 'neg'}">${g.roi_pct >= 0 ? '+' : ''}${g.roi_pct.toFixed(1)}%</span>`
         : `<span class="stat" style="color:var(--text-muted)">—</span>`;
-      const subline = (g.races_bet != null)
-        ? `${races} races · hit ${hitRate} · ROI ${roi}`
-        : (g.meta || '');
+      const tagline = g.tagline || '';
+      const subline = (g.races_bet != null && g.races_bet > 0)
+        ? `${tagline}${tagline ? ' · ' : ''}${races} races · hit ${hitRate} · ROI ${roi}`
+        : (tagline || g.meta || '');
+      const badge = isDefault
+        ? `<span style="display:inline-block;font-size:9px;padding:1px 5px;background:var(--teal);color:var(--bg-base);border-radius:4px;margin-left:6px;font-weight:700;letter-spacing:0.3px">★ DEFAULT</span>`
+        : '';
       return `
         <div class="strategy-pill ${isActive ? 'active' : ''}" data-strategy="${g.strategy}">
-          <span class="name">${escHtml(g.label || g.strategy)}</span>
+          <span class="name">${escHtml(g.label || g.strategy)}${badge}</span>
           <span class="meta">${subline}</span>
         </div>`;
     }).join('');
