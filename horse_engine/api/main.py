@@ -5201,10 +5201,23 @@ async def portfolio_simulation(
     # Portfolios are defined by RANK (1=model's top horse). Translated to
     # tab numbers per race using the prediction history.
     portfolios = {
-        "ten_box_mega ($20/race)": [
-            [1,2,3], [1,2,5], [1,2,6], [1,2,4], [2,3,4],
-            [1,2,3,4], [1,2,3,5], [2,3,4,5],
-            [1,2,3,4,5], [1,2,3,4,5,6],
+        "trio_only ($2/race)": [
+            [1,2,3],
+        ],
+        "trio_x3 ($6/race)": [
+            [1,2,3], [1,2,4], [1,2,5],
+        ],
+        "trio_x5 ($10/race)": [
+            [1,2,3], [1,2,4], [1,2,5], [1,3,4], [2,3,4],
+        ],
+        "trio_x5_value ($10/race)": [
+            # Includes value runner 5 for outsider scenarios
+            [1,2,3], [1,2,4], [1,2,5], [1,3,4], [1,3,5],
+        ],
+        "trio_x10 ($20/race)": [
+            [1,2,3], [1,2,4], [1,2,5], [1,2,6],
+            [1,3,4], [1,3,5], [2,3,4], [2,3,5],
+            [1,4,5], [3,4,5],
         ],
         "spread_5box ($10/race)": [
             [1,2,3], [1,2,3,4], [1,2,5], [1,2,6], [2,3,4,5],
@@ -5215,8 +5228,10 @@ async def portfolio_simulation(
         "trio_plus_quad ($4/race)": [
             [1,2,3], [1,2,3,4],
         ],
-        "trio_only ($2/race)": [
-            [1,2,3],
+        "ten_box_mega ($20/race)": [
+            [1,2,3], [1,2,5], [1,2,6], [1,2,4], [2,3,4],
+            [1,2,3,4], [1,2,3,5], [2,3,4,5],
+            [1,2,3,4,5], [1,2,3,4,5,6],
         ],
         "net_only ($2/race)": [
             [1,2,3,4,5,6],
