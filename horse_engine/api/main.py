@@ -67,6 +67,8 @@ from horse_engine.models.database import (
     save_race_predictions,
 )
 from horse_engine.bets import (
+    STRATEGY_GROUP as _STRATEGY_GROUP,
+    STRATEGY_GROUP_LABELS as _STRATEGY_GROUP_LABELS,
     STRATEGY_REGISTRY as _BET_STRATEGIES,
     compute_payout as _bet_compute_payout,
     generate_recommendations as _build_bet_basket,
@@ -4115,6 +4117,7 @@ def _row_to_bet_dict(b: BetRecommendationRow) -> dict:
         "id": b.id,
         "race_id": b.race_id,
         "strategy_label": b.strategy_label,
+        "strategy_group": _STRATEGY_GROUP.get(b.strategy_label, "spread"),
         "box_horses": json.loads(b.box_horses_json) if b.box_horses_json else [],
         "box_horse_names": json.loads(b.box_horse_names_json) if b.box_horse_names_json else [],
         "num_permutations": b.num_permutations,
@@ -4130,31 +4133,49 @@ def _row_to_bet_dict(b: BetRecommendationRow) -> dict:
     }
 
 
+def _strategy_labels_for_group(group: str) -> Optional[list[str]]:
+    """Return the list of strategy_label values that belong to the given
+    group, or None if the group is 'all' / unset (no filter)."""
+    if not group or group == "all":
+        return None
+    return [lbl for lbl, g in _STRATEGY_GROUP.items() if g == group]
+
+
 @app.get("/api/bets/{race_id}")
-async def get_bets_for_race(race_id: str):
-    """Paper-trading bet recommendations for a single race."""
+async def get_bets_for_race(race_id: str, strategy: Optional[str] = None):
+    """Paper-trading bet recommendations for a single race. Pass
+    strategy=spread or strategy=sweep to filter."""
+    labels = _strategy_labels_for_group(strategy)
     async with get_session() as session:
-        rows = (await session.execute(
+        q = (
             select(BetRecommendationRow)
             .where(BetRecommendationRow.race_id == race_id)
             .order_by(BetRecommendationRow.id)
-        )).scalars().all()
-    return {"race_id": race_id, "bets": [_row_to_bet_dict(b) for b in rows]}
+        )
+        if labels:
+            q = q.where(BetRecommendationRow.strategy_label.in_(labels))
+        rows = (await session.execute(q)).scalars().all()
+    return {"race_id": race_id, "strategy": strategy or "all",
+            "bets": [_row_to_bet_dict(b) for b in rows]}
 
 
 @app.get("/api/bets")
-async def list_bet_races(days: int = 7):
-    """Race-by-race paper-trading ledger. Returns one row per race with
-    aggregated stake/payout/pnl across all bets for that race. Settlement
-    status: 'pending' if any bet is unsettled, otherwise 'settled'."""
+async def list_bet_races(days: int = 7, strategy: Optional[str] = None):
+    """Race-by-race paper-trading ledger. Pass strategy=spread or
+    strategy=sweep to filter the per-race aggregation to a single
+    strategy group; default returns the combined view."""
     days = max(1, min(int(days), 60))
     cutoff = datetime.utcnow() - timedelta(days=days)
+    labels = _strategy_labels_for_group(strategy)
     async with get_session() as session:
-        rows = (await session.execute(
+        q = (
             select(BetRecommendationRow)
             .where(BetRecommendationRow.recommended_at >= cutoff)
             .order_by(BetRecommendationRow.recommended_at.desc())
-        )).scalars().all()
+        )
+        if labels:
+            q = q.where(BetRecommendationRow.strategy_label.in_(labels))
+        rows = (await session.execute(q)).scalars().all()
         race_ids = list({r.race_id for r in rows})
         # Top-3 results per race (for the winning-combination strip on
         # settled cards). Pull tab + horse name + position; group below.
@@ -4306,6 +4327,51 @@ async def admin_settle_bets(x_cron_secret: Optional[str] = Header(None)):
     _check_admin(x_cron_secret)
     asyncio.create_task(_scheduled_settle_bets())
     return {"ok": True, "queued": True}
+
+
+@app.get("/api/bet-insights/strategy-stats")
+async def get_strategy_stats(days: int = 14):
+    """Per-strategy-group aggregate stats for the strategy selector cards
+    on The Lab. Returns races bet, race hit rate, total stake, total
+    payout (where dividend known), P&L and ROI for each group."""
+    days = max(1, min(int(days), 60))
+    cutoff = datetime.utcnow() - timedelta(days=days)
+    async with get_session() as session:
+        rows = (await session.execute(
+            select(BetRecommendationRow)
+            .where(BetRecommendationRow.recommended_at >= cutoff)
+        )).scalars().all()
+    by_group: dict[str, list] = {}
+    for r in rows:
+        g = _STRATEGY_GROUP.get(r.strategy_label, "spread")
+        by_group.setdefault(g, []).append(r)
+    out: list[dict] = []
+    for g_key, bets in by_group.items():
+        race_ids = {b.race_id for b in bets}
+        races_with_hit = {b.race_id for b in bets if b.is_hit}
+        total_stake = round(sum((b.stake_dollars or 0) for b in bets), 2)
+        # Only count payouts where the dividend was set (no inflation from
+        # nulls). Sum of P&L for the same subset is the realised P&L.
+        settled_with_div = [b for b in bets if b.trifecta_dividend is not None]
+        total_payout = round(sum((b.payout_dollars or 0) for b in settled_with_div), 2)
+        priced_stake = round(sum((b.stake_dollars or 0) for b in settled_with_div), 2)
+        roi_pct = round((total_payout - priced_stake) / priced_stake * 100, 1) if priced_stake else None
+        out.append({
+            "strategy": g_key,
+            "label": _STRATEGY_GROUP_LABELS.get(g_key, g_key),
+            "races_bet": len(race_ids),
+            "races_hit": len(races_with_hit),
+            "race_hit_rate_pct": round(len(races_with_hit) / len(race_ids) * 100, 1) if race_ids else 0,
+            "total_stake_dollars": total_stake,
+            "total_payout_dollars": total_payout if priced_stake else None,
+            "pnl_dollars": round(total_payout - priced_stake, 2) if priced_stake else None,
+            "roi_pct": roi_pct,
+            "settled_with_dividend": len(settled_with_div),
+        })
+    # Stable ordering: spread first then sweep, then whatever else.
+    order = {"spread": 0, "sweep": 1}
+    out.sort(key=lambda s: order.get(s["strategy"], 99))
+    return {"days": days, "strategies": out}
 
 
 @app.get("/api/bet-insights/today")

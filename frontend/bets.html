@@ -73,6 +73,52 @@
       text-decoration: none;
     }
 
+    /* Strategy selector */
+    .strategy-row {
+      display: flex;
+      gap: 8px;
+      margin: 12px 0 10px;
+    }
+    .strategy-pill {
+      flex: 1;
+      padding: 10px 12px;
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      cursor: pointer;
+      text-align: left;
+      color: var(--text-dim);
+      transition: all 0.15s;
+    }
+    .strategy-pill.active {
+      background: rgba(45,212,191,0.10);
+      border-color: var(--teal);
+      color: var(--text);
+    }
+    .strategy-pill .name {
+      display: block;
+      font-family: 'Barlow Condensed', sans-serif;
+      font-weight: 800;
+      font-size: 18px;
+      letter-spacing: 0.4px;
+    }
+    .strategy-pill .meta {
+      display: block;
+      font-size: 10px;
+      color: var(--text-muted);
+      margin-top: 2px;
+      line-height: 1.4;
+    }
+    .strategy-pill.active .name { color: var(--teal-bright); }
+    .strategy-pill .stat {
+      display: inline-block;
+      font-weight: 700;
+      color: var(--text);
+      font-variant-numeric: tabular-nums;
+    }
+    .strategy-pill .stat.pos { color: var(--green-bright); }
+    .strategy-pill .stat.neg { color: var(--red); }
+
     /* Sort selector */
     .sort-row {
       display: flex;
@@ -506,6 +552,7 @@
       </div>
       <a href="/hotseat" class="nav-back">🔥 Hot Seat →</a>
     </div>
+    <div id="strategyRow" class="strategy-row"></div>
     <div id="heroPick"></div>
     <div id="summary" class="summary"></div>
     <div class="sort-row">
@@ -536,7 +583,12 @@
   };
 
   // race_id -> bool (expanded?); race_id -> array of bet rows (cached fetch)
-  const state = { expanded: new Set(), detail: {}, lastData: null, sort: 'next' };
+  const STRATEGY_KEY = 'fiq_strategy';
+  const state = {
+    expanded: new Set(), detail: {}, lastData: null, sort: 'next',
+    strategy: (typeof sessionStorage !== 'undefined' && sessionStorage.getItem(STRATEGY_KEY)) || 'spread',
+    strategyStats: [],
+  };
 
   function fmtPnl(v) {
     if (v == null) return null;
@@ -623,7 +675,7 @@
   async function fetchBetDetail(raceId) {
     if (state.detail[raceId] !== undefined) return;
     try {
-      const r = await fetch(`${API}/api/bets/${encodeURIComponent(raceId)}`);
+      const r = await fetch(`${API}/api/bets/${encodeURIComponent(raceId)}?strategy=${encodeURIComponent(state.strategy)}`);
       if (!r.ok) throw new Error('HTTP ' + r.status);
       const data = await r.json();
       state.detail[raceId] = data.bets || [];
@@ -868,7 +920,7 @@
 
   async function load() {
     try {
-      const r = await fetch(`${API}/api/bets?days=14`);
+      const r = await fetch(`${API}/api/bets?days=14&strategy=${encodeURIComponent(state.strategy)}`);
       if (!r.ok) throw new Error('HTTP ' + r.status);
       const data = await r.json();
       render(data);
@@ -876,6 +928,49 @@
       document.getElementById('races').innerHTML = `
         <div class="empty">Could not load ledger: ${escHtml(e.message)}</div>`;
     }
+  }
+
+  function renderStrategyRow() {
+    const row = document.getElementById('strategyRow');
+    if (!row) return;
+    const groups = state.strategyStats.length ? state.strategyStats : [
+      { strategy: 'spread', label: 'The Spread', meta: 'Loading…' },
+      { strategy: 'sweep',  label: 'The Sweep',  meta: 'Loading…' },
+    ];
+    // Force the canonical pair even when the API hasn't sent stats for both.
+    const present = new Set(groups.map(g => g.strategy));
+    if (!present.has('spread')) groups.push({ strategy: 'spread', label: 'The Spread', meta: 'No data yet' });
+    if (!present.has('sweep'))  groups.push({ strategy: 'sweep',  label: 'The Sweep',  meta: 'No data yet' });
+    const order = { spread: 0, sweep: 1 };
+    groups.sort((a, b) => (order[a.strategy] ?? 9) - (order[b.strategy] ?? 9));
+    row.innerHTML = groups.filter(g => g.strategy === 'spread' || g.strategy === 'sweep').map(g => {
+      const isActive = state.strategy === g.strategy;
+      const races = g.races_bet ?? 0;
+      const hitRate = (g.race_hit_rate_pct != null) ? g.race_hit_rate_pct.toFixed(0) + '%' : '—';
+      const roi = (g.roi_pct != null)
+        ? `<span class="stat ${g.roi_pct >= 0 ? 'pos' : 'neg'}">${g.roi_pct >= 0 ? '+' : ''}${g.roi_pct.toFixed(1)}%</span>`
+        : `<span class="stat" style="color:var(--text-muted)">—</span>`;
+      const subline = (g.races_bet != null)
+        ? `${races} races · hit ${hitRate} · ROI ${roi}`
+        : (g.meta || '');
+      return `
+        <div class="strategy-pill ${isActive ? 'active' : ''}" data-strategy="${g.strategy}">
+          <span class="name">${escHtml(g.label || g.strategy)}</span>
+          <span class="meta">${subline}</span>
+        </div>`;
+    }).join('');
+  }
+
+  async function loadStrategyStats() {
+    try {
+      const r = await fetch(`${API}/api/bet-insights/strategy-stats?days=14`);
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      const d = await r.json();
+      state.strategyStats = d.strategies || [];
+    } catch (e) {
+      console.error('[strategy-stats]', e);
+    }
+    renderStrategyRow();
   }
 
   async function loadHeroPick() {
@@ -915,6 +1010,20 @@
       target.innerHTML = '';
     }
   }
+
+  // Strategy pills — delegated since the row re-renders when stats refresh.
+  document.getElementById('strategyRow').addEventListener('click', (e) => {
+    const pill = e.target.closest('.strategy-pill');
+    if (!pill) return;
+    const next = pill.dataset.strategy;
+    if (!next || next === state.strategy) return;
+    state.strategy = next;
+    try { sessionStorage.setItem(STRATEGY_KEY, next); } catch (e) {}
+    state.detail = {};  // bet-detail cache is per-strategy
+    state.expanded.clear();
+    renderStrategyRow();
+    load();
+  });
 
   // Sort pills
   document.querySelectorAll('.sort-pill').forEach(btn => {
@@ -987,8 +1096,13 @@
   // Hero pick refreshes a bit faster — the upcoming-only filter naturally
   // promotes the next race as races jump throughout the day.
   setInterval(loadHeroPick, 90000 + Math.random() * 20000);
+  // Strategy stats refresh every 5 min — they're cumulative; no need to
+  // chase intraday changes.
+  setInterval(loadStrategyStats, 300000);
+  renderStrategyRow();   // paint immediately with placeholder
   load();
   loadHeroPick();
+  loadStrategyStats();
 </script>
 </body>
 </html>

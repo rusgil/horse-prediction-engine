@@ -93,7 +93,30 @@ def generate_recommendations(runners: list[dict], stake: float = DEFAULT_STAKE) 
     if t5 and t4 and t3 and t2:
         _add("no_favourite_hedge", [t2, t3, t4, t5])
 
+    # 6. The Sweep — a single 5-horse box of top 5 by win rank. 60-day
+    # backtest had this matching the 5-box basket's race hit rate at 1/5th
+    # the cost; we generate it alongside the spread so the two strategies
+    # can be A/B compared on real dividends as they come in.
+    if t5:
+        _add("wide_top5", [t1, t2, t3, t4, t5])
+
     return bets
+
+
+# Strategy-group taxonomy. Maps each box strategy_label to a top-level
+# brand. The Lab UI surfaces stats / picks / ledger entries per group.
+STRATEGY_GROUP = {
+    "core_top3": "spread",
+    "core_top4": "spread",
+    "value_runner1": "spread",
+    "value_runner2": "spread",
+    "no_favourite_hedge": "spread",
+    "wide_top5": "sweep",
+}
+STRATEGY_GROUP_LABELS = {
+    "spread": "The Spread",
+    "sweep": "The Sweep",
+}
 
 
 # ── Alternative strategies for backtest comparison ───────────────────────
