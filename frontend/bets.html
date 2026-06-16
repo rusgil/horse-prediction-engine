@@ -935,8 +935,8 @@
     if (!row) return;
     const CANONICAL = [
       { strategy: 'spread', label: 'The Spread' },
-      { strategy: 'sweep',  label: 'The Sweep' },
-      { strategy: 'net',    label: 'The Net' },
+      { strategy: 'trio',   label: 'The Trio' },
+      { strategy: 'quad',   label: 'The Quad' },
     ];
     const byKey = {};
     for (const s of (state.strategyStats || [])) byKey[s.strategy] = s;

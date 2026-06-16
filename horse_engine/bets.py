@@ -93,19 +93,19 @@ def generate_recommendations(runners: list[dict], stake: float = DEFAULT_STAKE) 
     if t5 and t4 and t3 and t2:
         _add("no_favourite_hedge", [t2, t3, t4, t5])
 
-    # 6. The Sweep — a single 5-horse box of top 5 by win rank. 60-day
-    # backtest had this matching the 5-box basket's race hit rate at 1/5th
-    # the cost; we generate it alongside the spread so the two strategies
-    # can be A/B compared on real dividends as they come in.
-    if t5:
-        _add("wide_top5", [t1, t2, t3, t4, t5])
+    # 6. The Trio — a single 3-horse box of the model's top 3 by win.
+    # Tightest box (6 perms); biggest per-hit payout (33¢/perm at $2
+    # flexi). Lower hit rate but the most profitable per-hit at typical
+    # AU country dividends ($50-150 range).
+    if t3:
+        _add("trio_only", [t1, t2, t3])
 
-    # 7. The Net — a single 6-horse box of top 6 by win rank. 270-day
-    # backtest at 52.3% race hit rate (vs The Sweep's 35.3%, validated
-    # across 2,362 races). Same $2 flexi stake; per-perm payout is half
-    # of The Sweep's so ROI hinges on the per-hit dividend size.
-    if t6:
-        _add("wide_top6", [t1, t2, t3, t4, t5, t6])
+    # 7. The Quad — a single 4-horse box of the model's top 4 by win.
+    # Middle-ground (24 perms, 8¢/perm). Broader coverage than Trio
+    # at half the per-hit payout. Real-data ROI between Trio and
+    # Sweep at typical AU country dividends.
+    if t4:
+        _add("quad_only", [t1, t2, t3, t4])
 
     return bets
 
@@ -118,13 +118,20 @@ STRATEGY_GROUP = {
     "value_runner1": "spread",
     "value_runner2": "spread",
     "no_favourite_hedge": "spread",
+    # Legacy single-box wides — kept in the map so historical rows still
+    # report correctly under their original group, but no new rows are
+    # generated. The recommender now emits trio_only / quad_only instead.
     "wide_top5": "sweep",
     "wide_top6": "net",
+    "trio_only": "trio",
+    "quad_only": "quad",
 }
 STRATEGY_GROUP_LABELS = {
     "spread": "The Spread",
     "sweep": "The Sweep",
     "net":   "The Net",
+    "trio":  "The Trio",
+    "quad":  "The Quad",
 }
 
 
