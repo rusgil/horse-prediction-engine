@@ -219,6 +219,128 @@ def strategy_exotic_top3(runners: list[dict], stake: float = DEFAULT_STAKE) -> l
     }]
 
 
+def strategy_anchor(runners: list[dict], stake: float = DEFAULT_STAKE) -> list[dict]:
+    """5-horse box of top 5 by win, but ONLY fires when rank-1 win prob
+    >= 35%. Concentrates capital on races with a genuinely strong model
+    favourite — the backtest showed rank-1 40%+ races hit 45.5%.
+    Same box shape as The Sweep, narrower entry criteria."""
+    active = _sorted_active(runners, "model_rank")
+    if not (MIN_FIELD_SIZE <= len(active) <= MAX_FIELD_SIZE) or len(active) < 5:
+        return []
+    w1 = (active[0].get("win_probability") or 0) * 100
+    if w1 < 35.0:
+        return []
+    top5 = active[:5]
+    return [{
+        "strategy_label": "anchor",
+        "box_horses": [h["tab_number"] for h in top5],
+        "box_horse_names": [h["horse_name"] for h in top5],
+        "num_permutations": _perms(5),
+        "stake_dollars": stake,
+    }]
+
+
+def strategy_net(runners: list[dict], stake: float = DEFAULT_STAKE) -> list[dict]:
+    """6-horse box of top 6 by win rank. Wider than The Sweep —
+    captures more outsiders at the cost of bigger permutation count
+    (120 perms vs 60). Tests whether stretching one box further
+    increases race hit rate enough to justify the dilution."""
+    active = _sorted_active(runners, "model_rank")
+    if not (MIN_FIELD_SIZE <= len(active) <= MAX_FIELD_SIZE) or len(active) < 6:
+        return []
+    w1 = (active[0].get("win_probability") or 0) * 100
+    if w1 < MIN_TOP1_WIN_PCT or (TRAP_ZONE_LO <= w1 < TRAP_ZONE_HI):
+        return []
+    top6 = active[:6]
+    return [{
+        "strategy_label": "net",
+        "box_horses": [h["tab_number"] for h in top6],
+        "box_horse_names": [h["horse_name"] for h in top6],
+        "num_permutations": _perms(6),
+        "stake_dollars": stake,
+    }]
+
+
+def strategy_blend(runners: list[dict], stake: float = DEFAULT_STAKE) -> list[dict]:
+    """Box the UNION of (top 3 by win) and (top 3 by place). Combines
+    two different model signals — the place model picks up consistent
+    top-3 finishers that the win model might rank lower. Box size
+    varies 3–5 horses depending on overlap between the two rankings."""
+    win_active = _sorted_active(runners, "model_rank")
+    place_active = _sorted_active(runners, "place_model_rank")
+    if not (MIN_FIELD_SIZE <= len(win_active) <= MAX_FIELD_SIZE):
+        return []
+    w1 = (win_active[0].get("win_probability") or 0) * 100
+    if w1 < MIN_TOP1_WIN_PCT or (TRAP_ZONE_LO <= w1 < TRAP_ZONE_HI):
+        return []
+    if len(win_active) < 3 or len(place_active) < 3:
+        return []
+    # Preserve order: win-top first, then place-top runners not already in.
+    seen_tabs: set = set()
+    blend: list[dict] = []
+    for r in win_active[:3] + place_active[:3]:
+        if r["tab_number"] in seen_tabs:
+            continue
+        seen_tabs.add(r["tab_number"])
+        blend.append(r)
+    if len(blend) < 3:
+        return []
+    return [{
+        "strategy_label": "blend",
+        "box_horses": [h["tab_number"] for h in blend],
+        "box_horse_names": [h["horse_name"] for h in blend],
+        "num_permutations": _perms(len(blend)),
+        "stake_dollars": stake,
+    }]
+
+
+def strategy_sniper(runners: list[dict], stake: float = DEFAULT_STAKE) -> list[dict]:
+    """Premium-grade 4-horse box. ONLY fires for races where:
+      - field size 7–10 (small enough to box tightly)
+      - rank-1 win >= 30% (model has strong conviction)
+      - top-3 sum >= 60% (concentrated probability mass)
+    Targets the highest-hit-rate buckets from the 60-day backtest. Low
+    volume but should have the best precision per dollar."""
+    active = _sorted_active(runners, "model_rank")
+    if not (MIN_FIELD_SIZE <= len(active) <= 10) or len(active) < 4:
+        return []
+    w1 = (active[0].get("win_probability") or 0) * 100
+    if w1 < 30.0:
+        return []
+    top3_sum = sum((active[i].get("win_probability") or 0) * 100 for i in range(3))
+    if top3_sum < 60.0:
+        return []
+    top4 = active[:4]
+    return [{
+        "strategy_label": "sniper",
+        "box_horses": [h["tab_number"] for h in top4],
+        "box_horse_names": [h["horse_name"] for h in top4],
+        "num_permutations": _perms(4),
+        "stake_dollars": stake,
+    }]
+
+
+def strategy_pocket(runners: list[dict], stake: float = DEFAULT_STAKE) -> list[dict]:
+    """4-horse box, ONLY fires for fields 7–8. The backtest showed
+    field=7 hits 48.7% and field 8-9 hits 32.5% — this strategy lives
+    entirely in the sweet spot. Tighter than The Sweep, broader than
+    a 3-horse box, restricted to the high-hit-rate field range."""
+    active = _sorted_active(runners, "model_rank")
+    if not (7 <= len(active) <= 8):
+        return []
+    w1 = (active[0].get("win_probability") or 0) * 100
+    if w1 < MIN_TOP1_WIN_PCT or (TRAP_ZONE_LO <= w1 < TRAP_ZONE_HI):
+        return []
+    top4 = active[:4]
+    return [{
+        "strategy_label": "pocket",
+        "box_horses": [h["tab_number"] for h in top4],
+        "box_horse_names": [h["horse_name"] for h in top4],
+        "num_permutations": _perms(4),
+        "stake_dollars": stake,
+    }]
+
+
 def strategy_small_field_only(runners: list[dict], stake: float = DEFAULT_STAKE) -> list[dict]:
     """Single 3-horse box of top 3 by win — ONLY for races with field ≤ 9
     (where the backtest showed 32-48% race-level hit rates). Bets very
@@ -248,6 +370,11 @@ STRATEGY_REGISTRY = {
     "place_top4": strategy_place_top4,
     "exotic_top3": strategy_exotic_top3,
     "small_field_top3": strategy_small_field_only,
+    "anchor": strategy_anchor,
+    "net": strategy_net,
+    "blend": strategy_blend,
+    "sniper": strategy_sniper,
+    "pocket": strategy_pocket,
 }
 
 

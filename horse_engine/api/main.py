@@ -4772,6 +4772,11 @@ async def strategy_shootout(
         total_boxes = 0
         total_perms = 0
         boxes_hit = 0
+        # Day-of-week buckets (0=Mon..6=Sun) + weekend split for the
+        # weekend-vs-weekday hypothesis test.
+        dow_counts = {i: {"races": 0, "hits": 0} for i in range(7)}
+        weekend = {"races": 0, "hits": 0}
+        weekday = {"races": 0, "hits": 0}
         for rid, top3 in resolved_top3.items():
             pruns = preds_by_race.get(rid, [])
             if len(pruns) < 7:
@@ -4802,6 +4807,23 @@ async def strategy_shootout(
                     race_hit = True
             if race_hit:
                 races_hit += 1
+            # Day-of-week classification (Mon=0..Sun=6).
+            try:
+                race_date = datetime.fromisoformat(rid.split("_", 1)[0]).date()
+                dow = race_date.weekday()
+                dow_counts[dow]["races"] += 1
+                if race_hit:
+                    dow_counts[dow]["hits"] += 1
+                if dow >= 5:
+                    weekend["races"] += 1
+                    if race_hit:
+                        weekend["hits"] += 1
+                else:
+                    weekday["races"] += 1
+                    if race_hit:
+                        weekday["hits"] += 1
+            except (ValueError, KeyError):
+                pass
         cost_per_race = round(total_perms * 2 / races_evaluated / max(1, total_boxes // races_evaluated), 2) if races_evaluated else 0
         # Total paper stake across the window = total_perms * (stake/perms)
         # but for flexi boxes the user-set stake is per BOX not per perm.
@@ -4809,9 +4831,28 @@ async def strategy_shootout(
         total_stake = total_boxes * DEFAULT_STAKE if False else total_boxes * 2.0
         cost_per_hit = round(total_stake / boxes_hit, 2) if boxes_hit else None
         cost_per_race_hit = round(total_stake / races_hit, 2) if races_hit else None
+        dow_names = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+        by_dow = {
+            dow_names[i]: {
+                "races": dow_counts[i]["races"],
+                "hits": dow_counts[i]["hits"],
+                "hit_rate_pct": (round(dow_counts[i]["hits"] / dow_counts[i]["races"] * 100, 1)
+                                 if dow_counts[i]["races"] else 0),
+            }
+            for i in range(7)
+        }
+        wkend_hit = round(weekend["hits"] / weekend["races"] * 100, 1) if weekend["races"] else 0
+        wkday_hit = round(weekday["hits"] / weekday["races"] * 100, 1) if weekday["races"] else 0
         strategy_results.append({
             "strategy": label,
             "races_evaluated": races_evaluated,
+            "weekend_races": weekend["races"],
+            "weekend_hits": weekend["hits"],
+            "weekend_hit_rate_pct": wkend_hit,
+            "weekday_races": weekday["races"],
+            "weekday_hits": weekday["hits"],
+            "weekday_hit_rate_pct": wkday_hit,
+            "by_dow": by_dow,
             "coverage_pct": round(races_evaluated / total_universe * 100, 1) if total_universe else 0,
             "races_hit": races_hit,
             "race_hit_rate_pct": round(races_hit / races_evaluated * 100, 1) if races_evaluated else 0,
