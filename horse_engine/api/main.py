@@ -4708,17 +4708,27 @@ async def backtest_formula(
 @app.get("/api/admin/bets/strategy-shootout")
 async def strategy_shootout(
     days: int = 60,
+    exclude_dow: Optional[str] = None,
     x_cron_secret: Optional[str] = Header(None),
 ):
     """Backtest every strategy in bets.STRATEGY_REGISTRY side-by-side
     against the last N days of settled racing. Returns per-strategy
-    race-coverage, hit rate, total boxes generated and effective
-    cost-per-hit (a proxy for ROI in the absence of dividend data).
+    race-coverage, hit rate, total boxes generated, effective
+    cost-per-hit, and weekend/weekday/day-of-week breakdown.
 
-    Use to compare alternative trifecta formulas against the current
-    5-box baseline before promoting any to production."""
+    exclude_dow: comma-separated list of weekday names to skip, e.g.
+    'Tue,Fri'. Useful for testing whether dropping the worst days
+    lifts the overall hit rate.
+    """
     _check_admin(x_cron_secret)
-    days = max(1, min(int(days), 120))
+    days = max(1, min(int(days), 365))
+    dow_name_to_int = {"Mon": 0, "Tue": 1, "Wed": 2, "Thu": 3, "Fri": 4, "Sat": 5, "Sun": 6}
+    excluded_dows: set[int] = set()
+    if exclude_dow:
+        for token in exclude_dow.split(","):
+            t = token.strip().title()
+            if t in dow_name_to_int:
+                excluded_dows.add(dow_name_to_int[t])
     cutoff_date = (_today_aest() - timedelta(days=days)).isoformat()
 
     # Pull all races with top-3 results + prediction history (same shape
@@ -4781,6 +4791,14 @@ async def strategy_shootout(
             pruns = preds_by_race.get(rid, [])
             if len(pruns) < 7:
                 continue
+            # Apply day-of-week exclusion early so excluded days don't
+            # inflate the universe or appear in the per-dow breakdown.
+            if excluded_dows:
+                try:
+                    if datetime.fromisoformat(rid.split("_", 1)[0]).date().weekday() in excluded_dows:
+                        continue
+                except (ValueError, KeyError):
+                    pass
             runners = [{
                 "tab_number": p.tab_number,
                 "horse_name": p.horse_name,
