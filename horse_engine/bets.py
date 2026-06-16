@@ -100,6 +100,13 @@ def generate_recommendations(runners: list[dict], stake: float = DEFAULT_STAKE) 
     if t5:
         _add("wide_top5", [t1, t2, t3, t4, t5])
 
+    # 7. The Net — a single 6-horse box of top 6 by win rank. 270-day
+    # backtest at 52.3% race hit rate (vs The Sweep's 35.3%, validated
+    # across 2,362 races). Same $2 flexi stake; per-perm payout is half
+    # of The Sweep's so ROI hinges on the per-hit dividend size.
+    if t6:
+        _add("wide_top6", [t1, t2, t3, t4, t5, t6])
+
     return bets
 
 
@@ -112,10 +119,12 @@ STRATEGY_GROUP = {
     "value_runner2": "spread",
     "no_favourite_hedge": "spread",
     "wide_top5": "sweep",
+    "wide_top6": "net",
 }
 STRATEGY_GROUP_LABELS = {
     "spread": "The Spread",
     "sweep": "The Sweep",
+    "net":   "The Net",
 }
 
 

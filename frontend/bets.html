@@ -933,17 +933,15 @@
   function renderStrategyRow() {
     const row = document.getElementById('strategyRow');
     if (!row) return;
-    const groups = state.strategyStats.length ? state.strategyStats : [
-      { strategy: 'spread', label: 'The Spread', meta: 'Loading…' },
-      { strategy: 'sweep',  label: 'The Sweep',  meta: 'Loading…' },
+    const CANONICAL = [
+      { strategy: 'spread', label: 'The Spread' },
+      { strategy: 'sweep',  label: 'The Sweep' },
+      { strategy: 'net',    label: 'The Net' },
     ];
-    // Force the canonical pair even when the API hasn't sent stats for both.
-    const present = new Set(groups.map(g => g.strategy));
-    if (!present.has('spread')) groups.push({ strategy: 'spread', label: 'The Spread', meta: 'No data yet' });
-    if (!present.has('sweep'))  groups.push({ strategy: 'sweep',  label: 'The Sweep',  meta: 'No data yet' });
-    const order = { spread: 0, sweep: 1 };
-    groups.sort((a, b) => (order[a.strategy] ?? 9) - (order[b.strategy] ?? 9));
-    row.innerHTML = groups.filter(g => g.strategy === 'spread' || g.strategy === 'sweep').map(g => {
+    const byKey = {};
+    for (const s of (state.strategyStats || [])) byKey[s.strategy] = s;
+    const groups = CANONICAL.map(c => byKey[c.strategy] || { ...c, meta: 'Loading…' });
+    row.innerHTML = groups.map(g => {
       const isActive = state.strategy === g.strategy;
       const races = g.races_bet ?? 0;
       const hitRate = (g.race_hit_rate_pct != null) ? g.race_hit_rate_pct.toFixed(0) + '%' : '—';
