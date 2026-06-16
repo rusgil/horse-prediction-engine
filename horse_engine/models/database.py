@@ -324,6 +324,12 @@ class BetRecommendationRow(Base):
     payout_dollars = Column(Float, nullable=True)     # (stake / num_perms) * dividend if hit
     pnl_dollars = Column(Float, nullable=True)        # payout - stake
     settled_at = Column(DateTime, nullable=True)
+    # Voided: the box contained a runner that was scratched between
+    # generation and the race jumping. Real-world TAB would refund the
+    # corresponding share of the stake — for our paper-trading the bet
+    # neither counts as a hit nor a loss. is_hit stays False; voided=True
+    # excludes the row from hit-rate and P&L aggregates.
+    voided = Column(Boolean, default=False, nullable=True)
 
 
 async def init_db() -> None:
@@ -365,6 +371,7 @@ async def init_db() -> None:
         "CREATE INDEX IF NOT EXISTS ix_hist_results_race_placed ON historical_results (race_id, placed)",
         "CREATE UNIQUE INDEX IF NOT EXISTS uq_bet_reco_race_strategy ON bet_recommendations (race_id, strategy_label)",
         "CREATE INDEX IF NOT EXISTS ix_bet_reco_settled ON bet_recommendations (settled)",
+        "ALTER TABLE bet_recommendations ADD COLUMN IF NOT EXISTS voided BOOLEAN DEFAULT FALSE",
         "CREATE UNIQUE INDEX IF NOT EXISTS uq_ra_calendar_date_state ON ra_calendar_cache (race_date, state)",
         "ALTER TABLE historical_results ADD COLUMN IF NOT EXISTS jockey TEXT",
         "ALTER TABLE historical_results ADD COLUMN IF NOT EXISTS trainer TEXT",

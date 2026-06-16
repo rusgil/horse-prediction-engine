@@ -3714,18 +3714,38 @@ async def _settle_bets_for_race(race_id: str) -> int:
     # later if/when a dividend source comes online.
     dividend = await _fetch_trifecta_dividend(race_id)
 
+    # Look up scratched-runner tab numbers for this race so we can void
+    # any box containing one. A bet whose box includes a scratched horse
+    # couldn't actually have hit — real TAB refunds the proportional
+    # share; we mark the row voided and exclude it from hit-rate/ROI.
+    async with get_session() as session:
+        scratched_rows = (await session.execute(
+            select(RunnerPredictionRow.tab_number)
+            .where(RunnerPredictionRow.race_id == race_id)
+            .where(RunnerPredictionRow.cancelled.is_(True))
+            .where(RunnerPredictionRow.tab_number.isnot(None))
+        )).fetchall()
+        scratched_tabs: set[int] = {tab for (tab,) in scratched_rows}
+
     async with get_session() as session:
         updated = 0
+        voided_count = 0
         for b in unsettled:
             row = await session.get(BetRecommendationRow, b.id)
             if row is None or row.settled:
                 continue
             box = json.loads(row.box_horses_json or "[]")
-            hit = _bet_is_hit(box, actual_top3)
+            box_has_scratched = any(t in scratched_tabs for t in box)
+            hit = (not box_has_scratched) and _bet_is_hit(box, actual_top3)
             row.is_hit = hit
+            row.voided = box_has_scratched
             row.actual_top3_json = json.dumps(actual_top3)
             row.trifecta_dividend = dividend  # None when source missing
-            if dividend is not None:
+            if box_has_scratched:
+                row.payout_dollars = 0.0
+                row.pnl_dollars = 0.0
+                voided_count += 1
+            elif dividend is not None:
                 payout, pnl = _bet_compute_payout(row.stake_dollars, row.num_permutations, dividend, hit)
                 row.payout_dollars = payout
                 row.pnl_dollars = pnl
@@ -3734,8 +3754,8 @@ async def _settle_bets_for_race(race_id: str) -> int:
             updated += 1
         await session.commit()
     if updated:
-        log.info("[bets] settled %d bets for %s (div=%s)", updated, race_id,
-                 f"${dividend:.2f}" if dividend else "unknown")
+        log.info("[bets] settled %d bets for %s (div=%s, voided=%d)", updated, race_id,
+                 f"${dividend:.2f}" if dividend else "unknown", voided_count)
     return updated
 
 
@@ -4359,26 +4379,30 @@ async def get_strategy_stats(days: int = 14):
         by_group.setdefault(g, []).append(r)
     out: list[dict] = []
     for g_key, bets in by_group.items():
-        race_ids = {b.race_id for b in bets}
-        races_with_hit = {b.race_id for b in bets if b.is_hit}
-        total_stake = round(sum((b.stake_dollars or 0) for b in bets), 2)
-        # Only count payouts where the dividend was set (no inflation from
-        # nulls). Sum of P&L for the same subset is the realised P&L.
-        settled_with_div = [b for b in bets if b.trifecta_dividend is not None]
+        # Exclude voided rows (boxes that contained a scratched horse —
+        # real TAB would refund these) from hit/ROI calculations. They're
+        # still tracked separately as `voided_bets`.
+        valid_bets = [b for b in bets if not getattr(b, "voided", False)]
+        voided_bets = [b for b in bets if getattr(b, "voided", False)]
+        valid_race_ids = {b.race_id for b in valid_bets}
+        races_with_hit = {b.race_id for b in valid_bets if b.is_hit}
+        total_stake = round(sum((b.stake_dollars or 0) for b in valid_bets), 2)
+        settled_with_div = [b for b in valid_bets if b.trifecta_dividend is not None]
         total_payout = round(sum((b.payout_dollars or 0) for b in settled_with_div), 2)
         priced_stake = round(sum((b.stake_dollars or 0) for b in settled_with_div), 2)
         roi_pct = round((total_payout - priced_stake) / priced_stake * 100, 1) if priced_stake else None
         out.append({
             "strategy": g_key,
             "label": _STRATEGY_GROUP_LABELS.get(g_key, g_key),
-            "races_bet": len(race_ids),
+            "races_bet": len(valid_race_ids),
             "races_hit": len(races_with_hit),
-            "race_hit_rate_pct": round(len(races_with_hit) / len(race_ids) * 100, 1) if race_ids else 0,
+            "race_hit_rate_pct": round(len(races_with_hit) / len(valid_race_ids) * 100, 1) if valid_race_ids else 0,
             "total_stake_dollars": total_stake,
             "total_payout_dollars": total_payout if priced_stake else None,
             "pnl_dollars": round(total_payout - priced_stake, 2) if priced_stake else None,
             "roi_pct": roi_pct,
             "settled_with_dividend": len(settled_with_div),
+            "voided_bets": len(voided_bets),
         })
     # Stable ordering: spread first then sweep, then whatever else.
     order = {"spread": 0, "sweep": 1}
@@ -5010,6 +5034,88 @@ async def admin_needing_dividend(
         })
     items.sort(key=lambda x: x.get("scheduled_time") or "", reverse=True)
     return {"days": days, "races_needing_dividend": items}
+
+
+@app.post("/api/admin/bets/detect-scratchings")
+async def admin_detect_scratchings(
+    days: int = 2,
+    x_cron_secret: Optional[str] = Header(None),
+):
+    """Scan recent bet races for horses that don't have a finishing
+    position in HistoricalResultRow — they were scratched (or DNF).
+    Flag them as cancelled in RunnerPredictionRow and re-settle each
+    affected race so the resulting bet rows get marked voided.
+
+    Critical when the proxy capped out and the scheduled scratch-
+    detection cron missed updates: corrects retroactive stats in one
+    sweep without manual per-race entry."""
+    _check_admin(x_cron_secret)
+    days = max(1, min(int(days), 30))
+    cutoff = datetime.utcnow() - timedelta(days=days)
+    async with get_session() as session:
+        race_ids = (await session.execute(
+            select(BetRecommendationRow.race_id).distinct()
+            .where(BetRecommendationRow.recommended_at >= cutoff)
+        )).scalars().all()
+
+    flagged: list[dict] = []
+    re_settled = 0
+    for rid in race_ids:
+        async with get_session() as session:
+            pred_horses = (await session.execute(
+                select(RunnerPredictionRow.id, RunnerPredictionRow.tab_number,
+                       RunnerPredictionRow.horse_name, RunnerPredictionRow.cancelled)
+                .where(RunnerPredictionRow.race_id == rid)
+            )).fetchall()
+            finished_names = (await session.execute(
+                select(HistoricalResultRow.horse_name)
+                .where(HistoricalResultRow.race_id == rid)
+            )).scalars().all()
+        finished_norm: set[str] = {_normalize_horse(n) for n in finished_names if n}
+        if not finished_norm:
+            continue  # race hasn't been seeded yet — skip
+        to_flag: list[tuple] = []  # (row_id, tab, name)
+        for pid, tab, name, was_cancelled in pred_horses:
+            if was_cancelled:
+                continue
+            if _normalize_horse(name or "") in finished_norm:
+                continue
+            to_flag.append((pid, tab, name))
+        if not to_flag:
+            continue
+        async with get_session() as session:
+            for pid, tab, name in to_flag:
+                row = await session.get(RunnerPredictionRow, pid)
+                if row is not None and not row.cancelled:
+                    row.cancelled = True
+            await session.commit()
+        flagged.append({
+            "race_id": rid,
+            "scratched": [{"tab_number": tab, "horse_name": name} for _, tab, name in to_flag],
+        })
+        # Force re-settle so existing bet rows pick up voided flags.
+        try:
+            async with get_session() as session:
+                # Clear the settled flag for bet rows in this race so the
+                # settle function reprocesses them.
+                from sqlalchemy import update as _sa_update
+                await session.execute(
+                    _sa_update(BetRecommendationRow)
+                    .where(BetRecommendationRow.race_id == rid)
+                    .values(settled=False)
+                )
+                await session.commit()
+            n = await _settle_bets_for_race(rid)
+            re_settled += n
+        except Exception as e:
+            log.debug("[scratch-detect] re-settle failed for %s: %s", rid, e)
+    return {
+        "days": days,
+        "races_examined": len(race_ids),
+        "races_with_scratchings": len(flagged),
+        "rows_re_settled": re_settled,
+        "details": flagged,
+    }
 
 
 @app.post("/api/admin/bets/generate-all")
