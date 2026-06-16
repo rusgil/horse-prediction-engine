@@ -5183,6 +5183,144 @@ async def admin_generate_all(x_cron_secret: Optional[str] = Header(None)):
     return {"ok": True, "queued": True}
 
 
+@app.get("/api/admin/bets/portfolio-sim")
+async def portfolio_simulation(
+    days: int = 270,
+    avg_dividend: float = 100.0,
+    x_cron_secret: Optional[str] = Header(None),
+):
+    """Simulate fixed portfolios (mixes of box bets per race) across the
+    backtest window. For each race, build each portfolio's boxes,
+    check against actual top-3, compute payout at a constant assumed
+    dividend, and report hit rate + ROI per portfolio.
+    """
+    _check_admin(x_cron_secret)
+    days = max(1, min(int(days), 365))
+    cutoff_date = (_today_aest() - timedelta(days=days)).isoformat()
+
+    # Portfolios are defined by RANK (1=model's top horse). Translated to
+    # tab numbers per race using the prediction history.
+    portfolios = {
+        "ten_box_mega ($20/race)": [
+            [1,2,3], [1,2,5], [1,2,6], [1,2,4], [2,3,4],
+            [1,2,3,4], [1,2,3,5], [2,3,4,5],
+            [1,2,3,4,5], [1,2,3,4,5,6],
+        ],
+        "spread_5box ($10/race)": [
+            [1,2,3], [1,2,3,4], [1,2,5], [1,2,6], [2,3,4,5],
+        ],
+        "trio_plus_value ($6/race)": [
+            [1,2,3], [1,2,5], [1,2,6],
+        ],
+        "trio_plus_quad ($4/race)": [
+            [1,2,3], [1,2,3,4],
+        ],
+        "trio_only ($2/race)": [
+            [1,2,3],
+        ],
+        "net_only ($2/race)": [
+            [1,2,3,4,5,6],
+        ],
+    }
+    stake_per_box = 2.0
+
+    # Pull all races with top-3 + prediction history (same as shootout)
+    async with get_session() as session:
+        result_rows = (await session.execute(
+            select(HistoricalResultRow.race_id, HistoricalResultRow.position,
+                   HistoricalResultRow.tab_number, HistoricalResultRow.horse_name)
+            .where(HistoricalResultRow.race_id >= f"{cutoff_date}_")
+            .where(HistoricalResultRow.position.in_([1, 2, 3]))
+        )).fetchall()
+        results_by_race: dict[str, list] = {}
+        for rid, pos, tab, name in result_rows:
+            results_by_race.setdefault(rid, []).append((pos, tab, name))
+        complete = [rid for rid, items in results_by_race.items() if len(items) >= 3]
+        pred_rows = (await session.execute(
+            select(RunnerPredictionHistoryRow)
+            .where(RunnerPredictionHistoryRow.race_id.in_(complete))
+            .where(RunnerPredictionHistoryRow.cancelled.is_(False) | RunnerPredictionHistoryRow.cancelled.is_(None))
+        )).scalars().all() if complete else []
+
+    preds_by_race: dict[str, list] = {}
+    for p in pred_rows:
+        preds_by_race.setdefault(p.race_id, []).append(p)
+
+    # Resolve top-3 tabs
+    tab_per_race: dict[str, dict[str, int]] = {}
+    for rid, pruns in preds_by_race.items():
+        tab_per_race[rid] = {_normalize_horse(p.horse_name): p.tab_number
+                             for p in pruns if p.tab_number is not None}
+    resolved_top3: dict[str, list[int]] = {}
+    for rid in complete:
+        items = sorted(results_by_race[rid], key=lambda x: x[0])[:3]
+        tabs = []
+        for pos, tab, name in items:
+            t = tab if tab is not None else tab_per_race.get(rid, {}).get(_normalize_horse(name))
+            tabs.append(t)
+        if all(t is not None for t in tabs):
+            resolved_top3[rid] = tabs
+
+    # Run each portfolio across the universe
+    results: list[dict] = []
+    for portfolio_name, rank_boxes in portfolios.items():
+        races_evaluated = 0
+        races_hit = 0
+        boxes_evaluated = 0
+        boxes_hit = 0
+        total_stake = 0.0
+        total_payout = 0.0
+        for rid, actual_top3 in resolved_top3.items():
+            pruns = preds_by_race.get(rid, [])
+            if len(pruns) < 7:
+                continue
+            # Sort by model_rank to get tabs by rank
+            sorted_p = sorted(
+                [p for p in pruns if p.model_rank and p.tab_number],
+                key=lambda p: p.model_rank,
+            )
+            if len(sorted_p) < 6:
+                continue  # portfolio includes ranks up to 6
+            rank_to_tab = {i + 1: sorted_p[i].tab_number for i in range(len(sorted_p))}
+            races_evaluated += 1
+            race_hit_any = False
+            for rank_box in rank_boxes:
+                tabs = [rank_to_tab.get(r) for r in rank_box]
+                if any(t is None for t in tabs):
+                    continue
+                boxes_evaluated += 1
+                total_stake += stake_per_box
+                if _bet_is_hit(tabs, actual_top3):
+                    boxes_hit += 1
+                    race_hit_any = True
+                    n = len(rank_box)
+                    perms = n * (n - 1) * (n - 2)
+                    payout = (stake_per_box / perms) * avg_dividend
+                    total_payout += payout
+            if race_hit_any:
+                races_hit += 1
+        pnl = round(total_payout - total_stake, 2)
+        roi = round(pnl / total_stake * 100, 1) if total_stake else 0
+        results.append({
+            "portfolio": portfolio_name,
+            "boxes_per_race": len(rank_boxes),
+            "races_evaluated": races_evaluated,
+            "races_hit": races_hit,
+            "race_hit_rate_pct": round(races_hit / races_evaluated * 100, 1) if races_evaluated else 0,
+            "total_stake": round(total_stake, 2),
+            "total_payout": round(total_payout, 2),
+            "pnl": pnl,
+            "roi_pct": roi,
+            "boxes_hit_rate_pct": round(boxes_hit / boxes_evaluated * 100, 1) if boxes_evaluated else 0,
+        })
+    results.sort(key=lambda r: -r["roi_pct"])
+    return {
+        "window_days": days,
+        "avg_dividend_assumed": avg_dividend,
+        "portfolios": results,
+    }
+
+
 @app.post("/api/admin/bets/settle-only")
 async def admin_settle_only(x_cron_secret: Optional[str] = Header(None)):
     """Settle bets using whatever results are already in the DB — no
