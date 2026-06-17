@@ -3345,6 +3345,9 @@ async def get_edge_yesterday(for_date: Optional[str] = Query(None, alias="date")
         _, venue_code, race_num = _parse_race_id(p.race_id)
         r = all_results.get((venue_code, race_num, _normalize_horse(p.horse_name)), {})
         sp = r.get("sp") or p.best_available_odds or None
+        # best_available_odds == 0 is a missing-data flag; treat as None.
+        if sp == 0:
+            sp = None
         winner = r.get("winner", False)
         position = r.get("position")
         # Race seeded but horse absent → scratched (HistoricalResultRow skips scratched runners)
@@ -3353,7 +3356,19 @@ async def get_edge_yesterday(for_date: Optional[str] = Query(None, alias="date")
         no_result = bool(p.race_id not in seeded_race_ids and not r)
         model_pct = round(p.win_probability * 100, 1)
         payout = round(sp * stake, 2) if winner and sp else 0
-        profit = 0 if (scratched or no_result) else (round(payout - stake, 2) if winner and sp else -stake)
+        # Profit logic:
+        #   • scratched/no_result → 0 (no bet placed)
+        #   • winner WITH sp → payout − stake (real profit)
+        #   • winner WITHOUT sp → 0 (result confirmed but dividend unknown;
+        #     don't treat as a loss — the punter would've collected
+        #     something; we just don't know what)
+        #   • not winner → −stake
+        if scratched or no_result:
+            profit = 0
+        elif winner:
+            profit = round(payout - stake, 2) if sp else 0
+        else:
+            profit = -stake
 
         placed = r.get("placed", False) or bool(position and position <= 3 and not scratched)
 
