@@ -1300,8 +1300,11 @@
           <span class="abandoned-tag">Abandoned</span>
         `;
       } else {
+        const metroTag = m.tier === 'metro'
+          ? `<span style="display:inline-block;font-size:0.6rem;font-weight:700;padding:1px 5px;border-radius:4px;background:rgba(45,212,191,0.15);color:#5eead4;border:1px solid rgba(45,212,191,0.4);letter-spacing:0.4px;margin-left:6px">METRO</span>`
+          : '';
         el.innerHTML = `
-          <span class="pill-name">${escHtml(m.venue || '')}</span>
+          <span class="pill-name">${escHtml(m.venue || '')}${metroTag}</span>
           <span class="pill-sub">${escHtml(m.state || '')}${m.rail_position && typeof m.rail_position === 'string' ? ' · ' + escHtml(m.rail_position.substring(0,20)) : ''}</span>
           ${wxHtml}
           ${statHtml}
@@ -1479,8 +1482,17 @@
   }
 
   function renderInfoBar(m) {
+    // Null-guard: in-flight selectRace can fire after a date switch
+    // that cleared S.selectedMeeting → previously crashed with
+    // 'Cannot read properties of null (reading "venue")'.
+    if (!m) return '';
+    const tier = m.tier || '';
+    const tierBadge = tier === 'metro'
+      ? `<span class="info-chip" style="background:rgba(45,212,191,0.15);color:var(--teal-bright,#5eead4);border-color:rgba(45,212,191,0.4)"><strong>METRO</strong></span>`
+      : '';
     return `
       <span class="info-chip"><strong>${escHtml(m.venue || '')}</strong></span>
+      ${tierBadge}
       ${m.state ? `<span class="info-chip">${escHtml(m.state)}</span>` : ''}
       ${m.rail_position ? `<span class="info-chip">Rail: <strong>${escHtml(m.rail_position)}</strong></span>` : ''}
       <span class="info-chip">${formatDate(S.date)}</span>

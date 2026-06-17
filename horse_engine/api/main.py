@@ -5759,6 +5759,39 @@ async def list_meetings(race_date: str = _today()):
     for it, w in zip(live_items, weathers):
         it["weather"] = w if isinstance(w, dict) else None
 
+    # Classify each meeting by tier — max prize_money across the day's
+    # races. >= $80k = metro; <$30k = country; in between = provincial.
+    # Falls back to METRO_VENUES hardcoded set when prize_money missing.
+    if items:
+        prize_prefix = f"{race_date}_"
+        async with get_session() as session:
+            prize_rows = (await session.execute(
+                select(RunnerPredictionRow.race_id, func.max(RunnerPredictionRow.prize_money))
+                .where(RunnerPredictionRow.race_id.like(f"{prize_prefix}%"))
+                .group_by(RunnerPredictionRow.race_id)
+            )).fetchall()
+        max_prize_by_venue: dict[str, int] = {}
+        for rid, prize in prize_rows:
+            if not prize:
+                continue
+            _, vc, _ = _parse_race_id(rid)
+            if vc:
+                max_prize_by_venue[vc] = max(max_prize_by_venue.get(vc, 0), int(prize))
+        for it in items:
+            vc = it.get("venue_code") or ""
+            mx = max_prize_by_venue.get(vc, 0)
+            if mx >= 80000:
+                it["tier"] = "metro"
+            elif mx >= 30000:
+                it["tier"] = "provincial"
+            elif mx > 0:
+                it["tier"] = "country"
+            else:
+                # No prize data — fall back to the hardcoded metro set.
+                from horse_engine.bets import is_metro_venue
+                it["tier"] = "metro" if is_metro_venue(vc) else "country"
+            it["max_prize_money"] = mx or None
+
     result = {"date": race_date, "meetings": items}
     _list_meetings_cache[race_date] = (datetime.utcnow(), result)
     return result
