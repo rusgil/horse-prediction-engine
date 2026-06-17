@@ -1166,20 +1166,6 @@
     }
   }
 
-  // Strategy pills — delegated since the row re-renders when stats refresh.
-  document.getElementById('strategyRow').addEventListener('click', (e) => {
-    const pill = e.target.closest('.strategy-pill');
-    if (!pill) return;
-    const next = pill.dataset.strategy;
-    if (!next || next === state.strategy) return;
-    state.strategy = next;
-    try { sessionStorage.setItem(STRATEGY_KEY, next); } catch (e) {}
-    state.detail = {};  // bet-detail cache is per-strategy
-    state.expanded.clear();
-    renderStrategyRow();
-    load();
-  });
-
   // Sort pills
   document.querySelectorAll('.sort-pill').forEach(btn => {
     btn.addEventListener('click', () => {
@@ -1253,11 +1239,8 @@
   setInterval(loadHeroPick, 90000 + Math.random() * 20000);
   // Strategy stats refresh every 5 min — they're cumulative; no need to
   // chase intraday changes.
-  setInterval(loadStrategyStats, 300000);
-  renderStrategyRow();   // paint immediately with placeholder
   load();
   loadHeroPick();
-  loadStrategyStats();
 </script>
 </body>
 </html>
