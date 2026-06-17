@@ -4240,6 +4240,19 @@ async def list_bet_races(
             q = q.where(BetRecommendationRow.strategy_label.in_(labels))
         rows = (await session.execute(q)).scalars().all()
         race_ids = list({r.race_id for r in rows})
+        # Per-(race, tab) odds lookup — only fetched when include_bets is on,
+        # used to annotate each box horse with its current live odds.
+        odds_lookup: dict[tuple[str, int], float] = {}
+        if include_bets and race_ids:
+            odds_rows = (await session.execute(
+                select(RunnerPredictionRow.race_id, RunnerPredictionRow.tab_number,
+                       RunnerPredictionRow.best_available_odds)
+                .where(RunnerPredictionRow.race_id.in_(race_ids))
+                .where(RunnerPredictionRow.tab_number.isnot(None))
+            )).fetchall()
+            for rid, tab, odds in odds_rows:
+                if odds and odds > 1.0:
+                    odds_lookup[(rid, tab)] = odds
         # Top-3 results per race (for the winning-combination strip on
         # settled cards). Pull tab + horse name + position; group below.
         top3_map: dict[str, list[dict]] = {}
@@ -4337,10 +4350,16 @@ async def list_bet_races(
         }
         if include_bets:
             # Group bets by strategy_group for compact per-card rendering.
+            # Decorate each bet with per-horse odds so the UI can display
+            # tab + name + live odds inline (handy at the TAB terminal).
             bets_by_group: dict[str, list[dict]] = {}
             for b in bets:
                 g = _STRATEGY_GROUP.get(b.strategy_label, "spread")
-                bets_by_group.setdefault(g, []).append(_row_to_bet_dict(b))
+                bd = _row_to_bet_dict(b)
+                bd["box_horse_odds"] = [
+                    odds_lookup.get((race_id, tab)) for tab in (bd["box_horses"] or [])
+                ]
+                bets_by_group.setdefault(g, []).append(bd)
             race_entry["bets_by_strategy"] = bets_by_group
         races.append(race_entry)
     # Sort: currently-running races (jumped but within ~8 min) lead,

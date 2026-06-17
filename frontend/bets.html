@@ -530,6 +530,33 @@
       font-variant-numeric: tabular-nums;
     }
     .strategy-block-box.hit .tab { border-color: rgba(74,222,128,0.45); }
+    .tab-pair {
+      display: inline-flex;
+      align-items: baseline;
+      gap: 4px;
+      margin-right: 8px;
+      margin-bottom: 2px;
+    }
+    .tab-name {
+      color: var(--text-dim);
+      font-size: 10px;
+      letter-spacing: 0.2px;
+    }
+    .tab-odds {
+      color: var(--gold);
+      font-weight: 600;
+      font-size: 10px;
+      font-variant-numeric: tabular-nums;
+      margin-left: 2px;
+    }
+    .strategy-block-box.hit .tab-name { color: var(--green-bright); }
+    .strategy-block-box-horses {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: baseline;
+      gap: 2px 8px;
+      flex: 1;
+    }
     .strategy-block-result {
       font-family: 'Barlow Condensed', sans-serif;
       font-weight: 700;
@@ -757,13 +784,15 @@
       const label = BOX_LABELS[b.strategy_label] || b.strategy_label;
       const horses = (b.box_horses || []).map((tab, i) => {
         const name = (b.box_horse_names || [])[i] || '';
-        return `<span class="tab" title="${escHtml(name)}">${tab}</span>`;
+        const odds = ((b.box_horse_odds || [])[i]);
+        const oddsTxt = (odds && odds > 1.0) ? ` <span class="tab-odds">$${odds.toFixed(2)}</span>` : '';
+        return `<span class="tab-pair"><span class="tab">${tab}</span><span class="tab-name">${escHtml(name)}</span>${oddsTxt}</span>`;
       }).join('');
       const hitMark = isHit ? ' ✓' : '';
       return `
         <div class="strategy-block-box${isHit ? ' hit' : ''}">
           <span class="strategy-block-box-label">${escHtml(label)}${hitMark}</span>
-          ${horses}
+          <div class="strategy-block-box-horses">${horses}</div>
         </div>`;
     }).join('');
     const chevron = collapsed ? '▸' : '▾';
