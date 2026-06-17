@@ -557,6 +557,12 @@
       gap: 2px 8px;
       flex: 1;
     }
+    .strategy-block-payout {
+      color: var(--green-bright);
+      font-weight: 700;
+      font-size: 11px;
+      margin-left: 4px;
+    }
     .strategy-block-result {
       font-family: 'Barlow Condensed', sans-serif;
       font-weight: 700;
@@ -769,11 +775,21 @@
     if (!meta) return '';
     const totalStake = bets.reduce((a, b) => a + (b.stake_dollars || 0), 0);
     const hits = bets.filter(b => b.is_hit).length;
+    // Sum estimated payouts across hit boxes — uses Harville on actual
+    // top-3's market odds, before any real TAB dividend is entered.
+    const estTotal = bets.reduce(
+      (a, b) => a + ((b.is_hit && b.estimated_payout) ? b.estimated_payout : 0),
+      0
+    );
+    const estPnl = estTotal > 0 ? (estTotal - totalStake) : null;
     let resultText, resultCls;
     if (raceStatus === 'pending') {
       resultText = 'Pending'; resultCls = 'pending';
     } else if (hits > 0) {
-      resultText = '✓ ' + hits + (hits === 1 ? ' hit' : ' hits');
+      const pnlTag = estPnl != null
+        ? ` · est ${estPnl >= 0 ? '+' : '-'}$${Math.abs(estPnl).toFixed(2)}`
+        : '';
+      resultText = '✓ ' + hits + (hits === 1 ? ' hit' : ' hits') + pnlTag;
       resultCls = 'hit';
     } else {
       resultText = '✗ Miss'; resultCls = 'miss';
@@ -789,9 +805,12 @@
         return `<span class="tab-pair"><span class="tab">${tab}</span><span class="tab-name">${escHtml(name)}</span>${oddsTxt}</span>`;
       }).join('');
       const hitMark = isHit ? ' ✓' : '';
+      const payoutTag = (isHit && b.estimated_payout)
+        ? ` <span class="strategy-block-payout">+$${b.estimated_payout.toFixed(2)}</span>`
+        : '';
       return `
         <div class="strategy-block-box${isHit ? ' hit' : ''}">
-          <span class="strategy-block-box-label">${escHtml(label)}${hitMark}</span>
+          <span class="strategy-block-box-label">${escHtml(label)}${hitMark}${payoutTag}</span>
           <div class="strategy-block-box-horses">${horses}</div>
         </div>`;
     }).join('');

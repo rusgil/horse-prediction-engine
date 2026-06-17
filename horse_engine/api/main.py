@@ -71,6 +71,7 @@ from horse_engine.bets import (
     STRATEGY_GROUP_LABELS as _STRATEGY_GROUP_LABELS,
     STRATEGY_REGISTRY as _BET_STRATEGIES,
     compute_payout as _bet_compute_payout,
+    estimate_printed_dividend as _harville_dividend,
     generate_recommendations as _build_bet_basket,
     is_hit as _bet_is_hit_typed,
     is_metro_venue as _is_metro_venue,
@@ -4362,8 +4363,9 @@ async def list_bet_races(
         }
         if include_bets:
             # Group bets by strategy_group for compact per-card rendering.
-            # Decorate each bet with per-horse odds so the UI can display
-            # tab + name + live odds inline (handy at the TAB terminal).
+            # Decorate each bet with per-horse odds + a Harville-estimated
+            # payout for hit boxes (gives the user a $ figure before any
+            # actual TAB dividend is manually entered).
             bets_by_group: dict[str, list[dict]] = {}
             for b in bets:
                 g = _STRATEGY_GROUP.get(b.strategy_label, "spread")
@@ -4371,6 +4373,22 @@ async def list_bet_races(
                 bd["box_horse_odds"] = [
                     odds_lookup.get((race_id, tab)) for tab in (bd["box_horses"] or [])
                 ]
+                # If hit and we have odds for the actual top-3, estimate
+                # the dividend via Harville on the market-implied probs.
+                bd["estimated_payout"] = None
+                if bd.get("is_hit") and bd.get("actual_top3"):
+                    actual_tabs = bd["actual_top3"]
+                    if len(actual_tabs) >= 3 and bd.get("bet_type") != "first_four":
+                        actual_odds = [odds_lookup.get((race_id, t)) for t in actual_tabs[:3]]
+                        if all(o and o > 1.0 for o in actual_odds):
+                            probs = [1.0 / o for o in actual_odds]
+                            est_div = _harville_dividend(probs, "trifecta")
+                            if est_div and bd.get("num_permutations"):
+                                stake = bd.get("stake_dollars") or 0
+                                bd["estimated_dividend"] = est_div
+                                bd["estimated_payout"] = round(
+                                    stake / bd["num_permutations"] * est_div, 2
+                                )
                 bets_by_group.setdefault(g, []).append(bd)
             race_entry["bets_by_strategy"] = bets_by_group
         races.append(race_entry)
