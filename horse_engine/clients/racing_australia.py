@@ -804,6 +804,13 @@ class RacingAustraliaClient:
     def __init__(self) -> None:
         # "date:state" → (ts, list of {ra_key, venue, slug, state})
         self._calendar_cache: dict[str, tuple[datetime, list]] = {}
+        # Per-cache-key locks — when multiple concurrent callers miss the
+        # in-memory + DB cache, only one of them issues the RA fetch.
+        # Without this the cache layer was being stampeded — production
+        # logs showed 11k Calendar.aspx hits/24h vs the 768 the TTL
+        # should have allowed (14× over).
+        self._calendar_locks: dict[str, asyncio.Lock] = {}
+        self._results_locks: dict[str, asyncio.Lock] = {}
         # ra_key → (ts, parsed meeting dict)
         self._meeting_cache: dict[str, tuple[datetime, dict]] = {}
         # ra_key → (ts, parsed results dict)
@@ -976,77 +983,78 @@ class RacingAustraliaClient:
 
     async def _fetch_state_calendar(self, state: str, race_date: str) -> list[dict]:
         cache_key = f"{race_date}:{state}"
+        # Fast-path cache check (no lock needed for reads).
         cached = self._calendar_cache.get(cache_key)
-        # 1-hour TTL (was 600s). Calendars are published days in advance — new
-        # meetings appearing intra-hour is rare. Bumping from 10min → 60min
-        # cuts Calendar.aspx hits 6x, the dominant proxy-budget consumer.
-        # The slug→key map (_slug_to_key) is persistent in-memory and survives
-        # cache expiry, so meeting lookups remain fast between refreshes.
         if cached and (datetime.utcnow() - cached[0]).total_seconds() < 3600:
             return cached[1]
 
-        # Persistent DB cache — survives Railway redeploys. Without this we
-        # re-fanout 32 Calendar requests on every cold start, burning the
-        # 5000/day proxy budget. Try DB before hitting RA; only fall through
-        # to a live fetch when the DB row is missing or stale.
-        db_hit = await _load_calendar_from_db(race_date, state)
-        if db_hit is not None:
-            meetings, slug_kvs = db_hit
+        # Thundering-herd guard: hold a per-cache-key lock around the
+        # miss-path (DB read + RA fetch + cache write). When N concurrent
+        # callers miss the cache, only one issues the RA hit; the others
+        # wait for the lock and pick up the freshly-cached value.
+        lock = self._calendar_locks.setdefault(cache_key, asyncio.Lock())
+        async with lock:
+            # Re-check in-memory cache — another caller may have populated it.
+            cached = self._calendar_cache.get(cache_key)
+            if cached and (datetime.utcnow() - cached[0]).total_seconds() < 3600:
+                return cached[1]
+
+            # Persistent DB cache — survives Railway redeploys.
+            db_hit = await _load_calendar_from_db(race_date, state)
+            if db_hit is not None:
+                meetings, slug_kvs = db_hit
+                self._calendar_cache[cache_key] = (datetime.utcnow(), meetings)
+                self._slug_to_key.update(slug_kvs)
+                return meetings
+
+            # Cache miss + no DB row — fall through to the actual RA fetch,
+            # still inside the lock so concurrent callers don't all hit RA.
+            ra_date = _ra_date(race_date)
+            try:
+                html = await self._get(f"{_BASE}/Calendar.aspx?State={state}")
+            except Exception as e:
+                log.debug("Calendar fetch failed for %s: %s", state, e)
+                return []
+
+            soup = BeautifulSoup(html, "html.parser")
+            meetings = []
+            from urllib.parse import unquote
+            for link in soup.find_all("a", href=re.compile(r"(Acceptances|Results\.aspx)")):
+                href = link.get("href", "")
+                m = re.search(r"Key=([^&\"]+)", href)
+                if not m:
+                    continue
+                ra_key = unquote(m.group(1))
+                if not ra_key.startswith(ra_date):
+                    continue
+                parts = ra_key.split(",", 2)
+                if len(parts) < 3:
+                    continue
+                raw_venue = parts[2]
+                if re.search(r"\b(Trial|Trail|Trials|TRL|Jumpout|Jump\s*Out)\b", raw_venue, re.IGNORECASE):
+                    continue
+                venue = _clean_venue(raw_venue)
+                slug = _make_slug(raw_venue, race_date)
+                self._slug_to_key[slug] = ra_key
+                self._slug_to_key[f"{race_date}:{state}:{venue}"] = ra_key
+                meetings.append({
+                    "id": ra_key,
+                    "name": venue,
+                    "slug": slug,
+                    "venue": venue,
+                    "state": state,
+                    "rail_position": "",
+                    "date": race_date,
+                })
+
             self._calendar_cache[cache_key] = (datetime.utcnow(), meetings)
-            self._slug_to_key.update(slug_kvs)
+            date_compact = race_date.replace("-", "")
+            slug_subset = {
+                k: v for k, v in self._slug_to_key.items()
+                if k.endswith(f"-{date_compact}") or k.startswith(f"{race_date}:{state}:")
+            }
+            await _persist_calendar_to_db(race_date, state, meetings, slug_subset)
             return meetings
-
-        ra_date = _ra_date(race_date)
-        try:
-            html = await self._get(f"{_BASE}/Calendar.aspx?State={state}")
-        except Exception as e:
-            log.debug("Calendar fetch failed for %s: %s", state, e)
-            return []
-
-        soup = BeautifulSoup(html, "html.parser")
-        meetings = []
-        from urllib.parse import unquote
-        # Capture both Acceptances links (today/future) and Results links (past meetings)
-        for link in soup.find_all("a", href=re.compile(r"(Acceptances|Results\.aspx)")):
-            href = link.get("href", "")
-            m = re.search(r"Key=([^&\"]+)", href)
-            if not m:
-                continue
-            ra_key = unquote(m.group(1))
-            if not ra_key.startswith(ra_date):
-                continue
-            parts = ra_key.split(",", 2)
-            if len(parts) < 3:
-                continue
-            raw_venue = parts[2]
-            # Skip trial/trackwork/jumpout meetings — no race cards or odds available
-            if re.search(r"\b(Trial|Trail|Trials|TRL|Jumpout|Jump\s*Out)\b", raw_venue, re.IGNORECASE):
-                continue
-            venue = _clean_venue(raw_venue)
-            slug = _make_slug(raw_venue, race_date)
-            self._slug_to_key[slug] = ra_key
-            # Also map cleaned venue name → raw key so reseed can look up by stored venue
-            self._slug_to_key[f"{race_date}:{state}:{venue}"] = ra_key
-            meetings.append({
-                "id": ra_key,
-                "name": venue,
-                "slug": slug,
-                "venue": venue,
-                "state": state,
-                "rail_position": "",
-                "date": race_date,
-            })
-
-        self._calendar_cache[cache_key] = (datetime.utcnow(), meetings)
-        # Persist the slugs for this (date, state) so a cold-start instance
-        # can rehydrate without re-fetching from RA.
-        date_compact = race_date.replace("-", "")
-        slug_subset = {
-            k: v for k, v in self._slug_to_key.items()
-            if k.endswith(f"-{date_compact}") or k.startswith(f"{race_date}:{state}:")
-        }
-        await _persist_calendar_to_db(race_date, state, meetings, slug_subset)
-        return meetings
 
     # ── Acceptances ───────────────────────────────────────────────────────────
 
@@ -1166,22 +1174,30 @@ class RacingAustraliaClient:
         """
         Fetch race results for a meeting.
         Returns {race_num: {'track_condition': str, 'runners': {name_lower: {'position', 'margin', 'sp'}}}}
-        Cached 5 minutes — results don't change once published.
+        Cached 30 minutes — results don't change once published. Was 5min,
+        which produced ~4k Results.aspx hits/day; 30min cuts that by ~6×.
+        Per-key lock prevents thundering herd from concurrent settlers.
         """
         cached = self._results_cache.get(ra_key)
-        if cached and (datetime.utcnow() - cached[0]).total_seconds() < 300:
+        if cached and (datetime.utcnow() - cached[0]).total_seconds() < 1800:
             return cached[1]
-        from urllib.parse import quote
-        url = f"{_BASE}/Results.aspx?Key={quote(ra_key, safe='')}"
-        try:
-            html = await self._get(url)
-        except Exception as e:
-            log.warning("RA results fetch failed for %s: %s", ra_key, e)
-            return {}
-        parsed = _parse_results_page(html)
-        self._results_cache[ra_key] = (datetime.utcnow(), parsed)
-        total_runners = sum(len(r["runners"]) for r in parsed.values())
-        log.debug("RA results: %d races, %d runners for %s", len(parsed), total_runners, ra_key)
+        lock = self._results_locks.setdefault(ra_key, asyncio.Lock())
+        async with lock:
+            # Re-check after acquiring — another caller may have populated.
+            cached = self._results_cache.get(ra_key)
+            if cached and (datetime.utcnow() - cached[0]).total_seconds() < 1800:
+                return cached[1]
+            from urllib.parse import quote
+            url = f"{_BASE}/Results.aspx?Key={quote(ra_key, safe='')}"
+            try:
+                html = await self._get(url)
+            except Exception as e:
+                log.warning("RA results fetch failed for %s: %s", ra_key, e)
+                return {}
+            parsed = _parse_results_page(html)
+            self._results_cache[ra_key] = (datetime.utcnow(), parsed)
+            total_runners = sum(len(r["runners"]) for r in parsed.values())
+            log.debug("RA results: %d races, %d runners for %s", len(parsed), total_runners, ra_key)
         return parsed
 
     _SPONSOR_PREFIXES = ["TAB ", "Sportsbet ", "Ladbrokes ", "Palmerbet ", "Neds ", "Ubet "]
