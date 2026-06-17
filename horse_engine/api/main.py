@@ -3678,17 +3678,32 @@ async def _settle_bets_for_race(race_id: str) -> int:
         # Top-3 finishers — fetch tab + horse_name so we can backfill
         # tab_number from the prediction tables when seed didn't capture
         # it (older HistoricalResultRow rows have tab_number = NULL).
-        results = (await session.execute(
+        result_rows = (await session.execute(
             select(HistoricalResultRow.tab_number, HistoricalResultRow.position,
                    HistoricalResultRow.horse_name)
             .where(HistoricalResultRow.race_id == race_id)
             .where(HistoricalResultRow.position.in_([1, 2, 3]))
         )).fetchall()
-        if len(results) < 3:
+        if len(result_rows) < 3:
             return 0
 
-        # Fill missing tab numbers from the prediction rows for this race.
-        if any(r.tab_number is None for r in results):
+        # Some seed paths inserted duplicate rows for the same position
+        # (e.g. a re-seed when name normalisation didn't match). Take the
+        # first non-null tab per position so actual_top3 is exactly 3
+        # tabs in finishing order — duplicates were causing false hits
+        # because _bet_is_hit checks actual[:3] (which became [8,8,7]
+        # for a duplicated [8,8,7,7,9,9] — a 2-horse set, not 3).
+        top_by_pos: dict[int, int] = {}
+        needs_lookup = False
+        for tab, pos, name in result_rows:
+            if pos in top_by_pos:
+                continue  # keep first (dedup)
+            if tab is not None:
+                top_by_pos[pos] = tab
+            else:
+                needs_lookup = True
+                top_by_pos[pos] = None  # placeholder
+        if needs_lookup:
             tab_lookup: dict[str, int] = {}
             for src in (RunnerPredictionRow, RunnerPredictionHistoryRow):
                 rows = (await session.execute(
@@ -3698,17 +3713,14 @@ async def _settle_bets_for_race(race_id: str) -> int:
                 )).fetchall()
                 for name, tab in rows:
                     tab_lookup[_normalize_horse(name)] = tab
-            filled: list = []
-            for r in results:
-                tab = r.tab_number
-                if tab is None:
-                    tab = tab_lookup.get(_normalize_horse(r.horse_name))
-                filled.append((tab, r.position))
-            if any(t is None for t, _ in filled):
-                return 0
-            actual_top3 = [tab for tab, _ in sorted(filled, key=lambda x: x[1])]
-        else:
-            actual_top3 = [r.tab_number for r in sorted(results, key=lambda r: r.position)]
+            for tab, pos, name in result_rows:
+                if top_by_pos.get(pos) is None and name:
+                    t = tab_lookup.get(_normalize_horse(name))
+                    if t is not None:
+                        top_by_pos[pos] = t
+        if any(top_by_pos.get(p) is None for p in (1, 2, 3)):
+            return 0
+        actual_top3 = [top_by_pos[1], top_by_pos[2], top_by_pos[3]]
 
         unsettled = (await session.execute(
             select(BetRecommendationRow)
