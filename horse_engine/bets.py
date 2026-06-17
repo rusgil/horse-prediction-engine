@@ -424,6 +424,144 @@ def strategy_small_field_only(runners: list[dict], stake: float = DEFAULT_STAKE)
     }]
 
 
+# ─── Harville dividend estimation ────────────────────────────────────────
+# Given individual win probabilities for each horse, estimate the
+# trifecta / first-four payout for a box bet.
+#
+# Harville model: P(horse i wins, j 2nd, k 3rd) = p_i * p_j/(1-p_i) *
+# p_k/(1-p_i-p_j). For a BOX bet that accepts any ordering, sum the
+# Harville probability over all N! permutations of the box horses.
+#
+# TAB takeout for AU trifectas is ~14.5% — applied at the pool level
+# so the punter-facing dividend is the gross_dividend × (1 - takeout).
+
+TAB_TRIFECTA_TAKEOUT = 0.145
+TAB_FIRST_FOUR_TAKEOUT = 0.20  # First Four takeout slightly higher
+
+
+def harville_top3_probability(p1: float, p2: float, p3: float) -> float:
+    """P(horse1 wins, horse2 2nd, horse3 3rd) under Harville independence."""
+    if p1 <= 0 or p2 <= 0 or p3 <= 0:
+        return 0.0
+    denom1 = 1.0 - p1
+    if denom1 <= 0:
+        return 0.0
+    denom2 = denom1 - p2
+    if denom2 <= 0:
+        return 0.0
+    return p1 * (p2 / denom1) * (p3 / denom2)
+
+
+def harville_top4_probability(p1: float, p2: float, p3: float, p4: float) -> float:
+    """P(horses fill positions 1..4 in that specific order)."""
+    if p1 <= 0 or p2 <= 0 or p3 <= 0 or p4 <= 0:
+        return 0.0
+    d1 = 1.0 - p1
+    if d1 <= 0: return 0.0
+    d2 = d1 - p2
+    if d2 <= 0: return 0.0
+    d3 = d2 - p3
+    if d3 <= 0: return 0.0
+    return p1 * (p2 / d1) * (p3 / d2) * (p4 / d3)
+
+
+def harville_trifecta_box_probability(win_probs: list[float]) -> float:
+    """Probability that the top-3 finishers (any order) all come from the
+    given set of horses. Sum Harville over all 3-permutations of the box."""
+    from itertools import permutations
+    horses = [p for p in win_probs if p and p > 0]
+    if len(horses) < 3:
+        return 0.0
+    total = 0.0
+    for perm in permutations(horses, 3):
+        total += harville_top3_probability(*perm)
+    return min(total, 1.0)
+
+
+def harville_first_four_box_probability(win_probs: list[float]) -> float:
+    """Probability that the top-4 finishers (any order) all come from the
+    given set of horses. Sum over all 4-permutations of the box."""
+    from itertools import permutations
+    horses = [p for p in win_probs if p and p > 0]
+    if len(horses) < 4:
+        return 0.0
+    total = 0.0
+    for perm in permutations(horses, 4):
+        total += harville_top4_probability(*perm)
+    return min(total, 1.0)
+
+
+def estimate_printed_dividend(
+    win_probs: list[float],
+    bet_type: str = "trifecta",
+    takeout: Optional[float] = None,
+) -> Optional[float]:
+    """Estimated dividend TAB would display IF the model's predicted
+    1-2-3 (or 1-2-3-4 for first four) ordering is the actual finishing
+    order. = 1 / ordered_prob * (1 - takeout). Matches the headline number
+    a punter sees on the TAB dividend board.
+
+    Inputs: win_probs should be sorted DESCENDING by model win conviction
+    so position[0] = model's top pick. Probabilities are 0..1.
+    """
+    if not win_probs:
+        return None
+    sorted_probs = sorted([p for p in win_probs if p and p > 0], reverse=True)
+    if bet_type == "first_four":
+        if len(sorted_probs) < 4:
+            return None
+        prob = harville_top4_probability(*sorted_probs[:4])
+        rate = TAB_FIRST_FOUR_TAKEOUT if takeout is None else takeout
+    else:
+        if len(sorted_probs) < 3:
+            return None
+        prob = harville_top3_probability(*sorted_probs[:3])
+        rate = TAB_TRIFECTA_TAKEOUT if takeout is None else takeout
+    if prob <= 0:
+        return None
+    gross = 1.0 / prob
+    return round(gross * (1 - rate), 2)
+
+
+def estimate_flexi_box_value(
+    win_probs: list[float],
+    stake: float = DEFAULT_STAKE,
+    bet_type: str = "trifecta",
+    takeout: Optional[float] = None,
+) -> dict:
+    """Expected-value summary for a flexi-box bet:
+      - box_hit_probability: Harville prob the box catches the placings
+      - printed_dividend: most-likely TAB dividend (post-takeout)
+      - expected_payout: stake × hit_prob × (1/box_prob × (1-takeout))
+      - expected_value: expected_payout - stake
+      - edge_pct: expected_value / stake × 100  (>0 = positive EV)
+    """
+    if bet_type == "first_four":
+        box_prob = harville_first_four_box_probability(win_probs)
+        rate = TAB_FIRST_FOUR_TAKEOUT if takeout is None else takeout
+    else:
+        box_prob = harville_trifecta_box_probability(win_probs)
+        rate = TAB_TRIFECTA_TAKEOUT if takeout is None else takeout
+    if box_prob <= 0:
+        return {"box_hit_probability": 0, "printed_dividend": None,
+                "expected_payout": 0.0, "expected_value": -stake, "edge_pct": -100.0}
+    # The expected per-hit payout on a $1 flexi box is 1/box_prob (gross).
+    # Multiplied by hit_prob = box_prob gives EXACTLY $1 expected (fair
+    # odds). Takeout pulls expected return below stake — that's the
+    # ~14.5% pool cost the bookie pulls.
+    printed = estimate_printed_dividend(win_probs, bet_type, takeout)
+    expected_payout_gross = stake * 1.0  # box_prob × (stake/box_prob) cancels
+    expected_payout = round(expected_payout_gross * (1 - rate), 2)
+    ev = round(expected_payout - stake, 2)
+    return {
+        "box_hit_probability": round(box_prob, 4),
+        "printed_dividend": printed,
+        "expected_payout": expected_payout,
+        "expected_value": ev,
+        "edge_pct": round(ev / stake * 100, 1) if stake else 0,
+    }
+
+
 def is_trifecta_hit(box_horses: list[int], actual_top3: list[int]) -> bool:
     """Top-3 finishers must all be in the box (order doesn't matter)."""
     if len(actual_top3) < 3:
