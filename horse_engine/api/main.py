@@ -5381,6 +5381,36 @@ async def portfolio_simulation(
     }
 
 
+@app.post("/api/admin/bets/resettle-all")
+async def admin_resettle_all(days: int = 7, x_cron_secret: Optional[str] = Header(None)):
+    """Force-resettle every bet row in the window — clears the settled
+    flag then runs settlement again. Use to retroactively apply the
+    dedup-actual-top3 fix to rows already on the wrong side of it."""
+    _check_admin(x_cron_secret)
+    days = max(1, min(int(days), 30))
+    cutoff = datetime.utcnow() - timedelta(days=days)
+    async with get_session() as session:
+        from sqlalchemy import update as _sa_update
+        race_ids = (await session.execute(
+            select(BetRecommendationRow.race_id).distinct()
+            .where(BetRecommendationRow.recommended_at >= cutoff)
+        )).scalars().all()
+        # Clear settled flag on all rows in the window.
+        await session.execute(
+            _sa_update(BetRecommendationRow)
+            .where(BetRecommendationRow.recommended_at >= cutoff)
+            .values(settled=False)
+        )
+        await session.commit()
+    settled = 0
+    for rid in race_ids:
+        try:
+            settled += await _settle_bets_for_race(rid)
+        except Exception as e:
+            log.debug("[bets] resettle failed for %s: %s", rid, e)
+    return {"ok": True, "races_examined": len(race_ids), "rows_resettled": settled}
+
+
 @app.post("/api/admin/bets/settle-only")
 async def admin_settle_only(x_cron_secret: Optional[str] = Header(None)):
     """Settle bets using whatever results are already in the DB — no
