@@ -80,8 +80,10 @@ def generate_recommendations(runners: list[dict], stake: float = DEFAULT_STAKE) 
     top1_win_pct = (active[0].get("win_probability") or 0) * 100
     if top1_win_pct < MIN_TOP1_WIN_PCT:
         return []
-    if TRAP_ZONE_LO <= top1_win_pct < TRAP_ZONE_HI:
-        return []
+    # Trap-zone filter (25-30%) removed 2026-06-17 — it was based on a
+    # noisy 60d sample and was rejecting otherwise-fine races (rank-1
+    # 28% sits right in the band), creating inconsistency where older
+    # bets exist but new strategies (Trio/Quad/Stack) wouldn't generate.
 
     def slot(i: int) -> Optional[dict]:
         return active[i] if i < len(active) else None

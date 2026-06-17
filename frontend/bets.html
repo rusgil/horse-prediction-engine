@@ -671,12 +671,19 @@
   const STRATEGY_KEY = 'fiq_strategy';
   const state = {
     expanded: new Set(), detail: {}, lastData: null, sort: 'next',
-    // Default: trio (single 3-horse box). 270d sim showed +41.6% ROI at
-    // $200 avg dividend, while wider portfolios were -7% to -53% on
-    // the same data — fewer boxes is structurally more profitable.
-    strategy: (typeof sessionStorage !== 'undefined' && sessionStorage.getItem(STRATEGY_KEY)) || 'trio',
+    strategy: 'all',  // page no longer filters by strategy — each card shows all
     strategyStats: [],
+    // "race_id:group" keys that the user has explicitly toggled the
+    // opposite of the default. By default Trio is expanded, others
+    // collapsed; flipping a section toggles its entry in this set.
+    collapsedFlip: new Set(),
   };
+
+  function isCollapsed(raceId, group) {
+    const flipped = state.collapsedFlip.has(`${raceId}:${group}`);
+    const defaultCollapsed = group !== 'trio';
+    return flipped ? !defaultCollapsed : defaultCollapsed;
+  }
 
   function fmtPnl(v) {
     if (v == null) return null;
@@ -729,7 +736,7 @@
     stack_no_fav: 'No fav', stack_value: 'Value',
   };
 
-  function renderStrategyBlock(group, bets, raceStatus) {
+  function renderStrategyBlock(raceId, group, bets, raceStatus) {
     if (!bets || !bets.length) return '';
     const meta = STRATEGY_DISPLAY.find(s => s.key === group);
     if (!meta) return '';
@@ -744,7 +751,8 @@
     } else {
       resultText = '✗ Miss'; resultCls = 'miss';
     }
-    const boxes = bets.map(b => {
+    const collapsed = isCollapsed(raceId, group);
+    const boxes = collapsed ? '' : bets.map(b => {
       const isHit = b.is_hit === true;
       const label = BOX_LABELS[b.strategy_label] || b.strategy_label;
       const horses = (b.box_horses || []).map((tab, i) => {
@@ -758,13 +766,17 @@
           ${horses}
         </div>`;
     }).join('');
+    const chevron = collapsed ? '▸' : '▾';
     return `
-      <div class="strategy-block${meta.isDefault ? ' default' : ''}">
+      <div class="strategy-block${meta.isDefault ? ' default' : ''}"
+           data-strat-toggle="${escHtml(raceId)}:${group}"
+           style="cursor:pointer">
         <div class="strategy-block-head">
           <div>
+            <span style="color:var(--text-muted);font-weight:700;margin-right:6px">${chevron}</span>
             <span class="strategy-block-name">${escHtml(meta.label)}</span>
             ${meta.isDefault ? '<span class="strategy-block-badge">★ DEFAULT</span>' : ''}
-            <span class="strategy-block-meta">· $${totalStake.toFixed(0)} · ${meta.tagline}</span>
+            <span class="strategy-block-meta">· $${totalStake.toFixed(0)} · ${meta.tagline} · ${bets.length} box${bets.length === 1 ? '' : 'es'}</span>
           </div>
           <span class="strategy-block-result ${resultCls}">${resultText}</span>
         </div>
@@ -1062,7 +1074,7 @@
             const bbs = r.bets_by_strategy || {};
             return STRATEGY_DISPLAY
               .filter(s => bbs[s.key] && bbs[s.key].length)
-              .map(s => renderStrategyBlock(s.key, bbs[s.key], r.status))
+              .map(s => renderStrategyBlock(r.race_id, s.key, bbs[s.key], r.status))
               .join('');
           })()}
         </div>`;
@@ -1180,6 +1192,17 @@
   // inline dividend save button. Cards re-render on refresh so all
   // listeners must be delegated from a stable parent.
   document.getElementById('races').addEventListener('click', async (e) => {
+    // Strategy block collapse toggle (whole block is clickable except
+    // dividend input which has its own button).
+    const stratBlock = e.target.closest('[data-strat-toggle]');
+    if (stratBlock && !e.target.closest('button, input')) {
+      const key = stratBlock.dataset.stratToggle;
+      if (state.collapsedFlip.has(key)) state.collapsedFlip.delete(key);
+      else state.collapsedFlip.add(key);
+      if (state.lastData) render(state.lastData);
+      return;
+    }
+
     // Dividend save
     const saveBtn = e.target.closest('button[data-divsave]');
     if (saveBtn) {
