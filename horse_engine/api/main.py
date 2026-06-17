@@ -4217,10 +4217,16 @@ async def get_bets_for_race(race_id: str, strategy: Optional[str] = None):
 
 
 @app.get("/api/bets")
-async def list_bet_races(days: int = 7, strategy: Optional[str] = None):
+async def list_bet_races(
+    days: int = 7,
+    strategy: Optional[str] = None,
+    include_bets: bool = False,
+):
     """Race-by-race paper-trading ledger. Pass strategy=spread or
-    strategy=sweep to filter the per-race aggregation to a single
-    strategy group; default returns the combined view."""
+    strategy=sweep to filter the per-race aggregation; default returns
+    the combined view. With include_bets=true, each race carries an
+    inline `bets_by_strategy` map so The Lab can render every strategy's
+    boxes inside the race card."""
     days = max(1, min(int(days), 60))
     cutoff = datetime.utcnow() - timedelta(days=days)
     labels = _strategy_labels_for_group(strategy)
@@ -4315,7 +4321,7 @@ async def list_bet_races(days: int = 7, strategy: Optional[str] = None):
         sched = sched_map.get(race_id)
         if isinstance(sched, str) and "T00:00:00" in sched:
             sched = None  # placeholder midnight = unknown
-        races.append({
+        race_entry = {
             "race_id": race_id,
             "date": date,
             "venue": venue,
@@ -4328,7 +4334,15 @@ async def list_bet_races(days: int = 7, strategy: Optional[str] = None):
             "status": status,
             "hits": sum(1 for b in bets if b.is_hit),
             "top3": top3_map.get(race_id) or None,
-        })
+        }
+        if include_bets:
+            # Group bets by strategy_group for compact per-card rendering.
+            bets_by_group: dict[str, list[dict]] = {}
+            for b in bets:
+                g = _STRATEGY_GROUP.get(b.strategy_label, "spread")
+                bets_by_group.setdefault(g, []).append(_row_to_bet_dict(b))
+            race_entry["bets_by_strategy"] = bets_by_group
+        races.append(race_entry)
     # Sort: currently-running races (jumped but within ~8 min) lead,
     # then truly upcoming sorted by soonest jump, then past sorted by
     # most-recent first. Parse scheduled_time as a tz-aware datetime —

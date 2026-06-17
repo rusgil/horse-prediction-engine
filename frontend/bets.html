@@ -455,6 +455,92 @@
     }
     .bet-loading { color: var(--text-muted); padding: 8px 0; font-size: 11px; text-align: center; }
 
+    /* Per-card strategy sections */
+    .strategy-block {
+      margin-top: 10px;
+      padding: 8px 10px;
+      background: var(--bg-elevated);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+    }
+    .strategy-block.default {
+      border-color: rgba(45,212,191,0.35);
+      background: rgba(45,212,191,0.04);
+    }
+    .strategy-block-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      font-size: 11px;
+      margin-bottom: 6px;
+    }
+    .strategy-block-name {
+      font-family: 'Barlow Condensed', sans-serif;
+      font-weight: 800;
+      font-size: 14px;
+      letter-spacing: 0.5px;
+      text-transform: uppercase;
+      color: var(--text);
+    }
+    .strategy-block.default .strategy-block-name { color: var(--teal-bright); }
+    .strategy-block-badge {
+      font-size: 9px;
+      padding: 1px 5px;
+      background: var(--teal);
+      color: var(--bg-base);
+      border-radius: 4px;
+      font-weight: 700;
+      letter-spacing: 0.3px;
+    }
+    .strategy-block-meta {
+      font-size: 10px;
+      color: var(--text-muted);
+      font-weight: 500;
+    }
+    .strategy-block-box {
+      font-size: 11px;
+      margin: 4px 0;
+      line-height: 1.5;
+      display: flex;
+      flex-wrap: wrap;
+      align-items: baseline;
+      gap: 4px;
+    }
+    .strategy-block-box.hit {
+      color: var(--green-bright);
+    }
+    .strategy-block-box-label {
+      color: var(--text-muted);
+      font-size: 9px;
+      text-transform: uppercase;
+      letter-spacing: 0.3px;
+      min-width: 70px;
+    }
+    .strategy-block-box .tab {
+      display: inline-block;
+      min-width: 18px;
+      padding: 1px 5px;
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      font-weight: 700;
+      text-align: center;
+      font-size: 11px;
+      font-variant-numeric: tabular-nums;
+    }
+    .strategy-block-box.hit .tab { border-color: rgba(74,222,128,0.45); }
+    .strategy-block-result {
+      font-family: 'Barlow Condensed', sans-serif;
+      font-weight: 700;
+      font-size: 11px;
+      letter-spacing: 0.3px;
+      margin-left: auto;
+    }
+    .strategy-block-result.hit { color: var(--green-bright); }
+    .strategy-block-result.miss { color: var(--text-muted); }
+    .strategy-block-result.pending { color: var(--teal-bright); }
+
     /* Inline dividend entry */
     .dividend-row {
       margin-top: 8px;
@@ -552,7 +638,6 @@
       </div>
       <a href="/hotseat" class="nav-back">🔥 Hot Seat →</a>
     </div>
-    <div id="strategyRow" class="strategy-row"></div>
     <div id="heroPick"></div>
     <div id="summary" class="summary"></div>
     <div class="sort-row">
@@ -626,6 +711,65 @@
   function escHtml(s) {
     return (s == null ? '' : String(s))
       .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  }
+
+  // Order + display labels for the per-card strategy blocks.
+  const STRATEGY_DISPLAY = [
+    { key: 'trio',   label: 'Trio',   tagline: '1 box · best ROI',  isDefault: true  },
+    { key: 'stack',  label: 'Stack',  tagline: '5 × 3-horse',       isDefault: false },
+    { key: 'quad',   label: 'Quad',   tagline: '1 box · 4 horses',  isDefault: false },
+    { key: 'spread', label: 'Spread', tagline: '5 mixed boxes',     isDefault: false },
+  ];
+  const BOX_LABELS = {
+    core_top3: 'Top 3', core_top4: 'Top 4',
+    value_runner1: 'Value 1', value_runner2: 'Value 2',
+    no_favourite_hedge: 'Hedge',
+    trio_only: 'Trio', quad_only: 'Quad',
+    stack_top3: 'Top 3', stack_skip3: 'Skip 3', stack_skip2: 'Skip 2',
+    stack_no_fav: 'No fav', stack_value: 'Value',
+  };
+
+  function renderStrategyBlock(group, bets, raceStatus) {
+    if (!bets || !bets.length) return '';
+    const meta = STRATEGY_DISPLAY.find(s => s.key === group);
+    if (!meta) return '';
+    const totalStake = bets.reduce((a, b) => a + (b.stake_dollars || 0), 0);
+    const hits = bets.filter(b => b.is_hit).length;
+    let resultText, resultCls;
+    if (raceStatus === 'pending') {
+      resultText = 'Pending'; resultCls = 'pending';
+    } else if (hits > 0) {
+      resultText = '✓ ' + hits + (hits === 1 ? ' hit' : ' hits');
+      resultCls = 'hit';
+    } else {
+      resultText = '✗ Miss'; resultCls = 'miss';
+    }
+    const boxes = bets.map(b => {
+      const isHit = b.is_hit === true;
+      const label = BOX_LABELS[b.strategy_label] || b.strategy_label;
+      const horses = (b.box_horses || []).map((tab, i) => {
+        const name = (b.box_horse_names || [])[i] || '';
+        return `<span class="tab" title="${escHtml(name)}">${tab}</span>`;
+      }).join('');
+      const hitMark = isHit ? ' ✓' : '';
+      return `
+        <div class="strategy-block-box${isHit ? ' hit' : ''}">
+          <span class="strategy-block-box-label">${escHtml(label)}${hitMark}</span>
+          ${horses}
+        </div>`;
+    }).join('');
+    return `
+      <div class="strategy-block${meta.isDefault ? ' default' : ''}">
+        <div class="strategy-block-head">
+          <div>
+            <span class="strategy-block-name">${escHtml(meta.label)}</span>
+            ${meta.isDefault ? '<span class="strategy-block-badge">★ DEFAULT</span>' : ''}
+            <span class="strategy-block-meta">· $${totalStake.toFixed(0)} · ${meta.tagline}</span>
+          </div>
+          <span class="strategy-block-result ${resultCls}">${resultText}</span>
+        </div>
+        ${boxes}
+      </div>`;
   }
 
   function renderBetDetail(raceId) {
@@ -914,16 +1058,20 @@
                      data-divinput="${escHtml(r.race_id)}" />
               <button data-divsave="${escHtml(r.race_id)}">Save</button>
             </div>` : ''}
-          ${state.expanded.has(r.race_id)
-            ? `<div class="bet-toggle" data-race="${escHtml(r.race_id)}">Hide bets ▴</div>${renderBetDetail(r.race_id)}`
-            : `<div class="bet-toggle" data-race="${escHtml(r.race_id)}">Show ${r.num_bets} bets ▾</div>`}
+          ${(() => {
+            const bbs = r.bets_by_strategy || {};
+            return STRATEGY_DISPLAY
+              .filter(s => bbs[s.key] && bbs[s.key].length)
+              .map(s => renderStrategyBlock(s.key, bbs[s.key], r.status))
+              .join('');
+          })()}
         </div>`;
     }).join('');
   }
 
   async function load() {
     try {
-      const r = await fetch(`${API}/api/bets?days=14&strategy=${encodeURIComponent(state.strategy)}`);
+      const r = await fetch(`${API}/api/bets?days=14&include_bets=true`);
       if (!r.ok) throw new Error('HTTP ' + r.status);
       const data = await r.json();
       render(data);
