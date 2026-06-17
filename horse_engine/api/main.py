@@ -5250,6 +5250,20 @@ async def admin_detect_scratchings(
     }
 
 
+@app.post("/api/admin/meetings/cache-bust")
+async def admin_bust_meetings_cache(
+    race_date: str,
+    x_cron_secret: Optional[str] = Header(None),
+):
+    """Drop the per-date meetings response cache so the next /api/meetings
+    call refetches from RA. Useful when an earlier proxy cap-out poisoned
+    the cache with an empty response and we don't want to wait 10 min."""
+    _check_admin(x_cron_secret)
+    _validate_date(race_date)
+    _invalidate_meeting_caches(race_date)
+    return {"ok": True, "date": race_date}
+
+
 @app.post("/api/admin/bets/generate-all")
 async def admin_generate_all(x_cron_secret: Optional[str] = Header(None)):
     """Fire the hourly bet-generation sweep immediately. Additive — only
