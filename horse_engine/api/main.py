@@ -4450,39 +4450,65 @@ async def list_bet_races(
                 )).fetchall():
                     if st:
                         sched_map[raceid] = st
-    # Rank-1 model win % per race — used for the Lab's confidence filter
-    # (same metric Hot Seat uses). Prefer history (frozen pre-race state);
-    # fall back to mutable predictions for races that haven't been
-    # snapshotted yet.
+    # Per-race feature extraction for the Lab's confidence filter +
+    # downstream signal analysis. We compute several features per race
+    # from the prediction snapshots:
+    #   - rank1_win_pct  : the favourite's model probability
+    #   - top3_sum_pct   : combined model prob of the model's top-3 horses
+    #   - field_size     : number of active (non-cancelled) runners
+    # Prefer history (frozen pre-race state); fall back to mutable predictions
+    # for races that haven't been snapshotted yet.
     rank1_pct: dict[str, float] = {}
+    top3_sum: dict[str, float] = {}
+    field_size: dict[str, int] = {}
     if race_ids:
+        from collections import defaultdict
+        race_probs: dict[str, list[tuple[int, float]]] = defaultdict(list)
         async with get_session() as session:
-            hist_top = (await session.execute(
+            hist_rows = (await session.execute(
                 select(RunnerPredictionHistoryRow.race_id,
-                       RunnerPredictionHistoryRow.win_probability)
+                       RunnerPredictionHistoryRow.model_rank,
+                       RunnerPredictionHistoryRow.win_probability,
+                       RunnerPredictionHistoryRow.enriched_at)
                 .where(RunnerPredictionHistoryRow.race_id.in_(race_ids))
-                .where(RunnerPredictionHistoryRow.model_rank == 1)
                 .where(RunnerPredictionHistoryRow.cancelled.is_(False)
                        | RunnerPredictionHistoryRow.cancelled.is_(None))
                 .where(RunnerPredictionHistoryRow.source == "live")
                 .order_by(RunnerPredictionHistoryRow.enriched_at.desc())
             )).fetchall()
-            for rid, p in hist_top:
-                if rid not in rank1_pct and p is not None:
-                    rank1_pct[rid] = float(p) * 100
-            missing = [rid for rid in race_ids if rid not in rank1_pct]
-            if missing:
-                live_top = (await session.execute(
+        # Group by race; keep only the latest enriched_at snapshot per race
+        # (rows are already DESC-sorted so first occurrence per race wins).
+        seen_race = set()
+        for rid, rank, p, _ in hist_rows:
+            if rid in seen_race and rid in race_probs and len(race_probs[rid]) > 25:
+                continue
+            if rid not in seen_race:
+                seen_race.add(rid)
+                race_probs[rid] = []
+            if rank is not None and p is not None:
+                race_probs[rid].append((int(rank), float(p)))
+        # For races with no history, pull from mutable.
+        missing = [rid for rid in race_ids if rid not in race_probs]
+        if missing:
+            async with get_session() as session:
+                live_rows = (await session.execute(
                     select(RunnerPredictionRow.race_id,
+                           RunnerPredictionRow.model_rank,
                            RunnerPredictionRow.win_probability)
                     .where(RunnerPredictionRow.race_id.in_(missing))
-                    .where(RunnerPredictionRow.model_rank == 1)
                     .where(RunnerPredictionRow.cancelled.is_(False)
                            | RunnerPredictionRow.cancelled.is_(None))
                 )).fetchall()
-                for rid, p in live_top:
-                    if rid not in rank1_pct and p is not None:
-                        rank1_pct[rid] = float(p) * 100
+            for rid, rank, p in live_rows:
+                if rank is not None and p is not None:
+                    race_probs[rid].append((int(rank), float(p)))
+        for rid, items in race_probs.items():
+            items.sort()
+            field_size[rid] = len(items)
+            if items:
+                rank1_pct[rid] = items[0][1] * 100
+                top3 = [p for _, p in items[:3]]
+                top3_sum[rid] = sum(top3) * 100
 
     by_race: dict[str, list[BetRecommendationRow]] = {}
     for r in rows:
@@ -4521,6 +4547,8 @@ async def list_bet_races(
             "pnl": pnl,
             "dividend_estimated": any_estimated,
             "rank1_win_pct": round(rank1_pct[race_id], 1) if race_id in rank1_pct else None,
+            "top3_sum_pct": round(top3_sum[race_id], 1) if race_id in top3_sum else None,
+            "field_size": field_size.get(race_id),
             "status": status,
             "hits": sum(1 for b in bets if b.is_hit),
             "top3": top3_map.get(race_id) or None,
@@ -5586,6 +5614,171 @@ async def portfolio_simulation(
         "window_days": days,
         "avg_dividend_assumed": avg_dividend,
         "portfolios": results,
+    }
+
+
+@app.get("/api/admin/bets/feature-analysis")
+async def admin_feature_analysis(
+    days: int = 30,
+    x_cron_secret: Optional[str] = Header(None),
+):
+    """Per-race feature → trifecta hit-rate breakdown over the last N days.
+    Helps answer: which races are the box bets most likely to hit?
+
+    For every settled race we compute:
+      - rank1_win_pct  : favourite's model probability
+      - top3_sum_pct   : combined prob of model's top-3 horses
+      - field_size     : number of active runners
+      - metro_country  : metro vs country meeting
+      - day_of_week    : Sat/Sun vs weekday
+
+    For each feature we bucket the races and report hit rate (% of races
+    where any bet box caught the trifecta) and average estimated ROI.
+    Designed to surface which signal actually predicts box hits.
+    """
+    _check_admin(x_cron_secret)
+    days = max(7, min(int(days), 365))
+    cutoff = datetime.utcnow() - timedelta(days=days)
+    from collections import defaultdict
+
+    async with get_session() as session:
+        bet_race_ids = list({
+            rid for (rid,) in (await session.execute(
+                select(BetRecommendationRow.race_id)
+                .where(BetRecommendationRow.recommended_at >= cutoff)
+                .where(BetRecommendationRow.settled.is_(True))
+            )).fetchall()
+        })
+        if not bet_race_ids:
+            return {"races_examined": 0, "buckets": {}}
+
+        # Bets per race for hit + P&L aggregation
+        bet_rows = (await session.execute(
+            select(BetRecommendationRow.race_id,
+                   BetRecommendationRow.is_hit,
+                   BetRecommendationRow.stake_dollars,
+                   BetRecommendationRow.payout_dollars,
+                   BetRecommendationRow.voided)
+            .where(BetRecommendationRow.race_id.in_(bet_race_ids))
+            .where(BetRecommendationRow.settled.is_(True))
+        )).fetchall()
+
+        # Per-race aggregations
+        race_hits: dict[str, int] = defaultdict(int)
+        race_stake: dict[str, float] = defaultdict(float)
+        race_payout: dict[str, float] = defaultdict(float)
+        for rid, hit, stake, payout, voided in bet_rows:
+            if voided:
+                continue
+            if hit:
+                race_hits[rid] += 1
+            race_stake[rid] += stake or 0
+            race_payout[rid] += payout or 0
+
+        # Per-race features from history (latest snapshot wins)
+        feat_rows = (await session.execute(
+            select(RunnerPredictionHistoryRow.race_id,
+                   RunnerPredictionHistoryRow.model_rank,
+                   RunnerPredictionHistoryRow.win_probability)
+            .where(RunnerPredictionHistoryRow.race_id.in_(bet_race_ids))
+            .where(RunnerPredictionHistoryRow.cancelled.is_(False)
+                   | RunnerPredictionHistoryRow.cancelled.is_(None))
+            .where(RunnerPredictionHistoryRow.source == "live")
+            .order_by(RunnerPredictionHistoryRow.enriched_at.desc())
+        )).fetchall()
+
+    race_probs: dict[str, list[tuple[int, float]]] = defaultdict(list)
+    for rid, rank, p in feat_rows:
+        if rank is None or p is None:
+            continue
+        race_probs[rid].append((int(rank), float(p)))
+    for rid in race_probs:
+        race_probs[rid].sort()
+
+    races: list[dict] = []
+    METRO = {"randwick", "royal-randwick", "rosehill", "rosehill-gardens",
+             "canterbury-park", "warwick-farm", "caulfield", "caulfield-heath",
+             "flemington", "moonee-valley", "sandown", "sandown-lakeside",
+             "sandown-hillside", "the-valley", "doomben", "eagle-farm",
+             "morphettville", "morphettville-parks", "ascot", "belmont"}
+    for rid in bet_race_ids:
+        items = race_probs.get(rid) or []
+        if not items:
+            continue
+        rank1 = items[0][1] * 100
+        top3 = sum(p for _, p in items[:3]) * 100
+        date_str, venue, _ = _parse_race_id(rid)
+        dow = "?"
+        if date_str:
+            try:
+                dow = datetime.strptime(date_str, "%Y-%m-%d").strftime("%a")
+            except Exception:
+                pass
+        races.append({
+            "race_id": rid,
+            "rank1": rank1,
+            "top3_sum": top3,
+            "field": len(items),
+            "metro": (venue or "").lower() in METRO,
+            "dow": dow,
+            "hit": race_hits[rid] > 0,
+            "stake": race_stake[rid],
+            "payout": race_payout[rid],
+        })
+
+    def _bucketize(name: str, buckets: list[tuple]):
+        out = []
+        for lo, hi, label in buckets:
+            sub = [r for r in races
+                   if r[name] is not None and lo <= r[name] < hi]
+            if not sub:
+                continue
+            hit_pct = round(sum(1 for r in sub if r["hit"]) / len(sub) * 100, 1)
+            stake = sum(r["stake"] for r in sub)
+            payout = sum(r["payout"] for r in sub)
+            roi = round((payout - stake) / stake * 100, 1) if stake else 0
+            out.append({"bucket": label, "n": len(sub),
+                        "hit_pct": hit_pct, "roi_pct": roi,
+                        "pnl": round(payout - stake, 2)})
+        return out
+
+    rank1_buckets = _bucketize("rank1", [(0, 20, "<20"), (20, 25, "20-25"),
+        (25, 30, "25-30"), (30, 35, "30-35"), (35, 40, "35-40"), (40, 100, "40+")])
+    top3_buckets = _bucketize("top3_sum", [(0, 40, "<40"), (40, 50, "40-50"),
+        (50, 60, "50-60"), (60, 70, "60-70"), (70, 80, "70-80"), (80, 100, "80+")])
+    field_buckets = _bucketize("field", [(0, 8, "<8"), (8, 10, "8-9"),
+        (10, 12, "10-11"), (12, 14, "12-13"), (14, 99, "14+")])
+    dow_buckets = []
+    for dow in ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]:
+        sub = [r for r in races if r["dow"] == dow]
+        if not sub:
+            continue
+        hit_pct = round(sum(1 for r in sub if r["hit"]) / len(sub) * 100, 1)
+        stake = sum(r["stake"] for r in sub)
+        payout = sum(r["payout"] for r in sub)
+        roi = round((payout - stake) / stake * 100, 1) if stake else 0
+        dow_buckets.append({"bucket": dow, "n": len(sub),
+            "hit_pct": hit_pct, "roi_pct": roi, "pnl": round(payout - stake, 2)})
+    metro_buckets = []
+    for is_metro, label in [(True, "metro"), (False, "country")]:
+        sub = [r for r in races if r["metro"] == is_metro]
+        if not sub:
+            continue
+        hit_pct = round(sum(1 for r in sub if r["hit"]) / len(sub) * 100, 1)
+        stake = sum(r["stake"] for r in sub)
+        payout = sum(r["payout"] for r in sub)
+        roi = round((payout - stake) / stake * 100, 1) if stake else 0
+        metro_buckets.append({"bucket": label, "n": len(sub),
+            "hit_pct": hit_pct, "roi_pct": roi, "pnl": round(payout - stake, 2)})
+
+    return {
+        "races_examined": len(races),
+        "days": days,
+        "rank1_win_pct": rank1_buckets,
+        "top3_sum_pct": top3_buckets,
+        "field_size": field_buckets,
+        "day_of_week": dow_buckets,
+        "metro_country": metro_buckets,
     }
 
 
