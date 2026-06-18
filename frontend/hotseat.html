@@ -916,6 +916,30 @@
     }).join('');
   }
 
+  // Survives hard-refresh during the post-deploy cold-cache window: the
+  // last good picks payload is stashed in sessionStorage so reloading
+  // the tab while /api/edge is slow doesn't drop straight to "no races".
+  const PICKS_CACHE_KEY = 'hotseat:lastPicks';
+  function savePicksToSession(picks) {
+    try {
+      sessionStorage.setItem(PICKS_CACHE_KEY, JSON.stringify({
+        picks, savedAt: Date.now()
+      }));
+    } catch (_) {}
+  }
+  function loadPicksFromSession() {
+    try {
+      const raw = sessionStorage.getItem(PICKS_CACHE_KEY);
+      if (!raw) return null;
+      const parsed = JSON.parse(raw);
+      // Sessions are tab-scoped, but discard anything older than 30 min
+      // anyway so we never re-hydrate truly stale data.
+      if (!parsed || !Array.isArray(parsed.picks)) return null;
+      if (Date.now() - (parsed.savedAt || 0) > 30 * 60 * 1000) return null;
+      return parsed.picks;
+    } catch (_) { return null; }
+  }
+
   async function loadPicks() {
     document.getElementById('refreshLabel').textContent = 'Refreshing…';
     try {
@@ -945,6 +969,7 @@
       }
       state.picks = data.picks;
       state.lastFetch = Date.now();
+      savePicksToSession(state.picks);
       populateVenueOptions();
       renderList();
     } catch (e) {
@@ -1006,6 +1031,16 @@
     renderList();
   });
 
+  // Hydrate from sessionStorage first so a hard refresh keeps the previous
+  // picks visible while the fresh /api/edge fetch runs. Critical when the
+  // user reloads during the post-deploy cold-cache window.
+  const cachedPicks = loadPicksFromSession();
+  if (cachedPicks && cachedPicks.length) {
+    state.picks = cachedPicks;
+    state.lastFetch = Date.now();
+    populateVenueOptions();
+    renderList();
+  }
   loadPicks();
 </script>
 </body>

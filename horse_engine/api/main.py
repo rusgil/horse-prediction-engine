@@ -53,6 +53,7 @@ from horse_engine.models.database import (
     ExoticBacktestRow,
     HistoricalResultRow,
     OddsSnapshotRow,
+    ResponseCacheRow,
     RunnerPredictionRow,
     RunnerPredictionHistoryRow,
     RacePredictionRow,
@@ -2081,6 +2082,28 @@ async def lifespan(app: FastAPI):
     # Enrich today on startup
     asyncio.create_task(_scheduled_enrich())
 
+    # Hydrate /api/edge response cache from Postgres before any user can
+    # hit the endpoint. Eliminates the 30-60s post-deploy cold-cache
+    # window — first user gets last-known-good immediately while the
+    # background prewarm refreshes it.
+    global _edge_response_cache
+    try:
+        async with get_session() as session:
+            row = (await session.execute(
+                select(ResponseCacheRow).where(ResponseCacheRow.cache_key == "edge")
+            )).scalar_one_or_none()
+        if row and row.cache_version == _EDGE_CACHE_VERSION:
+            body = json.loads(row.payload_json)
+            # Backdate the timestamp by (TTL - 60s) so the prewarm task
+            # refreshes very soon — we serve stale-but-fast immediately,
+            # then real data lands within ~60s.
+            backdated = datetime.utcnow() - timedelta(seconds=max(_EDGE_RESPONSE_TTL - 60, 0))
+            _edge_response_cache = (backdated, body, _EDGE_CACHE_VERSION)
+            log.info("[edge] hydrated cache from DB: %d picks, version %d",
+                     len(body.get("picks", [])), row.cache_version)
+    except Exception as e:
+        log.warning("[edge] DB hydration skipped: %s", e)
+
     # Pre-warm the /api/edge response cache so users don't pay the 25-30s
     # cold-cache cost. Refresh every 4 min + 120s jitter (4-6 min). Cache
     # TTL is bumped to 7 min in parallel (_EDGE_RESPONSE_TTL=420) so the
@@ -2865,6 +2888,28 @@ async def get_edge_picks():
         "picks": picks,
     }
     _edge_response_cache = (datetime.utcnow(), body, _EDGE_CACHE_VERSION)
+    # Persist to Postgres so the next container redeploy can hydrate
+    # this cache before any user request — kills the 30-60s post-deploy
+    # cold-cache window.
+    try:
+        async with get_session() as session:
+            from sqlalchemy.dialects.postgresql import insert as pg_insert
+            stmt = pg_insert(ResponseCacheRow).values(
+                cache_key="edge",
+                payload_json=json.dumps(body),
+                cache_version=_EDGE_CACHE_VERSION,
+                updated_at=datetime.utcnow(),
+            )
+            stmt = stmt.on_conflict_do_update(
+                index_elements=["cache_key"],
+                set_=dict(payload_json=stmt.excluded.payload_json,
+                          cache_version=stmt.excluded.cache_version,
+                          updated_at=stmt.excluded.updated_at),
+            )
+            await session.execute(stmt)
+            await session.commit()
+    except Exception as e:
+        log.debug("[edge] persistent-cache write skipped: %s", e)
     return body
 
 

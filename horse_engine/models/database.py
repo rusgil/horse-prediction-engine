@@ -301,6 +301,20 @@ class RaCalendarCacheRow(Base):
     fetched_at = Column(DateTime, default=datetime.utcnow, index=True)
 
 
+class ResponseCacheRow(Base):
+    """Persistent response-cache snapshot. Keyed by name (e.g. 'edge').
+    Used to survive Railway redeploys: the new container hydrates the
+    in-memory cache from this row before serving any user request,
+    eliminating the 30-60s cold-cache window after every deploy.
+    """
+    __tablename__ = "response_cache"
+
+    cache_key = Column(String, primary_key=True)        # 'edge', 'track_record', ...
+    payload_json = Column(Text, nullable=False)          # serialized response body
+    cache_version = Column(Integer, nullable=False, default=0)
+    updated_at = Column(DateTime, default=datetime.utcnow, index=True)
+
+
 class BetRecommendationRow(Base):
     """One row per recommended trifecta box bet. Paper-trading ledger —
     no real money. Settled after the race using the trifecta dividend
@@ -378,6 +392,9 @@ async def init_db() -> None:
         "CREATE INDEX IF NOT EXISTS ix_bet_reco_settled ON bet_recommendations (settled)",
         "ALTER TABLE bet_recommendations ADD COLUMN IF NOT EXISTS voided BOOLEAN DEFAULT FALSE",
         "ALTER TABLE bet_recommendations ADD COLUMN IF NOT EXISTS dividend_estimated BOOLEAN DEFAULT FALSE",
+        # response_cache table is created by Base.metadata.create_all above,
+        # but make sure the cache_version column exists on older deployments.
+        "ALTER TABLE response_cache ADD COLUMN IF NOT EXISTS cache_version INTEGER DEFAULT 0",
         "CREATE UNIQUE INDEX IF NOT EXISTS uq_ra_calendar_date_state ON ra_calendar_cache (race_date, state)",
         "ALTER TABLE historical_results ADD COLUMN IF NOT EXISTS jockey TEXT",
         "ALTER TABLE historical_results ADD COLUMN IF NOT EXISTS trainer TEXT",
