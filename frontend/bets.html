@@ -1039,12 +1039,20 @@
     const pendingCount = races.length - resulted.length;
     const anyEstimated = settled.some(r => r.dividend_estimated);
 
-    // Per-strategy daily hit %: today's AEST resulted races only.
-    // Resets at AEST midnight by virtue of the date filter.
+    // Per-strategy daily hit %: prefer today's AEST resulted races, fall
+    // back to the most recent date that has any resulted races so the
+    // strip is never just '—'s when racing hasn't yet started today.
     const todayKey = _todayAestKey();
-    const todayResulted = resulted.filter(r => _aestDateKey(r) === todayKey);
+    let stratDayKey = todayKey;
+    let dayResulted = resulted.filter(r => _aestDateKey(r) === todayKey);
+    if (!dayResulted.length) {
+      const resultedDates = [...new Set(resulted.map(_aestDateKey))].filter(Boolean).sort();
+      stratDayKey = resultedDates[resultedDates.length - 1] || todayKey;
+      dayResulted = resulted.filter(r => _aestDateKey(r) === stratDayKey);
+    }
+    const stratDayLabel = stratDayKey === todayKey ? 'today' : _dayLabel(stratDayKey).toLowerCase();
     const stratStats = STRATEGY_DISPLAY.filter(s => !s.legacy).map(s => {
-      const racesWithGroup = todayResulted.filter(r => {
+      const racesWithGroup = dayResulted.filter(r => {
         const groupBets = (r.bets_by_strategy || {})[s.key];
         return groupBets && groupBets.length > 0;
       });
@@ -1083,7 +1091,7 @@
       <div class="strategy-stat">
         <div class="strategy-stat-name">${s.label}</div>
         <div class="strategy-stat-num">${s.pct === null ? '—' : s.pct + '%'}</div>
-        <div class="strategy-stat-frac">${s.hits}/${s.total} today</div>
+        <div class="strategy-stat-frac">${s.hits}/${s.total} ${stratDayLabel}</div>
       </div>`).join('');
 
     const main = document.getElementById('races');
