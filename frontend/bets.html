@@ -243,6 +243,37 @@
       color: var(--text-muted);
       margin-top: 2px;
     }
+    .strategy-stats {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 6px;
+      margin: -4px 0 12px 0;
+    }
+    .strategy-stat {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 6px 4px;
+      text-align: center;
+    }
+    .strategy-stat-name {
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 0.4px;
+      color: var(--text-muted);
+    }
+    .strategy-stat-num {
+      font-family: 'Barlow Condensed', sans-serif;
+      font-weight: 700;
+      font-size: 16px;
+      font-variant-numeric: tabular-nums;
+      margin-top: 1px;
+    }
+    .strategy-stat-frac {
+      font-size: 10px;
+      color: var(--text-muted);
+      font-variant-numeric: tabular-nums;
+    }
 
     .race {
       background: var(--bg-card);
@@ -1001,6 +1032,25 @@
     const hitPct = resulted.length ? Math.round(racesWithHit / resulted.length * 100) : 0;
     const pendingCount = races.length - resulted.length;
     const anyEstimated = settled.some(r => r.dividend_estimated);
+
+    // Per-strategy daily hit %: today's AEST resulted races only.
+    // Resets at AEST midnight by virtue of the date filter.
+    const todayKey = _todayAestKey();
+    const todayResulted = resulted.filter(r => _aestDateKey(r) === todayKey);
+    const stratStats = STRATEGY_DISPLAY.map(s => {
+      const racesWithGroup = todayResulted.filter(r => {
+        const groupBets = (r.bets_by_strategy || {})[s.key];
+        return groupBets && groupBets.length > 0;
+      });
+      const groupHits = racesWithGroup.filter(r =>
+        r.bets_by_strategy[s.key].some(b => b.is_hit)
+      ).length;
+      const pct = racesWithGroup.length
+        ? Math.round(groupHits / racesWithGroup.length * 100)
+        : null;
+      return { key: s.key, label: s.label, hits: groupHits, total: racesWithGroup.length, pct };
+    });
+
     summary.innerHTML = `
       <div class="summary-card">
         <div class="summary-num">${resulted.length}/${races.length}</div>
@@ -1014,6 +1064,21 @@
         <div class="summary-num">${racesWithHit}/${resulted.length}</div>
         <div class="summary-label">Races hit (${hitPct}%)</div>
       </div>`;
+
+    // Render per-strategy daily strip just below the summary.
+    let stripEl = document.getElementById('strategy-stats');
+    if (!stripEl) {
+      stripEl = document.createElement('div');
+      stripEl.id = 'strategy-stats';
+      stripEl.className = 'strategy-stats';
+      summary.parentNode.insertBefore(stripEl, summary.nextSibling);
+    }
+    stripEl.innerHTML = stratStats.map(s => `
+      <div class="strategy-stat">
+        <div class="strategy-stat-name">${s.label}</div>
+        <div class="strategy-stat-num">${s.pct === null ? '—' : s.pct + '%'}</div>
+        <div class="strategy-stat-frac">${s.hits}/${s.total} today</div>
+      </div>`).join('');
 
     const main = document.getElementById('races');
     if (!races.length) {
