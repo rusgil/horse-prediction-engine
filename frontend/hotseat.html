@@ -354,6 +354,56 @@
       font-weight: 500;
     }
 
+    .daily-stats {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 8px;
+      margin-top: 10px;
+    }
+    .daily-stat {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 8px 10px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+    }
+    .daily-stat-label {
+      font-size: 11px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      color: var(--text-muted);
+      font-weight: 600;
+    }
+    .daily-stat-value {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-end;
+    }
+    .daily-stat-pct {
+      font-family: 'Barlow Condensed', sans-serif;
+      font-weight: 800;
+      font-size: 20px;
+      line-height: 1;
+      font-variant-numeric: tabular-nums;
+    }
+    .daily-stat-pct.win   { color: var(--green-bright); }
+    .daily-stat-pct.place { color: var(--blue); }
+    .daily-stat-frac {
+      font-size: 10px;
+      color: var(--text-muted);
+      font-variant-numeric: tabular-nums;
+      margin-top: 2px;
+    }
+    .daily-stat-day {
+      font-size: 9px;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.4px;
+    }
+
     /* Stats row: win% | place% | odds */
     .stats {
       display: grid;
@@ -503,6 +553,7 @@
         <option value="all">All tracks</option>
       </select>
     </div>
+    <div id="dailyStats" class="daily-stats"></div>
   </header>
 
   <main id="list">
@@ -602,6 +653,71 @@
     return new Date(iso).getTime() <= Date.now();
   }
 
+  function _aestDayKey(iso) {
+    if (!iso) return '';
+    const d = new Date(iso);
+    if (isNaN(d.getTime())) return '';
+    const parts = d.toLocaleDateString('en-AU', {
+      timeZone: 'Australia/Sydney', year: 'numeric', month: '2-digit', day: '2-digit',
+    }).split('/');
+    return `${parts[2]}-${parts[1]}-${parts[0]}`;
+  }
+
+  function _todayAestDayKey() {
+    const parts = new Date().toLocaleDateString('en-AU', {
+      timeZone: 'Australia/Sydney', year: 'numeric', month: '2-digit', day: '2-digit',
+    }).split('/');
+    return `${parts[2]}-${parts[1]}-${parts[0]}`;
+  }
+
+  function renderDailyStats() {
+    const el = document.getElementById('dailyStats');
+    if (!el) return;
+    const picks = state.picks || [];
+    // Picks where the race has actually finished + we have a result.
+    // p.actual_position null = race ran but results not yet seeded.
+    const resulted = picks.filter(p =>
+      isFinished(p.scheduled_time) && p.actual_position != null
+    );
+    const todayKey = _todayAestDayKey();
+    let dayResulted = resulted.filter(p => _aestDayKey(p.scheduled_time) === todayKey);
+    let dayLabel = 'today';
+    if (!dayResulted.length) {
+      const days = [...new Set(resulted.map(p => _aestDayKey(p.scheduled_time)))].filter(Boolean).sort();
+      const recent = days[days.length - 1];
+      if (recent) {
+        dayResulted = resulted.filter(p => _aestDayKey(p.scheduled_time) === recent);
+        dayLabel = recent === todayKey ? 'today' : recent;
+      }
+    }
+    const total = dayResulted.length;
+    const wins  = dayResulted.filter(p => p.won).length;
+    const places = dayResulted.filter(p => p.placed).length;
+    const winPct = total ? Math.round(wins / total * 100) : null;
+    const placePct = total ? Math.round(places / total * 100) : null;
+    el.innerHTML = `
+      <div class="daily-stat">
+        <div>
+          <div class="daily-stat-label">Win rate</div>
+          <div class="daily-stat-day">${dayLabel}</div>
+        </div>
+        <div class="daily-stat-value">
+          <div class="daily-stat-pct win">${winPct === null ? '—' : winPct + '%'}</div>
+          <div class="daily-stat-frac">${wins}/${total}</div>
+        </div>
+      </div>
+      <div class="daily-stat">
+        <div>
+          <div class="daily-stat-label">Place rate</div>
+          <div class="daily-stat-day">${dayLabel}</div>
+        </div>
+        <div class="daily-stat-value">
+          <div class="daily-stat-pct place">${placePct === null ? '—' : placePct + '%'}</div>
+          <div class="daily-stat-frac">${places}/${total}</div>
+        </div>
+      </div>`;
+  }
+
   function renderFieldExpansion(p) {
     const field = Array.isArray(p.field) ? p.field : [];
     if (!field.length) return '';
@@ -693,6 +809,10 @@
   }
 
   function renderList() {
+    // Daily win/place tally is fed by the unfiltered picks list — it
+    // reflects model performance across the whole card, not whatever
+    // filter the user has on screen.
+    renderDailyStats();
     const main = document.getElementById('list');
     const picks = applyFilters(state.picks, state.winFilter, state.placeFilter, state.venue);
 
