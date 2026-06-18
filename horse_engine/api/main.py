@@ -553,13 +553,14 @@ async def _scheduled_pre_race_enrich():
 async def _check_scratches_today() -> int:
     """
     Lightweight scratch detection — no ML inference.
-    Checks races starting within the next 4 hours (wider than the 2-hour pre-race
-    enrich window so scratches are caught before enrichment runs).
+    Checks races starting within the next 10 hours so the full afternoon
+    racing card is in scope from the first morning cron tick (was 4h,
+    which missed scratchings on races jumping 4-10h out).
     Returns count of newly cancelled runners.
     """
     from sqlalchemy import update as sa_update
     now_utc = datetime.utcnow().replace(tzinfo=timezone.utc)
-    horizon = now_utc + timedelta(hours=4)
+    horizon = now_utc + timedelta(hours=10)
     today = _today_aest().isoformat()
     date_sfx = f"-{today.replace('-', '')}"
     total_cancelled = 0
@@ -689,7 +690,12 @@ async def _scheduled_pre_race_enrich_and_scratch():
     from sqlalchemy import update as sa_update
     now_utc = datetime.utcnow().replace(tzinfo=timezone.utc)
     enrich_horizon = now_utc + timedelta(hours=2)
-    scratch_horizon = now_utc + timedelta(hours=4)
+    # Scratch horizon was 4h — too narrow. Races jumping in the afternoon
+    # (15:00-17:00 AEST) when scratchings often appear in the morning
+    # were sitting in 'no detection yet' state for hours after the
+    # scratching landed. Widen to 10h so the entire day's racing card
+    # comes under scratch surveillance from the first morning cron tick.
+    scratch_horizon = now_utc + timedelta(hours=10)
     today = _today_aest().isoformat()
     date_sfx = f"-{today.replace('-', '')}"
     log.info("[pre-race] Combined enrich+scratch scan starting")
