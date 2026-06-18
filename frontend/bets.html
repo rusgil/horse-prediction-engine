@@ -996,7 +996,7 @@
     const settled = races.filter(r => r.status === 'settled');
     const totalStakeAll = races.reduce((a, r) => a + (r.total_stake || 0), 0);
     const totalPnl = settled.reduce((a, r) => a + (r.pnl || 0), 0);
-    const totalHits = races.reduce((a, r) => a + (r.hits || 0), 0);
+    const racesWithHit = settled.filter(r => (r.hits || 0) > 0).length;
     summary.innerHTML = `
       <div class="summary-card">
         <div class="summary-num">${races.length}</div>
@@ -1007,8 +1007,8 @@
         <div class="summary-label">Settled P/L</div>
       </div>
       <div class="summary-card">
-        <div class="summary-num">${totalHits}</div>
-        <div class="summary-label">Trifecta hits</div>
+        <div class="summary-num">${racesWithHit}/${settled.length}</div>
+        <div class="summary-label">Races hit</div>
       </div>`;
 
     const main = document.getElementById('races');
