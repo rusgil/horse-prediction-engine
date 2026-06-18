@@ -711,12 +711,11 @@
       <button class="sort-pill" data-sort="pnl">Best P/L</button>
     </div>
     <div class="sort-row">
-      <span class="sort-label">Confidence</span>
+      <span class="sort-label" title="Combined model probability of the top-3 ranked horses. Open races (lower %) catch the trifecta more often than concentrated races.">Race spread</span>
       <button class="sort-pill conf-pill active" data-conf="all">All</button>
-      <button class="sort-pill conf-pill" data-conf="25">≥25%</button>
-      <button class="sort-pill conf-pill" data-conf="30">≥30%</button>
-      <button class="sort-pill conf-pill" data-conf="35">≥35%</button>
-      <button class="sort-pill conf-pill" data-conf="40">≥40%</button>
+      <button class="sort-pill conf-pill" data-conf="65">≤65% open</button>
+      <button class="sort-pill conf-pill" data-conf="55">≤55% open</button>
+      <button class="sort-pill conf-pill" data-conf="45">≤45% open</button>
     </div>
   </header>
   <main id="races">
@@ -993,9 +992,16 @@
 
   function applyConfFilter(races) {
     if (state.confFilter === 'all' || !state.confFilter) return races;
-    const floor = Number(state.confFilter);
-    if (!isFinite(floor)) return races;
-    return races.filter(r => (r.rank1_win_pct ?? 0) >= floor);
+    // Filter is a CEILING on top-3 sum %: ≤ X means show "open" races
+    // (model spreads probability across many runners). 30d backtest
+    // showed this is the strongest predictor of trifecta box hits.
+    const ceil = Number(state.confFilter);
+    if (!isFinite(ceil)) return races;
+    return races.filter(r => {
+      const s = r.top3_sum_pct;
+      // Drop races we have no top-3 signal for; otherwise keep if ≤ ceiling.
+      return s != null && s <= ceil;
+    });
   }
 
   function applySort(races) {
@@ -1197,7 +1203,7 @@
           <div class="race-top">
             <div>
               <div class="race-id">${escHtml(venue)} R${r.race_number}</div>
-              <div class="race-meta">${escHtml(r.date || '')} · ${r.num_bets} bets · stake $${r.total_stake.toFixed(2)}${r.rank1_win_pct != null ? ` · <strong style="color:var(--green-bright)">${r.rank1_win_pct.toFixed(0)}%</strong>` : ''}</div>
+              <div class="race-meta">${escHtml(r.date || '')} · ${r.num_bets} bets · stake $${r.total_stake.toFixed(2)}${r.top3_sum_pct != null ? ` · <strong style="color:var(--green-bright)" title="Top-3 model probability — lower = more open race = higher hit rate">top-3 ${r.top3_sum_pct.toFixed(0)}%</strong>` : ''}</div>
               ${timeRow}
             </div>
             ${pnlEl}
