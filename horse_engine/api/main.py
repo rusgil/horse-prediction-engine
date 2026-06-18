@@ -11363,9 +11363,17 @@ async def premium_performance_public():
     }
 
 
+_premium_monthly_cache: tuple[datetime, dict] | None = None
+_PREMIUM_MONTHLY_TTL = 600  # 10 min — monthly P&L only changes on settlement
+
 @app.get("/api/performance/premium/monthly")
 async def premium_performance_monthly():
     """Public monthly breakdown of Premium pick P&L for last 6 months inc MTD (no auth required)."""
+    global _premium_monthly_cache
+    if _premium_monthly_cache is not None:
+        ts, body = _premium_monthly_cache
+        if (datetime.utcnow() - ts).total_seconds() < _PREMIUM_MONTHLY_TTL:
+            return body
     today = date.today()
     # First day of the month 5 months ago (gives current month + 5 prior = 6 total)
     first_of_current = today.replace(day=1)
@@ -11435,7 +11443,9 @@ async def premium_performance_monthly():
             "roi_pct": round(pnl / bets * 100, 1) if bets else None,
         })
 
-    return {"months": months_out}
+    body = {"months": months_out}
+    _premium_monthly_cache = (datetime.utcnow(), body)
+    return body
 
 
 @app.get("/api/performance/premium/daily")
