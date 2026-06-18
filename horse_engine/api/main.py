@@ -70,9 +70,11 @@ from horse_engine.bets import (
     STRATEGY_GROUP as _STRATEGY_GROUP,
     STRATEGY_GROUP_LABELS as _STRATEGY_GROUP_LABELS,
     STRATEGY_REGISTRY as _BET_STRATEGIES,
+    TAB_TRIFECTA_TAKEOUT as _TAB_TRIFECTA_TAKEOUT,
     compute_payout as _bet_compute_payout,
     estimate_printed_dividend as _harville_dividend,
     generate_recommendations as _build_bet_basket,
+    harville_top3_probability as _harville_top3_prob,
     is_hit as _bet_is_hit_typed,
     is_metro_venue as _is_metro_venue,
     is_trifecta_hit as _bet_is_hit,
@@ -3757,6 +3759,41 @@ async def _settle_bets_for_race(race_id: str) -> int:
     # trifecta so the ledger shows actionable info; payout / P&L populate
     # later if/when a dividend source comes online.
     dividend = await _fetch_trifecta_dividend(race_id)
+    dividend_estimated = False
+    # Fallback: when TAB doesn't return a dividend, derive a Harville
+    # estimate from the actual finishers' model win-probabilities. Same
+    # math the Lab UI uses for the on-card 'estimated payout' badge —
+    # accurate within ~10-20% of the printed TAB number on average.
+    if dividend is None:
+        async with get_session() as session:
+            prob_rows = (await session.execute(
+                select(RunnerPredictionHistoryRow.tab_number,
+                       RunnerPredictionHistoryRow.win_probability)
+                .where(RunnerPredictionHistoryRow.race_id == race_id)
+                .where(RunnerPredictionHistoryRow.tab_number.in_(actual_top3))
+                .where(RunnerPredictionHistoryRow.source == "live")
+            )).fetchall()
+        if not prob_rows:
+            async with get_session() as session:
+                prob_rows = (await session.execute(
+                    select(RunnerPredictionRow.tab_number,
+                           RunnerPredictionRow.win_probability)
+                    .where(RunnerPredictionRow.race_id == race_id)
+                    .where(RunnerPredictionRow.tab_number.in_(actual_top3))
+                )).fetchall()
+        # Pick the highest-confidence row per tab (history can have multiple)
+        prob_by_tab: dict[int, float] = {}
+        for tab, p in prob_rows:
+            if p is None or p <= 0:
+                continue
+            if tab not in prob_by_tab or p > prob_by_tab[tab]:
+                prob_by_tab[tab] = float(p)
+        if all(t in prob_by_tab for t in actual_top3):
+            p1, p2, p3 = (prob_by_tab[t] for t in actual_top3)
+            ordered_prob = _harville_top3_prob(p1, p2, p3)
+            if ordered_prob > 0:
+                dividend = round((1.0 / ordered_prob) * (1 - _TAB_TRIFECTA_TAKEOUT), 2)
+                dividend_estimated = True
 
     # Look up scratched-runner tab numbers for this race so we can void
     # any box containing one. A bet whose box includes a scratched horse
@@ -3788,6 +3825,7 @@ async def _settle_bets_for_race(race_id: str) -> int:
             effective_box = sorted(box_set - scratched_tabs)
             row.actual_top3_json = json.dumps(actual_top3)
             row.trifecta_dividend = dividend
+            row.dividend_estimated = dividend_estimated
             if len(effective_box) < 3:
                 # Box dead — full refund. Real bettor gets stake back.
                 row.is_hit = False
@@ -4218,6 +4256,7 @@ def _row_to_bet_dict(b: BetRecommendationRow) -> dict:
         "is_hit": b.is_hit,
         "actual_top3": json.loads(b.actual_top3_json) if b.actual_top3_json else None,
         "trifecta_dividend": b.trifecta_dividend,
+        "dividend_estimated": bool(b.dividend_estimated),
         "payout_dollars": b.payout_dollars,
         "pnl_dollars": b.pnl_dollars,
         "settled_at": b.settled_at.isoformat() if b.settled_at else None,
@@ -4368,6 +4407,7 @@ async def list_bet_races(
         sched = sched_map.get(race_id)
         if isinstance(sched, str) and "T00:00:00" in sched:
             sched = None  # placeholder midnight = unknown
+        any_estimated = any(getattr(b, "dividend_estimated", False) for b in bets if b.settled)
         race_entry = {
             "race_id": race_id,
             "date": date,
@@ -4378,6 +4418,7 @@ async def list_bet_races(
             "total_stake": round(total_stake, 2),
             "total_payout": round(total_payout, 2) if (not any_unsettled and has_dividend) else None,
             "pnl": pnl,
+            "dividend_estimated": any_estimated,
             "status": status,
             "hits": sum(1 for b in bets if b.is_hit),
             "top3": top3_map.get(race_id) or None,

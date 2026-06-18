@@ -1000,6 +1000,7 @@
     const racesWithHit = resulted.filter(r => (r.hits || 0) > 0).length;
     const hitPct = resulted.length ? Math.round(racesWithHit / resulted.length * 100) : 0;
     const pendingCount = races.length - resulted.length;
+    const anyEstimated = settled.some(r => r.dividend_estimated);
     summary.innerHTML = `
       <div class="summary-card">
         <div class="summary-num">${resulted.length}/${races.length}</div>
@@ -1007,7 +1008,7 @@
       </div>
       <div class="summary-card">
         <div class="summary-num ${totalPnl >= 0 ? 'pos' : 'neg'}">${fmtPnl(totalPnl) || '—'}</div>
-        <div class="summary-label">Settled P/L</div>
+        <div class="summary-label">${anyEstimated ? 'P/L (est.)' : 'Settled P/L'}</div>
       </div>
       <div class="summary-card">
         <div class="summary-num">${racesWithHit}/${resulted.length}</div>
