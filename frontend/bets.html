@@ -1136,7 +1136,15 @@
         const labelCls = hits > 0 ? 'pos' : 'neg';
         pnlEl = `<div class="race-pnl ${labelCls}" style="font-size:14px;font-weight:700">${label}</div>`;
       } else {
-        pnlEl = `<div class="race-pnl ${pnl >= 0 ? 'pos' : 'neg'}">${fmtPnl(pnl)}</div>`;
+        // Settled with dividend — show both the Correct/Missed marker AND
+        // the $ P&L so users keep the at-a-glance hit signal even after
+        // dividends populate.
+        const marker = hits > 0 ? `✓ Correct (${hits})` : '✗ Missed';
+        const markerCls = hits > 0 ? 'pos' : 'neg';
+        pnlEl = `<div class="race-pnl ${pnl >= 0 ? 'pos' : 'neg'}">
+          <div style="font-size:11px;font-weight:600" class="${markerCls}">${marker}</div>
+          <div>${fmtPnl(pnl)}</div>
+        </div>`;
       }
       const venue = (r.venue || '').replace(/-/g,' ').toUpperCase();
       const jt = formatJumpTime(r.scheduled_time);
