@@ -786,10 +786,16 @@
 
   // Order + display labels for the per-card strategy blocks.
   const STRATEGY_DISPLAY = [
-    { key: 'trio',   label: 'Trio',   tagline: '1 box · best ROI',  isDefault: true  },
-    { key: 'stack',  label: 'Stack',  tagline: '5 × 3-horse',       isDefault: false },
-    { key: 'quad',   label: 'Quad',   tagline: '1 box · 4 horses',  isDefault: false },
-    { key: 'spread', label: 'Spread', tagline: '5 mixed boxes',     isDefault: false },
+    { key: 'trio',   label: 'Trio',   tagline: '1 box · best ROI',  isDefault: true,  legacy: false },
+    { key: 'stack',  label: 'Stack',  tagline: '5 × 3-horse',       isDefault: false, legacy: false },
+    { key: 'quad',   label: 'Quad',   tagline: '1 box · 4 horses',  isDefault: false, legacy: false },
+    { key: 'spread', label: 'Spread', tagline: '5 mixed boxes',     isDefault: false, legacy: false },
+    // Legacy single-box wides — only rendered on older races that still
+    // have these rows in the DB; no new rows are generated. Hidden from
+    // the daily-strategy summary strip via the legacy flag so the strip
+    // stays focused on current strategies.
+    { key: 'net',    label: 'Net',    tagline: '6-horse wide box',  isDefault: false, legacy: true  },
+    { key: 'sweep',  label: 'Sweep',  tagline: '5-horse wide box',  isDefault: false, legacy: true  },
   ];
   const BOX_LABELS = {
     core_top3: 'Top 3', core_top4: 'Top 4',
@@ -1037,7 +1043,7 @@
     // Resets at AEST midnight by virtue of the date filter.
     const todayKey = _todayAestKey();
     const todayResulted = resulted.filter(r => _aestDateKey(r) === todayKey);
-    const stratStats = STRATEGY_DISPLAY.map(s => {
+    const stratStats = STRATEGY_DISPLAY.filter(s => !s.legacy).map(s => {
       const racesWithGroup = todayResulted.filter(r => {
         const groupBets = (r.bets_by_strategy || {})[s.key];
         return groupBets && groupBets.length > 0;
