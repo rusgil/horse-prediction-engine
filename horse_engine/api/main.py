@@ -2082,6 +2082,28 @@ async def lifespan(app: FastAPI):
     # Enrich today on startup
     asyncio.create_task(_scheduled_enrich())
 
+    # Bet-gen + settlement + result-seed catch-up on startup. Without this,
+    # any deploy that lands between cron ticks defers all of these to the
+    # NEXT scheduled run — sometimes an hour away. On heavy-deploy days
+    # the gaps compound and today's races can sit out of The Lab for the
+    # whole afternoon. Sequenced + delayed so each waits on the previous
+    # without dogpiling DB queries on container boot.
+    async def _startup_bet_catchup():
+        await asyncio.sleep(20)  # let enrichment land first
+        try:
+            await _scheduled_generate_bets()
+        except Exception as e:
+            log.warning("[startup] bet-gen catch-up failed: %s", e)
+        try:
+            await _scheduled_seed_results()
+        except Exception as e:
+            log.warning("[startup] result-seed catch-up failed: %s", e)
+        try:
+            await _scheduled_settle_bets()
+        except Exception as e:
+            log.warning("[startup] settle-bets catch-up failed: %s", e)
+    asyncio.create_task(_startup_bet_catchup())
+
     # Hydrate /api/edge response cache from Postgres before any user can
     # hit the endpoint. Eliminates the 30-60s post-deploy cold-cache
     # window — first user gets last-known-good immediately while the
