@@ -994,9 +994,10 @@
     const races = applySort(data.races || []);
     const summary = document.getElementById('summary');
     const settled = races.filter(r => r.status === 'settled');
+    const resulted = races.filter(r => r.status === 'settled' || r.status === 'settled_no_dividend');
     const totalStakeAll = races.reduce((a, r) => a + (r.total_stake || 0), 0);
     const totalPnl = settled.reduce((a, r) => a + (r.pnl || 0), 0);
-    const racesWithHit = settled.filter(r => (r.hits || 0) > 0).length;
+    const racesWithHit = resulted.filter(r => (r.hits || 0) > 0).length;
     summary.innerHTML = `
       <div class="summary-card">
         <div class="summary-num">${races.length}</div>
@@ -1007,7 +1008,7 @@
         <div class="summary-label">Settled P/L</div>
       </div>
       <div class="summary-card">
-        <div class="summary-num">${racesWithHit}/${settled.length}</div>
+        <div class="summary-num">${racesWithHit}/${resulted.length}</div>
         <div class="summary-label">Races hit</div>
       </div>`;
 
