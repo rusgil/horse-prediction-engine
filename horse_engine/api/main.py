@@ -5270,6 +5270,18 @@ async def admin_bust_meetings_cache(
     return {"ok": True, "date": race_date}
 
 
+@app.post("/api/admin/scratch-sweep-now")
+async def admin_scratch_sweep_now(x_cron_secret: Optional[str] = Header(None)):
+    """Run the today-scratch detection immediately and bust the edge cache so
+    cancellations surface on the Edge page within seconds (vs waiting for
+    the next 15-min cron tick)."""
+    _check_admin(x_cron_secret)
+    global _edge_response_cache
+    cancelled = await _check_scratches_today()
+    _edge_response_cache = None
+    return {"ok": True, "newly_cancelled": cancelled}
+
+
 @app.post("/api/admin/bets/generate-all")
 async def admin_generate_all(x_cron_secret: Optional[str] = Header(None)):
     """Fire the hourly bet-generation sweep immediately. Additive — only
@@ -5504,6 +5516,9 @@ async def admin_debug_dividend(race_id: str, x_cron_secret: Optional[str] = Head
     }
 
 
+_track_record_cache: tuple[datetime, dict] | None = None
+_TRACK_RECORD_TTL = 600  # 10 min — tier rates barely move between settlements
+
 @app.get("/api/track-record")
 async def get_track_record():
     """Public endpoint — tier win rates from the unified all-time backtest +
@@ -5513,6 +5528,11 @@ async def get_track_record():
     samples (e.g. 6 picks in the Hot tier, 1 win, 17% — pure noise). Switched
     to all-time on 2026-06-13. Now scales with stored history (3,000+ picks
     in the unified set) so the tier numbers are statistically meaningful."""
+    global _track_record_cache
+    if _track_record_cache is not None:
+        ts, body = _track_record_cache
+        if (datetime.utcnow() - ts).total_seconds() < _TRACK_RECORD_TTL:
+            return body
     async with get_session() as session:
         # Retroactive backtest rows (built via the offline backtest pipeline)
         bt_rows = (await session.execute(
@@ -5564,11 +5584,13 @@ async def get_track_record():
             "conf_min": tier["conf_min"],
             "conf_max": tier["conf_max"],
         })
-    return {
+    body = {
         "tiers": output,
         "total_races": len(unified),
         "generated_at": datetime.utcnow().isoformat(),
     }
+    _track_record_cache = (datetime.utcnow(), body)
+    return body
 
 
 # ── Frontend ─────────────────────────────────────────────────────────────────
