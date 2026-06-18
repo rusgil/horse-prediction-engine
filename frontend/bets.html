@@ -998,6 +998,7 @@
     const totalStakeAll = races.reduce((a, r) => a + (r.total_stake || 0), 0);
     const totalPnl = settled.reduce((a, r) => a + (r.pnl || 0), 0);
     const racesWithHit = resulted.filter(r => (r.hits || 0) > 0).length;
+    const hitPct = resulted.length ? Math.round(racesWithHit / resulted.length * 100) : 0;
     summary.innerHTML = `
       <div class="summary-card">
         <div class="summary-num">${races.length}</div>
@@ -1009,7 +1010,7 @@
       </div>
       <div class="summary-card">
         <div class="summary-num">${racesWithHit}/${resulted.length}</div>
-        <div class="summary-label">Races hit</div>
+        <div class="summary-label">Races hit (${hitPct}%)</div>
       </div>`;
 
     const main = document.getElementById('races');
