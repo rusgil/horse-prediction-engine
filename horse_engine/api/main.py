@@ -4450,6 +4450,40 @@ async def list_bet_races(
                 )).fetchall():
                     if st:
                         sched_map[raceid] = st
+    # Rank-1 model win % per race — used for the Lab's confidence filter
+    # (same metric Hot Seat uses). Prefer history (frozen pre-race state);
+    # fall back to mutable predictions for races that haven't been
+    # snapshotted yet.
+    rank1_pct: dict[str, float] = {}
+    if race_ids:
+        async with get_session() as session:
+            hist_top = (await session.execute(
+                select(RunnerPredictionHistoryRow.race_id,
+                       RunnerPredictionHistoryRow.win_probability)
+                .where(RunnerPredictionHistoryRow.race_id.in_(race_ids))
+                .where(RunnerPredictionHistoryRow.model_rank == 1)
+                .where(RunnerPredictionHistoryRow.cancelled.is_(False)
+                       | RunnerPredictionHistoryRow.cancelled.is_(None))
+                .where(RunnerPredictionHistoryRow.source == "live")
+                .order_by(RunnerPredictionHistoryRow.enriched_at.desc())
+            )).fetchall()
+            for rid, p in hist_top:
+                if rid not in rank1_pct and p is not None:
+                    rank1_pct[rid] = float(p) * 100
+            missing = [rid for rid in race_ids if rid not in rank1_pct]
+            if missing:
+                live_top = (await session.execute(
+                    select(RunnerPredictionRow.race_id,
+                           RunnerPredictionRow.win_probability)
+                    .where(RunnerPredictionRow.race_id.in_(missing))
+                    .where(RunnerPredictionRow.model_rank == 1)
+                    .where(RunnerPredictionRow.cancelled.is_(False)
+                           | RunnerPredictionRow.cancelled.is_(None))
+                )).fetchall()
+                for rid, p in live_top:
+                    if rid not in rank1_pct and p is not None:
+                        rank1_pct[rid] = float(p) * 100
+
     by_race: dict[str, list[BetRecommendationRow]] = {}
     for r in rows:
         by_race.setdefault(r.race_id, []).append(r)
@@ -4486,6 +4520,7 @@ async def list_bet_races(
             "total_payout": round(total_payout, 2) if (not any_unsettled and has_dividend) else None,
             "pnl": pnl,
             "dividend_estimated": any_estimated,
+            "rank1_win_pct": round(rank1_pct[race_id], 1) if race_id in rank1_pct else None,
             "status": status,
             "hits": sum(1 for b in bets if b.is_hit),
             "top3": top3_map.get(race_id) or None,

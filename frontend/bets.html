@@ -710,6 +710,14 @@
       <button class="sort-pill" data-sort="recent">Just ran</button>
       <button class="sort-pill" data-sort="pnl">Best P/L</button>
     </div>
+    <div class="sort-row">
+      <span class="sort-label">Confidence</span>
+      <button class="sort-pill conf-pill active" data-conf="all">All</button>
+      <button class="sort-pill conf-pill" data-conf="25">≥25%</button>
+      <button class="sort-pill conf-pill" data-conf="30">≥30%</button>
+      <button class="sort-pill conf-pill" data-conf="35">≥35%</button>
+      <button class="sort-pill conf-pill" data-conf="40">≥40%</button>
+    </div>
   </header>
   <main id="races">
     <div class="loading">Loading ledger…</div>
@@ -737,6 +745,9 @@
     expanded: new Set(), detail: {}, lastData: null, sort: 'next',
     strategy: 'all',  // page no longer filters by strategy — each card shows all
     strategyStats: [],
+    // Confidence filter: floor on the rank-1 horse's model win %. 'all' = no
+    // floor; otherwise a numeric threshold. Mirrors Hot Seat's win-% filter.
+    confFilter: 'all',
     // "race_id:group" keys that the user has explicitly toggled the
     // opposite of the default. By default Trio is expanded, others
     // collapsed; flipping a section toggles its entry in this set.
@@ -980,7 +991,15 @@
   // Mirrors the 480s Running window in formatCountdown.
   const RUNNING_WINDOW_MS = 8 * 60 * 1000;
 
+  function applyConfFilter(races) {
+    if (state.confFilter === 'all' || !state.confFilter) return races;
+    const floor = Number(state.confFilter);
+    if (!isFinite(floor)) return races;
+    return races.filter(r => (r.rank1_win_pct ?? 0) >= floor);
+  }
+
   function applySort(races) {
+    races = applyConfFilter(races);
     const now = Date.now();
     if (state.sort === 'next') {
       // Parse scheduled_time as a Date (includes TZ offset) so upcoming
@@ -1178,7 +1197,7 @@
           <div class="race-top">
             <div>
               <div class="race-id">${escHtml(venue)} R${r.race_number}</div>
-              <div class="race-meta">${escHtml(r.date || '')} · ${r.num_bets} bets · stake $${r.total_stake.toFixed(2)}</div>
+              <div class="race-meta">${escHtml(r.date || '')} · ${r.num_bets} bets · stake $${r.total_stake.toFixed(2)}${r.rank1_win_pct != null ? ` · <strong style="color:var(--green-bright)">${r.rank1_win_pct.toFixed(0)}%</strong>` : ''}</div>
               ${timeRow}
             </div>
             ${pnlEl}
@@ -1317,12 +1336,23 @@
     }
   }
 
-  // Sort pills
-  document.querySelectorAll('.sort-pill').forEach(btn => {
+  // Sort pills (top row) — toggle within sort group only.
+  document.querySelectorAll('.sort-pill:not(.conf-pill)').forEach(btn => {
     btn.addEventListener('click', () => {
-      document.querySelectorAll('.sort-pill').forEach(b => b.classList.remove('active'));
+      document.querySelectorAll('.sort-pill:not(.conf-pill)')
+        .forEach(b => b.classList.remove('active'));
       btn.classList.add('active');
       state.sort = btn.dataset.sort;
+      if (state.lastData) render(state.lastData);
+    });
+  });
+
+  // Confidence filter pills — toggle within conf group only.
+  document.querySelectorAll('.conf-pill').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.conf-pill').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      state.confFilter = btn.dataset.conf;
       if (state.lastData) render(state.lastData);
     });
   });
