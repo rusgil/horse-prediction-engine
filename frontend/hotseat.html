@@ -850,8 +850,14 @@
         ? '$' + p.best_available_odds.toFixed(2) : '—';
       const placeTxt = p.place_probability != null ? p.place_probability.toFixed(0) + '%' : '—';
       const venueLabel = p.venue ? p.venue.replace(/-/g, ' ').toUpperCase() : '—';
-      // "Premium" badge = high model confidence + high calibrated rate
-      const isPremium = p.model_pct >= 30 && (p.calibrated_win_rate ?? 0) >= 45;
+      // Premium badge — matches edge.html's isPremiumPick exactly so the
+      // criteria advertised on the Edge page ('≥30% confidence · $3.00+
+      // odds · model beats market by 5%+') hold true on Hot Seat too.
+      // Was missing the odds floor + edge_pct check, which let
+      // short-priced (e.g. $2.50) overlay favourites through.
+      const isPremium = p.model_pct >= 29.5
+        && p.best_available_odds != null && p.best_available_odds >= 3.0
+        && p.edge_pct != null && p.edge_pct > 5;
 
       const horseMeta = [];
       if (p.barrier) horseMeta.push(`B${p.barrier}`);
