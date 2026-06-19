@@ -2057,12 +2057,15 @@ async def lifespan(app: FastAPI):
     global _scheduler
     scheduler = AsyncIOScheduler(timezone="Australia/Sydney")
     _scheduler = scheduler
-    # 6am enrich dropped 2026-06-20: ~100 RA fetches per run × 3/day was
-    # burning the droplet's 5000/24h budget. Market data isn't fresh that
-    # early anyway (odds-pro opens ~8-9am). 10am + 1pm + the every-15min
-    # pre-race enrich-and-scratch (for races within 2h of jump) is enough.
-    scheduler.add_job(_scheduled_enrich, CronTrigger(hour=10, minute=0, timezone="Australia/Sydney"))
-    scheduler.add_job(_scheduled_enrich, CronTrigger(hour=13, minute=0, timezone="Australia/Sydney"))
+    # Full-enrichment schedule chosen so everything's ready BEFORE first
+    # race (typically 11:10 AEST on Sat metro days, 12:00 on weekdays):
+    #   08:30 — early baseline (catches overnight market changes)
+    #   10:30 — final pre-race refresh (40 min before 11:10 jump)
+    # The 13:00 enrich is dropped — it was mid-racing and the per-15-min
+    # pre-race-enrich-and-scratch cron already keeps individual race
+    # data fresh as their jump windows open.
+    scheduler.add_job(_scheduled_enrich, CronTrigger(hour=8,  minute=30, timezone="Australia/Sydney"))
+    scheduler.add_job(_scheduled_enrich, CronTrigger(hour=10, minute=30, timezone="Australia/Sydney"))
     scheduler.add_job(_scheduled_prerace_snapshot, CronTrigger(hour=9, minute=0, timezone="Australia/Sydney"))
     # Results seeding — every 30 min during racing hours. Previously only
     # fired at sparse hours (14/15/17/19/23), meaning a 16:00 race would
