@@ -1060,11 +1060,13 @@ class RacingAustraliaClient:
 
     async def _fetch_meeting(self, ra_key: str, race_date: str, state: str) -> dict | None:
         cached = self._meeting_cache.get(ra_key)
-        # 15-min TTL — matches the pre-race enrich cron's clear cadence, so
-        # the in-memory cache fully covers the gap between cron ticks. Was
-        # 5min, which meant 3× the Acceptances hits per cron cycle without
-        # any added freshness benefit.
-        if cached and (datetime.utcnow() - cached[0]).total_seconds() < 900:
+        # 30-min TTL. Was 15min, which on a heavy-deploy day burned the
+        # droplet's 5000/24h cap by 21:30 UTC. Acceptances change rarely
+        # in the morning (scratchings land late) so a 30-min TTL halves
+        # our Acceptances volume without meaningful freshness loss; the
+        # scratch-detection cron still catches scratchings within one
+        # 15-min cron tick + at most one stale window.
+        if cached and (datetime.utcnow() - cached[0]).total_seconds() < 1800:
             return cached[1]
         from urllib.parse import quote
         url = f"{_BASE}/Acceptances.aspx?Key={quote(ra_key, safe='')}"

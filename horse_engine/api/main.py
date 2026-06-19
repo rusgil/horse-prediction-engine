@@ -2038,7 +2038,10 @@ async def lifespan(app: FastAPI):
     global _scheduler
     scheduler = AsyncIOScheduler(timezone="Australia/Sydney")
     _scheduler = scheduler
-    scheduler.add_job(_scheduled_enrich, CronTrigger(hour=6,  minute=0, timezone="Australia/Sydney"))
+    # 6am enrich dropped 2026-06-20: ~100 RA fetches per run × 3/day was
+    # burning the droplet's 5000/24h budget. Market data isn't fresh that
+    # early anyway (odds-pro opens ~8-9am). 10am + 1pm + the every-15min
+    # pre-race enrich-and-scratch (for races within 2h of jump) is enough.
     scheduler.add_job(_scheduled_enrich, CronTrigger(hour=10, minute=0, timezone="Australia/Sydney"))
     scheduler.add_job(_scheduled_enrich, CronTrigger(hour=13, minute=0, timezone="Australia/Sydney"))
     scheduler.add_job(_scheduled_prerace_snapshot, CronTrigger(hour=9, minute=0, timezone="Australia/Sydney"))
@@ -2051,7 +2054,10 @@ async def lifespan(app: FastAPI):
         _scheduled_seed_results,
         CronTrigger(hour="14-23", minute="0,30", timezone="Australia/Sydney")
     )
-    scheduler.add_job(_scheduled_calibrate,      CronTrigger(hour=2,  minute=0, timezone="Australia/Sydney"))
+    # Calibration was running daily but docstring says "weekly". Daily
+    # was burning CPU on a model whose drift signal moves on a week+
+    # timescale anyway. Sundays at 2am only.
+    scheduler.add_job(_scheduled_calibrate,      CronTrigger(day_of_week="sun", hour=2,  minute=0, timezone="Australia/Sydney"))
     scheduler.add_job(_scheduled_exotic_retrain, CronTrigger(hour=3,  minute=0, timezone="Australia/Sydney"))
     scheduler.add_job(
         _scheduled_odds_snapshot,
@@ -2079,8 +2085,24 @@ async def lifespan(app: FastAPI):
     scheduler.start()
     log.info("[scheduler] Cron jobs scheduled")
 
-    # Enrich today on startup
-    asyncio.create_task(_scheduled_enrich())
+    # Enrich today on startup — but only if it hasn't run in the last
+    # 30 min, to protect the RA proxy on heavy-deploy days (15+ deploys
+    # in a session × full _scheduled_enrich each time = 100s of fetches).
+    async def _startup_enrich_if_stale():
+        from sqlalchemy import func as _func
+        try:
+            async with get_session() as session:
+                last_enriched = (await session.execute(
+                    select(_func.max(RunnerPredictionRow.enriched_at))
+                )).scalar()
+            if last_enriched and (datetime.utcnow() - last_enriched).total_seconds() < 1800:
+                log.info("[startup-enrich] skipped — last enrichment %s ago",
+                         (datetime.utcnow() - last_enriched))
+                return
+        except Exception as e:
+            log.warning("[startup-enrich] staleness check failed: %s", e)
+        await _scheduled_enrich()
+    asyncio.create_task(_startup_enrich_if_stale())
 
     # Bet-gen + settlement + result-seed catch-up on startup. Without this,
     # any deploy that lands between cron ticks defers all of these to the
