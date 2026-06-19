@@ -357,52 +357,46 @@
     .daily-stats {
       display: grid;
       grid-template-columns: repeat(2, 1fr);
-      gap: 8px;
-      margin-top: 10px;
+      gap: 6px;
+      margin-top: 8px;
     }
     .daily-stat {
       background: var(--bg-card);
       border: 1px solid var(--border);
-      border-radius: 10px;
-      padding: 8px 10px;
+      border-radius: 6px;
+      padding: 4px 8px;
       display: flex;
       align-items: center;
       justify-content: space-between;
-      gap: 8px;
+      gap: 6px;
     }
     .daily-stat-label {
-      font-size: 11px;
+      font-size: 9px;
       text-transform: uppercase;
-      letter-spacing: 0.5px;
+      letter-spacing: 0.4px;
       color: var(--text-muted);
       font-weight: 600;
     }
     .daily-stat-value {
       display: flex;
-      flex-direction: column;
-      align-items: flex-end;
+      align-items: baseline;
+      gap: 4px;
     }
     .daily-stat-pct {
       font-family: 'Barlow Condensed', sans-serif;
       font-weight: 800;
-      font-size: 20px;
+      font-size: 14px;
       line-height: 1;
       font-variant-numeric: tabular-nums;
     }
     .daily-stat-pct.win   { color: var(--green-bright); }
     .daily-stat-pct.place { color: var(--blue); }
     .daily-stat-frac {
-      font-size: 10px;
-      color: var(--text-muted);
-      font-variant-numeric: tabular-nums;
-      margin-top: 2px;
-    }
-    .daily-stat-day {
       font-size: 9px;
       color: var(--text-muted);
-      text-transform: uppercase;
-      letter-spacing: 0.4px;
+      font-variant-numeric: tabular-nums;
     }
+    .daily-stat-day { display: none; }
 
     /* Stats row: win% | place% | odds */
     .stats {
@@ -697,23 +691,17 @@
     const placePct = total ? Math.round(places / total * 100) : null;
     el.innerHTML = `
       <div class="daily-stat">
-        <div>
-          <div class="daily-stat-label">Win rate</div>
-          <div class="daily-stat-day">${dayLabel}</div>
-        </div>
+        <span class="daily-stat-label">Win</span>
         <div class="daily-stat-value">
-          <div class="daily-stat-pct win">${winPct === null ? '—' : winPct + '%'}</div>
-          <div class="daily-stat-frac">${wins}/${total}</div>
+          <span class="daily-stat-pct win">${winPct === null ? '—' : winPct + '%'}</span>
+          <span class="daily-stat-frac">${wins}/${total}</span>
         </div>
       </div>
       <div class="daily-stat">
-        <div>
-          <div class="daily-stat-label">Place rate</div>
-          <div class="daily-stat-day">${dayLabel}</div>
-        </div>
+        <span class="daily-stat-label">Place</span>
         <div class="daily-stat-value">
-          <div class="daily-stat-pct place">${placePct === null ? '—' : placePct + '%'}</div>
-          <div class="daily-stat-frac">${places}/${total}</div>
+          <span class="daily-stat-pct place">${placePct === null ? '—' : placePct + '%'}</span>
+          <span class="daily-stat-frac">${places}/${total}</span>
         </div>
       </div>`;
   }
