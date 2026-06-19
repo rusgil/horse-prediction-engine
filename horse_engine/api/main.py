@@ -3565,13 +3565,15 @@ async def _generate_bets_for_race(race_id: str, *, regenerate: bool = False) -> 
     """Create bet recommendations for a single race. No-op if rows already
     exist unless regenerate=True. Returns rows inserted.
 
-    Metro filter: only generates bets for races at metro venues — box
-    trifectas need ~$200+ dividends to be profitable, and country/
-    provincial trifectas typically clear $50-130. The filter keeps
-    paper-trading stakes on races where the math actually works."""
+    Prize-money gate: only generates bets for races with prize money
+    ≥ $30k. Replaces the earlier metro-venue-only filter. The 30d
+    backtest showed country races hit 40% (vs 44% metro) and were
+    profitable, so a strict venue gate was leaving money on the table
+    AND emptying The Lab on country-only days. Prize money better
+    tracks dividend pool size: $30k+ races consistently clear the
+    box-trifecta break-even on the available strategies."""
+    PRIZE_MONEY_FLOOR = 30_000
     _date_str, venue_code, _race_num = _parse_race_id(race_id)
-    if venue_code and not _is_metro_venue(venue_code):
-        return 0
     async with get_session() as session:
         # Find existing strategy_labels for this race — additive insert by
         # default so newly-added strategies (e.g. wide_top5) get backfilled
@@ -3594,6 +3596,13 @@ async def _generate_bets_for_race(race_id: str, *, regenerate: bool = False) -> 
                 .where(RunnerPredictionHistoryRow.race_id == race_id)
             )).scalars().all()
         if not rows:
+            return 0
+        # Prize-money gate (replaces metro-only filter). Use max across
+        # rows — same value should be on every runner row of the race,
+        # but max is robust to nulls / partial backfills. Skip races
+        # whose prize money signals a low dividend pool.
+        prize_money = max((getattr(r, "prize_money", None) or 0) for r in rows)
+        if prize_money and prize_money < PRIZE_MONEY_FLOOR:
             return 0
 
         runners = [{
