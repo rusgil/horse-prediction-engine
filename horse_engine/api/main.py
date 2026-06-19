@@ -1820,6 +1820,25 @@ async def _scheduled_seed_results():
             log.exception("[scheduler] Result seeding failed for %s: %s", race_date, e)
 
 
+async def _scheduled_morning_settle():
+    """Early-morning catch-up: seed YESTERDAY's results then run settlement.
+    The afternoon seed/settle crons don't start until 14:00 AEST, which
+    leaves yesterday's late-evening races in pending state for half the
+    next day. Running once at 08:00 fills that gap with ~5-15 RA fetches
+    (results for yesterday's venues only — today's racing data isn't
+    touched, so no double-cost vs the 14:00 sweep)."""
+    yesterday = (_today_aest() - timedelta(days=1)).isoformat()
+    try:
+        n = await _seed_results_for_date(yesterday)
+        log.info("[morning-settle] Seeded %d results for %s", n, yesterday)
+    except Exception as e:
+        log.exception("[morning-settle] Result seeding failed: %s", e)
+    try:
+        await _scheduled_settle_bets()
+    except Exception as e:
+        log.exception("[morning-settle] Settlement failed: %s", e)
+
+
 async def _scheduled_exotic_retrain():
     """Run by APScheduler at 3am AEST — retrain exotic model after nightly calibration."""
     log.info("[scheduler] Running nightly exotic model retrain")
@@ -2053,6 +2072,13 @@ async def lifespan(app: FastAPI):
     scheduler.add_job(
         _scheduled_seed_results,
         CronTrigger(hour="14-23", minute="0,30", timezone="Australia/Sydney")
+    )
+    # 08:00 morning seed+settle for yesterday's results so any late-night
+    # races that didn't seed by 23:30 are picked up before users open the
+    # app in the morning.
+    scheduler.add_job(
+        _scheduled_morning_settle,
+        CronTrigger(hour=8, minute=0, timezone="Australia/Sydney")
     )
     # Calibration was running daily but docstring says "weekly". Daily
     # was burning CPU on a model whose drift signal moves on a week+
