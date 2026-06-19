@@ -2069,9 +2069,13 @@ async def lifespan(app: FastAPI):
     # wait until 17:00 to be seeded. Settlement also self-seeds, but this
     # cadence keeps the historical_results table fresh for other readers
     # (edge/yesterday, dashboard, premium-perf, etc.).
+    # Was 14-23: first races (Sat metro can start at 11:10) sat for 3h
+    # with results published but not seeded. 11-23 catches those within
+    # ~20-50 min of finishing. Extra 6 ticks/day × ~5 venues = ~30 RA
+    # fetches, well within the proxy budget.
     scheduler.add_job(
         _scheduled_seed_results,
-        CronTrigger(hour="14-23", minute="0,30", timezone="Australia/Sydney")
+        CronTrigger(hour="11-23", minute="0,30", timezone="Australia/Sydney")
     )
     # 08:00 morning seed+settle for yesterday's results so any late-night
     # races that didn't seed by 23:30 are picked up before users open the
@@ -2104,9 +2108,11 @@ async def lifespan(app: FastAPI):
         CronTrigger(hour="6-21", minute=5, timezone="Australia/Sydney")
     )
     # Settlement sweep — runs every 30 min during the results window.
+    # Pushed earlier (was 14-23) to cover Sat metro first race at 11:10.
+    # Each settle is DB-only — no RA budget impact.
     scheduler.add_job(
         _scheduled_settle_bets,
-        CronTrigger(hour="14-23", minute="10,40", timezone="Australia/Sydney")
+        CronTrigger(hour="11-23", minute="10,40", timezone="Australia/Sydney")
     )
     scheduler.start()
     log.info("[scheduler] Cron jobs scheduled")
