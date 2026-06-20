@@ -5247,56 +5247,92 @@ async def all_tactics_filtered_backtest(
             "field_size": field_size,
         }
 
-    strategy_results: list[dict] = []
-    GROUP_FOR = {label: grp for label, grp in _STRATEGY_GROUP.items()}
-    for label, gen in _BET_STRATEGIES.items():
-        races_evaluated = 0
-        races_hit = 0
-        boxes_evaluated = 0
-        boxes_hit = 0
-        for rid, info in eligible.items():
-            runners = [{
-                "tab_number": p.tab_number,
-                "horse_name": p.horse_name,
-                "win_probability": p.win_probability,
-                "place_probability": p.place_probability,
-                "model_rank": p.model_rank,
-                "cancelled": bool(p.cancelled),
-            } for p in info["pruns"]]
-            try:
-                bets = gen(runners) or []
-            except Exception:
+    # Use the production bet basket — produces every box (Trio, Quad,
+    # Stack×5, Spread×5, Net, Sweep) that the live recommender emits.
+    from collections import defaultdict
+    by_label = defaultdict(lambda: {"races_with_bet": 0, "races_hit": 0,
+                                      "boxes": 0, "boxes_hit": 0})
+    by_group = defaultdict(lambda: {"races_with_bet": 0, "races_hit": 0,
+                                      "boxes": 0, "boxes_hit": 0})
+    races_with_any_box = 0
+    for rid, info in eligible.items():
+        runners = [{
+            "tab_number": p.tab_number,
+            "horse_name": p.horse_name,
+            "win_probability": p.win_probability,
+            "place_probability": p.place_probability,
+            "model_rank": p.model_rank,
+            "cancelled": bool(p.cancelled),
+        } for p in info["pruns"]]
+        try:
+            bets = _build_bet_basket(runners) or []
+        except Exception:
+            continue
+        if not bets:
+            continue
+        races_with_any_box += 1
+        # Each bet has a strategy_label — group its hit status
+        seen_labels: set = set()
+        seen_groups: set = set()
+        for b in bets:
+            label = b.get("strategy_label")
+            if not label:
                 continue
-            if not bets:
-                continue
-            races_evaluated += 1
-            hit_any = False
-            for b in bets:
-                boxes_evaluated += 1
-                if _bet_is_hit(b["box_horses"], info["actual_top3"]):
-                    boxes_hit += 1
-                    hit_any = True
-            if hit_any:
-                races_hit += 1
-        strategy_results.append({
-            "label": label,
-            "group": GROUP_FOR.get(label, "?"),
-            "races_evaluated": races_evaluated,
-            "races_hit": races_hit,
-            "race_hit_rate_pct": round(races_hit/races_evaluated*100, 1) if races_evaluated else 0,
-            "boxes_evaluated": boxes_evaluated,
-            "boxes_hit": boxes_hit,
-            "box_hit_rate_pct": round(boxes_hit/boxes_evaluated*100, 2) if boxes_evaluated else 0,
-        })
-    strategy_results.sort(key=lambda x: -x["race_hit_rate_pct"])
+            group = _STRATEGY_GROUP.get(label, "?")
+            hit = _bet_is_hit(b["box_horses"], info["actual_top3"])
+            by_label[label]["boxes"] += 1
+            by_group[group]["boxes"] += 1
+            if hit:
+                by_label[label]["boxes_hit"] += 1
+                by_group[group]["boxes_hit"] += 1
+            if label not in seen_labels:
+                by_label[label]["races_with_bet"] += 1
+                seen_labels.add(label)
+                if hit:
+                    by_label[label]["races_hit"] += 1
+            elif hit and by_label[label]["races_with_bet"] == 1:
+                # already counted but mark hit (single box per label per race)
+                pass
+            if group not in seen_groups:
+                by_group[group]["races_with_bet"] += 1
+                seen_groups.add(group)
+        # group race-hit increments (one hit per group counts the race)
+        for grp in seen_groups:
+            any_grp_hit = any(
+                _bet_is_hit(b["box_horses"], info["actual_top3"])
+                for b in bets
+                if _STRATEGY_GROUP.get(b.get("strategy_label"), "?") == grp
+            )
+            if any_grp_hit:
+                by_group[grp]["races_hit"] += 1
+
+    def fmt(d: dict, key: str) -> list:
+        out = []
+        for k, s in d.items():
+            out.append({
+                "label" if key == "label" else "group": k,
+                "races_with_bet": s["races_with_bet"],
+                "races_hit": s["races_hit"],
+                "race_hit_rate_pct": round(s["races_hit"]/s["races_with_bet"]*100, 1) if s["races_with_bet"] else 0,
+                "boxes_evaluated": s["boxes"],
+                "boxes_hit": s["boxes_hit"],
+                "box_hit_rate_pct": round(s["boxes_hit"]/s["boxes"]*100, 2) if s["boxes"] else 0,
+            })
+        out.sort(key=lambda x: -x["race_hit_rate_pct"])
+        return out
+
+    strategy_results = fmt(by_label, "label")
+    group_results = fmt(by_group, "group")
     return {
         "window_days": days,
         "top3_sum_max_pct": top3_max,
         "field_max": field_max,
         "universe_races": universe_count,
         "filter_matched_races": len(eligible),
+        "races_with_any_box": races_with_any_box,
         "coverage_pct": round(len(eligible)/universe_count*100, 1) if universe_count else 0,
-        "strategies": strategy_results,
+        "by_group": group_results,
+        "by_strategy": strategy_results,
     }
 
 
