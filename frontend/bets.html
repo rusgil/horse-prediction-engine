@@ -751,9 +751,9 @@
     <div class="sort-row">
       <span class="sort-label">Race spread</span>
       <span class="filter-info" data-tip="conf-tip" tabindex="0">i</span>
-      <button class="sort-pill conf-pill active" data-conf="all">All</button>
+      <button class="sort-pill conf-pill" data-conf="all">All</button>
       <button class="sort-pill conf-pill" data-conf="65">≤65% open</button>
-      <button class="sort-pill conf-pill" data-conf="55">≤55% open</button>
+      <button class="sort-pill conf-pill active" data-conf="55">≤55% open</button>
       <button class="sort-pill conf-pill" data-conf="45">≤45% open</button>
     </div>
     <div id="conf-tip" class="filter-tip">
@@ -766,8 +766,8 @@
     <div class="sort-row">
       <span class="sort-label">Field size</span>
       <span class="filter-info" data-tip="field-tip" tabindex="0">i</span>
-      <button class="sort-pill field-pill active" data-field="all">All</button>
-      <button class="sort-pill field-pill" data-field="11">≤11</button>
+      <button class="sort-pill field-pill" data-field="all">All</button>
+      <button class="sort-pill field-pill active" data-field="11">≤11</button>
       <button class="sort-pill field-pill" data-field="10">≤10</button>
       <button class="sort-pill field-pill" data-field="9">≤9</button>
     </div>
@@ -803,12 +803,14 @@
     expanded: new Set(), detail: {}, lastData: null, sort: 'next',
     strategy: 'all',  // page no longer filters by strategy — each card shows all
     strategyStats: [],
-    // Confidence filter: floor on the rank-1 horse's model win %. 'all' = no
-    // floor; otherwise a numeric threshold. Mirrors Hot Seat's win-% filter.
-    confFilter: 'all',
-    // Field-size filter: ceiling on number of active runners. Today's
-    // 17-race sample showed field ≤ 11 hit 60% vs 14% for 12+ runners.
-    fieldFilter: 'all',
+    // Race-spread filter: ceiling on top-3 sum %. ≤55% caught 7/7 across
+    // the 06-19 + 06-20 sample. 30d backtest had this band at ~53-60% hit.
+    confFilter: '55',
+    // Field-size filter: ceiling on active runners. ≤11 paired with ≤55%
+    // top-3 sum gave the best hit-rate split observed (60% vs 14% on
+    // 12+ runners). Defaulting both filters on so the Lab shows the
+    // recommended pre-filtered set out of the gate.
+    fieldFilter: '11',
     // "race_id:group" keys that the user has explicitly toggled the
     // opposite of the default. By default Trio is expanded, others
     // collapsed; flipping a section toggles its entry in this set.
