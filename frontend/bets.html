@@ -311,6 +311,15 @@
       color: var(--text-muted);
       font-variant-numeric: tabular-nums;
     }
+    .strategy-stat-roi {
+      font-size: 10px;
+      font-weight: 700;
+      font-variant-numeric: tabular-nums;
+      margin-top: 1px;
+      letter-spacing: 0.3px;
+    }
+    .strategy-stat-roi.pos { color: var(--green-bright); }
+    .strategy-stat-roi.neg { color: var(--red); }
 
     .race {
       background: var(--bg-card);
@@ -1151,7 +1160,19 @@
       const pct = racesWithGroup.length
         ? Math.round(groupHits / racesWithGroup.length * 100)
         : null;
-      return { key: s.key, label: s.label, hits: groupHits, total: racesWithGroup.length, pct };
+      // Aggregate stake / payout across every bet (excluding voided)
+      // in this strategy's boxes so we can show ROI alongside hit %.
+      let stake = 0, payout = 0;
+      for (const r of racesWithGroup) {
+        for (const b of r.bets_by_strategy[s.key]) {
+          if (b.voided) continue;
+          stake += b.stake_dollars || 0;
+          payout += b.payout_dollars || 0;
+        }
+      }
+      const pnl = payout - stake;
+      const roi = stake > 0 ? Math.round(pnl / stake * 100) : null;
+      return { key: s.key, label: s.label, hits: groupHits, total: racesWithGroup.length, pct, roi, pnl };
     });
 
     summary.innerHTML = `
@@ -1176,12 +1197,17 @@
       stripEl.className = 'strategy-stats';
       summary.parentNode.insertBefore(stripEl, summary.nextSibling);
     }
-    stripEl.innerHTML = stratStats.map(s => `
+    stripEl.innerHTML = stratStats.map(s => {
+      const roiCls = s.roi == null ? '' : (s.roi >= 0 ? 'pos' : 'neg');
+      const roiTxt = s.roi == null ? '—' : `${s.roi >= 0 ? '+' : ''}${s.roi}%`;
+      return `
       <div class="strategy-stat">
         <div class="strategy-stat-name">${s.label}</div>
         <div class="strategy-stat-num">${s.pct === null ? '—' : s.pct + '%'}</div>
         <div class="strategy-stat-frac">${s.hits}/${s.total} ${stratDayLabel}</div>
-      </div>`).join('');
+        <div class="strategy-stat-roi ${roiCls}">${roiTxt} ROI</div>
+      </div>`;
+    }).join('');
 
     const main = document.getElementById('races');
     if (!races.length) {
