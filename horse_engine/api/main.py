@@ -4248,55 +4248,52 @@ def _market_implied_top4(odds: Optional[float]) -> Optional[float]:
 
 
 def _build_spine(edge_picks: list[dict]) -> Optional[dict]:
-    """The Spine: 4-leg cross-race Top 4 multi at metro venues, boosted.
-
-    Selection: from each metro race, take the rank-1 horse with strong
-    model_pct. Compute its top-4 probability from the field. Rank races
-    by that top-4 prob and pick the 4 highest (one per race), spread by
-    time. Multiply boosted Top 4 odds (model-derived) to get the multi
-    estimate."""
-    by_race: dict[str, dict] = {}
-    for p in edge_picks:
-        venue = (p.get("venue") or "").lower()
-        if venue not in _FUNK_METRO_VENUES:
-            continue
-        rid = p.get("race_id")
-        if not rid or rid in by_race:
-            continue
-        # Need a populated field with model win probabilities
-        field = p.get("field") or []
-        if len(field) < _sb.TOP4_MIN_FIELD_SIZE:
-            continue
-        # Build win-prob vector (active runners only)
-        active = [f for f in field if not f.get("scratched")]
-        if len(active) < _sb.TOP4_MIN_FIELD_SIZE:
-            continue
-        win_probs = []
-        target_idx = None
-        for i, f in enumerate(active):
-            wp = (f.get("win_pct") or 0) / 100.0
-            win_probs.append(wp)
-            if f.get("rank") == 1:
-                target_idx = i
-        if target_idx is None or win_probs[target_idx] <= 0:
-            continue
-        # Top-4 probability for the rank-1 horse
-        others = win_probs[:target_idx] + win_probs[target_idx+1:]
-        top4_prob = _harville_horse_top_n(win_probs[target_idx], others, 4)
-        if top4_prob < 0.65:
-            continue
-        # Sportsbet-equivalent Top 4 price (with over-round)
-        sb_top4_odds = round(1.0 / max(top4_prob - _sb.TOP4_OVERROUND_PCT * top4_prob, 0.05), 2)
-        by_race[rid] = {
-            "race_id": rid,
-            "venue": p.get("venue"),
-            "race_number": p.get("race_number"),
-            "horse_name": active[target_idx]["horse_name"],
-            "tab_number": active[target_idx].get("tab_number"),
-            "scheduled_time": p.get("scheduled_time"),
-            "model_top4_prob": round(top4_prob, 4),
-            "sb_top4_odds_est": sb_top4_odds,
-        }
+    """The Spine: 4-leg cross-race Top 4 multi, boosted. Prefers metro
+    venues; falls back to any race with field ≥8 if metro is empty
+    (Sunday country cards, public-holiday wash-outs, etc.)."""
+    def collect(metro_only: bool) -> dict:
+        out: dict[str, dict] = {}
+        for p in edge_picks:
+            venue = (p.get("venue") or "").lower()
+            if metro_only and venue not in _FUNK_METRO_VENUES:
+                continue
+            rid = p.get("race_id")
+            if not rid or rid in out:
+                continue
+            field = p.get("field") or []
+            active = [f for f in field if not f.get("scratched")]
+            if len(active) < _sb.TOP4_MIN_FIELD_SIZE:
+                continue
+            win_probs = []
+            target_idx = None
+            for i, f in enumerate(active):
+                wp = (f.get("win_pct") or 0) / 100.0
+                win_probs.append(wp)
+                if f.get("rank") == 1:
+                    target_idx = i
+            if target_idx is None or win_probs[target_idx] <= 0:
+                continue
+            others = win_probs[:target_idx] + win_probs[target_idx+1:]
+            top4_prob = _harville_horse_top_n(win_probs[target_idx], others, 4)
+            # Looser threshold on fallback so we still ship 4 legs
+            min_top4 = 0.65 if metro_only else 0.60
+            if top4_prob < min_top4:
+                continue
+            sb_top4_odds = round(1.0 / max(top4_prob - _sb.TOP4_OVERROUND_PCT * top4_prob, 0.05), 2)
+            out[rid] = {
+                "race_id": rid,
+                "venue": p.get("venue"),
+                "race_number": p.get("race_number"),
+                "horse_name": active[target_idx]["horse_name"],
+                "tab_number": active[target_idx].get("tab_number"),
+                "scheduled_time": p.get("scheduled_time"),
+                "model_top4_prob": round(top4_prob, 4),
+                "sb_top4_odds_est": sb_top4_odds,
+            }
+        return out
+    by_race = collect(metro_only=True)
+    if len(by_race) < 4:
+        by_race = collect(metro_only=False)
     if len(by_race) < 4:
         return None
     candidates = sorted(by_race.values(), key=lambda r: -r["model_top4_prob"])
@@ -4369,15 +4366,26 @@ def _build_lock(edge_picks: list[dict]) -> Optional[dict]:
 
 
 def _build_wave(edge_picks: list[dict]) -> Optional[dict]:
-    """The Wave: Quaddie box at one metro venue. Pick the venue with the
-    most contiguous races today, take top-2 by model_pct in each of the
-    first 4 races available. 2^4 = 16 perm box, stake $10 base."""
-    by_venue: dict[str, list[dict]] = {}
-    for p in edge_picks:
-        venue = (p.get("venue") or "").lower()
-        if venue not in _FUNK_METRO_VENUES:
-            continue
-        by_venue.setdefault(venue, []).append(p)
+    """The Wave: Quaddie box. Prefers metro venues for pool size; falls
+    back to whichever venue has the most contiguous races on country-only
+    days. 2 picks per leg × 4 legs = 16 perm box, $10 base stake."""
+    def collect(metro_only: bool) -> dict[str, list[dict]]:
+        out: dict[str, list[dict]] = {}
+        for p in edge_picks:
+            venue = (p.get("venue") or "").lower()
+            if metro_only and venue not in _FUNK_METRO_VENUES:
+                continue
+            out.setdefault(venue, []).append(p)
+        return out
+    by_venue = collect(metro_only=True)
+    # Filter to venues with ≥4 races
+    qualified = {v: ps for v, ps in by_venue.items()
+                 if len({p["race_id"] for p in ps}) >= 4}
+    if not qualified:
+        by_venue = collect(metro_only=False)
+        qualified = {v: ps for v, ps in by_venue.items()
+                     if len({p["race_id"] for p in ps}) >= 4}
+    by_venue = qualified
     # Need a venue with at least 4 distinct races
     selected_venue = None
     selected_races = []
