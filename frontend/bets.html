@@ -306,6 +306,7 @@
     }
     .race-pnl.pos { color: var(--green-bright); }
     .race-pnl.neg { color: var(--red); }
+    .race-pnl.amber { color: #f59e0b; }
     .race-pnl.pending { color: var(--teal-bright); font-size: 13px; font-weight: 600; }
     .race-meta {
       font-size: 11px;
@@ -1186,9 +1187,15 @@
         // Settled with dividend — show both the Correct/Missed marker AND
         // the $ P&L so users keep the at-a-glance hit signal even after
         // dividends populate.
+        // Pnl colour:
+        //   pos green   — profitable
+        //   amber       — race hit but dividend didn't cover stake
+        //                  (so the model was right but the box was too wide)
+        //   neg red     — total miss
         const marker = hits > 0 ? `✓ Correct (${hits})` : '✗ Missed';
         const markerCls = hits > 0 ? 'pos' : 'neg';
-        pnlEl = `<div class="race-pnl ${pnl >= 0 ? 'pos' : 'neg'}">
+        const pnlCls = pnl >= 0 ? 'pos' : (hits > 0 ? 'amber' : 'neg');
+        pnlEl = `<div class="race-pnl ${pnlCls}">
           <div style="font-size:11px;font-weight:600" class="${markerCls}">${marker}</div>
           <div>${fmtPnl(pnl)}</div>
         </div>`;
