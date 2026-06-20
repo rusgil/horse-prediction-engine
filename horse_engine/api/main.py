@@ -3382,21 +3382,38 @@ async def refresh_edge_results(request: Request):
 
 
 _yesterday_response_cache: dict[str, tuple[datetime, dict]] = {}
-_YESTERDAY_CACHE_TTL = 300  # 5 min — yesterday's results don't change once settled
+_YESTERDAY_CACHE_TTL = 1800  # 30 min — past dates are stable; only today refreshes
+_YESTERDAY_CACHE_VERSION = 1
 
 @app.get("/api/edge/yesterday")
 async def get_edge_yesterday(for_date: Optional[str] = Query(None, alias="date")):
     """Qualifying picks with actual results and SP odds from Racing Australia.
     Accepts ?date=YYYY-MM-DD (defaults to yesterday)."""
     target_date = for_date or (_today_aest() - timedelta(days=1)).isoformat()
-    # Response cache — past-date results are stable. Was a 30s+ cold-cache
-    # cost (the synchronous _seed_race_results_on_demand call inside) which
-    # blocked the edge page load on every visit.
+    # In-memory cache. Past-date results are stable; 30-min TTL is plenty.
     cached = _yesterday_response_cache.get(target_date)
     if cached is not None:
         ts, body = cached
         if (datetime.utcnow() - ts).total_seconds() < _YESTERDAY_CACHE_TTL:
             return body
+    # Fall through to DB-persisted cache. Survives container redeploys so
+    # the first user post-deploy doesn't pay the 10s on-demand-seed cost.
+    cache_key = f"edge_yesterday:{target_date}"
+    try:
+        async with get_session() as session:
+            row = (await session.execute(
+                select(ResponseCacheRow).where(ResponseCacheRow.cache_key == cache_key)
+            )).scalar_one_or_none()
+        if row and row.cache_version == _YESTERDAY_CACHE_VERSION:
+            age = (datetime.utcnow() - row.updated_at).total_seconds()
+            if age < _YESTERDAY_CACHE_TTL:
+                body = json.loads(row.payload_json)
+                # Re-populate the in-memory tier so subsequent hits don't
+                # round-trip to Postgres for the next 30 min.
+                _yesterday_response_cache[target_date] = (row.updated_at, body)
+                return body
+    except Exception as e:
+        log.debug("[edge-yesterday] DB cache read skipped: %s", e)
     threshold = 0.295
     prefix = f"{target_date}_"
     stake = 10
@@ -3614,6 +3631,28 @@ async def get_edge_yesterday(for_date: Optional[str] = Query(None, alias="date")
         },
     }
     _yesterday_response_cache[target_date] = (datetime.utcnow(), response_body)
+    # Persist so the next container redeploy hydrates this date instantly
+    # instead of paying the ~10s on-demand-seed cost on the first hit.
+    try:
+        cache_key = f"edge_yesterday:{target_date}"
+        async with get_session() as session:
+            from sqlalchemy.dialects.postgresql import insert as pg_insert
+            stmt = pg_insert(ResponseCacheRow).values(
+                cache_key=cache_key,
+                payload_json=json.dumps(response_body),
+                cache_version=_YESTERDAY_CACHE_VERSION,
+                updated_at=datetime.utcnow(),
+            )
+            stmt = stmt.on_conflict_do_update(
+                index_elements=["cache_key"],
+                set_=dict(payload_json=stmt.excluded.payload_json,
+                          cache_version=stmt.excluded.cache_version,
+                          updated_at=stmt.excluded.updated_at),
+            )
+            await session.execute(stmt)
+            await session.commit()
+    except Exception as e:
+        log.debug("[edge-yesterday] DB cache write skipped: %s", e)
     return response_body
 
 
