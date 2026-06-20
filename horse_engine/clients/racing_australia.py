@@ -1176,18 +1176,20 @@ class RacingAustraliaClient:
         """
         Fetch race results for a meeting.
         Returns {race_num: {'track_condition': str, 'runners': {name_lower: {'position', 'margin', 'sp'}}}}
-        Cached 30 minutes — results don't change once published. Was 5min,
-        which produced ~4k Results.aspx hits/day; 30min cuts that by ~6×.
+        Cached 6 hours — once a race is published, the result is final.
+        Was 30 min; on a Sat metro day with 26 seed-cron ticks × 30+
+        venues that meant 600+ Results.aspx fetches/day just for seeding.
+        6h means at most 4 fetches per meeting per day, total under 200.
         Per-key lock prevents thundering herd from concurrent settlers.
         """
         cached = self._results_cache.get(ra_key)
-        if cached and (datetime.utcnow() - cached[0]).total_seconds() < 1800:
+        if cached and (datetime.utcnow() - cached[0]).total_seconds() < 21600:
             return cached[1]
         lock = self._results_locks.setdefault(ra_key, asyncio.Lock())
         async with lock:
             # Re-check after acquiring — another caller may have populated.
             cached = self._results_cache.get(ra_key)
-            if cached and (datetime.utcnow() - cached[0]).total_seconds() < 1800:
+            if cached and (datetime.utcnow() - cached[0]).total_seconds() < 21600:
                 return cached[1]
             from urllib.parse import quote
             url = f"{_BASE}/Results.aspx?Key={quote(ra_key, safe='')}"

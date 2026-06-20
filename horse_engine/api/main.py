@@ -719,10 +719,44 @@ async def _scheduled_pre_race_enrich_and_scratch():
             log.warning("[pre-race] No meetings returned for %s", today)
             return
 
+        # Pre-filter meetings: skip venues whose max prize money for
+        # today is known to be sub-$30k (same threshold the bet
+        # recommender uses). Picnic / sub-$30k country meets don't
+        # generate Lab bets so their scratchings & odds don't affect
+        # anything user-visible. Fetching them every 15min was burning
+        # ~half the proxy budget on a Sat metro day.
+        # Unknown venues (no predictions yet) get a pass-through — we
+        # need to enrich them at least once to learn the prize money.
+        PRIZE_MONEY_FLOOR = 30_000
+        prize_by_venue: dict[str, int] = {}
+        async with get_session() as session:
+            from sqlalchemy import func as _func
+            prize_rows = (await session.execute(
+                select(RunnerPredictionRow.venue,
+                       _func.max(RunnerPredictionRow.prize_money))
+                .where(RunnerPredictionRow.race_id.like(f"{today}_%"))
+                .where(RunnerPredictionRow.prize_money.isnot(None))
+                .group_by(RunnerPredictionRow.venue)
+            )).fetchall()
+        for venue, prize in prize_rows:
+            if venue and prize:
+                prize_by_venue[venue.strip().lower()] = int(prize)
+        skipped_low_prize = 0
+        eligible_meetings = []
+        for m in meetings:
+            venue = (m.get("venue") or "").strip().lower()
+            pm = prize_by_venue.get(venue, 0)
+            if pm and pm < PRIZE_MONEY_FLOOR:
+                skipped_low_prize += 1
+                continue
+            eligible_meetings.append(m)
+        if skipped_low_prize:
+            log.info("[pre-race] skipped %d sub-$30k meetings", skipped_low_prize)
+
         # Single get_meeting_races pass per meeting — shared by enrich, scratch, and cancel-check
         meeting_meta: dict[str, tuple] = {}   # vc -> (slug, venue_name, state)
         venue_raw_events: dict[str, list] = {}  # vc -> raw_events
-        for m in meetings:
+        for m in eligible_meetings:
             slug = m.get("slug", "")
             if not slug:
                 continue
@@ -1424,6 +1458,12 @@ async def _seed_results_for_date(race_date: str) -> int:
     ra_seeded_total = 0
     ra = client._ra
     for (venue_name, state), race_ids in venue_state_map_ra.items():
+        # Skip venues whose every race is already in historical_results.
+        # Without this, every 30-min seed-cron tick re-fetches Results.aspx
+        # for already-done venues — by mid-afternoon a Sat metro card
+        # burns hundreds of redundant fetches and trips the proxy cap.
+        if race_ids and race_ids.issubset(already_seeded_ra):
+            continue
         try:
             _, results = await ra.find_results(race_date, state, venue_name)
         except Exception:
