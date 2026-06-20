@@ -717,6 +717,13 @@
       <button class="sort-pill conf-pill" data-conf="55">≤55% open</button>
       <button class="sort-pill conf-pill" data-conf="45">≤45% open</button>
     </div>
+    <div class="sort-row">
+      <span class="sort-label" title="Number of active runners in the race. Smaller fields (≤11) hit ~60% in today's sample vs 14% for 12+ runners.">Field size</span>
+      <button class="sort-pill field-pill active" data-field="all">All</button>
+      <button class="sort-pill field-pill" data-field="11">≤11</button>
+      <button class="sort-pill field-pill" data-field="10">≤10</button>
+      <button class="sort-pill field-pill" data-field="9">≤9</button>
+    </div>
   </header>
   <main id="races">
     <div class="loading">Loading ledger…</div>
@@ -747,6 +754,9 @@
     // Confidence filter: floor on the rank-1 horse's model win %. 'all' = no
     // floor; otherwise a numeric threshold. Mirrors Hot Seat's win-% filter.
     confFilter: 'all',
+    // Field-size filter: ceiling on number of active runners. Today's
+    // 17-race sample showed field ≤ 11 hit 60% vs 14% for 12+ runners.
+    fieldFilter: 'all',
     // "race_id:group" keys that the user has explicitly toggled the
     // opposite of the default. By default Trio is expanded, others
     // collapsed; flipping a section toggles its entry in this set.
@@ -991,17 +1001,21 @@
   const RUNNING_WINDOW_MS = 8 * 60 * 1000;
 
   function applyConfFilter(races) {
-    if (state.confFilter === 'all' || !state.confFilter) return races;
-    // Filter is a CEILING on top-3 sum %: ≤ X means show "open" races
-    // (model spreads probability across many runners). 30d backtest
-    // showed this is the strongest predictor of trifecta box hits.
-    const ceil = Number(state.confFilter);
-    if (!isFinite(ceil)) return races;
-    return races.filter(r => {
-      const s = r.top3_sum_pct;
-      // Drop races we have no top-3 signal for; otherwise keep if ≤ ceiling.
-      return s != null && s <= ceil;
-    });
+    // Top-3 sum ceiling — model probability spread across favourites.
+    if (state.confFilter !== 'all' && state.confFilter) {
+      const ceil = Number(state.confFilter);
+      if (isFinite(ceil)) {
+        races = races.filter(r => r.top3_sum_pct != null && r.top3_sum_pct <= ceil);
+      }
+    }
+    // Field-size ceiling — smaller fields catch the box more reliably.
+    if (state.fieldFilter !== 'all' && state.fieldFilter) {
+      const fceil = Number(state.fieldFilter);
+      if (isFinite(fceil)) {
+        races = races.filter(r => r.field_size != null && r.field_size <= fceil);
+      }
+    }
+    return races;
   }
 
   function applySort(races) {
@@ -1203,7 +1217,7 @@
           <div class="race-top">
             <div>
               <div class="race-id">${escHtml(venue)} R${r.race_number}</div>
-              <div class="race-meta">${escHtml(r.date || '')} · ${r.num_bets} bets · stake $${r.total_stake.toFixed(2)}${r.top3_sum_pct != null ? ` · <strong style="color:var(--green-bright)" title="Top-3 model probability — lower = more open race = higher hit rate">top-3 ${r.top3_sum_pct.toFixed(0)}%</strong>` : ''}</div>
+              <div class="race-meta">${escHtml(r.date || '')} · ${r.num_bets} bets · stake $${r.total_stake.toFixed(2)}${r.top3_sum_pct != null ? ` · <strong style="color:var(--green-bright)" title="Top-3 model probability — lower = more open race = higher hit rate">top-3 ${r.top3_sum_pct.toFixed(0)}%</strong>` : ''}${r.field_size != null ? ` · <strong style="color:var(--blue)" title="Runners in the race — smaller fields hit more often">${r.field_size}-horse</strong>` : ''}</div>
               ${timeRow}
             </div>
             ${pnlEl}
@@ -1343,9 +1357,9 @@
   }
 
   // Sort pills (top row) — toggle within sort group only.
-  document.querySelectorAll('.sort-pill:not(.conf-pill)').forEach(btn => {
+  document.querySelectorAll('.sort-pill:not(.conf-pill):not(.field-pill)').forEach(btn => {
     btn.addEventListener('click', () => {
-      document.querySelectorAll('.sort-pill:not(.conf-pill)')
+      document.querySelectorAll('.sort-pill:not(.conf-pill):not(.field-pill)')
         .forEach(b => b.classList.remove('active'));
       btn.classList.add('active');
       state.sort = btn.dataset.sort;
@@ -1359,6 +1373,16 @@
       document.querySelectorAll('.conf-pill').forEach(b => b.classList.remove('active'));
       btn.classList.add('active');
       state.confFilter = btn.dataset.conf;
+      if (state.lastData) render(state.lastData);
+    });
+  });
+
+  // Field-size filter pills — toggle within field group only.
+  document.querySelectorAll('.field-pill').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.field-pill').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      state.fieldFilter = btn.dataset.field;
       if (state.lastData) render(state.lastData);
     });
   });
