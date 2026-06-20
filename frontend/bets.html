@@ -134,6 +134,43 @@
       text-transform: uppercase;
       letter-spacing: 0.5px;
     }
+    .filter-info {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 14px;
+      height: 14px;
+      border-radius: 50%;
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      color: var(--text-dim);
+      font-size: 9px;
+      font-weight: 700;
+      font-style: italic;
+      cursor: pointer;
+      margin-left: 4px;
+      user-select: none;
+      transition: background 0.15s, color 0.15s;
+    }
+    .filter-info:hover, .filter-info:focus, .filter-info.open {
+      background: var(--teal-bright);
+      color: #000;
+    }
+    .filter-tip {
+      display: none;
+      width: 100%;
+      margin: 4px 0 6px;
+      padding: 8px 10px;
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-left: 3px solid var(--teal-bright);
+      border-radius: 6px;
+      font-size: 11px;
+      line-height: 1.45;
+      color: var(--text);
+    }
+    .filter-tip.open { display: block; }
+    .filter-tip strong { color: var(--teal-bright); }
     .sort-pill {
       padding: 5px 10px;
       background: var(--bg-card);
@@ -712,18 +749,32 @@
       <button class="sort-pill" data-sort="pnl">Best P/L</button>
     </div>
     <div class="sort-row">
-      <span class="sort-label" title="Combined model probability of the top-3 ranked horses. Open races (lower %) catch the trifecta more often than concentrated races.">Race spread</span>
+      <span class="sort-label">Race spread</span>
+      <span class="filter-info" data-tip="conf-tip" tabindex="0">i</span>
       <button class="sort-pill conf-pill active" data-conf="all">All</button>
       <button class="sort-pill conf-pill" data-conf="65">≤65% open</button>
       <button class="sort-pill conf-pill" data-conf="55">≤55% open</button>
       <button class="sort-pill conf-pill" data-conf="45">≤45% open</button>
     </div>
+    <div id="conf-tip" class="filter-tip">
+      <strong>Top-3 model probability sum</strong> (lower = more open race).
+      Add the model's win % for the rank-1, 2, and 3 horses. Open races
+      (e.g. ≤45%) historically catch the trifecta more often than
+      favourite-dominated ones — your 3-4 horse box covers more of the
+      plausible placings.
+    </div>
     <div class="sort-row">
-      <span class="sort-label" title="Number of active runners in the race. Smaller fields (≤11) hit ~60% in today's sample vs 14% for 12+ runners.">Field size</span>
+      <span class="sort-label">Field size</span>
+      <span class="filter-info" data-tip="field-tip" tabindex="0">i</span>
       <button class="sort-pill field-pill active" data-field="all">All</button>
       <button class="sort-pill field-pill" data-field="11">≤11</button>
       <button class="sort-pill field-pill" data-field="10">≤10</button>
       <button class="sort-pill field-pill" data-field="9">≤9</button>
+    </div>
+    <div id="field-tip" class="filter-tip">
+      <strong>Active runners in the race</strong> (cancelled excluded).
+      Today's 17-race sample: field ≤11 hit 60% vs 14% for 12+ runners.
+      Smaller fields mean fewer ways the box can be bowled.
     </div>
   </header>
   <main id="races">
@@ -1391,6 +1442,24 @@
       btn.classList.add('active');
       state.fieldFilter = btn.dataset.field;
       if (state.lastData) render(state.lastData);
+    });
+  });
+
+  // Filter info icons — tap toggles a help blurb below the row.
+  document.querySelectorAll('.filter-info').forEach(icon => {
+    icon.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const tipId = icon.dataset.tip;
+      const tip = document.getElementById(tipId);
+      if (!tip) return;
+      const wasOpen = tip.classList.contains('open');
+      // Close all open tips first
+      document.querySelectorAll('.filter-tip.open').forEach(t => t.classList.remove('open'));
+      document.querySelectorAll('.filter-info.open').forEach(b => b.classList.remove('open'));
+      if (!wasOpen) {
+        tip.classList.add('open');
+        icon.classList.add('open');
+      }
     });
   });
 
