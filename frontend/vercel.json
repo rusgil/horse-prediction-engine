@@ -1,11 +1,13 @@
 {
   "rewrites": [
-    { "source": "/edge",    "destination": "/edge.html" },
-    { "source": "/hotseat", "destination": "/hotseat.html" },
-    { "source": "/bets",    "destination": "/bets.html" },
-    { "source": "/lab",     "destination": "/bets.html" },
-    { "source": "/about",   "destination": "/about.html" },
-    { "source": "/login",     "destination": "/login.html" },
-    { "source": "/dashboard", "destination": "/dashboard.html" }
+    { "source": "/edge",       "destination": "/edge.html" },
+    { "source": "/hotseat",    "destination": "/hotseat.html" },
+    { "source": "/bets",       "destination": "/bets.html" },
+    { "source": "/lab",        "destination": "/bets.html" },
+    { "source": "/funk-me-up", "destination": "/funkmeup.html" },
+    { "source": "/funkmeup",   "destination": "/funkmeup.html" },
+    { "source": "/about",      "destination": "/about.html" },
+    { "source": "/login",      "destination": "/login.html" },
+    { "source": "/dashboard",  "destination": "/dashboard.html" }
   ]
 }

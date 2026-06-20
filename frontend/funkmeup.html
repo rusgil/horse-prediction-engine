@@ -1,0 +1,580 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <script>
+    fetch('/api/check', {credentials:'include'})
+      .then(r => r.ok ? null : (location.href='/login'))
+      .catch(() => location.href='/login');
+  </script>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Funk Me Up · funkyiq</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800&family=Barlow+Condensed:wght@600;700;800&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg-base:       #07090f;
+      --bg-card:       #0e1220;
+      --bg-elevated:   #1a2035;
+      --border:        #1e2840;
+      --gold:          #e8a020;
+      --purple:        #a855f7;
+      --purple-bright: #c084fc;
+      --green:         #22c55e;
+      --green-bright:  #4ade80;
+      --blue:          #60a5fa;
+      --teal-bright:   #5eead4;
+      --amber:         #f59e0b;
+      --red:           #f87171;
+      --text:          #e6e9f0;
+      --text-dim:      #8a93a8;
+      --text-muted:    #5c6478;
+    }
+    * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+    html, body { margin: 0; padding: 0; }
+    body {
+      background: var(--bg-base);
+      color: var(--text);
+      font-family: 'Outfit', system-ui, -apple-system, sans-serif;
+      min-height: 100vh;
+      -webkit-font-smoothing: antialiased;
+      padding-bottom: env(safe-area-inset-bottom);
+    }
+
+    /* Header */
+    header {
+      position: sticky;
+      top: 0;
+      z-index: 10;
+      background: linear-gradient(180deg, #0a0d18 0%, rgba(10,13,24,0.92) 100%);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      border-bottom: 1px solid var(--border);
+      padding: 14px 16px 12px;
+      padding-top: calc(14px + env(safe-area-inset-top));
+    }
+    .title-row {
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 12px;
+    }
+    .title {
+      font-family: 'Barlow Condensed', sans-serif;
+      font-weight: 800;
+      font-size: 26px;
+      letter-spacing: 0.5px;
+      margin: 0;
+      color: var(--text);
+    }
+    .title .funk { color: var(--purple-bright); }
+    .subtitle {
+      color: var(--text-dim);
+      font-size: 12px;
+      margin-top: 2px;
+    }
+    .nav-back {
+      color: var(--text-dim);
+      text-decoration: none;
+      font-size: 12px;
+      font-weight: 600;
+      padding: 4px 10px;
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      background: var(--bg-card);
+    }
+    .nav-back + .nav-back { margin-left: 6px; }
+
+    /* Exposure summary */
+    .exposure-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr;
+      gap: 8px;
+      margin-top: 12px;
+    }
+    .exposure-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 8px 10px;
+      text-align: center;
+    }
+    .exposure-num {
+      font-family: 'Barlow Condensed', sans-serif;
+      font-weight: 800;
+      font-size: 20px;
+      font-variant-numeric: tabular-nums;
+    }
+    .exposure-num.pos { color: var(--green-bright); }
+    .exposure-num.neg { color: var(--red); }
+    .exposure-label {
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      color: var(--text-muted);
+      margin-top: 2px;
+    }
+
+    /* Body */
+    main { padding: 14px 16px 24px; max-width: 720px; margin: 0 auto; }
+
+    .section-title {
+      font-family: 'Barlow Condensed', sans-serif;
+      font-size: 14px;
+      font-weight: 700;
+      letter-spacing: 0.8px;
+      color: var(--text-dim);
+      text-transform: uppercase;
+      margin: 18px 0 8px;
+    }
+
+    /* Play card */
+    .play {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 14px;
+      margin-bottom: 12px;
+      position: relative;
+    }
+    .play.hero {
+      border-color: var(--purple);
+      box-shadow: 0 0 0 1px var(--purple), 0 0 24px rgba(168,85,247,0.18);
+    }
+    .play-header {
+      display: flex;
+      align-items: flex-start;
+      justify-content: space-between;
+      gap: 8px;
+    }
+    .play-title {
+      font-family: 'Barlow Condensed', sans-serif;
+      font-size: 20px;
+      font-weight: 800;
+      margin: 0;
+      letter-spacing: 0.5px;
+    }
+    .play-title .emoji { margin-right: 6px; }
+    .play-subtitle {
+      font-size: 11px;
+      color: var(--text-dim);
+      margin-top: 3px;
+    }
+    .hero-tag {
+      position: absolute;
+      top: -8px;
+      left: 12px;
+      background: var(--purple);
+      color: #fff;
+      font-size: 10px;
+      font-weight: 800;
+      text-transform: uppercase;
+      letter-spacing: 0.6px;
+      padding: 3px 8px;
+      border-radius: 999px;
+    }
+    .confidence {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 22px;
+      height: 22px;
+      border-radius: 50%;
+      font-family: 'Barlow Condensed', sans-serif;
+      font-weight: 800;
+      font-size: 13px;
+      flex-shrink: 0;
+      border: 1.5px solid;
+    }
+    .confidence.A { color: var(--green-bright); border-color: var(--green); background: rgba(34,197,94,0.12); }
+    .confidence.B { color: var(--amber); border-color: var(--amber); background: rgba(245,158,11,0.12); }
+    .confidence.C { color: var(--red); border-color: var(--red); background: rgba(248,113,113,0.12); }
+
+    /* Legs / picks list */
+    .legs {
+      margin: 10px 0 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .leg {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 10px;
+      background: var(--bg-elevated);
+      border-radius: 8px;
+      font-size: 13px;
+    }
+    .leg-meta { color: var(--text-dim); font-size: 11px; }
+    .leg-horse { font-weight: 600; }
+    .leg-odds {
+      font-family: 'Barlow Condensed', sans-serif;
+      font-weight: 700;
+      color: var(--text);
+      font-variant-numeric: tabular-nums;
+    }
+    .leg-picks {
+      font-size: 12px;
+      color: var(--text);
+      line-height: 1.5;
+    }
+
+    /* Stats grid */
+    .stats {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 8px;
+      background: var(--bg-elevated);
+      border-radius: 10px;
+      padding: 10px 6px;
+      margin-top: 4px;
+    }
+    .stat {
+      text-align: center;
+      border-right: 1px solid var(--border);
+    }
+    .stat:last-child { border-right: 0; }
+    .stat-num {
+      font-family: 'Barlow Condensed', sans-serif;
+      font-weight: 800;
+      font-size: 18px;
+      line-height: 1;
+      font-variant-numeric: tabular-nums;
+    }
+    .stat-num.pos { color: var(--green-bright); }
+    .stat-num.neg { color: var(--red); }
+    .stat-num.purple { color: var(--purple-bright); }
+    .stat-label {
+      font-size: 9px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      color: var(--text-muted);
+      margin-top: 3px;
+    }
+
+    .play-foot {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-top: 10px;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+    .play-foot button {
+      background: var(--bg-elevated);
+      border: 1px solid var(--border);
+      color: var(--text);
+      font-family: 'Outfit', sans-serif;
+      font-size: 12px;
+      font-weight: 600;
+      padding: 6px 12px;
+      border-radius: 6px;
+      cursor: pointer;
+    }
+    .play-foot button:hover { border-color: var(--purple); color: var(--purple-bright); }
+    .past-stat {
+      font-size: 11px;
+      color: var(--text-dim);
+    }
+    .past-stat.pos { color: var(--green); }
+    .past-stat.neg { color: var(--red); }
+
+    /* Empty / disclaimers */
+    .empty {
+      padding: 32px 16px;
+      text-align: center;
+      color: var(--text-dim);
+      font-size: 13px;
+    }
+    .disclaimer {
+      margin-top: 16px;
+      padding: 10px 12px;
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-left: 3px solid var(--gold);
+      border-radius: 6px;
+      font-size: 11px;
+      line-height: 1.5;
+      color: var(--text-dim);
+    }
+    .responsible {
+      margin-top: 12px;
+      text-align: center;
+      font-size: 10px;
+      color: var(--text-muted);
+    }
+
+    /* Toast for clipboard */
+    .toast {
+      position: fixed;
+      bottom: 24px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: var(--bg-elevated);
+      border: 1px solid var(--purple);
+      color: var(--text);
+      padding: 10px 16px;
+      border-radius: 8px;
+      font-size: 13px;
+      font-weight: 600;
+      z-index: 100;
+      animation: toast-in 0.2s ease-out;
+    }
+    @keyframes toast-in { from { opacity: 0; transform: translate(-50%, 10px); } to { opacity: 1; transform: translate(-50%, 0); } }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="title-row">
+      <div>
+        <h1 class="title">🎺 <span class="funk">Funk</span> Me Up</h1>
+        <div class="subtitle">Today's playbook · Sportsbet-tuned · $10 base stake</div>
+      </div>
+      <div>
+        <a href="/hotseat" class="nav-back">🔥 Hot Seat</a>
+        <a href="/lab" class="nav-back">🧪 Lab</a>
+      </div>
+    </div>
+    <div id="exposure" class="exposure-row" style="display:none;">
+      <div class="exposure-card">
+        <div class="exposure-num" id="cashExp">—</div>
+        <div class="exposure-label">Cash exposure</div>
+      </div>
+      <div class="exposure-card">
+        <div class="exposure-num" id="bonusExp">—</div>
+        <div class="exposure-label">Bonus credit</div>
+      </div>
+      <div class="exposure-card">
+        <div class="exposure-num" id="expEv">—</div>
+        <div class="exposure-label">Est. profit</div>
+      </div>
+    </div>
+  </header>
+
+  <main id="root">
+    <div class="empty">Loading today's playbook…</div>
+  </main>
+
+<script>
+  const API = 'https://web-production-dec62.up.railway.app';
+
+  const KIND_META = {
+    spine: { emoji: '🎯' },
+    lock:  { emoji: '💪' },
+    wave:  { emoji: '🌊' },
+    lab:   { emoji: '🧪' },
+    bonus: { emoji: '⭐' },
+  };
+
+  function escHtml(s) {
+    return (s == null ? '' : String(s))
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+  }
+
+  function fmtMoney(n) {
+    if (n == null) return '—';
+    const sign = n < 0 ? '-' : '+';
+    return `${n >= 0 ? '+' : '-'}$${Math.abs(n).toFixed(2)}`;
+  }
+
+  function fmtMoneyPlain(n) {
+    if (n == null) return '—';
+    return `$${n.toFixed(2)}`;
+  }
+
+  function fmtPct(p) {
+    if (p == null) return '—';
+    return `${Math.round(p * 100)}%`;
+  }
+
+  function fmtJump(iso) {
+    if (!iso) return '';
+    const d = new Date(iso);
+    if (isNaN(d.getTime())) return '';
+    return d.toLocaleTimeString('en-AU', { hour: '2-digit', minute: '2-digit', hour12: false });
+  }
+
+  function venueLabel(v) {
+    return (v || '').replace(/-/g, ' ').toUpperCase();
+  }
+
+  function copyPlan(text) {
+    if (!navigator.clipboard) return;
+    navigator.clipboard.writeText(text).then(() => {
+      const t = document.createElement('div');
+      t.className = 'toast';
+      t.textContent = 'Plan copied to clipboard';
+      document.body.appendChild(t);
+      setTimeout(() => t.remove(), 1800);
+    });
+  }
+
+  function playToText(p) {
+    const parts = [`[${p.title}] ${p.subtitle || ''}`];
+    if (p.kind === 'spine' && p.legs) {
+      p.legs.forEach((l, i) => {
+        parts.push(`  ${i+1}. ${venueLabel(l.venue)} R${l.race_number} · ${l.horse_name} · Top 4`);
+      });
+      parts.push(`  Multi ~$${p.boosted_multi_odds} (boosted) · stake $${p.stake_dollars}`);
+    } else if (p.kind === 'lock' || p.kind === 'bonus') {
+      parts.push(`  ${venueLabel(p.venue)} R${p.race_number} · ${p.horse_name} · $${p.best_available_odds}`);
+      const stk = p.kind === 'bonus' ? `bonus $${p.bonus_stake_dollars}` : `stake $${p.stake_dollars}`;
+      parts.push(`  ${stk} · model ${p.model_pct}% · edge +${p.edge_pct}pts`);
+    } else if (p.kind === 'wave' && p.legs) {
+      parts.push(`  Venue: ${venueLabel(p.venue)}`);
+      p.legs.forEach((l) => {
+        const names = (l.picks || []).map(x => x.horse_name).join(' / ');
+        parts.push(`  R${l.race_number}: ${names}`);
+      });
+      parts.push(`  Quaddie 16-perm box · stake $${p.stake_dollars}`);
+    } else if (p.kind === 'lab') {
+      parts.push(`  ${venueLabel(p.venue)} R${p.race_number} · Trio box`);
+      parts.push(`  Box: ${(p.box_horse_names || []).join(' / ')}`);
+      parts.push(`  Stake $${p.stake_dollars} · top-3 sum ${p.top3_sum_pct}% · ${p.field_size}-horse field`);
+    }
+    return parts.join('\n');
+  }
+
+  function renderPlay(p, isHero) {
+    const meta = KIND_META[p.kind] || { emoji: '·' };
+    const cls = `play${isHero ? ' hero' : ''}`;
+    const heroTag = isHero ? '<div class="hero-tag">Today\'s Top Play</div>' : '';
+
+    let legsHtml = '';
+    if (p.kind === 'spine' && p.legs) {
+      legsHtml = `<div class="legs">${p.legs.map(l => `
+        <div class="leg">
+          <div>
+            <div class="leg-horse">${escHtml(l.horse_name)}</div>
+            <div class="leg-meta">${escHtml(venueLabel(l.venue))} R${l.race_number} · Top 4${l.scheduled_time ? ' · ' + fmtJump(l.scheduled_time) : ''}</div>
+          </div>
+          <div class="leg-odds">$${l.sb_top4_odds_est}</div>
+        </div>`).join('')}</div>`;
+    } else if (p.kind === 'lock' || p.kind === 'bonus') {
+      const stakeLabel = p.kind === 'bonus' ? `$${p.bonus_stake_dollars} bonus` : `$${p.stake_dollars}`;
+      legsHtml = `<div class="legs"><div class="leg">
+        <div>
+          <div class="leg-horse">${escHtml(p.horse_name)}</div>
+          <div class="leg-meta">${escHtml(venueLabel(p.venue))} R${p.race_number}${p.scheduled_time ? ' · ' + fmtJump(p.scheduled_time) : ''} · model ${p.model_pct}% · +${p.edge_pct}pt edge</div>
+        </div>
+        <div class="leg-odds">$${p.best_available_odds}</div>
+      </div></div>`;
+    } else if (p.kind === 'wave' && p.legs) {
+      legsHtml = `<div class="legs">${p.legs.map(l => `
+        <div class="leg">
+          <div style="flex:1">
+            <div class="leg-horse">R${l.race_number}${l.scheduled_time ? ' · ' + fmtJump(l.scheduled_time) : ''}</div>
+            <div class="leg-picks">${(l.picks || []).map(x => `${escHtml(x.horse_name)} <span class="leg-meta">(${(x.win_pct || 0).toFixed(0)}%)</span>`).join(' &nbsp;·&nbsp; ')}</div>
+          </div>
+          <div class="leg-odds">${fmtPct(l.leg_hit_probability)}</div>
+        </div>`).join('')}</div>`;
+    } else if (p.kind === 'lab') {
+      const names = (p.box_horse_names || []).join(' · ');
+      legsHtml = `<div class="legs"><div class="leg">
+        <div style="flex:1">
+          <div class="leg-horse">${escHtml(venueLabel(p.venue))} R${p.race_number}</div>
+          <div class="leg-picks">${escHtml(names)}</div>
+        </div>
+        <div class="leg-odds">Trio</div>
+      </div></div>`;
+    }
+
+    const evCls = (p.expected_value_dollars || 0) >= 0 ? 'pos' : 'neg';
+    const stakeShown = p.kind === 'bonus' ? p.bonus_stake_dollars : p.stake_dollars;
+    const stakeLabel = p.kind === 'bonus' ? 'Bonus' : 'Stake';
+    return `
+      <div class="${cls}">
+        ${heroTag}
+        <div class="play-header">
+          <div>
+            <h3 class="play-title"><span class="emoji">${meta.emoji}</span>${escHtml(p.title)}</h3>
+            <div class="play-subtitle">${escHtml(p.subtitle || '')}</div>
+          </div>
+          <span class="confidence ${p.confidence}" title="Confidence tier — A safer, C high variance">${p.confidence}</span>
+        </div>
+        ${legsHtml}
+        <div class="stats">
+          <div class="stat">
+            <div class="stat-num purple">${fmtPct(p.model_hit_probability)}</div>
+            <div class="stat-label">Hit prob.</div>
+          </div>
+          <div class="stat">
+            <div class="stat-num">${fmtMoneyPlain(stakeShown)}</div>
+            <div class="stat-label">${stakeLabel}</div>
+          </div>
+          <div class="stat">
+            <div class="stat-num ${evCls}">${fmtMoney(p.expected_value_dollars)}</div>
+            <div class="stat-label">Est. profit</div>
+          </div>
+        </div>
+        <div class="play-foot">
+          <span class="past-stat">Potential return: ${fmtMoneyPlain(p.potential_return_dollars)}</span>
+          <button data-copy="${p.kind}">Copy plan</button>
+        </div>
+      </div>`;
+  }
+
+  function renderExposure(d) {
+    const exp = document.getElementById('exposure');
+    document.getElementById('cashExp').textContent = `$${(d.cash_exposure_dollars || 0).toFixed(2)}`;
+    document.getElementById('bonusExp').textContent = `$${(d.bonus_exposure_dollars || 0).toFixed(2)}`;
+    const ev = d.expected_profit_dollars || 0;
+    const evEl = document.getElementById('expEv');
+    evEl.textContent = fmtMoney(ev);
+    evEl.className = `exposure-num ${ev >= 0 ? 'pos' : 'neg'}`;
+    exp.style.display = 'grid';
+  }
+
+  async function load() {
+    const root = document.getElementById('root');
+    try {
+      const res = await fetch(`${API}/api/funk-me-up/today`);
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      const data = await res.json();
+      window._funkData = data;  // for copy handler
+      renderExposure(data);
+      if (!data.plays || !data.plays.length) {
+        root.innerHTML = `
+          <div class="empty">
+            <div style="font-size:28px;margin-bottom:8px">📭</div>
+            <div>No qualifying plays today — try again closer to the first jump.</div>
+          </div>`;
+        return;
+      }
+      const heroKind = data.hero_kind;
+      const hero = data.plays.find(p => p.kind === heroKind);
+      const others = data.plays.filter(p => p.kind !== heroKind);
+      let html = '';
+      if (hero) {
+        html += '<div class="section-title">Today\'s Top Play</div>';
+        html += renderPlay(hero, true);
+      }
+      if (others.length) {
+        html += '<div class="section-title">More Plays</div>';
+        html += others.map(p => renderPlay(p, false)).join('');
+      }
+      html += `<div class="disclaimer">${escHtml(data.disclaimer || '')}</div>`;
+      html += `<div class="responsible">Gamble responsibly · 1800 858 858 · gamblinghelponline.org.au</div>`;
+      root.innerHTML = html;
+
+      // Wire copy buttons
+      root.querySelectorAll('[data-copy]').forEach(btn => {
+        btn.addEventListener('click', () => {
+          const kind = btn.dataset.copy;
+          const p = (window._funkData.plays || []).find(x => x.kind === kind);
+          if (p) copyPlan(playToText(p));
+        });
+      });
+    } catch (e) {
+      root.innerHTML = `<div class="empty">Could not load: ${escHtml(e.message)}</div>`;
+    }
+  }
+
+  load();
+</script>
+</body>
+</html>

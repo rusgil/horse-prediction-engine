@@ -75,11 +75,13 @@ from horse_engine.bets import (
     compute_payout as _bet_compute_payout,
     estimate_printed_dividend as _harville_dividend,
     generate_recommendations as _build_bet_basket,
+    harville_horse_top_n as _harville_horse_top_n,
     harville_top3_probability as _harville_top3_prob,
     is_hit as _bet_is_hit_typed,
     is_metro_venue as _is_metro_venue,
     is_trifecta_hit as _bet_is_hit,
 )
+from horse_engine.bookmakers import sportsbet_features as _sb
 from horse_engine.models.enriched import EnrichedRunner
 from horse_engine.pipeline import enrich_and_predict_race, enrich_meeting
 from horse_engine.prediction.engine import _value_rating
@@ -4215,6 +4217,415 @@ def _assign_trifecta_tiers(picks: list[dict]) -> None:
         pick["premium"] = pick["tier"] in ("hot", "high") and any(
             leg.get("overlay") and leg["overlay"] > 0.03 for leg in pick["legs"]
         )
+
+
+# ── Funk Me Up — daily playbook combining model picks with Sportsbet features ──
+# Five plays, each targeting a different bookmaker feature class. Designed
+# around a $10 base outlay per play (~$40 cash exposure + bonus credit).
+# See horse_engine/bookmakers/sportsbet_features.py for the static rule set.
+
+_FUNK_BASE_STAKE = 10.0
+
+# Metro-only venues for The Spine and The Wave (deeper markets, better
+# liquidity, Top 4 reliably available, Quaddie pools larger).
+_FUNK_METRO_VENUES = {
+    "randwick", "royal-randwick", "rosehill", "rosehill-gardens",
+    "canterbury-park", "warwick-farm",
+    "caulfield", "caulfield-heath", "flemington", "moonee-valley",
+    "sandown", "sandown-lakeside", "sandown-hillside", "the-valley",
+    "doomben", "eagle-farm",
+    "morphettville", "morphettville-parks",
+    "ascot", "belmont",
+}
+
+
+def _market_implied_top4(odds: Optional[float]) -> Optional[float]:
+    """Best-effort: invert TAB Top 4 odds to a market probability.
+    Strip overround using Sportsbet's typical Top 4 over-round %."""
+    if not odds or odds <= 1.0:
+        return None
+    return (1.0 / odds) * (1.0 - _sb.TOP4_OVERROUND_PCT)
+
+
+def _build_spine(edge_picks: list[dict]) -> Optional[dict]:
+    """The Spine: 4-leg cross-race Top 4 multi at metro venues, boosted.
+
+    Selection: from each metro race, take the rank-1 horse with strong
+    model_pct. Compute its top-4 probability from the field. Rank races
+    by that top-4 prob and pick the 4 highest (one per race), spread by
+    time. Multiply boosted Top 4 odds (model-derived) to get the multi
+    estimate."""
+    by_race: dict[str, dict] = {}
+    for p in edge_picks:
+        venue = (p.get("venue") or "").lower()
+        if venue not in _FUNK_METRO_VENUES:
+            continue
+        rid = p.get("race_id")
+        if not rid or rid in by_race:
+            continue
+        # Need a populated field with model win probabilities
+        field = p.get("field") or []
+        if len(field) < _sb.TOP4_MIN_FIELD_SIZE:
+            continue
+        # Build win-prob vector (active runners only)
+        active = [f for f in field if not f.get("scratched")]
+        if len(active) < _sb.TOP4_MIN_FIELD_SIZE:
+            continue
+        win_probs = []
+        target_idx = None
+        for i, f in enumerate(active):
+            wp = (f.get("win_pct") or 0) / 100.0
+            win_probs.append(wp)
+            if f.get("rank") == 1:
+                target_idx = i
+        if target_idx is None or win_probs[target_idx] <= 0:
+            continue
+        # Top-4 probability for the rank-1 horse
+        others = win_probs[:target_idx] + win_probs[target_idx+1:]
+        top4_prob = _harville_horse_top_n(win_probs[target_idx], others, 4)
+        if top4_prob < 0.65:
+            continue
+        # Sportsbet-equivalent Top 4 price (with over-round)
+        sb_top4_odds = round(1.0 / max(top4_prob - _sb.TOP4_OVERROUND_PCT * top4_prob, 0.05), 2)
+        by_race[rid] = {
+            "race_id": rid,
+            "venue": p.get("venue"),
+            "race_number": p.get("race_number"),
+            "horse_name": active[target_idx]["horse_name"],
+            "tab_number": active[target_idx].get("tab_number"),
+            "scheduled_time": p.get("scheduled_time"),
+            "model_top4_prob": round(top4_prob, 4),
+            "sb_top4_odds_est": sb_top4_odds,
+        }
+    if len(by_race) < 4:
+        return None
+    candidates = sorted(by_race.values(), key=lambda r: -r["model_top4_prob"])
+    legs = candidates[:4]
+    # Spread the 4 picks across jump time when possible
+    legs = sorted(legs, key=lambda l: l.get("scheduled_time") or "")
+    raw_multi = 1.0
+    per_leg_strike = 1.0
+    for l in legs:
+        raw_multi *= l["sb_top4_odds_est"]
+        per_leg_strike *= l["model_top4_prob"]
+    raw_multi = round(raw_multi, 2)
+    boosted = _sb.boosted_multi_odds(raw_multi, 4)
+    return {
+        "kind": "spine",
+        "title": "The Spine",
+        "subtitle": "4-leg Top 4 multi · cross-race · +20% Sportsbet boost",
+        "confidence": "B",
+        "legs": legs,
+        "raw_multi_odds": raw_multi,
+        "boosted_multi_odds": boosted,
+        "model_hit_probability": round(per_leg_strike, 4),
+        "stake_dollars": _FUNK_BASE_STAKE,
+        "potential_return_dollars": round(boosted * _FUNK_BASE_STAKE, 2),
+        "expected_value_dollars": round(per_leg_strike * boosted * _FUNK_BASE_STAKE - _FUNK_BASE_STAKE, 2),
+    }
+
+
+def _build_lock(edge_picks: list[dict]) -> Optional[dict]:
+    """The Lock: single win bet on the day's strongest Premium pick.
+    Defined by Edge page's Premium criteria (≥29.5% + ≥$3 + >5pt edge)
+    plus an additional 'highest edge_pct' tiebreak."""
+    candidates = []
+    for p in edge_picks:
+        odds = p.get("best_available_odds")
+        edge = p.get("edge_pct")
+        model_pct = p.get("model_pct") or 0
+        if not odds or odds < 3.0:
+            continue
+        if model_pct < 29.5:
+            continue
+        if edge is None or edge <= 5:
+            continue
+        candidates.append(p)
+    if not candidates:
+        return None
+    pick = max(candidates, key=lambda p: p.get("edge_pct") or 0)
+    return {
+        "kind": "lock",
+        "title": "The Lock",
+        "subtitle": "Single win · Premium-tier pick · best edge of the day",
+        "confidence": "B",
+        "race_id": pick["race_id"],
+        "venue": pick.get("venue"),
+        "race_number": pick.get("race_number"),
+        "horse_name": pick["horse_name"],
+        "tab_number": pick.get("tab_number"),
+        "scheduled_time": pick.get("scheduled_time"),
+        "model_pct": pick.get("model_pct"),
+        "market_implied_pct": pick.get("market_implied_pct"),
+        "edge_pct": pick.get("edge_pct"),
+        "best_available_odds": pick.get("best_available_odds"),
+        "model_hit_probability": round((pick.get("model_pct") or 0) / 100, 4),
+        "stake_dollars": _FUNK_BASE_STAKE,
+        "potential_return_dollars": round((pick.get("best_available_odds") or 0) * _FUNK_BASE_STAKE, 2),
+        "expected_value_dollars": round(
+            ((pick.get("model_pct") or 0) / 100) * (pick.get("best_available_odds") or 0) * _FUNK_BASE_STAKE - _FUNK_BASE_STAKE, 2
+        ),
+    }
+
+
+def _build_wave(edge_picks: list[dict]) -> Optional[dict]:
+    """The Wave: Quaddie box at one metro venue. Pick the venue with the
+    most contiguous races today, take top-2 by model_pct in each of the
+    first 4 races available. 2^4 = 16 perm box, stake $10 base."""
+    by_venue: dict[str, list[dict]] = {}
+    for p in edge_picks:
+        venue = (p.get("venue") or "").lower()
+        if venue not in _FUNK_METRO_VENUES:
+            continue
+        by_venue.setdefault(venue, []).append(p)
+    # Need a venue with at least 4 distinct races
+    selected_venue = None
+    selected_races = []
+    for venue, picks in by_venue.items():
+        # Group picks by race_id
+        races: dict[str, dict] = {}
+        for p in picks:
+            rid = p["race_id"]
+            if rid in races:
+                continue
+            races[rid] = p
+        if len(races) < 4:
+            continue
+        # Sort by race_number — we want consecutive races
+        sorted_races = sorted(races.values(), key=lambda r: r.get("race_number") or 99)
+        if len(sorted_races) < 4:
+            continue
+        # Prefer the 4 latest contiguous races (typical Quaddie slot)
+        chosen = sorted_races[-4:]
+        selected_venue = venue
+        selected_races = chosen
+        break
+    if not selected_races:
+        return None
+    legs = []
+    combined_prob = 1.0
+    for r in selected_races:
+        field = r.get("field") or []
+        active = [f for f in field if not f.get("scratched")]
+        sorted_active = sorted(active, key=lambda f: -(f.get("win_pct") or 0))[:2]
+        if len(sorted_active) < 2:
+            return None
+        picks_for_leg = [
+            {
+                "horse_name": f["horse_name"],
+                "win_pct": f.get("win_pct"),
+                "tab_number": f.get("tab_number"),
+            }
+            for f in sorted_active
+        ]
+        # Probability at least one of these 2 picks wins this leg
+        leg_p = sum((f.get("win_pct") or 0) / 100 for f in sorted_active)
+        leg_p = min(leg_p, 1.0)
+        combined_prob *= leg_p
+        legs.append({
+            "race_id": r["race_id"],
+            "race_number": r.get("race_number"),
+            "scheduled_time": r.get("scheduled_time"),
+            "picks": picks_for_leg,
+            "leg_hit_probability": round(leg_p, 4),
+        })
+    # 2 picks per leg × 4 legs = 16 combos. At $10/16 = ~$0.625 per combo,
+    # which is below the $1 minimum bet — so flexi the box at base stake.
+    perms = 16
+    return {
+        "kind": "wave",
+        "title": "The Wave",
+        "subtitle": f"Quaddie box · {selected_venue.replace('-', ' ').upper()} · 2 × 4 legs (16 perms)",
+        "confidence": "C",
+        "venue": selected_venue,
+        "legs": legs,
+        "perms": perms,
+        "model_hit_probability": round(combined_prob, 4),
+        "stake_dollars": _FUNK_BASE_STAKE,
+        # Quaddie dividends are pari-mutuel; estimate using a typical metro
+        # Quaddie dividend of ~$1,200 per $1 (varies enormously). The hit
+        # probability x estimated dividend gives a rough EV — UI labels it
+        # as 'estimated' so the user knows it's not a fixed-odds promise.
+        "estimated_dividend_dollars": 1200.0,
+        "potential_return_dollars": round((_FUNK_BASE_STAKE / perms) * 1200.0, 2),
+        "expected_value_dollars": round(
+            combined_prob * (_FUNK_BASE_STAKE / perms) * 1200.0 - _FUNK_BASE_STAKE, 2
+        ),
+    }
+
+
+async def _build_lab_pick(today: str) -> Optional[dict]:
+    """The Lab Pick: the highest-confidence Trio from today's Lab boxes,
+    filtered by ≤55% top-3 sum AND ≤11 field (the live default).
+    Returns the strongest Trio box of the day."""
+    async with get_session() as session:
+        bet_rows = (await session.execute(
+            select(BetRecommendationRow)
+            .where(BetRecommendationRow.race_id.like(f"{today}_%"))
+            .where(BetRecommendationRow.strategy_label == "trio_only")
+        )).scalars().all()
+    if not bet_rows:
+        return None
+    # Score each candidate by the Lab's filter signal
+    best = None
+    best_score = -1.0
+    for b in bet_rows:
+        rid = b.race_id
+        async with get_session() as session:
+            prob_rows = (await session.execute(
+                select(RunnerPredictionRow.win_probability, RunnerPredictionRow.model_rank,
+                       RunnerPredictionRow.cancelled)
+                .where(RunnerPredictionRow.race_id == rid)
+            )).fetchall()
+        active = [(p, r) for (p, r, c) in prob_rows if not c and p is not None and r is not None]
+        if len(active) < 3:
+            continue
+        sorted_active = sorted(active, key=lambda x: x[1])
+        top3_sum = sum(p for p, _ in sorted_active[:3]) * 100
+        field_size = len(active)
+        if top3_sum > 55 or field_size > 11:
+            continue
+        # Score: higher trio_hit prob (lower top3_sum = more open race
+        # but the Trio strategy itself wants the model's top-3 to LAND).
+        # Use the model's top-3 sum % directly — higher is better for Trio.
+        # Tie-break by smaller field.
+        score = (top3_sum, -field_size)
+        if best is None or score > best_score:
+            best = (b, top3_sum, field_size, sorted_active)
+            best_score = score
+    if best is None:
+        return None
+    bet, top3_sum, field_size, sorted_active = best
+    box_horses = json.loads(bet.box_horses_json) if bet.box_horses_json else []
+    box_names = json.loads(bet.box_horse_names_json) if bet.box_horse_names_json else []
+    # Trio box hit probability — odds of the 3 model-top-3 horses filling
+    # the 3 placings (any order).
+    top3_probs = [p for p, _ in sorted_active[:3]]
+    box_hit_prob = 0.0
+    from itertools import permutations
+    for perm in permutations(top3_probs):
+        box_hit_prob += _harville_top3_prob(*perm)
+    box_hit_prob = min(box_hit_prob, 1.0)
+    perms = 6
+    # Use the Lab's existing $200 trifecta dividend baseline (real TAB
+    # dividends average $80-$300 on metro trifectas; this is conservative).
+    est_dividend = 200.0
+    return {
+        "kind": "lab",
+        "title": "The Lab Pick",
+        "subtitle": f"Trio box · top-3 sum {top3_sum:.1f}% · {field_size}-horse field",
+        "confidence": "A",
+        "race_id": bet.race_id,
+        "venue": (bet.race_id.split("_")[1] if "_" in bet.race_id else None),
+        "race_number": int(bet.race_id.rsplit("_R", 1)[1]) if "_R" in bet.race_id else None,
+        "box_horses": box_horses,
+        "box_horse_names": box_names,
+        "perms": perms,
+        "top3_sum_pct": round(top3_sum, 1),
+        "field_size": field_size,
+        "model_hit_probability": round(box_hit_prob, 4),
+        "stake_dollars": _FUNK_BASE_STAKE,
+        "estimated_dividend_dollars": est_dividend,
+        "potential_return_dollars": round((_FUNK_BASE_STAKE / perms) * est_dividend, 2),
+        "expected_value_dollars": round(
+            box_hit_prob * (_FUNK_BASE_STAKE / perms) * est_dividend - _FUNK_BASE_STAKE, 2
+        ),
+    }
+
+
+def _build_bonus(edge_picks: list[dict]) -> Optional[dict]:
+    """The Bonus: best $4-$10 horse with model overlay, sized for a $50
+    bonus bet (stake not returned per Sportsbet's bonus rules)."""
+    BONUS_STAKE = 50.0
+    candidates = []
+    for p in edge_picks:
+        odds = p.get("best_available_odds")
+        edge = p.get("edge_pct")
+        model_pct = p.get("model_pct") or 0
+        if not odds or odds < 4.0 or odds > 10.0:
+            continue
+        if model_pct < 20:
+            continue
+        if edge is None or edge <= 5:
+            continue
+        candidates.append(p)
+    if not candidates:
+        return None
+    pick = max(candidates, key=lambda p: p.get("edge_pct") or 0)
+    odds = pick["best_available_odds"]
+    hit_p = (pick.get("model_pct") or 0) / 100
+    profit_if_won = _sb.bonus_bet_return(BONUS_STAKE, odds)
+    return {
+        "kind": "bonus",
+        "title": "The Bonus",
+        "subtitle": f"${int(BONUS_STAKE)} bonus bet · ${odds:.2f} value pick",
+        "confidence": "A",
+        "race_id": pick["race_id"],
+        "venue": pick.get("venue"),
+        "race_number": pick.get("race_number"),
+        "horse_name": pick["horse_name"],
+        "tab_number": pick.get("tab_number"),
+        "scheduled_time": pick.get("scheduled_time"),
+        "model_pct": pick.get("model_pct"),
+        "edge_pct": pick.get("edge_pct"),
+        "best_available_odds": odds,
+        "model_hit_probability": round(hit_p, 4),
+        "stake_dollars": 0.0,  # cash exposure is zero; bonus credit
+        "bonus_stake_dollars": BONUS_STAKE,
+        "potential_return_dollars": profit_if_won,
+        "expected_value_dollars": round(hit_p * profit_if_won, 2),
+    }
+
+
+@app.get("/api/funk-me-up/today")
+async def funk_me_up_today():
+    """Funk Me Up daily playbook — 5 plays mapped to Sportsbet features.
+    Reads from the existing /api/edge response so it's fast and consistent
+    with what users see on Hot Seat / Edge."""
+    edge = await get_edge_picks()
+    today_iso = _today_aest().isoformat()
+    today_prefix = f"{today_iso}_"
+    today_picks = [p for p in edge.get("picks", []) if (p.get("race_id") or "").startswith(today_prefix)]
+
+    plays = []
+    for build_fn in (_build_spine, _build_lock, _build_wave, _build_bonus):
+        try:
+            play = build_fn(today_picks)
+        except Exception as e:
+            log.warning("[funk-me-up] %s failed: %s", build_fn.__name__, e)
+            play = None
+        if play:
+            plays.append(play)
+    try:
+        lab_play = await _build_lab_pick(today_iso)
+        if lab_play:
+            plays.append(lab_play)
+    except Exception as e:
+        log.warning("[funk-me-up] lab pick failed: %s", e)
+
+    # Hero: highest expected_value_dollars across plays. Ties broken by
+    # hit_probability so safer plays surface when EVs are close.
+    hero = None
+    if plays:
+        hero = max(plays, key=lambda p: (
+            p.get("expected_value_dollars") or 0,
+            p.get("model_hit_probability") or 0
+        ))
+
+    total_cash_exposure = round(sum(p.get("stake_dollars") or 0 for p in plays), 2)
+    bonus_exposure = round(sum(p.get("bonus_stake_dollars") or 0 for p in plays), 2)
+    expected_profit = round(sum(p.get("expected_value_dollars") or 0 for p in plays), 2)
+
+    return {
+        "date": today_iso,
+        "base_stake": _FUNK_BASE_STAKE,
+        "hero_kind": hero.get("kind") if hero else None,
+        "plays": plays,
+        "cash_exposure_dollars": total_cash_exposure,
+        "bonus_exposure_dollars": bonus_exposure,
+        "expected_profit_dollars": expected_profit,
+        "disclaimer": "Estimates use TAB odds; Sportsbet prices vary. Verify boost % and Top 4 prices in the Sportsbet betslip before placing.",
+    }
 
 
 @app.get("/api/edge/trifectas")

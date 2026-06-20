@@ -465,6 +465,30 @@ def harville_top4_probability(p1: float, p2: float, p3: float, p4: float) -> flo
     return p1 * (p2 / d1) * (p3 / d2) * (p4 / d3)
 
 
+def harville_horse_top_n(horse_p: float, others_p: list[float], n: int) -> float:
+    """Recursive Harville: probability the target horse (with win_prob horse_p)
+    finishes in the top n of a race against the other horses (win probs in
+    others_p). Used to build Sportsbet-equivalent Top 2/3/4 fair prices from
+    our model's win-probability vector."""
+    if n <= 0 or horse_p <= 0:
+        return 0.0
+    others_p = [p for p in others_p if p and p > 0]
+    total_p = horse_p + sum(others_p)
+    if total_p <= 0:
+        return 0.0
+    p_horse_wins = horse_p / total_p
+    if n == 1:
+        return p_horse_wins
+    # P(top n) = P(wins) + Σ over each other horse o:
+    #   P(o wins) × P(horse top n-1 among horses minus o)
+    p = p_horse_wins
+    for i, op in enumerate(others_p):
+        p_o_wins = op / total_p
+        remaining = others_p[:i] + others_p[i+1:]
+        p += p_o_wins * harville_horse_top_n(horse_p, remaining, n - 1)
+    return min(p, 1.0)
+
+
 def harville_trifecta_box_probability(win_probs: list[float]) -> float:
     """Probability that the top-3 finishers (any order) all come from the
     given set of horses. Sum Harville over all 3-permutations of the box."""
