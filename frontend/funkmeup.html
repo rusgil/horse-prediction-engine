@@ -281,6 +281,28 @@
     }
     .past-stat.pos { color: var(--green); }
     .past-stat.neg { color: var(--red); }
+    .past-strip {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 6px 10px;
+      margin-top: 10px;
+      background: rgba(94,234,212,0.06);
+      border: 1px solid rgba(94,234,212,0.18);
+      border-radius: 8px;
+      font-size: 11px;
+    }
+    .past-strip-label {
+      color: var(--teal-bright);
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      font-size: 9px;
+    }
+    .past-strip-val { color: var(--text); font-weight: 600; font-variant-numeric: tabular-nums; }
+    .past-strip-val.pos { color: var(--green-bright); }
+    .past-strip-val.neg { color: var(--red); }
+    .past-strip-val.muted { color: var(--text-muted); }
 
     /* Empty / disclaimers */
     .empty {
@@ -511,10 +533,27 @@
             <div class="stat-label">Est. profit</div>
           </div>
         </div>
+        ${renderPastStrip(p.kind)}
         <div class="play-foot">
           <span class="past-stat">Potential return: ${fmtMoneyPlain(p.potential_return_dollars)}</span>
           <button data-copy="${p.kind}">Copy plan</button>
         </div>
+      </div>`;
+  }
+
+  function renderPastStrip(kind) {
+    const bt = (window._funkBacktest && window._funkBacktest.by_play && window._funkBacktest.by_play[kind]) || null;
+    if (!bt || !bt.days_evaluated) {
+      return `<div class="past-strip"><span class="past-strip-label">Past 7 days</span><span class="past-strip-val muted">— no qualifying days —</span></div>`;
+    }
+    const roi = bt.roi_pct;
+    const roiCls = roi == null ? 'muted' : (roi >= 0 ? 'pos' : 'neg');
+    const roiTxt = roi == null ? '—' : `${roi >= 0 ? '+' : ''}${roi}% ROI`;
+    return `
+      <div class="past-strip">
+        <span class="past-strip-label">Past 7 days</span>
+        <span class="past-strip-val">${bt.days_hit}/${bt.days_evaluated} hit</span>
+        <span class="past-strip-val ${roiCls}">${roiTxt}</span>
       </div>`;
   }
 
@@ -532,10 +571,18 @@
   async function load() {
     const root = document.getElementById('root');
     try {
-      const res = await fetch(`${API}/api/funk-me-up/today`);
-      if (!res.ok) throw new Error('HTTP ' + res.status);
-      const data = await res.json();
+      const [todayRes, btRes] = await Promise.all([
+        fetch(`${API}/api/funk-me-up/today`),
+        fetch(`${API}/api/funk-me-up/backtest?days=7`).catch(() => null),
+      ]);
+      if (!todayRes.ok) throw new Error('HTTP ' + todayRes.status);
+      const data = await todayRes.json();
       window._funkData = data;  // for copy handler
+      try {
+        window._funkBacktest = btRes && btRes.ok ? await btRes.json() : null;
+      } catch (_) {
+        window._funkBacktest = null;
+      }
       renderExposure(data);
       if (!data.plays || !data.plays.length) {
         root.innerHTML = `

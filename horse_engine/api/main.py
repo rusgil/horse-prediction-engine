@@ -4636,6 +4636,299 @@ async def funk_me_up_today():
     }
 
 
+_funk_backtest_cache: tuple[datetime, dict] | None = None
+_FUNK_BACKTEST_TTL = 3600  # 1h — backtest moves once per day, no need to recompute often
+
+
+@app.get("/api/funk-me-up/backtest")
+async def funk_me_up_backtest(days: int = 7):
+    """Replay each Funk Me Up play's selection logic against the last N
+    days of historical predictions + results. Returns per-play hit count,
+    ROI, and total P/L estimate so the UI can show a 7-day track record
+    on each card."""
+    global _funk_backtest_cache
+    if _funk_backtest_cache is not None:
+        ts, body = _funk_backtest_cache
+        if (datetime.utcnow() - ts).total_seconds() < _FUNK_BACKTEST_TTL and body.get("days") == days:
+            return body
+    days = max(1, min(int(days), 30))
+    today = _today_aest()
+    target_dates = [(today - timedelta(days=i)).isoformat() for i in range(1, days + 1)]
+    earliest = target_dates[-1]
+
+    async with get_session() as session:
+        pred_rows = (await session.execute(
+            select(RunnerPredictionHistoryRow)
+            .where(RunnerPredictionHistoryRow.race_id >= f"{earliest}_")
+            .where(RunnerPredictionHistoryRow.cancelled.is_(False)
+                   | RunnerPredictionHistoryRow.cancelled.is_(None))
+            .where(RunnerPredictionHistoryRow.source == "live")
+        )).scalars().all()
+        result_rows = (await session.execute(
+            select(HistoricalResultRow.race_id, HistoricalResultRow.position,
+                   HistoricalResultRow.tab_number, HistoricalResultRow.horse_name,
+                   HistoricalResultRow.starting_price)
+            .where(HistoricalResultRow.race_id >= f"{earliest}_")
+        )).fetchall()
+        lab_rows = (await session.execute(
+            select(BetRecommendationRow)
+            .where(BetRecommendationRow.race_id >= f"{earliest}_")
+            .where(BetRecommendationRow.strategy_label == "trio_only")
+            .where(BetRecommendationRow.settled.is_(True))
+        )).scalars().all()
+
+    # Bucket predictions by race; keep latest enriched_at per (race, horse)
+    preds_by_race: dict[str, list] = {}
+    seen: dict[tuple, datetime] = {}
+    for p in pred_rows:
+        key = (p.race_id, _normalize_horse(p.horse_name))
+        if key in seen and (p.enriched_at or datetime.min) <= seen[key]:
+            continue
+        seen[key] = p.enriched_at or datetime.min
+        preds_by_race.setdefault(p.race_id, []).append(p)
+
+    # Results by race — keep position 1..4 with SP and tab
+    result_by_race: dict[str, dict] = {}
+    for rid, pos, tab, name, sp in result_rows:
+        if pos is None:
+            continue
+        slot = result_by_race.setdefault(rid, {})
+        slot[int(pos)] = {"tab": tab, "horse_name": name, "sp": sp}
+
+    def race_date(rid: str) -> str:
+        return rid.split("_", 1)[0]
+
+    # Per-play accumulators
+    stats = {k: {"days_evaluated": 0, "days_hit": 0,
+                 "total_stake": 0.0, "total_pnl": 0.0}
+             for k in ("spine", "lock", "wave", "lab", "bonus")}
+    BASE = 10.0
+    BONUS_STAKE = 50.0
+
+    def _was_top_n(rid: str, horse_name: str, n: int) -> bool:
+        slots = result_by_race.get(rid) or {}
+        target = _normalize_horse(horse_name)
+        for pos in range(1, n + 1):
+            row = slots.get(pos)
+            if row and _normalize_horse(row["horse_name"]) == target:
+                return True
+        return False
+
+    def _winner_horse(rid: str) -> Optional[str]:
+        slots = result_by_race.get(rid) or {}
+        row = slots.get(1)
+        return row["horse_name"] if row else None
+
+    def _sp_for(rid: str, horse_name: str) -> Optional[float]:
+        slots = result_by_race.get(rid) or {}
+        target = _normalize_horse(horse_name)
+        for pos in range(1, 5):
+            row = slots.get(pos)
+            if row and _normalize_horse(row["horse_name"]) == target:
+                return row.get("sp")
+        return None
+
+    for date in target_dates:
+        # Restrict to races on this date that have any result
+        prefix = f"{date}_"
+        race_ids_today = [rid for rid in preds_by_race
+                          if rid.startswith(prefix) and rid in result_by_race]
+        if not race_ids_today:
+            continue
+
+        # --- SPINE: 4-leg Top 4 multi ---
+        spine_legs = []
+        for rid in race_ids_today:
+            runners = sorted(preds_by_race[rid], key=lambda p: p.model_rank or 99)
+            if len(runners) < _sb.TOP4_MIN_FIELD_SIZE:
+                continue
+            rank1 = runners[0]
+            if (rank1.win_probability or 0) <= 0:
+                continue
+            others = [r.win_probability for r in runners[1:] if r.win_probability]
+            top4_prob = _harville_horse_top_n(rank1.win_probability, others, 4)
+            if top4_prob < 0.60:
+                continue
+            sb_odds = round(1.0 / max(top4_prob - _sb.TOP4_OVERROUND_PCT * top4_prob, 0.05), 2)
+            spine_legs.append({"race_id": rid, "horse_name": rank1.horse_name,
+                               "sb_odds": sb_odds, "top4_prob": top4_prob})
+        if len(spine_legs) >= 4:
+            spine_legs.sort(key=lambda l: -l["top4_prob"])
+            chosen = spine_legs[:4]
+            raw_multi = 1.0
+            for l in chosen:
+                raw_multi *= l["sb_odds"]
+            boosted = _sb.boosted_multi_odds(raw_multi, 4)
+            all_hit = all(_was_top_n(l["race_id"], l["horse_name"], 4) for l in chosen)
+            stats["spine"]["days_evaluated"] += 1
+            stats["spine"]["total_stake"] += BASE
+            if all_hit:
+                stats["spine"]["days_hit"] += 1
+                stats["spine"]["total_pnl"] += boosted * BASE - BASE
+            else:
+                stats["spine"]["total_pnl"] -= BASE
+
+        # --- LOCK: best single Premium ---
+        lock_candidates = []
+        for rid in race_ids_today:
+            runners = sorted(preds_by_race[rid], key=lambda p: p.model_rank or 99)
+            if not runners:
+                continue
+            rank1 = runners[0]
+            model_pct = (rank1.win_probability or 0) * 100
+            if model_pct < 29.5:
+                continue
+            sp = _sp_for(rid, rank1.horse_name) or 0
+            # Use winner's SP if our pick won; else use any active SP from race or skip
+            slots = result_by_race.get(rid) or {}
+            # Look for SP on rank-1 from any finishing pos; if no SP found, skip the race
+            target_sp = None
+            for p in (1, 2, 3, 4):
+                row = slots.get(p)
+                if row and _normalize_horse(row["horse_name"]) == _normalize_horse(rank1.horse_name):
+                    target_sp = row.get("sp")
+                    break
+            if not target_sp or target_sp < 3.0:
+                continue
+            market_pct = (1.0 / target_sp) * 100 * 0.88
+            edge = model_pct - market_pct
+            if edge <= 5:
+                continue
+            lock_candidates.append({"race_id": rid, "horse_name": rank1.horse_name,
+                                    "sp": target_sp, "edge": edge})
+        if lock_candidates:
+            best = max(lock_candidates, key=lambda c: c["edge"])
+            won = _was_top_n(best["race_id"], best["horse_name"], 1)
+            stats["lock"]["days_evaluated"] += 1
+            stats["lock"]["total_stake"] += BASE
+            if won:
+                stats["lock"]["days_hit"] += 1
+                stats["lock"]["total_pnl"] += BASE * best["sp"] - BASE
+            else:
+                stats["lock"]["total_pnl"] -= BASE
+
+        # --- WAVE: Quaddie box at any venue with 4+ races ---
+        by_venue: dict[str, list[str]] = {}
+        for rid in race_ids_today:
+            venue = rid.split("_")[1] if "_" in rid else None
+            if not venue:
+                continue
+            by_venue.setdefault(venue, []).append(rid)
+        wave_venue, wave_legs = None, None
+        for venue, rids in by_venue.items():
+            rids = sorted(rids, key=lambda r: int(r.rsplit("_R", 1)[1]) if "_R" in r else 0)
+            if len(rids) < 4:
+                continue
+            wave_venue, wave_legs = venue, rids[-4:]
+            break
+        if wave_legs:
+            all_legs_have_top2 = True
+            wave_all_hit = True
+            for rid in wave_legs:
+                runners = sorted(preds_by_race[rid], key=lambda p: p.model_rank or 99)
+                top2 = runners[:2]
+                if len(top2) < 2:
+                    all_legs_have_top2 = False
+                    break
+                winner = _winner_horse(rid)
+                if winner is None:
+                    all_legs_have_top2 = False
+                    break
+                tgt = _normalize_horse(winner)
+                hit = any(_normalize_horse(r.horse_name) == tgt for r in top2)
+                if not hit:
+                    wave_all_hit = False
+                    # Continue to confirm legs were valid; result still counted
+            if all_legs_have_top2:
+                stats["wave"]["days_evaluated"] += 1
+                stats["wave"]["total_stake"] += BASE
+                if wave_all_hit:
+                    stats["wave"]["days_hit"] += 1
+                    # Pari-mutuel approximation: assume $1,200 dividend on $1
+                    # base, stake $10 / 16 perms = $0.625/perm. Use $1200 as
+                    # baseline dividend, scaled by per-perm share.
+                    stats["wave"]["total_pnl"] += (BASE / 16) * 1200.0 - BASE
+                else:
+                    stats["wave"]["total_pnl"] -= BASE
+
+        # --- BONUS: $4-$10 overlay ---
+        bonus_candidates = []
+        for rid in race_ids_today:
+            runners = sorted(preds_by_race[rid], key=lambda p: p.model_rank or 99)
+            if not runners:
+                continue
+            rank1 = runners[0]
+            model_pct = (rank1.win_probability or 0) * 100
+            if model_pct < 20:
+                continue
+            sp = _sp_for(rid, rank1.horse_name)
+            if not sp or sp < 4.0 or sp > 10.0:
+                continue
+            market_pct = (1.0 / sp) * 100 * 0.88
+            edge = model_pct - market_pct
+            if edge <= 5:
+                continue
+            bonus_candidates.append({"race_id": rid, "horse_name": rank1.horse_name,
+                                     "sp": sp, "edge": edge})
+        if bonus_candidates:
+            best = max(bonus_candidates, key=lambda c: c["edge"])
+            won = _was_top_n(best["race_id"], best["horse_name"], 1)
+            stats["bonus"]["days_evaluated"] += 1
+            # Bonus doesn't count as cash stake — track total_pnl as raw upside
+            if won:
+                stats["bonus"]["days_hit"] += 1
+                stats["bonus"]["total_pnl"] += BONUS_STAKE * (best["sp"] - 1)
+            # No cash loss on a missed bonus bet
+
+    # --- LAB PICK: use existing BetRecommendationRow.is_hit on the trio_only ---
+    lab_by_day: dict[str, list] = {}
+    for b in lab_rows:
+        d = race_date(b.race_id)
+        if d not in target_dates:
+            continue
+        lab_by_day.setdefault(d, []).append(b)
+    for d, bets in lab_by_day.items():
+        # Pick best (smallest top3 sum from prediction history) — match live selector
+        scored = []
+        for b in bets:
+            rid = b.race_id
+            runners = sorted(preds_by_race.get(rid, []), key=lambda p: p.model_rank or 99)
+            if len(runners) < 3:
+                continue
+            top3_sum = sum((r.win_probability or 0) for r in runners[:3]) * 100
+            field = len([r for r in runners])
+            if top3_sum > 55 or field > 11:
+                continue
+            scored.append((b, top3_sum))
+        if not scored:
+            continue
+        chosen, _ = max(scored, key=lambda x: x[1])  # match live selector tiebreak
+        stats["lab"]["days_evaluated"] += 1
+        stats["lab"]["total_stake"] += BASE
+        if chosen.is_hit:
+            stats["lab"]["days_hit"] += 1
+            # Use estimated $200 dividend × stake/6 perms
+            stats["lab"]["total_pnl"] += (BASE / 6) * 200.0 - BASE
+        else:
+            stats["lab"]["total_pnl"] -= BASE
+
+    out = {}
+    for k, s in stats.items():
+        hit_rate = round(s["days_hit"] / s["days_evaluated"] * 100, 1) if s["days_evaluated"] else 0
+        roi = round(s["total_pnl"] / s["total_stake"] * 100, 1) if s["total_stake"] else None
+        out[k] = {
+            "days_evaluated": s["days_evaluated"],
+            "days_hit": s["days_hit"],
+            "hit_rate_pct": hit_rate,
+            "total_stake": round(s["total_stake"], 2),
+            "total_pnl": round(s["total_pnl"], 2),
+            "roi_pct": roi,
+        }
+    body = {"days": days, "by_play": out}
+    _funk_backtest_cache = (datetime.utcnow(), body)
+    return body
+
+
 @app.get("/api/edge/trifectas")
 async def get_edge_trifectas():
     """Standalone trifecta picks ranked by combined place probability, tiered like win picks."""
