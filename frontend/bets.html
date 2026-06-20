@@ -1074,10 +1074,11 @@
     races = applyConfFilter(races);
     const now = Date.now();
     if (state.sort === 'next') {
-      // Parse scheduled_time as a Date (includes TZ offset) so upcoming
-      // vs past compares on the real instant. Running races (jumped, but
-      // still inside the Running window) lead, then truly upcoming
-      // sorted by soonest jump, then finished sorted most-recent-first.
+      // 'Next race' is forward-looking only: running (jumped within the
+      // last 8 min) + truly upcoming. Past races are hidden — they
+      // belong in the 'Just ran' or 'Best P/L' sorts. Old behaviour
+      // showed past races at the bottom of this list, which confused
+      // users into thinking the filter was wrong.
       const running = races.filter(r => {
         const t = _jumpMs(r);
         return t != null && t <= now && t > now - RUNNING_WINDOW_MS;
@@ -1086,14 +1087,9 @@
         const t = _jumpMs(r);
         return t != null && t > now;
       });
-      const past = races.filter(r => {
-        const t = _jumpMs(r);
-        return t == null || t <= now - RUNNING_WINDOW_MS;
-      });
       running.sort((a, b) => (_jumpMs(b) || 0) - (_jumpMs(a) || 0));
       upcoming.sort((a, b) => (_jumpMs(a) || 0) - (_jumpMs(b) || 0));
-      past.sort((a, b) => (_jumpMs(b) || 0) - (_jumpMs(a) || 0));
-      return [...running, ...upcoming, ...past];
+      return [...running, ...upcoming];
     }
     if (state.sort === 'recent') {
       // 'Just ran' — past races first (most recently finished at top),
