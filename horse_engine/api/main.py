@@ -2220,6 +2220,19 @@ async def lifespan(app: FastAPI):
                 await asyncio.sleep(retry_delay)
     asyncio.create_task(_prewarm_edge_cache())
 
+    # Prewarm /api/edge/yesterday once on startup so the first user after
+    # a redeploy doesn't pay the 10s on-demand-seed cost. Yesterday's
+    # data is stable — no need for a refresh loop; one warming call
+    # writes to the DB row that subsequent boots hydrate from instantly.
+    async def _prewarm_yesterday():
+        await asyncio.sleep(10)
+        try:
+            await get_edge_yesterday()
+            log.info("[edge-yesterday-prewarm] cache warm")
+        except Exception as e:
+            log.warning("[edge-yesterday-prewarm] failed: %s", e)
+    asyncio.create_task(_prewarm_yesterday())
+
     # Backfill last 3 days — catch up on any missed enrichments/results.
     # Throttled per-date: skip dates whose latest enriched_at is < 12h old.
     # Without this, every Railway redeploy (often several per day during
