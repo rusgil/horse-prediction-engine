@@ -5174,6 +5174,105 @@ async def backtest_formula(
     return summary
 
 
+@app.get("/api/admin/bets/trio-filtered-backtest")
+async def trio_filtered_backtest(
+    days: int = 90,
+    top3_max: float = 55.0,
+    field_max: int = 11,
+    x_cron_secret: Optional[str] = Header(None),
+):
+    """Retroactive backtest of the Trio strategy (3-horse box of model's
+    top-3 by win probability) on historical races, filtered by
+    top-3 sum % ceiling and field-size ceiling. Returns hit rate and
+    a small daily-rollup for sanity checking."""
+    _check_admin(x_cron_secret)
+    days = max(1, min(int(days), 365))
+    cutoff_date = (_today_aest() - timedelta(days=days)).isoformat()
+
+    async with get_session() as session:
+        result_rows = (await session.execute(
+            select(HistoricalResultRow.race_id, HistoricalResultRow.position,
+                   HistoricalResultRow.tab_number, HistoricalResultRow.horse_name)
+            .where(HistoricalResultRow.race_id >= f"{cutoff_date}_")
+            .where(HistoricalResultRow.position.in_([1, 2, 3]))
+        )).fetchall()
+        results_by_race: dict[str, list] = {}
+        for rid, pos, tab, name in result_rows:
+            results_by_race.setdefault(rid, []).append((pos, tab, name))
+        complete = [rid for rid, items in results_by_race.items() if len(items) >= 3]
+        pred_rows = (await session.execute(
+            select(RunnerPredictionHistoryRow)
+            .where(RunnerPredictionHistoryRow.race_id.in_(complete))
+            .where(RunnerPredictionHistoryRow.cancelled.is_(False) | RunnerPredictionHistoryRow.cancelled.is_(None))
+        )).scalars().all() if complete else []
+
+    preds_by_race: dict[str, list] = {}
+    for p in pred_rows:
+        preds_by_race.setdefault(p.race_id, []).append(p)
+
+    tab_per_race: dict[str, dict[str, int]] = {}
+    for rid, pruns in preds_by_race.items():
+        tab_per_race[rid] = {
+            _normalize_horse(p.horse_name): p.tab_number
+            for p in pruns if p.tab_number is not None
+        }
+
+    universe_count = 0
+    filter_count = 0
+    hit_count = 0
+    by_day: dict[str, dict] = {}
+    for rid, pruns in preds_by_race.items():
+        if len(pruns) < 3:
+            continue
+        if rid not in results_by_race:
+            continue
+        # Resolve actual top-3 tabs
+        items = sorted(results_by_race[rid], key=lambda x: x[0])[:3]
+        actual_top3: list = []
+        for pos, tab, name in items:
+            t = tab if tab is not None else tab_per_race.get(rid, {}).get(_normalize_horse(name))
+            actual_top3.append(t)
+        if any(t is None for t in actual_top3):
+            continue
+        universe_count += 1
+        # Compute features
+        sorted_pruns = sorted(pruns, key=lambda p: p.model_rank or 99)
+        field_size = len(pruns)
+        top3_sum = sum((sorted_pruns[i].win_probability or 0) for i in range(min(3, len(sorted_pruns)))) * 100
+        if top3_sum > top3_max or field_size > field_max:
+            continue
+        # Build Trio box (top-3 ranked horses' tab numbers)
+        trio_tabs = [p.tab_number for p in sorted_pruns[:3]]
+        if any(t is None for t in trio_tabs):
+            continue
+        filter_count += 1
+        hit = set(trio_tabs) == set(actual_top3)
+        if hit:
+            hit_count += 1
+        date_str = rid.split("_", 1)[0]
+        d = by_day.setdefault(date_str, {"races": 0, "hits": 0})
+        d["races"] += 1
+        if hit:
+            d["hits"] += 1
+
+    overall = {
+        "window_days": days,
+        "top3_sum_max_pct": top3_max,
+        "field_max": field_max,
+        "universe_races": universe_count,
+        "filter_matched_races": filter_count,
+        "trio_hits": hit_count,
+        "hit_rate_pct": round(hit_count / filter_count * 100, 1) if filter_count else 0,
+        "coverage_pct": round(filter_count / universe_count * 100, 1) if universe_count else 0,
+    }
+    daily = [
+        {"date": d, "races": v["races"], "hits": v["hits"],
+         "hit_rate_pct": round(v["hits"]/v["races"]*100, 1) if v["races"] else 0}
+        for d, v in sorted(by_day.items())
+    ]
+    return {"overall": overall, "by_day": daily}
+
+
 @app.get("/api/admin/bets/strategy-shootout")
 async def strategy_shootout(
     days: int = 60,
