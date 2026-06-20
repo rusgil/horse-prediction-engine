@@ -3477,16 +3477,25 @@
 
   function _seedResultsMapFromPicks(picks) {
     for (const p of picks) {
-      if (p.won !== undefined || p.actual_position !== undefined) {
-        resultsMap[p.race_id] = {
-          winner: p.won || false,
-          position: p.actual_position,
-          sp: p.sp,
-          placed: p.placed || false,
-          scratched: p.scratched || false,
-          no_result: false,
-        };
-      }
+      // Only seed when we actually have a result — won/placed are
+      // strictly true/false, or position is a number. /api/edge returns
+      // null for all three when the race ran but hasn't been seeded yet.
+      // Old code seeded a result object regardless (winner=false on null)
+      // which made renderCard's catch-all render '✗ Wrong' on
+      // not-yet-seeded races (e.g. Toowoomba R5 ZOUSAIN'S CHOICE which
+      // won but Edge said Wrong because seed-cron hadn't fetched results).
+      const hasResult = p.won === true || p.won === false
+        || p.placed === true || p.placed === false
+        || (typeof p.actual_position === 'number');
+      if (!hasResult) continue;
+      resultsMap[p.race_id] = {
+        winner: p.won === true,
+        position: p.actual_position,
+        sp: p.sp,
+        placed: p.placed === true,
+        scratched: p.scratched || false,
+        no_result: false,
+      };
     }
   }
 
