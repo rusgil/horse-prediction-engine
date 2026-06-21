@@ -1013,7 +1013,12 @@ class RacingAustraliaClient:
             try:
                 html = await self._get(f"{_BASE}/Calendar.aspx?State={state}")
             except Exception as e:
-                log.debug("Calendar fetch failed for %s: %s", state, e)
+                log.warning("Calendar fetch failed for %s: %s", state, e)
+                # Cache the failure for 5 minutes so we don't death-spiral
+                # the proxy when it's returning 503 (cap hit). Empty list
+                # is a valid 'no meetings today' so we serve that until
+                # the cap window rolls.
+                self._calendar_cache[cache_key] = (datetime.utcnow() - timedelta(seconds=3300), [])
                 return []
 
             soup = BeautifulSoup(html, "html.parser")
@@ -1074,6 +1079,9 @@ class RacingAustraliaClient:
             html = await self._get(url)
         except Exception as e:
             log.warning("Acceptances fetch failed for %s: %s", ra_key, e)
+            # Cache None for 5 min so a 503-storm doesn't dogpile RA.
+            # 30-min TTL minus 25 min = 5 min remaining.
+            self._meeting_cache[ra_key] = (datetime.utcnow() - timedelta(seconds=1500), None)
             return None
         parsed = _parse_acceptances_page(html, ra_key, race_date, state)
         self._meeting_cache[ra_key] = (datetime.utcnow(), parsed)
@@ -1197,6 +1205,9 @@ class RacingAustraliaClient:
                 html = await self._get(url)
             except Exception as e:
                 log.warning("RA results fetch failed for %s: %s", ra_key, e)
+                # Cache the failure for 5 min — backdate the TTL so that
+                # the proxy 503-loop doesn't dogpile RA while the cap clears.
+                self._results_cache[ra_key] = (datetime.utcnow() - timedelta(seconds=21300), {})
                 return {}
             parsed = _parse_results_page(html)
             self._results_cache[ra_key] = (datetime.utcnow(), parsed)
