@@ -764,12 +764,24 @@
     if (venue && venue !== 'all') {
       out = out.filter(p => p.venue === venue);
     }
-    out.sort((a, b) => {
-      const at = new Date(a.scheduled_time).getTime();
-      const bt = new Date(b.scheduled_time).getTime();
-      return at - bt;
-    });
-    return out;
+    // Partition so remaining (not-yet-jumped or in-progress) races are at
+    // the top, sorted by soonest jump. Finished races trail below, sorted
+    // most-recently-finished first so just-completed races sit nearest the
+    // upcoming list and old results drop to the bottom.
+    const now = Date.now();
+    const RUNNING_WINDOW_MS = 8 * 60 * 1000;
+    const remaining = [];
+    const finished = [];
+    for (const p of out) {
+      const t = new Date(p.scheduled_time).getTime();
+      if (isNaN(t)) { remaining.push(p); continue; }
+      // Treat anything jumped within the last 8 min as still 'live' / running.
+      if (t > now - RUNNING_WINDOW_MS) remaining.push(p);
+      else finished.push(p);
+    }
+    remaining.sort((a, b) => new Date(a.scheduled_time).getTime() - new Date(b.scheduled_time).getTime());
+    finished.sort((a, b) => new Date(b.scheduled_time).getTime() - new Date(a.scheduled_time).getTime());
+    return [...remaining, ...finished];
   }
 
   function populateVenueOptions() {
