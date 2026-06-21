@@ -831,12 +831,25 @@ async def _scheduled_pre_race_enrich_and_scratch():
 
                 if in_scratch:
                     try:
-                        current_field = {
-                            (sel.get("competitor") or {}).get("name", "").strip()
-                            for sel in full_event.get("selections", [])
-                            if (sel.get("competitor") or {}).get("name", "").strip()
-                        }
+                        # Build current-field set, treating runners marked
+                        # 'SCRATCHED'/'WITHDRAWN' status as already removed
+                        # (otherwise they'd remain in current_field and never
+                        # be detected as a scratching).
+                        current_field = set()
+                        for sel in (full_event.get("selections") or []):
+                            comp = sel.get("competitor") or {}
+                            name = (comp.get("name") or "").strip()
+                            if not name:
+                                continue
+                            status = (sel.get("status") or comp.get("status") or "").upper()
+                            if status in ("SCRATCHED", "WITHDRAWN", "LATE_SCRATCHING", "LATESCRATCHING"):
+                                continue
+                            current_field.add(name)
                         if not current_field:
+                            log.warning(
+                                "[scratch-check] %s: empty current_field from TAB; skipping",
+                                race_id,
+                            )
                             continue
                         async with get_session() as session:
                             # Compare current RA field against the union of uncancelled
