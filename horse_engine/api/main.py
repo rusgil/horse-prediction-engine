@@ -721,14 +721,11 @@ async def _scheduled_pre_race_enrich_and_scratch():
             log.warning("[pre-race] No meetings returned for %s", today)
             return
 
-        # Pre-filter meetings: skip venues whose max prize money for
-        # today is known to be sub-$30k (same threshold the bet
-        # recommender uses). Picnic / sub-$30k country meets don't
-        # generate Lab bets so their scratchings & odds don't affect
-        # anything user-visible. Fetching them every 15min was burning
-        # ~half the proxy budget on a Sat metro day.
-        # Unknown venues (no predictions yet) get a pass-through — we
-        # need to enrich them at least once to learn the prize money.
+        # Build a prize-money lookup once. Used to decide which meetings
+        # get the heavyweight enrich pass; scratch detection runs on ALL
+        # meetings regardless (cheap, and country races still need
+        # scratchings flagged so the Funk Me Up Sunday country card
+        # doesn't show stale runners).
         PRIZE_MONEY_FLOOR = 30_000
         prize_by_venue: dict[str, int] = {}
         async with get_session() as session:
@@ -743,17 +740,16 @@ async def _scheduled_pre_race_enrich_and_scratch():
         for venue, prize in prize_rows:
             if venue and prize:
                 prize_by_venue[venue.strip().lower()] = int(prize)
-        skipped_low_prize = 0
-        eligible_meetings = []
-        for m in meetings:
+
+        def _meeting_is_low_prize(m: dict) -> bool:
             venue = (m.get("venue") or "").strip().lower()
             pm = prize_by_venue.get(venue, 0)
-            if pm and pm < PRIZE_MONEY_FLOOR:
-                skipped_low_prize += 1
-                continue
-            eligible_meetings.append(m)
-        if skipped_low_prize:
-            log.info("[pre-race] skipped %d sub-$30k meetings", skipped_low_prize)
+            return bool(pm) and pm < PRIZE_MONEY_FLOOR
+
+        # All meetings get fetched (cheap — cached) so scratchings are
+        # caught even on country-only Sundays. Enrichment is the
+        # expensive part; gate that separately further down.
+        eligible_meetings = list(meetings)
 
         # Single get_meeting_races pass per meeting — shared by enrich, scratch, and cancel-check
         meeting_meta: dict[str, tuple] = {}   # vc -> (slug, venue_name, state)
@@ -775,8 +771,21 @@ async def _scheduled_pre_race_enrich_and_scratch():
         enriched_count = 0
         scratch_count = 0
 
+        # Map vc → meeting dict so we can apply the prize-money gate per venue
+        meeting_by_vc: dict[str, dict] = {}
+        for m in eligible_meetings:
+            slug = m.get("slug", "")
+            if not slug:
+                continue
+            vc = slug[:-len(date_sfx)] if slug.endswith(date_sfx) else slug.split("-")[0]
+            meeting_by_vc[vc] = m
+
         for vc, raw_events in venue_raw_events.items():
             slug, venue_name, state = meeting_meta[vc]
+            # Gate enrichment by prize money — scratch detection still runs.
+            # Saves the heavy enrich-and-predict call on sub-$30k meetings
+            # that don't generate Lab bets anyway.
+            is_low_prize = _meeting_is_low_prize(meeting_by_vc.get(vc, {}))
             for raw_event in raw_events:
                 start_raw = raw_event.get("startTime")
                 if not start_raw:
@@ -786,7 +795,7 @@ async def _scheduled_pre_race_enrich_and_scratch():
                 except ValueError:
                     continue
 
-                in_enrich = now_utc <= jump <= enrich_horizon
+                in_enrich = now_utc <= jump <= enrich_horizon and not is_low_prize
                 in_scratch = now_utc - timedelta(minutes=30) <= jump <= scratch_horizon
 
                 if not in_enrich and not in_scratch:
