@@ -191,6 +191,63 @@
     .confidence.B { color: var(--amber); border-color: var(--amber); background: rgba(245,158,11,0.12); }
     .confidence.C { color: var(--red); border-color: var(--red); background: rgba(248,113,113,0.12); }
 
+    /* Prescriptive action block — the 'do this exact bet' instruction */
+    .action-block {
+      margin: 10px 0;
+      padding: 10px 12px;
+      background: rgba(168,85,247,0.08);
+      border: 1px solid rgba(168,85,247,0.35);
+      border-left: 4px solid var(--purple);
+      border-radius: 8px;
+    }
+    .action-head {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 6px;
+    }
+    .action-num {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      width: 22px;
+      height: 22px;
+      border-radius: 50%;
+      background: var(--purple);
+      color: #fff;
+      font-family: 'Barlow Condensed', sans-serif;
+      font-weight: 800;
+      font-size: 13px;
+      flex-shrink: 0;
+    }
+    .action-verb {
+      font-family: 'Barlow Condensed', sans-serif;
+      font-size: 13px;
+      font-weight: 800;
+      letter-spacing: 0.8px;
+      text-transform: uppercase;
+      color: var(--purple-bright);
+    }
+    .action-product {
+      font-size: 14px;
+      font-weight: 700;
+      color: var(--text);
+      margin-bottom: 4px;
+    }
+    .action-path {
+      font-size: 11px;
+      color: var(--text-dim);
+      font-family: 'Outfit', sans-serif;
+      line-height: 1.45;
+      margin-bottom: 5px;
+    }
+    .action-return {
+      font-size: 11px;
+      font-weight: 600;
+    }
+    .action-return.pos { color: var(--green-bright); }
+    .action-return.neg { color: var(--red); }
+
     /* Legs / picks list */
     .legs {
       margin: 10px 0 12px;
@@ -478,10 +535,72 @@
     return parts.join('\n');
   }
 
-  function renderPlay(p, isHero) {
+  // Earliest jump time across a play's legs/races — used to sort plays
+  // by what to place first.
+  function _earliestMs(p) {
+    let best = Infinity;
+    const ts = [];
+    if (p.kind === 'spine' && p.legs) p.legs.forEach(l => l.scheduled_time && ts.push(l.scheduled_time));
+    else if (p.kind === 'wave' && p.legs) p.legs.forEach(l => l.scheduled_time && ts.push(l.scheduled_time));
+    else if (p.scheduled_time) ts.push(p.scheduled_time);
+    for (const t of ts) {
+      const ms = new Date(t).getTime();
+      if (!isNaN(ms) && ms < best) best = ms;
+    }
+    return best;
+  }
+
+  // Action verb + product name + path to find on Sportsbet for each play.
+  function buildAction(p) {
+    if (p.kind === 'lock') {
+      return {
+        verb: 'PLACE THIS WIN BET',
+        product: `$${p.stake_dollars.toFixed(0)} Win on ${p.horse_name}`,
+        path: `Sportsbet → Racing → ${venueLabel(p.venue)} → R${p.race_number} → Win`,
+        returnIf: `Returns ${fmtMoneyPlain(p.potential_return_dollars)} if it wins`,
+      };
+    }
+    if (p.kind === 'bonus') {
+      return {
+        verb: 'USE YOUR BONUS BET',
+        product: `$${p.bonus_stake_dollars.toFixed(0)} Bonus Bet on ${p.horse_name}`,
+        path: `Sportsbet → Racing → ${venueLabel(p.venue)} → R${p.race_number} → Win → use Bonus Bet`,
+        returnIf: `Returns ${fmtMoneyPlain(p.potential_return_dollars)} profit if it wins (stake not returned)`,
+      };
+    }
+    if (p.kind === 'spine') {
+      return {
+        verb: 'BUILD THIS 4-LEG MULTI',
+        product: `$${p.stake_dollars.toFixed(0)} Racing Multi · 4 × Top 4`,
+        path: `Sportsbet → Multi Builder → tap Top 4 for each horse below → confirm +20% boost shows in betslip`,
+        returnIf: `Returns ${fmtMoneyPlain(p.potential_return_dollars)} if all 4 land`,
+      };
+    }
+    if (p.kind === 'wave') {
+      return {
+        verb: 'PLACE THIS QUADDIE BOX',
+        product: `$${p.stake_dollars.toFixed(0)} Quaddie · 2×2×2×2 box (${p.perms} combos)`,
+        path: `Sportsbet → Racing → ${venueLabel(p.venue)} → Quaddie → box the 2 horses per leg below`,
+        returnIf: `Est. ${fmtMoneyPlain(p.potential_return_dollars)} share of the pool if all 4 winners come from your picks`,
+      };
+    }
+    if (p.kind === 'lab') {
+      const names = (p.box_horse_names || []).join(', ');
+      return {
+        verb: 'PLACE THIS TRIFECTA BOX',
+        product: `$${p.stake_dollars.toFixed(0)} Flexi Trifecta Box (3 horses · ${p.perms} perms)`,
+        path: `Sportsbet → Racing → ${venueLabel(p.venue)} → R${p.race_number} → Exotics → Trifecta → Box ${names}`,
+        returnIf: `Est. ${fmtMoneyPlain(p.potential_return_dollars)} if any order of these 3 fills the trifecta`,
+      };
+    }
+    return null;
+  }
+
+  function renderPlay(p, isHero, ordinal) {
     const meta = KIND_META[p.kind] || { emoji: '·' };
     const cls = `play${isHero ? ' hero' : ''}`;
     const heroTag = isHero ? '<div class="hero-tag">Today\'s Top Play</div>' : '';
+    const action = buildAction(p);
 
     let legsHtml = '';
     if (p.kind === 'spine' && p.legs) {
@@ -525,6 +644,20 @@
     const evCls = (p.expected_value_dollars || 0) >= 0 ? 'pos' : 'neg';
     const stakeShown = p.kind === 'bonus' ? p.bonus_stake_dollars : p.stake_dollars;
     const stakeLabel = p.kind === 'bonus' ? 'Bonus' : 'Stake';
+
+    // Prescriptive action block — tells the user EXACTLY what bet to
+    // place, where to find it on Sportsbet, and what the return looks like.
+    const actionHtml = action ? `
+      <div class="action-block">
+        <div class="action-head">
+          ${ordinal ? `<span class="action-num">${ordinal}</span>` : ''}
+          <span class="action-verb">${action.verb}</span>
+        </div>
+        <div class="action-product">${escHtml(action.product)}</div>
+        <div class="action-path">${escHtml(action.path)}</div>
+        <div class="action-return ${evCls}">${escHtml(action.returnIf)}</div>
+      </div>` : '';
+
     return `
       <div class="${cls}">
         ${heroTag}
@@ -535,6 +668,7 @@
           </div>
           <span class="confidence ${p.confidence}" title="Confidence tier — A safer, C high variance">${p.confidence}</span>
         </div>
+        ${actionHtml}
         ${legsHtml}
         <div class="stats">
           <div class="stat">
@@ -621,14 +755,22 @@
       const heroKind = data.hero_kind;
       const hero = data.plays.find(p => p.kind === heroKind);
       const others = data.plays.filter(p => p.kind !== heroKind);
+      // Sort 'More Plays' by earliest jump time so the page reads
+      // top-to-bottom as the order to place bets through the day.
+      others.sort((a, b) => _earliestMs(a) - _earliestMs(b));
+      // Assign ordinals across the whole card list, hero first.
+      const ordered = hero ? [hero, ...others] : others;
+      const ordinalByKind = {};
+      ordered.forEach((p, i) => { ordinalByKind[p.kind] = i + 1; });
+
       let html = '';
       if (hero) {
-        html += '<div class="section-title">Today\'s Top Play</div>';
-        html += renderPlay(hero, true);
+        html += '<div class="section-title">Today\'s Top Play — place first</div>';
+        html += renderPlay(hero, true, ordinalByKind[hero.kind]);
       }
       if (others.length) {
-        html += '<div class="section-title">More Plays</div>';
-        html += others.map(p => renderPlay(p, false)).join('');
+        html += '<div class="section-title">More Plays — in order of jump time</div>';
+        html += others.map(p => renderPlay(p, false, ordinalByKind[p.kind])).join('');
       }
       html += `<div class="disclaimer">${escHtml(data.disclaimer || '')}</div>`;
       html += `<div class="responsible">Gamble responsibly · 1800 858 858 · gamblinghelponline.org.au</div>`;
