@@ -6770,6 +6770,212 @@ async def portfolio_simulation(
     }
 
 
+@app.get("/api/admin/predictions/niche-analysis")
+async def predictions_niche_analysis(
+    days: int = 60,
+    min_sample: int = 30,
+    x_cron_secret: Optional[str] = Header(None),
+):
+    """Where is the model actually strong? Buckets the rank-1 win rate
+    over the last N days by metro/country, day-of-week, field size,
+    distance band, track condition, prize money, model confidence band,
+    state, and combinations of these. Returns each band with sample
+    count and win rate, plus the overall baseline so the user can see
+    the gap above the average."""
+    _check_admin(x_cron_secret)
+    days = max(7, min(int(days), 365))
+    cutoff_date = (_today_aest() - timedelta(days=days)).isoformat()
+
+    async with get_session() as session:
+        # Rank-1 predictions only — that's the model's actual call.
+        pred_rows = (await session.execute(
+            select(
+                RunnerPredictionHistoryRow.race_id,
+                RunnerPredictionHistoryRow.horse_name,
+                RunnerPredictionHistoryRow.win_probability,
+                RunnerPredictionHistoryRow.distance,
+                RunnerPredictionHistoryRow.track_condition,
+                RunnerPredictionHistoryRow.prize_money,
+                RunnerPredictionHistoryRow.state,
+                RunnerPredictionHistoryRow.field_size,
+                RunnerPredictionHistoryRow.enriched_at,
+            )
+            .where(RunnerPredictionHistoryRow.race_id >= f"{cutoff_date}_")
+            .where(RunnerPredictionHistoryRow.model_rank == 1)
+            .where(RunnerPredictionHistoryRow.cancelled.is_(False)
+                   | RunnerPredictionHistoryRow.cancelled.is_(None))
+            .where(RunnerPredictionHistoryRow.source == "live")
+            .order_by(RunnerPredictionHistoryRow.enriched_at.desc())
+        )).fetchall()
+        # Top-3 sum: pull rank 1-3 win_prob per race for the concentration feature.
+        top3_rows = (await session.execute(
+            select(RunnerPredictionHistoryRow.race_id,
+                   RunnerPredictionHistoryRow.model_rank,
+                   RunnerPredictionHistoryRow.win_probability)
+            .where(RunnerPredictionHistoryRow.race_id >= f"{cutoff_date}_")
+            .where(RunnerPredictionHistoryRow.model_rank.in_([1, 2, 3]))
+            .where(RunnerPredictionHistoryRow.cancelled.is_(False)
+                   | RunnerPredictionHistoryRow.cancelled.is_(None))
+            .where(RunnerPredictionHistoryRow.source == "live")
+        )).fetchall()
+        # Winners
+        winners = (await session.execute(
+            select(HistoricalResultRow.race_id, HistoricalResultRow.horse_name)
+            .where(HistoricalResultRow.race_id >= f"{cutoff_date}_")
+            .where(HistoricalResultRow.position == 1)
+        )).fetchall()
+
+    # Dedup predictions to one row per race (latest enriched first thanks to ORDER BY)
+    rank1_by_race: dict[str, dict] = {}
+    for rid, name, p, dist, tc, pm, state, fs, enr in pred_rows:
+        if rid in rank1_by_race:
+            continue
+        rank1_by_race[rid] = {
+            "race_id": rid,
+            "horse_name": name,
+            "model_pct": (p or 0) * 100,
+            "distance": dist,
+            "track_condition": tc,
+            "prize_money": pm,
+            "state": state,
+            "field_size": fs,
+        }
+    # Top-3 sum per race
+    top3_by_race: dict[str, dict[int, float]] = {}
+    for rid, rank, p in top3_rows:
+        if p is None or rank is None:
+            continue
+        top3_by_race.setdefault(rid, {})[int(rank)] = float(p) * 100
+    # Winners lookup
+    winners_by_race: dict[str, str] = {}
+    for rid, name in winners:
+        winners_by_race[rid] = _normalize_horse(name or "")
+
+    # Build evaluation set
+    evals: list[dict] = []
+    for rid, info in rank1_by_race.items():
+        if rid not in winners_by_race:
+            continue  # no result yet
+        won = _normalize_horse(info["horse_name"]) == winners_by_race[rid]
+        date_str, venue, _ = _parse_race_id(rid)
+        dow = "?"
+        if date_str:
+            try:
+                dow = datetime.strptime(date_str, "%Y-%m-%d").strftime("%a")
+            except Exception:
+                pass
+        top3 = top3_by_race.get(rid, {})
+        top3_sum = sum(top3.get(r, 0) for r in (1, 2, 3))
+        info_full = dict(info)
+        info_full.update({
+            "won": won,
+            "dow": dow,
+            "venue": venue,
+            "metro": (venue or "").lower() in _FUNK_METRO_VENUES,
+            "top3_sum_pct": top3_sum,
+        })
+        evals.append(info_full)
+
+    total_n = len(evals)
+    total_wins = sum(1 for e in evals if e["won"])
+    overall_rate = round(total_wins / total_n * 100, 1) if total_n else 0
+
+    def _bucket(name: str, key_fn, bands=None):
+        """Return list of {bucket, n, wins, win_rate_pct, lift_pct}.
+        bands lets you collapse continuous values into named ranges."""
+        groups: dict[str, list] = {}
+        for e in evals:
+            k = key_fn(e)
+            if k is None:
+                continue
+            groups.setdefault(k, []).append(e)
+        out = []
+        for k, items in groups.items():
+            n = len(items)
+            wins = sum(1 for x in items if x["won"])
+            rate = round(wins / n * 100, 1) if n else 0
+            out.append({
+                "bucket": k,
+                "n": n,
+                "wins": wins,
+                "win_rate_pct": rate,
+                "lift_pct": round(rate - overall_rate, 1),
+            })
+        out.sort(key=lambda r: -r["win_rate_pct"])
+        return out
+
+    def _band_dist(d):
+        if not d: return None
+        if d <= 1200: return "sprint (≤1200m)"
+        if d <= 1600: return "mile (1300-1600m)"
+        if d <= 2000: return "middle (1700-2000m)"
+        return "staying (2100m+)"
+
+    def _band_field(f):
+        if not f: return None
+        if f <= 8: return "small (≤8)"
+        if f <= 11: return "medium (9-11)"
+        if f <= 14: return "large (12-14)"
+        return "huge (15+)"
+
+    def _band_model(p):
+        if p is None: return None
+        if p < 25: return "weak rank-1 (<25%)"
+        if p < 30: return "mod rank-1 (25-29%)"
+        if p < 35: return "strong rank-1 (30-34%)"
+        if p < 40: return "very strong (35-39%)"
+        return "dominant (≥40%)"
+
+    def _band_top3(p):
+        if not p: return None
+        if p < 45: return "open (<45%)"
+        if p < 55: return "moderate (45-54%)"
+        if p < 65: return "concentrated (55-64%)"
+        return "heavy fav (≥65%)"
+
+    def _band_prize(p):
+        if not p: return "unknown"
+        if p >= 80000: return "metro ($80k+)"
+        if p >= 30000: return "feature ($30-79k)"
+        if p >= 15000: return "country ($15-29k)"
+        return "picnic (<$15k)"
+
+    def _band_tc(t):
+        if not t: return None
+        t = str(t).lower()
+        if "good" in t: return "Good"
+        if "soft" in t: return "Soft"
+        if "heavy" in t: return "Heavy"
+        if "synth" in t or "tape" in t or "poly" in t: return "Synthetic"
+        return "Other"
+
+    result = {
+        "days": days,
+        "overall_races": total_n,
+        "overall_wins": total_wins,
+        "overall_win_rate_pct": overall_rate,
+        "min_sample": min_sample,
+        "buckets": {
+            "metro_vs_country": _bucket("metro", lambda e: "Metro" if e["metro"] else "Country/Provincial"),
+            "day_of_week": _bucket("dow", lambda e: e["dow"] if e["dow"] != "?" else None),
+            "field_size": _bucket("field", lambda e: _band_field(e["field_size"])),
+            "distance": _bucket("dist", lambda e: _band_dist(e["distance"])),
+            "track_condition": _bucket("tc", lambda e: _band_tc(e["track_condition"])),
+            "prize_money": _bucket("prize", lambda e: _band_prize(e["prize_money"])),
+            "state": _bucket("state", lambda e: e.get("state") if e.get("state") else None),
+            "model_confidence": _bucket("mod", lambda e: _band_model(e["model_pct"])),
+            "top3_sum": _bucket("t3", lambda e: _band_top3(e["top3_sum_pct"])),
+        },
+    }
+    # Filter each bucket to only bands with sample ≥ min_sample for the
+    # "honest" view (small samples are too noisy to act on).
+    result["honest_buckets"] = {
+        name: [b for b in band if b["n"] >= min_sample]
+        for name, band in result["buckets"].items()
+    }
+    return result
+
+
 @app.get("/api/admin/bets/feature-analysis")
 async def admin_feature_analysis(
     days: int = 30,
