@@ -164,6 +164,47 @@
       margin-left: auto;
     }
 
+    .edge-mode-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin-top: 12px;
+      padding: 8px 12px;
+      background: rgba(168,85,247,0.06);
+      border: 1px solid rgba(168,85,247,0.25);
+      border-radius: 8px;
+    }
+    .edge-mode-label {
+      font-family: 'Barlow Condensed', sans-serif;
+      font-weight: 800;
+      font-size: 0.72rem;
+      letter-spacing: 0.6px;
+      color: var(--purple-bright, #c084fc);
+      text-transform: uppercase;
+    }
+    .edge-mode-pill {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      color: var(--text-dim);
+      padding: 5px 10px;
+      border-radius: 999px;
+      font-size: 0.75rem;
+      font-weight: 600;
+      cursor: pointer;
+      font-family: inherit;
+    }
+    .edge-mode-pill.active {
+      background: var(--purple, #a855f7);
+      color: #fff;
+      border-color: var(--purple, #a855f7);
+    }
+    .edge-mode-hint {
+      font-size: 0.7rem;
+      color: var(--text-dim);
+      margin-left: 6px;
+    }
+
     @media (min-width: 768px) {
       .hero-title { font-size: 3rem; }
     }
@@ -1504,6 +1545,12 @@
       </div>
       <span class="updated-at" id="updatedAt"></span>
     </div>
+    <div class="edge-mode-row" id="edgeModeRow">
+      <span class="edge-mode-label">Mode</span>
+      <button class="edge-mode-pill active" id="edgeModeSharp" onclick="setEdgeMode('sharp')">🎯 Sharp only</button>
+      <button class="edge-mode-pill" id="edgeModeAll" onclick="setEdgeMode('all')">All picks</button>
+      <span class="edge-mode-hint">Sharp = high-confidence niche (~32% win rate vs 17% baseline)</span>
+    </div>
   </div>
 
   <div class="nav-tabs-wrap">
@@ -2275,8 +2322,29 @@
     section.style.display = '';
   }
 
+  // Sharp niche — historical 30-35% win rate vs 16-20% baseline. A
+  // pick qualifies if model_pct ≥30 OR top-3 sum ≥60% (race is
+  // concentrated). The niche-analysis backtest showed these two
+  // signals each lift win rate +10-18 points.
+  function isSharpEdgePick(p) {
+    if ((p.model_pct || 0) >= 30) return true;
+    const field = p.field || [];
+    const top3Sum = field
+      .filter(f => !f.scratched)
+      .sort((a, b) => (b.win_pct || 0) - (a.win_pct || 0))
+      .slice(0, 3)
+      .reduce((s, f) => s + (f.win_pct || 0), 0);
+    return top3Sum >= 60;
+  }
+
+  // Page-level sharp/all toggle. Default = sharp.
+  if (typeof window.__edgeMode === 'undefined') window.__edgeMode = 'sharp';
+
   function renderContent(data, stake, results) {
-    const picks = data.picks;
+    let picks = data.picks;
+    if (window.__edgeMode === 'sharp') {
+      picks = picks.filter(isSharpEdgePick);
+    }
     results = results || {};
 
     const picksByDate = {};
@@ -2448,6 +2516,22 @@
       renderContent(picksData, stake, resultsMap);
     }
   }
+
+  // Sharp/All toggle handler. Re-renders the current picks list using
+  // the new mode without re-fetching from the server.
+  function setEdgeMode(mode) {
+    window.__edgeMode = mode;
+    const sharpBtn = document.getElementById('edgeModeSharp');
+    const allBtn = document.getElementById('edgeModeAll');
+    if (sharpBtn) sharpBtn.classList.toggle('active', mode === 'sharp');
+    if (allBtn) allBtn.classList.toggle('active', mode === 'all');
+    if (picksData) {
+      const stake = parseFloat(document.getElementById('stakeInput').value) || 10;
+      renderContent(picksData, stake, resultsMap);
+    }
+  }
+  // Expose on the global scope so the inline onclick handlers can reach it.
+  window.setEdgeMode = setEdgeMode;
   let resultsMap = {};
   let yesterdayLoaded = false;
   let yesterdayData = null;

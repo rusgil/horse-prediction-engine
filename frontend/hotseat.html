@@ -527,7 +527,13 @@
     </div>
     <div class="filter-help">
       <strong>Win %</strong> = model's chance the horse wins ·
-      <strong>Place %</strong> = chance of finishing top 3
+      <strong>Place %</strong> = chance of finishing top 3 ·
+      <strong>Sharp</strong> = our highest-confidence niche (32-35% win rate historically)
+    </div>
+    <div class="filter-row">
+      <span class="filter-axis-label">Mode</span>
+      <button class="filter-pill active" data-axis="mode" data-filter="sharp">🎯 Sharp only</button>
+      <button class="filter-pill" data-axis="mode" data-filter="all">All picks</button>
     </div>
     <div class="filter-row">
       <span class="filter-axis-label">Win %</span>
@@ -562,12 +568,28 @@
   const API = 'https://web-production-dec62.up.railway.app';
   let state = {
     picks: [],
+    mode: 'sharp',  // 'sharp' or 'all' — sharp is the high-confidence niche
     winFilter: 'all',
     placeFilter: 'all',
     venue: 'all',
     expanded: new Set(),  // race_ids whose field is shown
     lastFetch: 0,
   };
+
+  // Sharp = the niche bucket where the model has historically hit 30-35%.
+  // Requires either a confident rank-1 (≥30%) OR a concentrated race
+  // (top-3 sum ≥60% — fewer plausible winners). Either is a strong signal
+  // independently; combined they overlap so this OR captures both.
+  function isSharpPick(p) {
+    const modelPct = p.model_pct || 0;
+    const field = p.field || [];
+    const top3Sum = field
+      .filter(f => !f.scratched)
+      .sort((a, b) => (b.win_pct || 0) - (a.win_pct || 0))
+      .slice(0, 3)
+      .reduce((s, f) => s + (f.win_pct || 0), 0);
+    return modelPct >= 30 || top3Sum >= 60;
+  }
 
   // Display-only aliases for venue labels. Slug stays the same in the DB
   // and API; only the rendered string changes.
@@ -761,6 +783,11 @@
 
   function applyFilters(picks, winFilter, placeFilter, venue) {
     let out = picks.filter(p => isUpcoming(p.scheduled_time));
+    // Sharp filter — applied before user-driven filters so the page
+    // defaults to the high-confidence niche.
+    if (state.mode === 'sharp') {
+      out = out.filter(isSharpPick);
+    }
     // Win threshold (model's predicted win probability)
     if (winFilter === 'win30') {
       out = out.filter(p => p.model_pct >= 30);
@@ -1033,6 +1060,7 @@
       btn.classList.add('active');
       if (axis === 'win') state.winFilter = btn.dataset.filter;
       else if (axis === 'place') state.placeFilter = btn.dataset.filter;
+      else if (axis === 'mode') state.mode = btn.dataset.filter;
       renderList();
     });
   });
