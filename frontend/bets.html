@@ -863,6 +863,21 @@
     return { text: `in ${hrs}h ${rem.toString().padStart(2,'0')}m`, cls: '' };
   }
 
+  // Display-only aliases for venue labels. Slug stays the same in the DB
+  // and API; only the rendered string changes.
+  const VENUE_DISPLAY_ALIAS = {
+    'pioneer-park': 'Alice Springs (Pioneer Park)',
+  };
+  function venueDisplay(slug, opts) {
+    opts = opts || {};
+    const key = (slug || '').toLowerCase();
+    const aliased = VENUE_DISPLAY_ALIAS[key];
+    if (aliased) return opts.upper ? aliased.toUpperCase() : aliased;
+    const titled = (slug || '').replace(/-/g, ' ');
+    if (opts.upper) return titled.toUpperCase();
+    return titled.replace(/\b\w/g, l => l.toUpperCase());
+  }
+
   function escHtml(s) {
     return (s == null ? '' : String(s))
       .replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
@@ -1270,7 +1285,7 @@
           <div>${fmtPnl(pnl)}</div>
         </div>`;
       }
-      const venue = (r.venue || '').replace(/-/g,' ').toUpperCase();
+      const venue = venueDisplay(r.venue, {upper: true});
       const jt = formatJumpTime(r.scheduled_time);
       const cd = formatCountdown(r.scheduled_time);
       const timeRow = jt
@@ -1411,7 +1426,7 @@
           </div>`;
         return;
       }
-      const venue = (cand.venue || '').replace(/-/g, ' ').replace(/\b\w/g, l => l.toUpperCase());
+      const venue = venueDisplay(cand.venue);
       const jump = cand.scheduled_time ? cand.scheduled_time.substring(11, 16) : '—';
       target.innerHTML = `
         <div class="hero-pick">

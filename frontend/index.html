@@ -1296,7 +1296,7 @@
       if (m.cancelled) {
         el.style.cssText = 'opacity:0.55;filter:grayscale(0.4);pointer-events:none;cursor:default;';
         el.innerHTML = `
-          <span class="pill-name">${escHtml(m.venue || '')}</span>
+          <span class="pill-name">${escHtml(venueDisplay(m))}</span>
           <span class="abandoned-tag">Abandoned</span>
         `;
       } else {
@@ -1491,7 +1491,7 @@
       ? `<span class="info-chip" style="background:rgba(45,212,191,0.15);color:var(--teal-bright,#5eead4);border-color:rgba(45,212,191,0.4)"><strong>METRO</strong></span>`
       : '';
     return `
-      <span class="info-chip"><strong>${escHtml(m.venue || '')}</strong></span>
+      <span class="info-chip"><strong>${escHtml(venueDisplay(m))}</strong></span>
       ${tierBadge}
       ${m.state ? `<span class="info-chip">${escHtml(m.state)}</span>` : ''}
       ${m.rail_position ? `<span class="info-chip">Rail: <strong>${escHtml(m.rail_position)}</strong></span>` : ''}
@@ -1785,6 +1785,17 @@
 
   function escHtml(s) {
     return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  }
+
+  // Display-only aliases keyed by venue_code (slug). Renders the alias
+  // when present; falls back to the server-provided venue text otherwise.
+  const VENUE_DISPLAY_ALIAS = {
+    'pioneer-park': 'Alice Springs (Pioneer Park)',
+  };
+  function venueDisplay(m) {
+    if (!m) return '';
+    const slug = (m.venue_code || '').toLowerCase();
+    return VENUE_DISPLAY_ALIAS[slug] || m.venue || '';
   }
 
   function capitalize(s) {

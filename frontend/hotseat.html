@@ -569,6 +569,21 @@
     lastFetch: 0,
   };
 
+  // Display-only aliases for venue labels. Slug stays the same in the DB
+  // and API; only the rendered string changes.
+  const VENUE_DISPLAY_ALIAS = {
+    'pioneer-park': 'Alice Springs (Pioneer Park)',
+  };
+  function venueDisplay(slug, opts) {
+    opts = opts || {};
+    const key = (slug || '').toLowerCase();
+    const aliased = VENUE_DISPLAY_ALIAS[key];
+    if (aliased) return opts.upper ? aliased.toUpperCase() : aliased;
+    const titled = (slug || '').replace(/-/g, ' ');
+    if (opts.upper) return titled.toUpperCase();
+    return titled.replace(/\b\w/g, l => l.toUpperCase());
+  }
+
   function escHtml(s) {
     return (s == null ? '' : String(s))
       .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
@@ -862,7 +877,7 @@
       const oddsTxt = p.best_available_odds && p.best_available_odds > 1.0
         ? '$' + p.best_available_odds.toFixed(2) : '—';
       const placeTxt = p.place_probability != null ? p.place_probability.toFixed(0) + '%' : '—';
-      const venueLabel = p.venue ? p.venue.replace(/-/g, ' ').toUpperCase() : '—';
+      const venueLabel = p.venue ? venueDisplay(p.venue, {upper: true}) : '—';
       // Premium badge — matches edge.html's isPremiumPick exactly so the
       // criteria advertised on the Edge page ('≥30% confidence · $3.00+
       // odds · model beats market by 5%+') hold true on Hot Seat too.

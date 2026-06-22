@@ -432,8 +432,13 @@
     return d.toLocaleTimeString('en-AU', { hour: '2-digit', minute: '2-digit', hour12: false });
   }
 
+  // Display-only aliases. Slug stays the same in the API; only renders change.
+  const VENUE_DISPLAY_ALIAS = {
+    'pioneer-park': 'Alice Springs (Pioneer Park)',
+  };
   function venueLabel(v) {
-    return (v || '').replace(/-/g, ' ').toUpperCase();
+    const key = (v || '').toLowerCase();
+    return (VENUE_DISPLAY_ALIAS[key] || (v || '').replace(/-/g, ' ')).toUpperCase();
   }
 
   function copyPlan(text) {
