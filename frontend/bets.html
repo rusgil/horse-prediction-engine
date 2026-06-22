@@ -1138,18 +1138,12 @@
     const pendingCount = races.length - resulted.length;
     const anyEstimated = settled.some(r => r.dividend_estimated);
 
-    // Per-strategy daily hit %: prefer today's AEST resulted races, fall
-    // back to the most recent date that has any resulted races so the
-    // strip is never just '—'s when racing hasn't yet started today.
-    const todayKey = _todayAestKey();
-    let stratDayKey = todayKey;
-    let dayResulted = resulted.filter(r => _aestDateKey(r) === todayKey);
-    if (!dayResulted.length) {
-      const resultedDates = [...new Set(resulted.map(_aestDateKey))].filter(Boolean).sort();
-      stratDayKey = resultedDates[resultedDates.length - 1] || todayKey;
-      dayResulted = resulted.filter(r => _aestDateKey(r) === stratDayKey);
-    }
-    const stratDayLabel = stratDayKey === todayKey ? 'today' : _dayLabel(stratDayKey).toLowerCase();
+    // Per-strategy stats use the same resulted set as the top card so
+    // the denominators line up (was previously today-only, which made
+    // 'X/6 today' under '16/31 races hit' look like a bug). Day label
+    // now reflects window: '14d' or the active filter range.
+    const dayResulted = resulted;
+    const stratDayLabel = 'window';
     const stratStats = STRATEGY_DISPLAY.filter(s => !s.legacy).map(s => {
       const racesWithGroup = dayResulted.filter(r => {
         const groupBets = (r.bets_by_strategy || {})[s.key];
@@ -1205,7 +1199,7 @@
       <div class="strategy-stat">
         <div class="strategy-stat-name">${s.label}</div>
         <div class="strategy-stat-num">${s.pct === null ? '—' : s.pct + '%'}</div>
-        <div class="strategy-stat-frac">${s.hits}/${s.total} ${stratDayLabel}</div>
+        <div class="strategy-stat-frac">${s.hits}/${s.total} hit</div>
         <div class="strategy-stat-roi ${roiCls}">${roiTxt} ROI</div>
       </div>`;
     }).join('');
