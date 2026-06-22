@@ -286,6 +286,63 @@
     .date-pill-acc.bad  { color: #f87171; }
     .date-pill.past { opacity: 0.8; }
 
+    /* Key/legend for the date-pill win/place pills */
+    .acc-key {
+      display: flex;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 6px 14px;
+      padding: 8px 12px;
+      margin: 8px 0 6px;
+      background: var(--bg-elevated);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      font-size: 11px;
+      color: var(--text-dim);
+    }
+    .acc-key-label {
+      font-family: 'Barlow Condensed', sans-serif;
+      font-weight: 800;
+      font-size: 10px;
+      letter-spacing: 0.6px;
+      color: var(--gold);
+      text-transform: uppercase;
+    }
+    .acc-key-item {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      white-space: nowrap;
+    }
+    .acc-key-swatch {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-width: 28px;
+      padding: 1px 5px;
+      border-radius: 4px;
+      font-size: 10px;
+      font-weight: 700;
+      font-family: 'Outfit', sans-serif;
+    }
+    .acc-key-swatch.win {
+      background: rgba(16,185,129,0.12);
+      color: #10b981;
+      border: 1px solid rgba(16,185,129,0.3);
+    }
+    .acc-key-swatch.place {
+      background: rgba(59,130,246,0.12);
+      color: #60a5fa;
+      border: 1px solid rgba(59,130,246,0.3);
+    }
+    .acc-key-tier {
+      font-size: 13px;
+      line-height: 1;
+    }
+    .acc-key-tier.good { color: #10b981; }
+    .acc-key-tier.ok   { color: var(--gold); }
+    .acc-key-tier.bad  { color: #f87171; }
+
     /* Day accuracy banner (shown on past dates) */
     .day-accuracy-bar {
       display: flex; align-items: center; gap: 16px; flex-wrap: wrap;
@@ -858,6 +915,14 @@
   <div class="pills-scroller">
     <div class="pills-row" id="datePills"></div>
     <div class="pills-fade-right"></div>
+  </div>
+
+  <!-- Key for the win/place pills shown on each past date -->
+  <div class="acc-key" id="accKey">
+    <span class="acc-key-label">KEY</span>
+    <span class="acc-key-item"><span class="acc-key-swatch win">17%</span>Win — model's top pick won the race</span>
+    <span class="acc-key-item"><span class="acc-key-swatch place">28%</span>Place — model's top pick finished top 3</span>
+    <span class="acc-key-item"><span class="acc-key-tier good">●</span>≥50% / <span class="acc-key-tier ok">●</span>38–49% / <span class="acc-key-tier bad">●</span>&lt;38%</span>
   </div>
 
   <!-- 5-day performance strip -->
