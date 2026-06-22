@@ -922,7 +922,11 @@
     <span class="acc-key-label">KEY</span>
     <span class="acc-key-item"><span class="acc-key-swatch win">17%</span>Win — model's top pick won the race</span>
     <span class="acc-key-item"><span class="acc-key-swatch place">28%</span>Place — model's top pick finished top 3</span>
-    <span class="acc-key-item"><span class="acc-key-tier good">●</span>≥50% / <span class="acc-key-tier ok">●</span>38–49% / <span class="acc-key-tier bad">●</span>&lt;38%</span>
+    <span class="acc-key-item" title="Realistic rank-1 win-rate bands. Market favourites win ~30-33%, so ≥25% is a strong model and <18% trails the favourite baseline.">
+      Win %: <span class="acc-key-tier good">●</span>≥25% strong /
+      <span class="acc-key-tier ok">●</span>18–24% ok /
+      <span class="acc-key-tier bad">●</span>&lt;18% weak
+    </span>
   </div>
 
   <!-- 5-day performance strip -->
@@ -1071,7 +1075,11 @@
         const complete = perf.data_complete !== false;
         const pct = Math.round(perf.win_rate * 100);
         const placePct = Math.round((perf.place_rate || 0) * 100);
-        const cls = pct >= 50 ? 'good' : pct >= 38 ? 'ok' : 'bad';
+        // Realistic rank-1 win-rate thresholds. Market favourites win ~30-33% of
+// all races (the natural ceiling for retail predictions). Anything ≥25%
+// is genuinely strong; 18-24% is competitive; <18% trails the market
+// favourite baseline by a meaningful margin.
+const cls = pct >= 25 ? 'good' : pct >= 18 ? 'ok' : 'bad';
         const winLabel = `${pct}%`;
         const placeLabel = `${placePct}%`;
         accHtml = `<span class="date-pill-acc ${cls}" title="${complete ? 'Win rate' : 'Win rate (partial)'}">${winLabel}</span><span class="date-pill-acc" style="color:#60a5fa;background:rgba(59,130,246,0.12);border-color:rgba(59,130,246,0.25);opacity:${complete ? 1 : 0.75}" title="${complete ? 'Place rate' : 'Place rate (partial)'}">${placeLabel}</span>`;
@@ -1258,7 +1266,8 @@
     const complete = perf.data_complete !== false;
     const pct = Math.round(perf.win_rate * 100);
     const placePct = Math.round(perf.place_rate * 100);
-    const rateClass = pct >= 50 ? 'good' : pct >= 38 ? 'ok' : 'bad';
+    // Same thresholds as the date-pill colouring (see renderDatePills).
+    const rateClass = pct >= 25 ? 'good' : pct >= 18 ? 'ok' : 'bad';
     const winDisplay = `${pct}%`;
     const placeDisplay = `${placePct}%`;
     const pnlClass = perf.value_pnl >= 0 ? 'good' : 'bad';
