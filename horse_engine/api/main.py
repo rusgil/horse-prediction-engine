@@ -6348,6 +6348,7 @@ async def place_decisiveness_backtest(
     days: int = 60,
     top3_max: float = 55.0,
     field_max: int = 11,
+    box_type: str = "trio",  # 'trio' (3-horse box) or 'quad' (4-horse box)
     x_cron_secret: Optional[str] = Header(None),
 ):
     """Does requiring a clear place gap between rank-3 and rank-4 lift
@@ -6362,8 +6363,20 @@ async def place_decisiveness_backtest(
     days = max(7, min(int(days), 365))
     cutoff_date = (_today_aest() - timedelta(days=days)).isoformat()
 
+    # Box-type config — box_size = horses in the box, gap_low/high = which
+    # ranks define the "decisiveness gap" we're testing. Trio compares
+    # rank-3 vs rank-4 (just outside the 3-horse box); Quad compares
+    # rank-4 vs rank-5 (just outside the 4-horse box).
+    bt = (box_type or "trio").lower()
+    if bt not in ("trio", "quad"):
+        raise HTTPException(400, "box_type must be 'trio' or 'quad'")
+    box_size = 3 if bt == "trio" else 4
+    gap_low = box_size  # rank-3 for trio, rank-4 for quad
+    gap_high = box_size + 1  # rank-4 for trio, rank-5 for quad
+    needed_ranks = list(range(1, gap_high + 1))
+
     async with get_session() as session:
-        # Pull every rank 1-4 prediction so we can compute the gap.
+        # Pull every rank 1..N+1 prediction so we can compute the gap.
         pred_rows = (await session.execute(
             select(
                 RunnerPredictionHistoryRow.race_id,
@@ -6375,7 +6388,7 @@ async def place_decisiveness_backtest(
                 RunnerPredictionHistoryRow.enriched_at,
             )
             .where(RunnerPredictionHistoryRow.race_id >= f"{cutoff_date}_")
-            .where(RunnerPredictionHistoryRow.model_rank.in_([1, 2, 3, 4]))
+            .where(RunnerPredictionHistoryRow.model_rank.in_(needed_ranks))
             .where(RunnerPredictionHistoryRow.cancelled.is_(False)
                    | RunnerPredictionHistoryRow.cancelled.is_(None))
             .where(RunnerPredictionHistoryRow.source == "live")
@@ -6439,7 +6452,7 @@ async def place_decisiveness_backtest(
     all_hits = 0
 
     for rid, ranks in per_race.items():
-        if not all(r in ranks for r in (1, 2, 3, 4)):
+        if not all(r in ranks for r in needed_ranks):
             continue
         # Apply baseline Lab Sharp filter
         top3_sum = sum(ranks[r]["win_prob"] for r in (1, 2, 3)) * 100
@@ -6450,11 +6463,13 @@ async def place_decisiveness_backtest(
         winners = results_by_race.get(rid)
         if not winners or len(winners) < 3:
             continue
-        # Trio box hit: model's top-3 horses are exactly the placings (any order)
-        box_normed = {_normalize_horse(ranks[r]["horse_name"]) for r in (1, 2, 3)}
-        hit = box_normed == winners
-        # Compute place gap rank-3 minus rank-4 (in percentage points)
-        gap = (ranks[3]["place_prob"] - ranks[4]["place_prob"]) * 100
+        # Box hit:
+        #   Trio: model's top-3 are EXACTLY the actual top-3
+        #   Quad: all 3 actual placings are within the model's top-4
+        box_normed = {_normalize_horse(ranks[r]["horse_name"]) for r in range(1, box_size + 1)}
+        hit = winners.issubset(box_normed)
+        # Place gap = rank gap_low - rank gap_high (i.e. last horse in box vs first horse out)
+        gap = (ranks[gap_low]["place_prob"] - ranks[gap_high]["place_prob"]) * 100
         all_eligible += 1
         if hit:
             all_hits += 1
@@ -6485,7 +6500,7 @@ async def place_decisiveness_backtest(
         kept_n = 0
         kept_hits = 0
         for rid, ranks in per_race.items():
-            if not all(r in ranks for r in (1, 2, 3, 4)):
+            if not all(r in ranks for r in needed_ranks):
                 continue
             top3_sum = sum(ranks[r]["win_prob"] for r in (1, 2, 3)) * 100
             fs = field_sizes.get(rid, 999)
@@ -6494,11 +6509,12 @@ async def place_decisiveness_backtest(
             winners = results_by_race.get(rid)
             if not winners or len(winners) < 3:
                 continue
-            gap = (ranks[3]["place_prob"] - ranks[4]["place_prob"]) * 100
+            gap = (ranks[gap_low]["place_prob"] - ranks[gap_high]["place_prob"]) * 100
             if gap < gap_min_pts:
                 continue
             kept_n += 1
-            if {_normalize_horse(ranks[r]["horse_name"]) for r in (1, 2, 3)} == winners:
+            box_normed = {_normalize_horse(ranks[r]["horse_name"]) for r in range(1, box_size + 1)}
+            if winners.issubset(box_normed):
                 kept_hits += 1
         coverage = round(kept_n / all_eligible * 100, 1) if all_eligible else 0
         hit_pct = round(kept_hits / kept_n * 100, 1) if kept_n else 0
@@ -6513,6 +6529,9 @@ async def place_decisiveness_backtest(
 
     return {
         "days": days,
+        "box_type": bt,
+        "box_size": box_size,
+        "gap_definition": f"rank-{gap_low} place_pct minus rank-{gap_high} place_pct",
         "lab_sharp_filter": f"top3 ≤{top3_max}% AND field ≤{field_max}",
         "baseline_eligible_races": all_eligible,
         "baseline_hits": all_hits,
