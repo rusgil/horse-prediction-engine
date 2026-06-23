@@ -1558,7 +1558,10 @@ const cls = pct >= 25 ? 'good' : pct >= 18 ? 'ok' : 'bad';
         return Math.max(max, pct);
       }, 0);
       const key = m.venue_code;
-      if (S.meetingStats[key]) S.meetingStats[key].maxConf = freshMaxConf;
+      // Initialise stats entry if the background load hasn't landed yet.
+      // Without this, isSharpMeeting() returns false for a freshly-selected
+      // meeting and the Sharp filter wrongly removes it from the pills.
+      S.meetingStats[key] = { ...(S.meetingStats[key] || {}), maxConf: freshMaxConf };
       const confEl = document.getElementById(`pill-conf-${key}`);
       if (confEl && freshMaxConf >= 25) {
         confEl.textContent = `${freshMaxConf}% best pick`;
