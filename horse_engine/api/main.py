@@ -555,6 +555,109 @@ async def _scheduled_pre_race_enrich():
         log.exception("[pre-race] Pre-race enrich failed: %s", e)
 
 
+async def _rerank_race_after_scratch(session, race_id: str) -> bool:
+    """Re-rank and renormalise probabilities over the surviving (uncancelled)
+    runners of a race. Pure DB op — no ML re-inference, no upstream API calls.
+
+    Without this step a cancelled rank-1 leaves model_rank=1 unfilled and the
+    Lab queries that key off `model_rank == 1` silently drop the race. Called
+    by _check_scratches_today whenever a runner is freshly cancelled.
+
+    Mirrors changes into RunnerPredictionHistoryRow's latest enriched_at
+    snapshot so settled-race views stay consistent too.
+    """
+    from sqlalchemy import update as sa_update
+
+    survivors = (await session.execute(
+        select(
+            RunnerPredictionRow.id,
+            RunnerPredictionRow.horse_name,
+            RunnerPredictionRow.win_probability,
+            RunnerPredictionRow.place_probability,
+            RunnerPredictionRow.exotic_model_rank,
+        )
+        .where(RunnerPredictionRow.race_id == race_id)
+        .where(
+            RunnerPredictionRow.cancelled.is_(False)
+            | RunnerPredictionRow.cancelled.is_(None)
+        )
+    )).fetchall()
+    if not survivors:
+        return False
+
+    sw = sum((row.win_probability or 0) for row in survivors)
+    sp = sum((row.place_probability or 0) for row in survivors)
+
+    by_win = sorted(survivors, key=lambda r: -(r.win_probability or 0))
+    by_place = sorted(survivors, key=lambda r: -(r.place_probability or 0))
+    # Exotic rank is preserved relative-order — sort survivors by their existing
+    # exotic_model_rank (None/0 sink to the back) and re-assign 1..N.
+    by_exotic = sorted(
+        survivors,
+        key=lambda r: (r.exotic_model_rank if r.exotic_model_rank else 1_000_000),
+    )
+
+    win_rank: dict[int, int] = {r.id: i + 1 for i, r in enumerate(by_win)}
+    place_rank: dict[int, int] = {r.id: i + 1 for i, r in enumerate(by_place)}
+    exotic_rank: dict[int, int] = {r.id: i + 1 for i, r in enumerate(by_exotic)}
+
+    for row in survivors:
+        new_win = ((row.win_probability or 0) / sw) if sw > 0 else 0.0
+        new_place = ((row.place_probability or 0) / sp) if sp > 0 else 0.0
+        await session.execute(
+            sa_update(RunnerPredictionRow)
+            .where(RunnerPredictionRow.id == row.id)
+            .values(
+                win_probability=new_win,
+                place_probability=new_place,
+                model_rank=win_rank[row.id],
+                place_model_rank=place_rank[row.id],
+                exotic_model_rank=exotic_rank[row.id],
+            )
+        )
+
+    # Mirror into history's latest snapshot so settled-race code sees the
+    # corrected ranking too. Only touches uncancelled history rows.
+    latest_at = (await session.execute(
+        select(func.max(RunnerPredictionHistoryRow.enriched_at))
+        .where(RunnerPredictionHistoryRow.race_id == race_id)
+    )).scalar()
+    if latest_at is not None:
+        hist_rows = (await session.execute(
+            select(
+                RunnerPredictionHistoryRow.id,
+                RunnerPredictionHistoryRow.horse_name,
+            )
+            .where(RunnerPredictionHistoryRow.race_id == race_id)
+            .where(RunnerPredictionHistoryRow.enriched_at == latest_at)
+            .where(
+                RunnerPredictionHistoryRow.cancelled.is_(False)
+                | RunnerPredictionHistoryRow.cancelled.is_(None)
+            )
+        )).fetchall()
+        # Map survivor by horse_name → new ranks/probs
+        by_name = {r.horse_name: r for r in survivors}
+        for hist_row in hist_rows:
+            surv = by_name.get(hist_row.horse_name)
+            if surv is None:
+                continue
+            new_win = ((surv.win_probability or 0) / sw) if sw > 0 else 0.0
+            new_place = ((surv.place_probability or 0) / sp) if sp > 0 else 0.0
+            await session.execute(
+                sa_update(RunnerPredictionHistoryRow)
+                .where(RunnerPredictionHistoryRow.id == hist_row.id)
+                .values(
+                    win_probability=new_win,
+                    place_probability=new_place,
+                    model_rank=win_rank[surv.id],
+                    place_model_rank=place_rank[surv.id],
+                    exotic_model_rank=exotic_rank[surv.id],
+                )
+            )
+
+    return True
+
+
 async def _check_scratches_today() -> int:
     """
     Lightweight scratch detection — no ML inference.
@@ -646,6 +749,15 @@ async def _check_scratches_today() -> int:
                             log.info("[scratch-check] %s: cancelled %d runner(s): %s",
                                      race_id, result.rowcount, scratched_names)
                             total_cancelled += result.rowcount
+                            # Re-rank + renormalise over the surviving field so
+                            # the Lab's rank-1 queries pick up the promoted horse.
+                            try:
+                                async with get_session() as rsession:
+                                    if await _rerank_race_after_scratch(rsession, race_id):
+                                        await rsession.commit()
+                                        log.info("[scratch-check] %s: re-ranked survivors", race_id)
+                            except Exception as re:
+                                log.warning("[scratch-check] %s: rerank failed: %s", race_id, re)
             except Exception as e:
                 log.debug("[scratch-check] Failed for %s: %s", slug, e)
     except Exception as e:
@@ -653,6 +765,7 @@ async def _check_scratches_today() -> int:
 
     # Sync step: catch any mutable-cancelled runners whose history row predates this fix.
     # Runs every call so retroactive scratches (cancelled before this code was deployed) propagate.
+    affected_race_ids: set[str] = set()
     try:
         async with get_session() as session:
             already_cancelled_mut = (await session.execute(
@@ -662,6 +775,7 @@ async def _check_scratches_today() -> int:
             )).fetchall()
             if already_cancelled_mut:
                 for race_id, horse_name in already_cancelled_mut:
+                    affected_race_ids.add(race_id)
                     await session.execute(
                         sa_update(RunnerPredictionHistoryRow)
                         .where(RunnerPredictionHistoryRow.race_id == race_id)
@@ -672,6 +786,27 @@ async def _check_scratches_today() -> int:
                 await session.commit()
     except Exception as e:
         log.warning("[scratch-check] History sync failed: %s", e)
+
+    # Retroactive re-rank: races flagged cancelled before this fix shipped never
+    # had their ranks rebuilt. Detect "stale-ranked" races (those where rank 1
+    # is on a cancelled runner) and re-rank them once.
+    try:
+        async with get_session() as session:
+            stale_race_ids = (await session.execute(
+                select(RunnerPredictionRow.race_id).distinct()
+                .where(RunnerPredictionRow.race_id.like(f"{today}_%"))
+                .where(RunnerPredictionRow.cancelled.is_(True))
+                .where(RunnerPredictionRow.model_rank == 1)
+            )).scalars().all()
+        for race_id in set(stale_race_ids) | affected_race_ids:
+            try:
+                async with get_session() as rsession:
+                    if await _rerank_race_after_scratch(rsession, race_id):
+                        await rsession.commit()
+            except Exception as re:
+                log.warning("[scratch-check] retro rerank %s failed: %s", race_id, re)
+    except Exception as e:
+        log.warning("[scratch-check] Retro rerank scan failed: %s", e)
 
     return total_cancelled
 
