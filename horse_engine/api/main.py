@@ -7008,6 +7008,210 @@ async def portfolio_simulation(
     }
 
 
+@app.get("/api/admin/predictions/funkmeup-rethink")
+async def funkmeup_rethink_analysis(
+    days: int = 60,
+    x_cron_secret: Optional[str] = Header(None),
+):
+    """Answers two questions for the Funk Me Up redesign:
+    1. Does the win rate on rank-1 drop when rank-1 and rank-2 are close
+       in model probability (model is 'indecisive')?
+    2. What's the realistic ROI on a 3-4 leg PLACE multi using the model's
+       top picks at typical TAB place odds?
+    """
+    _check_admin(x_cron_secret)
+    days = max(7, min(int(days), 365))
+    cutoff_date = (_today_aest() - timedelta(days=days)).isoformat()
+
+    async with get_session() as session:
+        # All rank 1-3 history rows for races in window
+        pred_rows = (await session.execute(
+            select(
+                RunnerPredictionHistoryRow.race_id,
+                RunnerPredictionHistoryRow.horse_name,
+                RunnerPredictionHistoryRow.model_rank,
+                RunnerPredictionHistoryRow.win_probability,
+                RunnerPredictionHistoryRow.place_probability,
+                RunnerPredictionHistoryRow.enriched_at,
+            )
+            .where(RunnerPredictionHistoryRow.race_id >= f"{cutoff_date}_")
+            .where(RunnerPredictionHistoryRow.model_rank.in_([1, 2, 3]))
+            .where(RunnerPredictionHistoryRow.cancelled.is_(False)
+                   | RunnerPredictionHistoryRow.cancelled.is_(None))
+            .where(RunnerPredictionHistoryRow.source == "live")
+            .order_by(RunnerPredictionHistoryRow.enriched_at.desc())
+        )).fetchall()
+        # Result rows — winner + placings 1-3
+        result_rows = (await session.execute(
+            select(HistoricalResultRow.race_id, HistoricalResultRow.position,
+                   HistoricalResultRow.horse_name, HistoricalResultRow.starting_price)
+            .where(HistoricalResultRow.race_id >= f"{cutoff_date}_")
+            .where(HistoricalResultRow.position.in_([1, 2, 3]))
+        )).fetchall()
+
+    # Build per-race {rank: (name, win_p, place_p)} keeping latest per horse
+    per_race: dict[str, dict] = {}
+    seen: set = set()
+    for rid, name, rank, wp, pp, enr in pred_rows:
+        key = (rid, _normalize_horse(name))
+        if key in seen:
+            continue
+        seen.add(key)
+        per_race.setdefault(rid, {})[int(rank)] = {
+            "horse_name": name,
+            "win_prob": float(wp or 0),
+            "place_prob": float(pp or 0),
+        }
+    # Results lookup
+    results: dict[str, dict] = {}
+    for rid, pos, name, sp in result_rows:
+        if pos is None:
+            continue
+        results.setdefault(rid, {})[int(pos)] = {
+            "horse_name": name, "sp": sp,
+        }
+
+    # Q1: rank-1 win rate by gap-to-rank-2
+    gap_buckets = [
+        ("≤2pt gap (toss-up)", 0, 2),
+        ("2-5pt gap (lean)", 2, 5),
+        ("5-10pt gap (clear)", 5, 10),
+        ("10pt+ gap (dominant)", 10, 999),
+    ]
+    by_gap = {b[0]: {"races": 0, "wins": 0, "places": 0} for b in gap_buckets}
+    overall_n = 0
+    overall_wins = 0
+    overall_places = 0
+    for rid, ranks in per_race.items():
+        if 1 not in ranks or 2 not in ranks:
+            continue
+        if rid not in results:
+            continue
+        winner_norm = _normalize_horse((results[rid].get(1) or {}).get("horse_name") or "")
+        placings_norm = {
+            _normalize_horse((results[rid].get(p) or {}).get("horse_name") or "")
+            for p in (1, 2, 3)
+        }
+        if not winner_norm:
+            continue
+        rank1 = ranks[1]
+        rank2 = ranks[2]
+        gap_pts = (rank1["win_prob"] - rank2["win_prob"]) * 100
+        won = _normalize_horse(rank1["horse_name"]) == winner_norm
+        placed = _normalize_horse(rank1["horse_name"]) in placings_norm
+        overall_n += 1
+        if won: overall_wins += 1
+        if placed: overall_places += 1
+        for label, lo, hi in gap_buckets:
+            if lo <= gap_pts < hi:
+                by_gap[label]["races"] += 1
+                if won: by_gap[label]["wins"] += 1
+                if placed: by_gap[label]["places"] += 1
+                break
+
+    q1_out = []
+    for label, lo, hi in gap_buckets:
+        d = by_gap[label]
+        n = d["races"]
+        q1_out.append({
+            "bucket": label,
+            "n": n,
+            "rank1_win_pct": round(d["wins"]/n*100, 1) if n else 0,
+            "rank1_place_pct": round(d["places"]/n*100, 1) if n else 0,
+        })
+
+    # Q2: 3 / 4-leg PLACE multi using top-1 picks per race (favourite-style)
+    # Approximate TAB place odds as 1 / (place_prob * (1 - book_margin))
+    # where book_margin ~ 0.12 (Place markets carry ~12-15% over-round).
+    # Use the model's place_probability as proxy for actual place odds since
+    # we don't store TAB place prices historically.
+    BOOK_MARGIN = 0.12
+
+    def synth_place_odds(place_prob: float) -> float:
+        if place_prob <= 0:
+            return 0
+        # Implied odds assuming the market over-round is shared evenly
+        implied = max(place_prob * (1 - BOOK_MARGIN), 0.05)
+        return round(1.0 / implied, 2)
+
+    # Build per-race rank-1 pick's place_prob + did it place
+    race_picks = []
+    for rid, ranks in per_race.items():
+        if 1 not in ranks or rid not in results:
+            continue
+        rank1 = ranks[1]
+        if rank1["place_prob"] <= 0:
+            continue
+        winner_norm = _normalize_horse((results[rid].get(1) or {}).get("horse_name") or "")
+        placings_norm = {
+            _normalize_horse((results[rid].get(p) or {}).get("horse_name") or "")
+            for p in (1, 2, 3)
+        }
+        placed = _normalize_horse(rank1["horse_name"]) in placings_norm
+        date_str = rid.split("_", 1)[0]
+        race_picks.append({
+            "race_id": rid,
+            "date": date_str,
+            "place_prob": rank1["place_prob"],
+            "place_odds_est": synth_place_odds(rank1["place_prob"]),
+            "placed": placed,
+        })
+
+    # Group by date, simulate N-leg place multis using the day's strongest
+    # place picks (sorted by place_prob desc).
+    def simulate_place_multis(legs: int):
+        from collections import defaultdict
+        by_date: dict[str, list] = defaultdict(list)
+        for rp in race_picks:
+            by_date[rp["date"]].append(rp)
+        days_total = 0
+        multis_hit = 0
+        total_stake = 0.0
+        total_return = 0.0
+        for d, picks in by_date.items():
+            picks_sorted = sorted(picks, key=lambda x: -x["place_prob"])
+            if len(picks_sorted) < legs:
+                continue
+            chosen = picks_sorted[:legs]
+            multi_odds = 1.0
+            for c in chosen:
+                multi_odds *= c["place_odds_est"]
+            stake = 10.0
+            days_total += 1
+            total_stake += stake
+            if all(c["placed"] for c in chosen):
+                multis_hit += 1
+                total_return += stake * multi_odds
+        pnl = total_return - total_stake
+        return {
+            "legs": legs,
+            "days_evaluated": days_total,
+            "multis_hit": multis_hit,
+            "hit_rate_pct": round(multis_hit/days_total*100, 1) if days_total else 0,
+            "total_stake": round(total_stake, 2),
+            "total_return": round(total_return, 2),
+            "pnl": round(pnl, 2),
+            "roi_pct": round(pnl/total_stake*100, 1) if total_stake else 0,
+        }
+
+    q2_out = [simulate_place_multis(n) for n in (2, 3, 4, 5)]
+
+    return {
+        "days": days,
+        "overall_rank1_races": overall_n,
+        "overall_rank1_win_pct": round(overall_wins/overall_n*100, 1) if overall_n else 0,
+        "overall_rank1_place_pct": round(overall_places/overall_n*100, 1) if overall_n else 0,
+        "q1_decisiveness": q1_out,
+        "q2_place_multi": q2_out,
+        "q2_caveats": [
+            "Place odds estimated from model place_probability with 12% book over-round.",
+            "Actual TAB place odds may differ by ±10%.",
+            "Assumes favourite is bet at each leg (max model place_prob per race).",
+            "All metro + country races included.",
+        ],
+    }
+
+
 @app.get("/api/admin/predictions/niche-analysis")
 async def predictions_niche_analysis(
     days: int = 60,
