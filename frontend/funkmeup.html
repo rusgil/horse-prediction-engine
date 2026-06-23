@@ -191,6 +191,26 @@
     .confidence.B { color: var(--amber); border-color: var(--amber); background: rgba(245,158,11,0.12); }
     .confidence.C { color: var(--red); border-color: var(--red); background: rgba(248,113,113,0.12); }
 
+    .play-header-right {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      flex-shrink: 0;
+    }
+    .sharp-badge {
+      display: inline-flex;
+      align-items: center;
+      padding: 3px 8px;
+      border-radius: 999px;
+      background: rgba(168,85,247,0.14);
+      border: 1px solid rgba(168,85,247,0.4);
+      color: var(--purple-bright);
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: 0.4px;
+      white-space: nowrap;
+    }
+
     /* Prescriptive action block — the 'do this exact bet' instruction */
     .action-block {
       margin: 10px 0;
@@ -422,7 +442,7 @@
     <div class="title-row">
       <div>
         <h1 class="title">🎺 <span class="funk">Funk</span> Me Up</h1>
-        <div class="subtitle">Today's playbook · Sportsbet-tuned · $10 base stake</div>
+        <div class="subtitle">Today's curated playbook · 🎯 Sharp picks across each Sportsbet product · $10 base stake</div>
       </div>
       <div>
         <a href="/hotseat" class="nav-back">🔥 Hot Seat</a>
@@ -658,6 +678,25 @@
         <div class="action-return ${evCls}">${escHtml(action.returnIf)}</div>
       </div>` : '';
 
+    // Sharp badge — a play qualifies when its selection rules effectively
+    // meet the site-wide Sharp niche (high-confidence win-pick band).
+    //   - Lock + Spine: always (their selection thresholds exceed Sharp's)
+    //   - Wave: when average leg hit probability is high enough that the
+    //     2-pick set is genuinely concentrated
+    //   - Bonus + Lab Pick: never (Bonus uses value-overlay band below
+    //     Sharp's threshold; Lab Pick uses inverse niche)
+    const isSharpPlay = (() => {
+      if (p.kind === 'lock' || p.kind === 'spine') return true;
+      if (p.kind === 'wave' && Array.isArray(p.legs)) {
+        const avg = p.legs.reduce((s, l) => s + (l.leg_hit_probability || 0), 0) / (p.legs.length || 1);
+        return avg >= 0.55; // legs averaging ≥55% combined-pick hit
+      }
+      return false;
+    })();
+    const sharpBadgeHtml = isSharpPlay
+      ? `<span class="sharp-badge" title="Sharp pick — meets our high-confidence niche criteria">🎯 Sharp</span>`
+      : '';
+
     return `
       <div class="${cls}">
         ${heroTag}
@@ -666,7 +705,10 @@
             <h3 class="play-title"><span class="emoji">${meta.emoji}</span>${escHtml(p.title)}</h3>
             <div class="play-subtitle">${escHtml(p.subtitle || '')}</div>
           </div>
-          <span class="confidence ${p.confidence}" title="Confidence tier — A safer, C high variance">${p.confidence}</span>
+          <div class="play-header-right">
+            ${sharpBadgeHtml}
+            <span class="confidence ${p.confidence}" title="Confidence tier — A safer, C high variance">${p.confidence}</span>
+          </div>
         </div>
         ${actionHtml}
         ${legsHtml}
