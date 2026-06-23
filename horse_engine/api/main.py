@@ -2297,6 +2297,27 @@ async def lifespan(app: FastAPI):
             log.warning("[edge-yesterday-prewarm] failed: %s", e)
     asyncio.create_task(_prewarm_yesterday())
 
+    # Prewarm /api/meetings for the date strip range (-7..+2). After a
+    # redeploy, every date click on the main page would otherwise pay
+    # the 10-15s RA cold-fetch cost. Each date prewarm reads from the
+    # ResponseCacheRow first (instant if it exists from a prior process),
+    # so this only triggers RA traffic for genuinely new dates.
+    async def _prewarm_meetings_strip():
+        await asyncio.sleep(15)  # let edge prewarm + DB pool settle first
+        try:
+            today = _today_aest()
+            dates = [(today + timedelta(days=i)).isoformat() for i in range(-7, 3)]
+            for d in dates:
+                try:
+                    await list_meetings(d)
+                except Exception as e:
+                    log.debug("[meetings-prewarm] %s skipped: %s", d, e)
+                await asyncio.sleep(2)  # gentle pace
+            log.info("[meetings-prewarm] %d dates warm", len(dates))
+        except Exception as e:
+            log.warning("[meetings-prewarm] failed: %s", e)
+    asyncio.create_task(_prewarm_meetings_strip())
+
     # Backfill last 3 days — catch up on any missed enrichments/results.
     # Throttled per-date: skip dates whose latest enriched_at is < 12h old.
     # Without this, every Railway redeploy (often several per day during
@@ -7940,6 +7961,26 @@ async def list_meetings(race_date: str = _today()):
     cached = _list_meetings_cache.get(race_date)
     if cached and (datetime.utcnow() - cached[0]).total_seconds() < 600:
         return cached[1]
+    # Persistent DB cache — survives Railway redeploys. Read here BEFORE
+    # hitting RA so a freshly-booted container serves date pills in <500ms
+    # instead of the full 10-15s RA cold-fetch.
+    try:
+        async with get_session() as session:
+            row = (await session.execute(
+                select(ResponseCacheRow)
+                .where(ResponseCacheRow.cache_key == f"meetings:{race_date}")
+            )).scalar_one_or_none()
+        if row:
+            # 6h staleness budget — older than that we re-fetch from RA to
+            # pick up new meetings / scratchings published since the cache
+            # was written.
+            age = (datetime.utcnow() - row.updated_at).total_seconds()
+            if age < 21600:
+                body = json.loads(row.payload_json)
+                _list_meetings_cache[race_date] = (datetime.utcnow(), body)
+                return body
+    except Exception as e:
+        log.debug("[list_meetings] DB cache read skipped: %s", e)
     client = get_tab_client()
     # When RA's breaker is open, client.get_meetings just hits the breaker and
     # returns empty after the timeout. Skip to the DB-fallback path directly
@@ -8149,6 +8190,29 @@ async def list_meetings(race_date: str = _today()):
 
     result = {"date": race_date, "meetings": items}
     _list_meetings_cache[race_date] = (datetime.utcnow(), result)
+    # Persist to Postgres so the next container redeploy hydrates this
+    # date immediately on startup. Without this, every date in the
+    # main-page strip is cold after a deploy → 10-15s per click.
+    try:
+        async with get_session() as session:
+            from sqlalchemy.dialects.postgresql import insert as pg_insert
+            cache_key = f"meetings:{race_date}"
+            stmt = pg_insert(ResponseCacheRow).values(
+                cache_key=cache_key,
+                payload_json=json.dumps(result),
+                cache_version=1,
+                updated_at=datetime.utcnow(),
+            )
+            stmt = stmt.on_conflict_do_update(
+                index_elements=["cache_key"],
+                set_=dict(payload_json=stmt.excluded.payload_json,
+                          cache_version=stmt.excluded.cache_version,
+                          updated_at=stmt.excluded.updated_at),
+            )
+            await session.execute(stmt)
+            await session.commit()
+    except Exception as e:
+        log.debug("[list_meetings] DB cache write skipped: %s", e)
     return result
 
 
