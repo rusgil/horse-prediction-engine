@@ -12285,12 +12285,18 @@ async def trifecta_analysis(x_cron_secret: Optional[str] = Header(None)):
 
 
 @app.get("/api/performance")
-async def performance_summary(days: int = Query(5, ge=1, le=365)):
+async def performance_summary(
+    days: int = Query(5, ge=1, le=365),
+    sharp: bool = Query(False),
+):
     """
     Per-day performance strip for the last N days.
     Shows top-pick win rate, place rate, and value P&L per day.
     No auth required — displayed publicly on the frontend.
-    Uses the immutable pre-race snapshot table so stats are stable across retrains.
+
+    When sharp=true, filters to the high-confidence niche (rank-1
+    model_pct ≥ 30 OR top-3 sum ≥ 60) — the band where the model
+    historically hits 30-35% win rate vs the ~17% overall baseline.
     """
     cutoff = (_today_aest() - timedelta(days=days)).isoformat()
 
@@ -12301,7 +12307,7 @@ async def performance_summary(days: int = Query(5, ge=1, le=365)):
         hr_rows = hr_result.scalars().all()
 
         if not hr_rows:
-            return {"days": days, "summary": [], "overall_win_rate": None}
+            return {"days": days, "summary": [], "overall_win_rate": None, "sharp": sharp}
 
         race_ids = list({r.race_id for r in hr_rows})
 
@@ -12319,6 +12325,32 @@ async def performance_summary(days: int = Query(5, ge=1, le=365)):
         for p in hist_pred_result.scalars().all():
             if p.race_id not in top_picks:
                 top_picks[p.race_id] = p
+
+        # When sharp=true: pull rank 1-3 win_probability per race to
+        # compute top3_sum. Then keep only races where rank-1 model_pct
+        # ≥ 30 OR top-3 sum ≥ 60. This mirrors the frontend's Sharp niche.
+        if sharp and top_picks:
+            top3_rows = (await session.execute(
+                select(RunnerPredictionHistoryRow.race_id,
+                       RunnerPredictionHistoryRow.model_rank,
+                       RunnerPredictionHistoryRow.win_probability)
+                .where(RunnerPredictionHistoryRow.race_id.in_(list(top_picks)))
+                .where(RunnerPredictionHistoryRow.model_rank.in_([1, 2, 3]))
+                .where(RunnerPredictionHistoryRow.cancelled.is_(False)
+                       | RunnerPredictionHistoryRow.cancelled.is_(None))
+            )).fetchall()
+            top3_by_race: dict[str, float] = {}
+            for rid, rank, p in top3_rows:
+                if p is None:
+                    continue
+                top3_by_race[rid] = top3_by_race.get(rid, 0) + float(p) * 100
+            keep: dict[str, RunnerPredictionHistoryRow] = {}
+            for rid, pick in top_picks.items():
+                rank1_pct = (pick.win_probability or 0) * 100
+                t3_sum = top3_by_race.get(rid, 0)
+                if rank1_pct >= 30 or t3_sum >= 60:
+                    keep[rid] = pick
+            top_picks = keep
 
     # Winner per race (position==1) — used for accurate act_won comparison
     winners: dict[str, str] = {}
@@ -12405,6 +12437,7 @@ async def performance_summary(days: int = Query(5, ge=1, le=365)):
     total_wins = sum(d["wins"] for d in by_date.values())
     return {
         "days": days,
+        "sharp": sharp,
         "overall_win_rate": round(total_wins / total_races, 3) if total_races else None,
         "overall_races": total_races,
         "summary": summary,

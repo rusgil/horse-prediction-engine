@@ -1078,6 +1078,9 @@
     if (sharpBtn) sharpBtn.classList.toggle('active', mode === 'sharp');
     if (allBtn) allBtn.classList.toggle('active', mode === 'all');
     renderMeetingPills();
+    // Re-fetch the 7-day performance strip with the new filter so the
+    // date-pill win/place % reflects only Sharp races when Sharp is on.
+    loadPerformanceStrip();
   }
   window.setMainMode = setMainMode;
 
@@ -1115,8 +1118,8 @@
     container.innerHTML = '';
     const today = todayISO();
     let todayEl = null;
-    // 5 past days → today → 2 future days
-    for (let i = -5; i <= 2; i++) {
+    // 7 past days → today → 2 future days
+    for (let i = -7; i <= 2; i++) {
       const iso = addDays(today, i);
       const isPast = i < 0;
       const el = document.createElement('div');
@@ -1198,11 +1201,17 @@ const cls = pct >= 25 ? 'good' : pct >= 18 ? 'ok' : 'bad';
 
   async function loadPerformanceStrip() {
     try {
-      const r = await fetch(`${API}/api/performance?days=7`);
+      const sharp = S.mainMode === 'sharp' ? '&sharp=true' : '';
+      const r = await fetch(`${API}/api/performance?days=7${sharp}`);
       if (!r.ok) return;
       const data = await r.json();
-      if (!data.summary || !data.summary.length) return;
-
+      if (!data.summary || !data.summary.length) {
+        // When sharp filters everything, fall back gracefully — date pills
+        // will just show no annotations rather than break.
+        S.perfByDate = {};
+        renderDatePills();
+        return;
+      }
       // Store per-date for date pills and day banners
       S.perfByDate = {};
       for (const d of data.summary) S.perfByDate[d.date] = d;
