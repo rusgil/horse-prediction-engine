@@ -358,40 +358,6 @@
     }
     .past-stat.pos { color: var(--green); }
     .past-stat.neg { color: var(--red); }
-    .past-strip {
-      display: flex;
-      flex-direction: column;
-      gap: 4px;
-      padding: 6px 10px;
-      margin-top: 10px;
-      background: rgba(94,234,212,0.06);
-      border: 1px solid rgba(94,234,212,0.18);
-      border-radius: 8px;
-    }
-    .past-strip-row {
-      display: flex;
-      align-items: center;
-      gap: 10px;
-      font-size: 11px;
-    }
-    .past-strip-row.past-strip-30 {
-      font-size: 10px;
-      opacity: 0.78;
-      padding-top: 4px;
-      border-top: 1px dashed rgba(94,234,212,0.12);
-    }
-    .past-strip-row.past-strip-30 .past-strip-label { font-size: 8px; }
-    .past-strip-label {
-      color: var(--teal-bright);
-      font-weight: 700;
-      text-transform: uppercase;
-      letter-spacing: 0.5px;
-      font-size: 9px;
-    }
-    .past-strip-val { color: var(--text); font-weight: 600; font-variant-numeric: tabular-nums; }
-    .past-strip-val.pos { color: var(--green-bright); }
-    .past-strip-val.neg { color: var(--red); }
-    .past-strip-val.muted { color: var(--text-muted); }
 
     /* Empty / disclaimers */
     .empty {
@@ -802,34 +768,10 @@
             <div class="stat-label">Est. profit</div>
           </div>
         </div>
-        ${renderPastStrip(p.kind)}
         <div class="play-foot">
           <span class="past-stat">Potential return: ${fmtMoneyPlain(p.potential_return_dollars)}</span>
           <button data-copy="${p.kind}">Copy plan</button>
         </div>
-      </div>`;
-  }
-
-  function _formatWindowRow(bt, label) {
-    if (!bt || !bt.days_evaluated) {
-      return `<span class="past-strip-label">${label}</span><span class="past-strip-val muted">no qualifying days</span>`;
-    }
-    const roi = bt.roi_pct;
-    const roiCls = roi == null ? 'muted' : (roi >= 0 ? 'pos' : 'neg');
-    const roiTxt = roi == null ? '—' : `${roi >= 0 ? '+' : ''}${roi}% ROI`;
-    return `
-      <span class="past-strip-label">${label}</span>
-      <span class="past-strip-val">${bt.days_hit}/${bt.days_evaluated} hit</span>
-      <span class="past-strip-val ${roiCls}">${roiTxt}</span>`;
-  }
-
-  function renderPastStrip(kind) {
-    const bt7  = (window._funkBacktest7  || {}).by_play?.[kind] || null;
-    const bt30 = (window._funkBacktest30 || {}).by_play?.[kind] || null;
-    return `
-      <div class="past-strip">
-        <div class="past-strip-row">${_formatWindowRow(bt7, 'Past 7 days')}</div>
-        <div class="past-strip-row past-strip-30">${_formatWindowRow(bt30, 'Past 30 days')}</div>
       </div>`;
   }
 
@@ -899,20 +841,10 @@
     const targetDate = _dateForDay(day);
     root.innerHTML = `<div class="empty">Loading ${day}'s playbook…</div>`;
     try {
-      const [planRes, bt7Res, bt30Res] = await Promise.all([
-        fetch(`${API}/api/funk-me-up/today?date=${targetDate}`),
-        fetch(`${API}/api/funk-me-up/backtest?days=7`).catch(() => null),
-        fetch(`${API}/api/funk-me-up/backtest?days=30`).catch(() => null),
-      ]);
+      const planRes = await fetch(`${API}/api/funk-me-up/today?date=${targetDate}`);
       if (!planRes.ok) throw new Error('HTTP ' + planRes.status);
       const data = await planRes.json();
       window._funkData = data;
-      try {
-        window._funkBacktest7 = bt7Res && bt7Res.ok ? await bt7Res.json() : null;
-      } catch (_) { window._funkBacktest7 = null; }
-      try {
-        window._funkBacktest30 = bt30Res && bt30Res.ok ? await bt30Res.json() : null;
-      } catch (_) { window._funkBacktest30 = null; }
       renderExposure(data);
       if (!data.plays || !data.plays.length) {
         const msg = day === 'tomorrow'
