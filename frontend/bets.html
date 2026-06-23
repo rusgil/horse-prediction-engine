@@ -887,6 +887,8 @@
     document.querySelectorAll('.mode-pill').forEach(b =>
       b.classList.toggle('active', b.dataset.mode === mode));
     if (state.lastData) render(state.lastData);
+    // Re-pick the hero to honour the new filter combo.
+    loadHeroPick();
   }
   window.setLabMode = setLabMode;
 
@@ -1473,19 +1475,40 @@
     renderStrategyRow();
   }
 
+  // Predicate matching the currently-active Lab filter combo. Used to
+  // ensure the hero pick respects the user's Mode toggle — previously
+  // the hero showed a race that the Sharp filter then excluded, which
+  // read as contradictory.
+  function _heroMatchesFilter(c) {
+    const top3OK = state.confFilter === 'all'
+      ? true
+      : (c.top3_sum_pct != null && c.top3_sum_pct <= Number(state.confFilter));
+    const fieldOK = state.fieldFilter === 'all'
+      ? true
+      : (c.field_size != null && c.field_size <= Number(state.fieldFilter));
+    return top3OK && fieldOK;
+  }
+
   async function loadHeroPick() {
     const target = document.getElementById('heroPick');
     if (!target) return;
     try {
-      const r = await fetch(`${API}/api/bet-insights/today?limit=1`);
+      // Fetch a bigger pool so we can find the first candidate that
+      // also passes the user's current Lab filter. Without this, hero
+      // can disagree with the filtered race list below it.
+      const r = await fetch(`${API}/api/bet-insights/today?limit=20`);
       if (!r.ok) throw new Error('HTTP ' + r.status);
       const d = await r.json();
-      const cand = (d.tomorrow_candidates && d.tomorrow_candidates[0]) || null;
+      const candidates = d.tomorrow_candidates || [];
+      const cand = candidates.find(_heroMatchesFilter) || null;
       if (!cand) {
+        const filterDesc = state.labMode === 'sharp'
+          ? 'Lab Sharp filter'
+          : `current filter (${state.confFilter === 'all' ? 'no top-3 cap' : '≤' + state.confFilter + '%'} · ${state.fieldFilter === 'all' ? 'any field' : '≤' + state.fieldFilter + ' runners'})`;
         target.innerHTML = `
           <div class="hero-pick empty">
             <div class="hero-label">Today's Best Pick</div>
-            <div style="font-size:12px;color:var(--text-muted)">No qualifying upcoming races right now. Algorithm filters: field 7-13, rank-1 win outside 25-30%.</div>
+            <div style="font-size:12px;color:var(--text-muted)">No qualifying upcoming race matches the ${filterDesc}. Switch to All races to see the broader Best Pick.</div>
           </div>`;
         return;
       }
@@ -1548,6 +1571,7 @@
       state.confFilter = btn.dataset.conf;
       _syncModeAfterSubFilter();
       if (state.lastData) render(state.lastData);
+      loadHeroPick();
     });
   });
 
@@ -1559,6 +1583,7 @@
       state.fieldFilter = btn.dataset.field;
       _syncModeAfterSubFilter();
       if (state.lastData) render(state.lastData);
+      loadHeroPick();
     });
   });
 
