@@ -797,7 +797,7 @@
       <button class="sort-pill" data-sort="recent">Just ran</button>
       <button class="sort-pill" data-sort="pnl">Best P/L</button>
     </div>
-    <div class="sort-row sub-filter" style="display:none">
+    <div class="sort-row sub-filter">
       <span class="sort-label">Race spread</span>
       <span class="filter-info" data-tip="conf-tip" tabindex="0">i</span>
       <button class="sort-pill conf-pill" data-conf="all">All</button>
@@ -812,7 +812,7 @@
       favourite-dominated ones — your 3-4 horse box covers more of the
       plausible placings.
     </div>
-    <div class="sort-row sub-filter" style="display:none">
+    <div class="sort-row sub-filter">
       <span class="sort-label">Field size</span>
       <span class="filter-info" data-tip="field-tip" tabindex="0">i</span>
       <button class="sort-pill field-pill" data-field="all">All</button>
@@ -877,13 +877,13 @@
       state.confFilter = 'all';
       state.fieldFilter = 'all';
     }
-    // Sync the sub-filter pill active states + visibility
+    // Sync the sub-filter pill active states. The sub-filter rows stay
+    // visible in both modes so users always see which thresholds are
+    // active and can override either way without hunting through menus.
     document.querySelectorAll('.conf-pill').forEach(b =>
       b.classList.toggle('active', b.dataset.conf === state.confFilter));
     document.querySelectorAll('.field-pill').forEach(b =>
       b.classList.toggle('active', b.dataset.field === state.fieldFilter));
-    document.querySelectorAll('.sub-filter').forEach(el =>
-      el.style.display = mode === 'sharp' ? 'none' : 'flex');
     document.querySelectorAll('.mode-pill').forEach(b =>
       b.classList.toggle('active', b.dataset.mode === mode));
     if (state.lastData) render(state.lastData);
@@ -1530,12 +1530,23 @@
     });
   });
 
+  // Helper — when the user touches a sub-filter and the resulting values
+  // no longer match the Lab Sharp defaults (55/11), flip the Mode toggle
+  // to 'All races' so the labels stay honest.
+  function _syncModeAfterSubFilter() {
+    const isSharp = state.confFilter === '55' && state.fieldFilter === '11';
+    state.labMode = isSharp ? 'sharp' : 'all';
+    document.querySelectorAll('.mode-pill').forEach(b =>
+      b.classList.toggle('active', b.dataset.mode === state.labMode));
+  }
+
   // Confidence filter pills — toggle within conf group only.
   document.querySelectorAll('.conf-pill').forEach(btn => {
     btn.addEventListener('click', () => {
       document.querySelectorAll('.conf-pill').forEach(b => b.classList.remove('active'));
       btn.classList.add('active');
       state.confFilter = btn.dataset.conf;
+      _syncModeAfterSubFilter();
       if (state.lastData) render(state.lastData);
     });
   });
@@ -1546,6 +1557,7 @@
       document.querySelectorAll('.field-pill').forEach(b => b.classList.remove('active'));
       btn.classList.add('active');
       state.fieldFilter = btn.dataset.field;
+      _syncModeAfterSubFilter();
       if (state.lastData) render(state.lastData);
     });
   });
