@@ -465,7 +465,7 @@
     <div class="title-row">
       <div>
         <h1 class="title">🎺 <span class="funk">Funk</span> Me Up</h1>
-        <div class="subtitle" id="pageSubtitle">Today's curated playbook · 🎯 Sharp picks across each Sportsbet product · $10 base stake</div>
+        <div class="subtitle" id="pageSubtitle">Today's lower-variance playbook · 🎯 Sharp picks · place-led · $10 base stake</div>
       </div>
       <div>
         <a href="/hotseat" class="nav-back">🔥 Hot Seat</a>
@@ -501,11 +501,14 @@
   const API = 'https://web-production-dec62.up.railway.app';
 
   const KIND_META = {
-    spine: { emoji: '🎯' },
-    lock:  { emoji: '💪' },
-    wave:  { emoji: '🌊' },
-    lab:   { emoji: '🧪' },
-    bonus: { emoji: '⭐' },
+    lock:   { emoji: '💪' },
+    bonus:  { emoji: '⭐' },
+    double: { emoji: '🪜' },
+    banker: { emoji: '🏦' },
+    lab:    { emoji: '🧪' },
+    // Legacy kinds kept so historical (yesterday) data still renders
+    spine:  { emoji: '🎯' },
+    wave:   { emoji: '🌊' },
   };
 
   function escHtml(s) {
@@ -579,6 +582,14 @@
       parts.push(`  ${venueLabel(p.venue)} R${p.race_number} · Trio box`);
       parts.push(`  Box: ${(p.box_horse_names || []).join(' / ')}`);
       parts.push(`  Stake $${p.stake_dollars} · top-3 sum ${p.top3_sum_pct}% · ${p.field_size}-horse field`);
+    } else if (p.kind === 'double' && p.legs) {
+      p.legs.forEach((l, i) => {
+        parts.push(`  ${i+1}. ${venueLabel(l.venue)} R${l.race_number} · ${l.horse_name} · Place`);
+      });
+      parts.push(`  Place Multi ~$${p.raw_multi_odds} · stake $${p.stake_dollars}`);
+    } else if (p.kind === 'banker') {
+      parts.push(`  ${venueLabel(p.venue)} R${p.race_number} · ${p.horse_name} · Place ~$${p.place_odds_est}`);
+      parts.push(`  stake $${p.stake_dollars} · model place ${Math.round(p.place_prob*100)}%`);
     }
     return parts.join('\n');
   }
@@ -588,9 +599,11 @@
   function _earliestMs(p) {
     let best = Infinity;
     const ts = [];
-    if (p.kind === 'spine' && p.legs) p.legs.forEach(l => l.scheduled_time && ts.push(l.scheduled_time));
-    else if (p.kind === 'wave' && p.legs) p.legs.forEach(l => l.scheduled_time && ts.push(l.scheduled_time));
-    else if (p.scheduled_time) ts.push(p.scheduled_time);
+    if ((p.kind === 'spine' || p.kind === 'wave' || p.kind === 'double') && p.legs) {
+      p.legs.forEach(l => l.scheduled_time && ts.push(l.scheduled_time));
+    } else if (p.scheduled_time) {
+      ts.push(p.scheduled_time);
+    }
     for (const t of ts) {
       const ms = new Date(t).getTime();
       if (!isNaN(ms) && ms < best) best = ms;
@@ -641,6 +654,22 @@
         returnIf: `Est. ${fmtMoneyPlain(p.potential_return_dollars)} if any order of these 3 fills the trifecta`,
       };
     }
+    if (p.kind === 'double') {
+      return {
+        verb: 'BUILD THIS PLACE MULTI',
+        product: `$${p.stake_dollars.toFixed(0)} 2-leg Place Multi`,
+        path: `Sportsbet → Multi Builder → tap Place for each horse below → confirm 2 legs in betslip`,
+        returnIf: `Returns ${fmtMoneyPlain(p.potential_return_dollars)} if both horses place (top 3)`,
+      };
+    }
+    if (p.kind === 'banker') {
+      return {
+        verb: 'PLACE THIS PLACE BET',
+        product: `$${p.stake_dollars.toFixed(0)} Place on ${p.horse_name}`,
+        path: `Sportsbet → Racing → ${venueLabel(p.venue)} → R${p.race_number} → Place`,
+        returnIf: `Returns ~${fmtMoneyPlain(p.potential_return_dollars)} if it finishes top 3`,
+      };
+    }
     return null;
   }
 
@@ -687,6 +716,23 @@
         </div>
         <div class="leg-odds">Trio</div>
       </div></div>`;
+    } else if (p.kind === 'double' && p.legs) {
+      legsHtml = `<div class="legs">${p.legs.map(l => `
+        <div class="leg">
+          <div>
+            <div class="leg-horse">${escHtml(l.horse_name)}</div>
+            <div class="leg-meta">${escHtml(venueLabel(l.venue))} R${l.race_number} · Place${l.scheduled_time ? ' · ' + fmtJump(l.scheduled_time) : ''} · place ${Math.round(l.place_prob*100)}%</div>
+          </div>
+          <div class="leg-odds">$${l.place_odds_est}</div>
+        </div>`).join('')}</div>`;
+    } else if (p.kind === 'banker') {
+      legsHtml = `<div class="legs"><div class="leg">
+        <div>
+          <div class="leg-horse">${escHtml(p.horse_name)}</div>
+          <div class="leg-meta">${escHtml(venueLabel(p.venue))} R${p.race_number}${p.scheduled_time ? ' · ' + fmtJump(p.scheduled_time) : ''} · place ${Math.round(p.place_prob*100)}%</div>
+        </div>
+        <div class="leg-odds">$${p.place_odds_est}</div>
+      </div></div>`;
     }
 
     const evCls = (p.expected_value_dollars || 0) >= 0 ? 'pos' : 'neg';
@@ -727,10 +773,15 @@
     //   - Bonus + Lab Pick: never (Bonus uses value-overlay band below
     //     Sharp's threshold; Lab Pick uses inverse niche)
     const isSharpPlay = (() => {
-      if (p.kind === 'lock' || p.kind === 'spine') return true;
+      // Lock / Spine: explicit confidence + edge thresholds in selection.
+      // Double / Banker: place plays use the ≥5pt rank-gap decisiveness
+      //   filter so toss-up races are excluded by construction.
+      // Wave: variance play — only badge when avg leg hit prob ≥55%.
+      // Bonus / Lab Pick: value/inverse niches respectively — not badged.
+      if (['lock', 'spine', 'double', 'banker'].includes(p.kind)) return true;
       if (p.kind === 'wave' && Array.isArray(p.legs)) {
         const avg = p.legs.reduce((s, l) => s + (l.leg_hit_probability || 0), 0) / (p.legs.length || 1);
-        return avg >= 0.55; // legs averaging ≥55% combined-pick hit
+        return avg >= 0.55;
       }
       return false;
     })();
@@ -825,7 +876,7 @@
     if (day === 'tomorrow') {
       return "Tomorrow's playbook · 🎯 Sharp picks · take prices early before the market shortens.";
     }
-    return "Today's curated playbook · 🎯 Sharp picks across each Sportsbet product · $10 base stake";
+    return "Today's lower-variance playbook · 🎯 Sharp picks · place-led · $10 base stake";
   }
 
   async function load(day) {

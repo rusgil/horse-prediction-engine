@@ -426,6 +426,19 @@
       background: rgba(59,130,246,0.15); border-radius: 3px;
       padding: 0 3px; margin-left: 1px;
     }
+    .race-pill-decisive {
+      font-size: 0.62rem; font-weight: 800; color: #c084fc;
+      background: rgba(168,85,247,0.15); border-radius: 3px;
+      padding: 0 4px; margin-left: 2px;
+      border: 1px solid rgba(168,85,247,0.4);
+    }
+    .race-pill-tossup {
+      font-size: 0.62rem; font-weight: 700; color: #f59e0b;
+      background: rgba(245,158,11,0.12); border-radius: 3px;
+      padding: 0 4px; margin-left: 2px;
+      border: 1px solid rgba(245,158,11,0.3);
+      opacity: 0.85;
+    }
     .race-pill-time {
       font-size: 0.68rem; color: var(--text-dim);
       font-weight: 600; letter-spacing: 0.02em;
@@ -1077,6 +1090,16 @@
     const allBtn = document.getElementById('mainModeAll');
     if (sharpBtn) sharpBtn.classList.toggle('active', mode === 'sharp');
     if (allBtn) allBtn.classList.toggle('active', mode === 'all');
+    // If switching to Sharp and the currently-selected meeting doesn't
+    // qualify, clear the race section so a non-Sharp meeting isn't left
+    // visible underneath the filtered pills.
+    if (mode === 'sharp' && S.selectedMeeting && !isSharpMeeting(S.selectedMeeting)) {
+      S.selectedMeeting = null;
+      S.races = [];
+      S.selectedRaceId = null;
+      const racesSection = document.getElementById('racesSection');
+      if (racesSection) racesSection.style.display = 'none';
+    }
     renderMeetingPills();
     // Re-fetch the 7-day performance strip with the new filter so the
     // date-pill win/place % reflects only Sharp races when Sharp is on.
@@ -1402,7 +1425,7 @@ const cls = pct >= 25 ? 'good' : pct >= 18 ? 'ok' : 'bad';
     const container = document.getElementById('meetingPills');
     container.innerHTML = '';
     const meetings = S.mainMode === 'sharp'
-      ? S.meetings.filter(m => isSharpMeeting(m) || S.selectedMeeting?.venue_code === m.venue_code)
+      ? S.meetings.filter(m => isSharpMeeting(m))
       : S.meetings;
     // Empty-state when Sharp filters everything out
     if (S.mainMode === 'sharp' && !meetings.length && S.meetings.length) {
@@ -1667,8 +1690,18 @@ const cls = pct >= 25 ? 'good' : pct >= 18 ? 'ok' : 'bad';
       const placePct = r.top_place_probability != null ? Math.round(r.top_place_probability * 100) : null;
       const pctHtml = topPct >= 25 ? ` <span class="race-pill-pct">Win: ${topPct}%</span>` : '';
       const placeHtml = placePct >= 25 ? ` <span class="race-pill-place">Place: ${placePct}%</span>` : '';
+      // Decisive-favourite indicator: rank-1 minus rank-2 win % ≥ 5pts.
+      // Backtest (60d, 1344 races): ≤2pt gap rank-1 wins 13%; 10pt+ gap
+      // wins 24%. A 5pt+ gap is the practical 'clear favourite' threshold.
+      const gapPts = (r.top_win_probability != null && r.rank2_win_probability != null)
+        ? (r.top_win_probability - r.rank2_win_probability) * 100 : null;
+      const decisiveHtml = gapPts != null && gapPts >= 5
+        ? ` <span class="race-pill-decisive" title="Clear favourite — model leads rank-2 by ${gapPts.toFixed(1)}pts. Higher win rate historically.">🎯 Clear fav</span>`
+        : (gapPts != null && gapPts < 2 && topPct >= 25)
+        ? ` <span class="race-pill-tossup" title="Toss-up — rank-1 and rank-2 within 2pts. Historical win rate drops to ~13%.">⚖️ Toss-up</span>`
+        : '';
       const tStr = r.scheduled_time || r.time ? formatTime(r.scheduled_time || r.time) : 'time not avail.';
-      el.innerHTML = `<div class="race-pill-main">R${r.race_number}${pctHtml}${placeHtml}${dotHtml ? ' ' + dotHtml : ''}</div><span class="race-pill-time">${tStr}</span>`;
+      el.innerHTML = `<div class="race-pill-main">R${r.race_number}${pctHtml}${placeHtml}${decisiveHtml}${dotHtml ? ' ' + dotHtml : ''}</div><span class="race-pill-time">${tStr}</span>`;
       el.addEventListener('click', () => selectRace(r));
       container.appendChild(el);
     });
