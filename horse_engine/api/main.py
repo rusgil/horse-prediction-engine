@@ -6343,6 +6343,185 @@ async def backtest_formula(
     return summary
 
 
+@app.get("/api/admin/bets/place-decisiveness-backtest")
+async def place_decisiveness_backtest(
+    days: int = 60,
+    top3_max: float = 55.0,
+    field_max: int = 11,
+    x_cron_secret: Optional[str] = Header(None),
+):
+    """Does requiring a clear place gap between rank-3 and rank-4 lift
+    Lab Sharp's hit rate?
+
+    For each historical race that already passes Lab Sharp (top-3 ≤55,
+    field ≤11), compute rank3_place_pct minus rank4_place_pct. Bucket
+    by gap size and report trifecta-box hit rate + estimated ROI per
+    bucket. Identifies the gap threshold that maximises hit rate while
+    keeping a usable sample size."""
+    _check_admin(x_cron_secret)
+    days = max(7, min(int(days), 365))
+    cutoff_date = (_today_aest() - timedelta(days=days)).isoformat()
+
+    async with get_session() as session:
+        # Pull every rank 1-4 prediction so we can compute the gap.
+        pred_rows = (await session.execute(
+            select(
+                RunnerPredictionHistoryRow.race_id,
+                RunnerPredictionHistoryRow.horse_name,
+                RunnerPredictionHistoryRow.model_rank,
+                RunnerPredictionHistoryRow.win_probability,
+                RunnerPredictionHistoryRow.place_probability,
+                RunnerPredictionHistoryRow.tab_number,
+                RunnerPredictionHistoryRow.enriched_at,
+            )
+            .where(RunnerPredictionHistoryRow.race_id >= f"{cutoff_date}_")
+            .where(RunnerPredictionHistoryRow.model_rank.in_([1, 2, 3, 4]))
+            .where(RunnerPredictionHistoryRow.cancelled.is_(False)
+                   | RunnerPredictionHistoryRow.cancelled.is_(None))
+            .where(RunnerPredictionHistoryRow.source == "live")
+            .order_by(RunnerPredictionHistoryRow.enriched_at.desc())
+        )).fetchall()
+        # Top-3 results to score trifecta box hits.
+        result_rows = (await session.execute(
+            select(HistoricalResultRow.race_id, HistoricalResultRow.position,
+                   HistoricalResultRow.tab_number, HistoricalResultRow.horse_name)
+            .where(HistoricalResultRow.race_id >= f"{cutoff_date}_")
+            .where(HistoricalResultRow.position.in_([1, 2, 3]))
+        )).fetchall()
+        # Field-size count per race for the ≤11 cutoff
+        from sqlalchemy import func as _func
+        field_size_rows = (await session.execute(
+            select(RunnerPredictionHistoryRow.race_id,
+                   _func.count(RunnerPredictionHistoryRow.id))
+            .where(RunnerPredictionHistoryRow.race_id >= f"{cutoff_date}_")
+            .where(RunnerPredictionHistoryRow.cancelled.is_(False)
+                   | RunnerPredictionHistoryRow.cancelled.is_(None))
+            .where(RunnerPredictionHistoryRow.source == "live")
+            .group_by(RunnerPredictionHistoryRow.race_id)
+        )).fetchall()
+
+    field_sizes = {rid: int(n) for rid, n in field_size_rows}
+
+    # Group predictions by race, keep latest per (race, horse)
+    seen: set = set()
+    per_race: dict[str, dict] = {}
+    for rid, name, rank, wp, pp, tab, enr in pred_rows:
+        key = (rid, _normalize_horse(name))
+        if key in seen:
+            continue
+        seen.add(key)
+        per_race.setdefault(rid, {})[int(rank)] = {
+            "horse_name": name,
+            "win_prob": float(wp or 0),
+            "place_prob": float(pp or 0),
+            "tab": tab,
+        }
+
+    # Results lookup
+    results_by_race: dict[str, set] = {}
+    for rid, pos, tab, name in result_rows:
+        if pos is None:
+            continue
+        results_by_race.setdefault(rid, set()).add(_normalize_horse(name or ""))
+
+    # Evaluate each race
+    bucket_defs = [
+        ("<0pt (rank-4 ahead)", -999, 0),
+        ("0-1pt (very flat)", 0, 1),
+        ("1-2pt (flat)", 1, 2),
+        ("2-3pt (mild gap)", 2, 3),
+        ("3-4pt (decisive)", 3, 4),
+        ("4-6pt (clear)", 4, 6),
+        ("6pt+ (dominant top-3)", 6, 999),
+    ]
+    buckets = {b[0]: {"n": 0, "hits": 0} for b in bucket_defs}
+    all_eligible = 0
+    all_hits = 0
+
+    for rid, ranks in per_race.items():
+        if not all(r in ranks for r in (1, 2, 3, 4)):
+            continue
+        # Apply baseline Lab Sharp filter
+        top3_sum = sum(ranks[r]["win_prob"] for r in (1, 2, 3)) * 100
+        fs = field_sizes.get(rid, 999)
+        if top3_sum > top3_max or fs > field_max:
+            continue
+        # Need a result to score
+        winners = results_by_race.get(rid)
+        if not winners or len(winners) < 3:
+            continue
+        # Trio box hit: model's top-3 horses are exactly the placings (any order)
+        box_normed = {_normalize_horse(ranks[r]["horse_name"]) for r in (1, 2, 3)}
+        hit = box_normed == winners
+        # Compute place gap rank-3 minus rank-4 (in percentage points)
+        gap = (ranks[3]["place_prob"] - ranks[4]["place_prob"]) * 100
+        all_eligible += 1
+        if hit:
+            all_hits += 1
+        for label, lo, hi in bucket_defs:
+            if lo <= gap < hi:
+                buckets[label]["n"] += 1
+                if hit:
+                    buckets[label]["hits"] += 1
+                break
+
+    overall_hit_pct = round(all_hits / all_eligible * 100, 1) if all_eligible else 0
+    out_buckets = []
+    for label, lo, hi in bucket_defs:
+        d = buckets[label]
+        n = d["n"]
+        hit_pct = round(d["hits"]/n*100, 1) if n else 0
+        out_buckets.append({
+            "bucket": label,
+            "n": n,
+            "hits": d["hits"],
+            "hit_rate_pct": hit_pct,
+            "lift_pts": round(hit_pct - overall_hit_pct, 1),
+        })
+
+    # Cumulative impact: what if we required gap ≥ X for various X?
+    thresholds = []
+    for gap_min_pts in (0, 1, 2, 3, 4, 5, 6):
+        kept_n = 0
+        kept_hits = 0
+        for rid, ranks in per_race.items():
+            if not all(r in ranks for r in (1, 2, 3, 4)):
+                continue
+            top3_sum = sum(ranks[r]["win_prob"] for r in (1, 2, 3)) * 100
+            fs = field_sizes.get(rid, 999)
+            if top3_sum > top3_max or fs > field_max:
+                continue
+            winners = results_by_race.get(rid)
+            if not winners or len(winners) < 3:
+                continue
+            gap = (ranks[3]["place_prob"] - ranks[4]["place_prob"]) * 100
+            if gap < gap_min_pts:
+                continue
+            kept_n += 1
+            if {_normalize_horse(ranks[r]["horse_name"]) for r in (1, 2, 3)} == winners:
+                kept_hits += 1
+        coverage = round(kept_n / all_eligible * 100, 1) if all_eligible else 0
+        hit_pct = round(kept_hits / kept_n * 100, 1) if kept_n else 0
+        thresholds.append({
+            "gap_min_pts": gap_min_pts,
+            "races_kept": kept_n,
+            "hits": kept_hits,
+            "hit_rate_pct": hit_pct,
+            "coverage_of_lab_sharp_pct": coverage,
+            "lift_vs_baseline_pts": round(hit_pct - overall_hit_pct, 1),
+        })
+
+    return {
+        "days": days,
+        "lab_sharp_filter": f"top3 ≤{top3_max}% AND field ≤{field_max}",
+        "baseline_eligible_races": all_eligible,
+        "baseline_hits": all_hits,
+        "baseline_hit_rate_pct": overall_hit_pct,
+        "by_gap_bucket": out_buckets,
+        "cumulative_threshold_test": thresholds,
+    }
+
+
 @app.get("/api/admin/bets/all-tactics-filtered-backtest")
 async def all_tactics_filtered_backtest(
     days: int = 90,
