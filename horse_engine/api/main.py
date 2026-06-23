@@ -4607,34 +4607,265 @@ def _build_bonus(edge_picks: list[dict]) -> Optional[dict]:
     }
 
 
+async def _build_historical_funk_picks(target_date: str) -> list[dict]:
+    """Rebuild a picks-list with the shape /api/edge would have produced
+    for a given past date — used by the yesterday Funk Me Up view.
+    Sources directly from RunnerPredictionHistoryRow + the latest
+    enriched_at snapshot per horse."""
+    async with get_session() as session:
+        rows = (await session.execute(
+            select(RunnerPredictionHistoryRow)
+            .where(RunnerPredictionHistoryRow.race_id.like(f"{target_date}_%"))
+            .where(RunnerPredictionHistoryRow.cancelled.is_(False)
+                   | RunnerPredictionHistoryRow.cancelled.is_(None))
+            .where(RunnerPredictionHistoryRow.source == "live")
+            .order_by(RunnerPredictionHistoryRow.enriched_at.desc())
+        )).scalars().all()
+    # Dedup latest-per-(race, horse)
+    seen: set = set()
+    by_race: dict[str, list] = {}
+    for r in rows:
+        key = (r.race_id, _normalize_horse(r.horse_name))
+        if key in seen:
+            continue
+        seen.add(key)
+        by_race.setdefault(r.race_id, []).append(r)
+    picks: list[dict] = []
+    for rid, runners in by_race.items():
+        runners.sort(key=lambda x: x.model_rank or 99)
+        if not runners:
+            continue
+        rank1 = runners[0]
+        _, venue, race_num = _parse_race_id(rid)
+        field = []
+        for r in runners:
+            field.append({
+                "rank": r.model_rank,
+                "horse_name": r.horse_name,
+                "tab_number": r.tab_number,
+                "win_pct": (r.win_probability or 0) * 100,
+                "place_pct": (r.place_probability or 0) * 100 if r.place_probability else 0,
+                "odds": 0.0,
+                "scratched": bool(r.cancelled),
+            })
+        picks.append({
+            "race_id": rid,
+            "horse_name": rank1.horse_name,
+            "model_pct": round((rank1.win_probability or 0) * 100, 1),
+            "venue": venue,
+            "race_number": race_num,
+            "scheduled_time": rank1.scheduled_time,
+            "best_available_odds": rank1.best_available_odds or 0,
+            "market_implied_pct": None,
+            "edge_pct": rank1.overlay * 100 if rank1.overlay else None,
+            "calibrated_win_rate": None,
+            "field": field,
+        })
+    return picks
+
+
+async def _resolve_play_outcome(play: dict, target_date: str) -> dict:
+    """Look up actual race results for a Funk Me Up play and return an
+    outcome dict: status (won/lost/partial), profit, details."""
+    if not play:
+        return {}
+    kind = play.get("kind")
+    async with get_session() as session:
+        result_rows = (await session.execute(
+            select(HistoricalResultRow.race_id, HistoricalResultRow.position,
+                   HistoricalResultRow.tab_number, HistoricalResultRow.horse_name,
+                   HistoricalResultRow.starting_price)
+            .where(HistoricalResultRow.race_id.like(f"{target_date}_%"))
+            .where(HistoricalResultRow.position.in_([1, 2, 3, 4]))
+        )).fetchall()
+    results: dict[str, dict[int, dict]] = {}
+    for rid, pos, tab, name, sp in result_rows:
+        if pos is None:
+            continue
+        results.setdefault(rid, {})[int(pos)] = {
+            "tab": tab, "horse_name": name, "sp": sp,
+        }
+
+    def horse_pos(rid: str, horse_name: str) -> Optional[int]:
+        slots = results.get(rid) or {}
+        tgt = _normalize_horse(horse_name or "")
+        for p, row in slots.items():
+            if _normalize_horse(row["horse_name"]) == tgt:
+                return p
+        return None
+
+    BASE = play.get("stake_dollars") or 10.0
+    BONUS_STAKE = play.get("bonus_stake_dollars") or 0
+
+    if kind in ("lock", "bonus"):
+        rid = play["race_id"]
+        pos = horse_pos(rid, play["horse_name"])
+        won = pos == 1
+        placed = pos in (1, 2, 3)
+        sp = (results.get(rid) or {}).get(pos, {}).get("sp") if pos else None
+        if kind == "lock":
+            profit = (BASE * (sp - 1)) if won and sp else (-BASE if pos is not None else 0)
+        else:
+            profit = (BONUS_STAKE * (sp - 1)) if won and sp else 0
+        return {
+            "status": "won" if won else ("lost" if pos is not None else "no_result"),
+            "won": won,
+            "placed": placed,
+            "actual_position": pos,
+            "profit_dollars": round(profit, 2) if profit is not None else 0,
+            "summary": (
+                f"Won at ${sp:.2f}" if won and sp else
+                f"Won (no SP)" if won else
+                f"{pos}{'st' if pos==1 else 'nd' if pos==2 else 'rd' if pos==3 else 'th'}" if pos else
+                "Results pending"
+            ),
+        }
+    if kind == "spine":
+        legs = play.get("legs") or []
+        leg_hits = []
+        for l in legs:
+            pos = horse_pos(l["race_id"], l["horse_name"])
+            leg_hits.append({
+                "race_id": l["race_id"],
+                "horse_name": l["horse_name"],
+                "position": pos,
+                "hit": pos is not None and pos <= 4,
+            })
+        all_hit = all(h["hit"] for h in leg_hits) if leg_hits else False
+        any_pos_known = any(h["position"] is not None for h in leg_hits)
+        boosted = play.get("boosted_multi_odds") or 0
+        profit = BASE * boosted - BASE if all_hit else (-BASE if any_pos_known else 0)
+        return {
+            "status": "won" if all_hit else ("lost" if any_pos_known else "no_result"),
+            "hit_count": sum(1 for h in leg_hits if h["hit"]),
+            "leg_count": len(leg_hits),
+            "leg_hits": leg_hits,
+            "profit_dollars": round(profit, 2),
+            "summary": (
+                f"All 4 legs landed top-4 — multi paid ${BASE * boosted:.2f}"
+                if all_hit else
+                f"{sum(1 for h in leg_hits if h['hit'])}/{len(leg_hits)} legs hit"
+                if any_pos_known else "Results pending"
+            ),
+        }
+    if kind == "wave":
+        legs = play.get("legs") or []
+        leg_hits = []
+        for l in legs:
+            slots = results.get(l["race_id"]) or {}
+            winner_row = slots.get(1)
+            winner = winner_row["horse_name"] if winner_row else None
+            our_picks_normed = {_normalize_horse(x["horse_name"]) for x in (l.get("picks") or [])}
+            hit = (winner is not None) and (_normalize_horse(winner) in our_picks_normed)
+            leg_hits.append({
+                "race_id": l["race_id"],
+                "winner": winner,
+                "hit": hit,
+            })
+        all_hit = all(h["hit"] for h in leg_hits) if leg_hits else False
+        any_known = any(h["winner"] is not None for h in leg_hits)
+        # Pari-mutuel — use the play's own estimate
+        dividend = play.get("estimated_dividend_dollars") or 1200
+        perms = play.get("perms") or 16
+        profit = (BASE / perms) * dividend - BASE if all_hit else (-BASE if any_known else 0)
+        return {
+            "status": "won" if all_hit else ("lost" if any_known else "no_result"),
+            "hit_count": sum(1 for h in leg_hits if h["hit"]),
+            "leg_count": len(leg_hits),
+            "leg_hits": leg_hits,
+            "profit_dollars": round(profit, 2),
+            "summary": (
+                f"All 4 winners came from our picks — Quaddie cashed (~${(BASE/perms)*dividend:.0f})"
+                if all_hit else
+                f"{sum(1 for h in leg_hits if h['hit'])}/{len(leg_hits)} legs hit"
+                if any_known else "Results pending"
+            ),
+        }
+    if kind == "lab":
+        rid = play.get("race_id")
+        if not rid:
+            return {"status": "no_result", "summary": "Results pending"}
+        slots = results.get(rid) or {}
+        top3_names = []
+        for p in (1, 2, 3):
+            row = slots.get(p)
+            if row:
+                top3_names.append(_normalize_horse(row["horse_name"]))
+        box = play.get("box_horse_names") or []
+        box_normed = {_normalize_horse(n) for n in box}
+        hit = len(top3_names) == 3 and set(top3_names) == box_normed
+        any_known = len(top3_names) > 0
+        dividend = play.get("estimated_dividend_dollars") or 200
+        perms = play.get("perms") or 6
+        profit = (BASE / perms) * dividend - BASE if hit else (-BASE if any_known else 0)
+        # Did our box catch any of the placings (partial credit)?
+        overlap = len(box_normed & set(top3_names))
+        return {
+            "status": "won" if hit else ("lost" if any_known else "no_result"),
+            "overlap": overlap,
+            "leg_count": 3,
+            "profit_dollars": round(profit, 2),
+            "summary": (
+                f"Trio cashed — all 3 placings in our box (~${(BASE/perms)*dividend:.0f})"
+                if hit else
+                f"{overlap}/3 placings in our box"
+                if any_known else "Results pending"
+            ),
+        }
+    return {}
+
+
 @app.get("/api/funk-me-up/today")
-async def funk_me_up_today():
-    """Funk Me Up daily playbook — 5 plays mapped to Sportsbet features.
-    Reads from the existing /api/edge response so it's fast and consistent
-    with what users see on Hot Seat / Edge."""
-    edge = await get_edge_picks()
+async def funk_me_up_today(date: Optional[str] = None):
+    """Funk Me Up playbook for a given date.
+
+    - date omitted or today  → live picks from /api/edge
+    - date is tomorrow / N days forward → live picks filtered by date
+    - date is yesterday / past → rebuilt from history with outcomes resolved
+
+    Accepts ?date=YYYY-MM-DD. Defaults to today's AEST date."""
     today_iso = _today_aest().isoformat()
-    today_prefix = f"{today_iso}_"
-    today_picks = [p for p in edge.get("picks", []) if (p.get("race_id") or "").startswith(today_prefix)]
+    target_date = date or today_iso
+    try:
+        target_dt = datetime.strptime(target_date, "%Y-%m-%d").date()
+    except ValueError:
+        raise HTTPException(400, "date must be YYYY-MM-DD")
+    today_dt = _today_aest()
+    is_past = target_dt < today_dt
+
+    if is_past:
+        picks_for_date = await _build_historical_funk_picks(target_date)
+    else:
+        edge = await get_edge_picks()
+        prefix = f"{target_date}_"
+        picks_for_date = [p for p in edge.get("picks", []) if (p.get("race_id") or "").startswith(prefix)]
 
     plays = []
     for build_fn in (_build_spine, _build_lock, _build_wave, _build_bonus):
         try:
-            play = build_fn(today_picks)
+            play = build_fn(picks_for_date)
         except Exception as e:
-            log.warning("[funk-me-up] %s failed: %s", build_fn.__name__, e)
+            log.warning("[funk-me-up] %s failed for %s: %s", build_fn.__name__, target_date, e)
             play = None
         if play:
             plays.append(play)
     try:
-        lab_play = await _build_lab_pick(today_iso)
+        lab_play = await _build_lab_pick(target_date)
         if lab_play:
             plays.append(lab_play)
     except Exception as e:
-        log.warning("[funk-me-up] lab pick failed: %s", e)
+        log.warning("[funk-me-up] lab pick failed for %s: %s", target_date, e)
 
-    # Hero: highest expected_value_dollars across plays. Ties broken by
-    # hit_probability so safer plays surface when EVs are close.
+    # Resolve outcomes for past dates
+    if is_past:
+        for p in plays:
+            try:
+                p["outcome"] = await _resolve_play_outcome(p, target_date)
+            except Exception as e:
+                log.debug("[funk-me-up] outcome resolution failed: %s", e)
+                p["outcome"] = {"status": "no_result", "summary": "Results unavailable"}
+
+    # Hero: highest expected_value_dollars across plays.
     hero = None
     if plays:
         hero = max(plays, key=lambda p: (
@@ -4645,15 +4876,22 @@ async def funk_me_up_today():
     total_cash_exposure = round(sum(p.get("stake_dollars") or 0 for p in plays), 2)
     bonus_exposure = round(sum(p.get("bonus_stake_dollars") or 0 for p in plays), 2)
     expected_profit = round(sum(p.get("expected_value_dollars") or 0 for p in plays), 2)
+    actual_profit = None
+    if is_past:
+        actual_profit = round(
+            sum((p.get("outcome", {}).get("profit_dollars") or 0) for p in plays), 2
+        )
 
     return {
-        "date": today_iso,
+        "date": target_date,
+        "is_past": is_past,
         "base_stake": _FUNK_BASE_STAKE,
         "hero_kind": hero.get("kind") if hero else None,
         "plays": plays,
         "cash_exposure_dollars": total_cash_exposure,
         "bonus_exposure_dollars": bonus_exposure,
         "expected_profit_dollars": expected_profit,
+        "actual_profit_dollars": actual_profit,
         "disclaimer": "Estimates use TAB odds; Sportsbet prices vary. Verify boost % and Top 4 prices in the Sportsbet betslip before placing.",
     }
 

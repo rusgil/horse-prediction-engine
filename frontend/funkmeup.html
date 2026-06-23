@@ -418,6 +418,63 @@
       color: var(--text-muted);
     }
 
+    /* Yesterday / Today / Tomorrow tab strip */
+    .day-tabs {
+      display: flex;
+      gap: 6px;
+      margin-top: 10px;
+    }
+    .day-tab {
+      flex: 1;
+      padding: 8px 12px;
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      color: var(--text-dim);
+      font-family: 'Outfit', sans-serif;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    .day-tab.active {
+      background: var(--purple);
+      border-color: var(--purple);
+      color: #fff;
+    }
+
+    /* Outcome banner for past-date plays */
+    .outcome-banner {
+      margin: 8px 0 10px;
+      padding: 8px 12px;
+      border-radius: 8px;
+      font-size: 12px;
+      font-weight: 600;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 8px;
+    }
+    .outcome-banner.won {
+      background: rgba(34,197,94,0.15);
+      border: 1px solid var(--green);
+      color: var(--green-bright);
+    }
+    .outcome-banner.lost {
+      background: rgba(248,113,113,0.10);
+      border: 1px solid rgba(248,113,113,0.4);
+      color: var(--red);
+    }
+    .outcome-banner.no_result {
+      background: var(--bg-elevated);
+      border: 1px solid var(--border);
+      color: var(--text-dim);
+    }
+    .outcome-profit {
+      font-family: 'Barlow Condensed', sans-serif;
+      font-weight: 800;
+      font-size: 16px;
+    }
+
     /* Toast for clipboard */
     .toast {
       position: fixed;
@@ -442,17 +499,22 @@
     <div class="title-row">
       <div>
         <h1 class="title">🎺 <span class="funk">Funk</span> Me Up</h1>
-        <div class="subtitle">Today's curated playbook · 🎯 Sharp picks across each Sportsbet product · $10 base stake</div>
+        <div class="subtitle" id="pageSubtitle">Today's curated playbook · 🎯 Sharp picks across each Sportsbet product · $10 base stake</div>
       </div>
       <div>
         <a href="/hotseat" class="nav-back">🔥 Hot Seat</a>
         <a href="/lab" class="nav-back">🧪 Labs</a>
       </div>
     </div>
+    <div class="day-tabs">
+      <button class="day-tab" data-day="yesterday">Yesterday</button>
+      <button class="day-tab active" data-day="today">Today</button>
+      <button class="day-tab" data-day="tomorrow">Tomorrow</button>
+    </div>
     <div id="exposure" class="exposure-row" style="display:none;">
       <div class="exposure-card">
         <div class="exposure-num" id="cashExp">—</div>
-        <div class="exposure-label">Cash exposure</div>
+        <div class="exposure-label" id="cashExpLabel">Cash exposure</div>
       </div>
       <div class="exposure-card">
         <div class="exposure-num" id="bonusExp">—</div>
@@ -460,7 +522,7 @@
       </div>
       <div class="exposure-card">
         <div class="exposure-num" id="expEv">—</div>
-        <div class="exposure-label">Est. profit</div>
+        <div class="exposure-label" id="expEvLabel">Est. profit</div>
       </div>
     </div>
   </header>
@@ -665,6 +727,19 @@
     const stakeShown = p.kind === 'bonus' ? p.bonus_stake_dollars : p.stake_dollars;
     const stakeLabel = p.kind === 'bonus' ? 'Bonus' : 'Stake';
 
+    // Outcome banner (past dates only) — shows what actually happened
+    // with this play and the realised P/L.
+    const outcome = p.outcome || null;
+    const outcomeHtml = outcome ? (() => {
+      const status = outcome.status || 'no_result';
+      const profit = outcome.profit_dollars || 0;
+      return `
+        <div class="outcome-banner ${status}">
+          <span>${escHtml(outcome.summary || '')}</span>
+          ${status !== 'no_result' ? `<span class="outcome-profit">${fmtMoney(profit)}</span>` : ''}
+        </div>`;
+    })() : '';
+
     // Prescriptive action block — tells the user EXACTLY what bet to
     // place, where to find it on Sportsbet, and what the return looks like.
     const actionHtml = action ? `
@@ -710,6 +785,7 @@
             <span class="confidence ${p.confidence}" title="Confidence tier — A safer, C high variance">${p.confidence}</span>
           </div>
         </div>
+        ${outcomeHtml}
         ${actionHtml}
         ${legsHtml}
         <div class="stats">
@@ -761,23 +837,75 @@
     const exp = document.getElementById('exposure');
     document.getElementById('cashExp').textContent = `$${(d.cash_exposure_dollars || 0).toFixed(2)}`;
     document.getElementById('bonusExp').textContent = `$${(d.bonus_exposure_dollars || 0).toFixed(2)}`;
-    const ev = d.expected_profit_dollars || 0;
     const evEl = document.getElementById('expEv');
-    evEl.textContent = fmtMoney(ev);
-    evEl.className = `exposure-num ${ev >= 0 ? 'pos' : 'neg'}`;
+    const evLabelEl = document.getElementById('expEvLabel');
+    const cashLabelEl = document.getElementById('cashExpLabel');
+    // For past dates, show ACTUAL profit instead of expected
+    if (d.is_past) {
+      const actual = d.actual_profit_dollars || 0;
+      evEl.textContent = fmtMoney(actual);
+      evEl.className = `exposure-num ${actual >= 0 ? 'pos' : 'neg'}`;
+      if (evLabelEl) evLabelEl.textContent = 'Actual profit';
+      if (cashLabelEl) cashLabelEl.textContent = 'Cash staked';
+    } else {
+      const ev = d.expected_profit_dollars || 0;
+      evEl.textContent = fmtMoney(ev);
+      evEl.className = `exposure-num ${ev >= 0 ? 'pos' : 'neg'}`;
+      if (evLabelEl) evLabelEl.textContent = 'Est. profit';
+      if (cashLabelEl) cashLabelEl.textContent = 'Cash exposure';
+    }
     exp.style.display = 'grid';
   }
 
-  async function load() {
+  // Current selected day. Drives the date passed to the API.
+  let currentDay = 'today';
+
+  function _dateForDay(day) {
+    const now = new Date();
+    const parts = now.toLocaleDateString('en-AU', {
+      timeZone: 'Australia/Sydney', year: 'numeric', month: '2-digit', day: '2-digit',
+    }).split('/');
+    const today = `${parts[2]}-${parts[1]}-${parts[0]}`;
+    if (day === 'today') return today;
+    const [y, m, d] = today.split('-').map(Number);
+    const offsetDays = day === 'yesterday' ? -1 : day === 'tomorrow' ? 1 : 0;
+    const base = new Date(Date.UTC(y, m - 1, d) + offsetDays * 86400000);
+    const yy = base.getUTCFullYear();
+    const mm = String(base.getUTCMonth() + 1).padStart(2, '0');
+    const dd = String(base.getUTCDate()).padStart(2, '0');
+    return `${yy}-${mm}-${dd}`;
+  }
+
+  function _subtitleFor(day) {
+    if (day === 'yesterday') {
+      return "Yesterday's playbook — outcomes resolved.";
+    }
+    if (day === 'tomorrow') {
+      return "Tomorrow's playbook · 🎯 Sharp picks · take prices early before the market shortens.";
+    }
+    return "Today's curated playbook · 🎯 Sharp picks across each Sportsbet product · $10 base stake";
+  }
+
+  async function load(day) {
+    day = day || currentDay;
+    currentDay = day;
     const root = document.getElementById('root');
+    // Update tab + subtitle styling
+    document.querySelectorAll('.day-tab').forEach(b =>
+      b.classList.toggle('active', b.dataset.day === day));
+    const sub = document.getElementById('pageSubtitle');
+    if (sub) sub.textContent = _subtitleFor(day);
+
+    const targetDate = _dateForDay(day);
+    root.innerHTML = `<div class="empty">Loading ${day}'s playbook…</div>`;
     try {
-      const [todayRes, bt7Res, bt30Res] = await Promise.all([
-        fetch(`${API}/api/funk-me-up/today`),
+      const [planRes, bt7Res, bt30Res] = await Promise.all([
+        fetch(`${API}/api/funk-me-up/today?date=${targetDate}`),
         fetch(`${API}/api/funk-me-up/backtest?days=7`).catch(() => null),
         fetch(`${API}/api/funk-me-up/backtest?days=30`).catch(() => null),
       ]);
-      if (!todayRes.ok) throw new Error('HTTP ' + todayRes.status);
-      const data = await todayRes.json();
+      if (!planRes.ok) throw new Error('HTTP ' + planRes.status);
+      const data = await planRes.json();
       window._funkData = data;
       try {
         window._funkBacktest7 = bt7Res && bt7Res.ok ? await bt7Res.json() : null;
@@ -787,38 +915,45 @@
       } catch (_) { window._funkBacktest30 = null; }
       renderExposure(data);
       if (!data.plays || !data.plays.length) {
+        const msg = day === 'tomorrow'
+          ? "Tomorrow's plays will appear once predictions are enriched (typically by 08:30 AEST)."
+          : day === 'yesterday'
+          ? "No yesterday plays to resolve — predictions weren't generated for that date."
+          : "No qualifying plays today — try again closer to the first jump.";
         root.innerHTML = `
           <div class="empty">
             <div style="font-size:28px;margin-bottom:8px">📭</div>
-            <div>No qualifying plays today — try again closer to the first jump.</div>
+            <div>${msg}</div>
           </div>`;
         return;
       }
       const heroKind = data.hero_kind;
       const hero = data.plays.find(p => p.kind === heroKind);
       const others = data.plays.filter(p => p.kind !== heroKind);
-      // Sort 'More Plays' by earliest jump time so the page reads
-      // top-to-bottom as the order to place bets through the day.
       others.sort((a, b) => _earliestMs(a) - _earliestMs(b));
-      // Assign ordinals across the whole card list, hero first.
       const ordered = hero ? [hero, ...others] : others;
       const ordinalByKind = {};
       ordered.forEach((p, i) => { ordinalByKind[p.kind] = i + 1; });
 
+      const heroLabel = day === 'yesterday' ? "Top Play that day"
+                      : day === 'tomorrow'  ? "Tomorrow's Top Play"
+                      : "Today's Top Play — place first";
+      const moreLabel = day === 'yesterday' ? "Other Plays — outcomes resolved"
+                      : day === 'tomorrow'  ? "Other Plays — in order of jump time"
+                      : "More Plays — in order of jump time";
       let html = '';
       if (hero) {
-        html += '<div class="section-title">Today\'s Top Play — place first</div>';
+        html += `<div class="section-title">${heroLabel}</div>`;
         html += renderPlay(hero, true, ordinalByKind[hero.kind]);
       }
       if (others.length) {
-        html += '<div class="section-title">More Plays — in order of jump time</div>';
+        html += `<div class="section-title">${moreLabel}</div>`;
         html += others.map(p => renderPlay(p, false, ordinalByKind[p.kind])).join('');
       }
       html += `<div class="disclaimer">${escHtml(data.disclaimer || '')}</div>`;
       html += `<div class="responsible">Gamble responsibly · 1800 858 858 · gamblinghelponline.org.au</div>`;
       root.innerHTML = html;
 
-      // Wire copy buttons
       root.querySelectorAll('[data-copy]').forEach(btn => {
         btn.addEventListener('click', () => {
           const kind = btn.dataset.copy;
@@ -831,7 +966,12 @@
     }
   }
 
-  load();
+  // Wire tab clicks
+  document.querySelectorAll('.day-tab').forEach(btn => {
+    btn.addEventListener('click', () => load(btn.dataset.day));
+  });
+
+  load('today');
 </script>
 </body>
 </html>
