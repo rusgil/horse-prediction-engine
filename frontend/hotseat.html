@@ -149,6 +149,29 @@
       transform: scale(0.96);
     }
 
+    /* Mode row — purple themed to match Edge + main page Sharp toggle */
+    .filter-row.mode-row {
+      padding: 8px 12px;
+      background: rgba(168,85,247,0.06);
+      border: 1px solid rgba(168,85,247,0.25);
+      border-radius: 8px;
+      margin-bottom: 10px;
+    }
+    .filter-row.mode-row .filter-axis-label {
+      color: var(--purple-bright);
+      font-weight: 800;
+    }
+    .filter-row.mode-row .filter-pill[data-axis="mode"] {
+      background: var(--bg-card);
+      border-color: var(--border);
+      color: var(--text-dim);
+    }
+    .filter-row.mode-row .filter-pill[data-axis="mode"].active {
+      background: var(--purple);
+      border-color: var(--purple);
+      color: #fff;
+    }
+
     /* Track selector */
     .track-row {
       display: flex;
@@ -530,7 +553,7 @@
       <strong>Place %</strong> = chance of finishing top 3 ·
       <strong>Sharp</strong> = our highest-confidence niche (32-35% win rate historically)
     </div>
-    <div class="filter-row">
+    <div class="filter-row mode-row">
       <span class="filter-axis-label">Mode</span>
       <button class="filter-pill active" data-axis="mode" data-filter="sharp">🎯 Sharp only</button>
       <button class="filter-pill" data-axis="mode" data-filter="all">All picks</button>
