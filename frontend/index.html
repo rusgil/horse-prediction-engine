@@ -1081,7 +1081,13 @@
   // Uses meetingStats.maxConf which is precomputed as the meeting fetches.
   function isSharpMeeting(m) {
     const stats = S.meetingStats[m.venue_code];
-    return !!(stats && stats.maxConf != null && stats.maxConf >= 30);
+    // Unknown state (stats not loaded yet) — show the meeting until we
+    // know it isn't Sharp. The background _loadMeetingWinRate fetcher
+    // re-renders pills as stats arrive, so non-Sharp meetings drop out
+    // a moment later. Without this, the initial page load shows the
+    // empty-state because no meetings have stats yet.
+    if (!stats || stats.maxConf == null) return true;
+    return stats.maxConf >= 30;
   }
 
   function setMainMode(mode) {
