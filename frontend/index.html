@@ -187,6 +187,33 @@
       color: var(--text-dim); margin-bottom: 10px;
     }
 
+    .main-mode-row {
+      display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+      margin-bottom: 12px; padding: 8px 12px;
+      background: rgba(168,85,247,0.06);
+      border: 1px solid rgba(168,85,247,0.25);
+      border-radius: 8px;
+    }
+    .main-mode-label {
+      font-family: 'Barlow Condensed', sans-serif;
+      font-weight: 800; font-size: 0.72rem;
+      letter-spacing: 0.6px; color: #c084fc;
+      text-transform: uppercase;
+    }
+    .main-mode-pill {
+      background: var(--bg-card); border: 1px solid var(--border);
+      color: var(--text-dim);
+      padding: 5px 10px; border-radius: 999px;
+      font-size: 0.75rem; font-weight: 600; cursor: pointer;
+      font-family: inherit;
+    }
+    .main-mode-pill.active {
+      background: #a855f7; color: #fff; border-color: #a855f7;
+    }
+    .main-mode-hint {
+      font-size: 0.7rem; color: var(--text-dim); margin-left: 4px;
+    }
+
     /* ── Scrollable pills row ────────────────────────────────── */
     .pills-scroller {
       position: relative; margin-bottom: 20px;
@@ -935,6 +962,12 @@
   <!-- Meetings -->
   <div id="meetingsSection" style="display:none">
     <div id="dayAccuracyBanner"></div>
+    <div class="main-mode-row">
+      <span class="main-mode-label">Mode</span>
+      <button class="main-mode-pill active" id="mainModeSharp" onclick="setMainMode('sharp')">🎯 Sharp only</button>
+      <button class="main-mode-pill" id="mainModeAll" onclick="setMainMode('all')">All meetings</button>
+      <span class="main-mode-hint">Sharp = meetings with a high-confidence pick (≥30%)</span>
+    </div>
     <div class="section-label" id="meetingsLabel">Today's Meetings</div>
     <div class="pills-scroller">
       <div class="pills-row" id="meetingPills"></div>
@@ -1027,7 +1060,26 @@
     perfByDate: {},   // date → {win_rate, place_rate, wins, races, value_pnl, value_bets}
     meetingStats: {}, // venue_code → {wins, total} for win% pills
     statsLoadGen: 0,  // incremented on date change to cancel stale _loadMeetingWinRate callbacks
+    mainMode: 'sharp', // 'sharp' or 'all' — Sharp shows meetings with ≥30% best-pick confidence
   };
+
+  // A meeting qualifies as 'Sharp' when it has at least one race with a
+  // rank-1 model_pct ≥ 30 (the niche we identified hits 30-35% historically).
+  // Uses meetingStats.maxConf which is precomputed as the meeting fetches.
+  function isSharpMeeting(m) {
+    const stats = S.meetingStats[m.venue_code];
+    return !!(stats && stats.maxConf != null && stats.maxConf >= 30);
+  }
+
+  function setMainMode(mode) {
+    S.mainMode = mode;
+    const sharpBtn = document.getElementById('mainModeSharp');
+    const allBtn = document.getElementById('mainModeAll');
+    if (sharpBtn) sharpBtn.classList.toggle('active', mode === 'sharp');
+    if (allBtn) allBtn.classList.toggle('active', mode === 'all');
+    renderMeetingPills();
+  }
+  window.setMainMode = setMainMode;
 
   function todayISO() {
     const d = new Date();
@@ -1340,7 +1392,18 @@ const cls = pct >= 25 ? 'good' : pct >= 18 ? 'ok' : 'bad';
   function renderMeetingPills() {
     const container = document.getElementById('meetingPills');
     container.innerHTML = '';
-    S.meetings.forEach(m => {
+    const meetings = S.mainMode === 'sharp'
+      ? S.meetings.filter(m => isSharpMeeting(m) || S.selectedMeeting?.venue_code === m.venue_code)
+      : S.meetings;
+    // Empty-state when Sharp filters everything out
+    if (S.mainMode === 'sharp' && !meetings.length && S.meetings.length) {
+      container.innerHTML = `
+        <div style="padding:14px 16px;color:var(--text-dim);font-size:0.85rem;font-style:italic;border:1px dashed var(--border);border-radius:10px;width:100%;text-align:center;">
+          No meetings today have a pick ≥30% confidence yet — try <strong style="color:#c084fc;cursor:pointer" onclick="setMainMode('all')">All meetings</strong> while the model warms up.
+        </div>`;
+      return;
+    }
+    meetings.forEach(m => {
       const el = document.createElement('div');
       el.className = 'pill' + (S.selectedMeeting?.venue_code === m.venue_code ? ' active' : '');
       const statKey = m.venue_code;
@@ -1432,6 +1495,9 @@ const cls = pct >= 25 ? 'good' : pct >= 18 ? 'ok' : 'bad';
         confEl.style.color = maxConf >= 40 ? 'var(--green)' : 'var(--gold)';
         confEl.style.display = '';
       }
+      // When Sharp filter is on, the visibility of this meeting may have
+      // just changed (maxConf became known). Re-render to add/remove the pill.
+      if (S.mainMode === 'sharp') renderMeetingPills();
     } catch (_) {}
   }
 
