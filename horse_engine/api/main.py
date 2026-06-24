@@ -6832,6 +6832,163 @@ async def place_decisiveness_backtest(
     }
 
 
+@app.get("/api/admin/model-anomalies")
+async def model_anomalies(
+    days: int = 90,
+    min_model_pct: float = 25.0,
+    min_sp: float = 8.0,
+    max_position: int = 5,
+    limit: int = 50,
+    x_cron_secret: Optional[str] = Header(None),
+):
+    """Find races where:
+      - model gave the rank-1 horse a high win% (≥ min_model_pct)
+      - market priced the same horse long (SP ≥ min_sp — market disagreed)
+      - horse finished poorly (position > max_position OR scratched-by-DNF)
+
+    These are the worst-case 'model very wrong' picks. For each we surface
+    the diagnostic features from the enriched snapshot so failure modes
+    can be classified (long layoff, market-rank gap, weak form proxy, etc.).
+    """
+    _check_admin(x_cron_secret)
+    days = max(7, min(int(days), 365))
+    cutoff_date = (_today_aest() - timedelta(days=days)).isoformat()
+
+    async with get_session() as session:
+        pred_rows = (await session.execute(
+            select(
+                RunnerPredictionHistoryRow.race_id,
+                RunnerPredictionHistoryRow.horse_name,
+                RunnerPredictionHistoryRow.win_probability,
+                RunnerPredictionHistoryRow.place_probability,
+                RunnerPredictionHistoryRow.market_rank,
+                RunnerPredictionHistoryRow.tab_number,
+                RunnerPredictionHistoryRow.scheduled_time,
+                RunnerPredictionHistoryRow.enriched_json,
+                RunnerPredictionHistoryRow.enriched_at,
+            )
+            .where(RunnerPredictionHistoryRow.race_id >= f"{cutoff_date}_")
+            .where(RunnerPredictionHistoryRow.model_rank == 1)
+            .where(RunnerPredictionHistoryRow.win_probability >= min_model_pct / 100.0)
+            .where(RunnerPredictionHistoryRow.cancelled.is_(False)
+                   | RunnerPredictionHistoryRow.cancelled.is_(None))
+            .where(RunnerPredictionHistoryRow.source == "live")
+            .order_by(RunnerPredictionHistoryRow.enriched_at.desc())
+        )).fetchall()
+        result_rows = (await session.execute(
+            select(HistoricalResultRow.race_id, HistoricalResultRow.horse_name,
+                   HistoricalResultRow.position, HistoricalResultRow.starting_price,
+                   HistoricalResultRow.field_size)
+            .where(HistoricalResultRow.race_id >= f"{cutoff_date}_")
+        )).fetchall()
+
+    # Latest snapshot per (race, horse) — picks list is reverse-chron-ordered
+    seen: set = set()
+    latest_picks = []
+    for row in pred_rows:
+        key = (row.race_id, _normalize_horse(row.horse_name))
+        if key in seen:
+            continue
+        seen.add(key)
+        latest_picks.append(row)
+
+    # Index results: (race_id, horse_name_normed) → (position, sp, field_size)
+    results_by_horse: dict[tuple[str, str], tuple] = {}
+    for r in result_rows:
+        results_by_horse[(r.race_id, _normalize_horse(r.horse_name or ""))] = (
+            r.position, float(r.starting_price or 0), r.field_size,
+        )
+
+    anomalies: list[dict] = []
+    for p in latest_picks:
+        key = (p.race_id, _normalize_horse(p.horse_name))
+        result = results_by_horse.get(key)
+        if not result:
+            continue
+        pos, sp, field_size = result
+        if pos is None or pos <= 0:
+            continue  # didn't finish — DNF/scratched after enrich
+        if sp < min_sp:
+            continue  # market backed it too — not an anomaly
+        if pos <= max_position:
+            continue  # actually ran well enough — not an anomaly
+        try:
+            enriched = json.loads(p.enriched_json) if p.enriched_json else {}
+        except Exception:
+            enriched = {}
+        model_pct = (p.win_probability or 0) * 100
+        market_implied_pct = (1.0 / sp) * 100 if sp > 1 else None
+        edge_pct = round(model_pct - market_implied_pct, 1) if market_implied_pct else None
+        market_rank = p.market_rank
+        days_off = enriched.get("days_since_last_run")
+        form_score = enriched.get("form_score")
+        # Failure-mode tags — heuristic; multiple may fire per anomaly
+        tags = []
+        if isinstance(days_off, (int, float)) and days_off > 180:
+            tags.append("long_layoff")
+        if isinstance(days_off, (int, float)) and days_off > 365:
+            tags.append("year_plus_spell")
+        if market_rank and market_rank >= 5:
+            tags.append("market_disagreed")
+        if isinstance(form_score, (int, float)) and form_score >= 0.75 and isinstance(days_off, (int, float)) and days_off > 120:
+            tags.append("stale_form_signal")
+        if enriched.get("class_change") == 1 and isinstance(days_off, (int, float)) and days_off > 120:
+            tags.append("class_drop_post_spell")
+        if (enriched.get("runs_this_prep") or 0) == 0:
+            tags.append("first_up_resuming")
+        if (enriched.get("starts_last_10") or 0) <= 2:
+            tags.append("thin_record")
+        if not tags:
+            tags.append("no_obvious_cause")
+        anomalies.append({
+            "race_id": p.race_id,
+            "horse_name": p.horse_name,
+            "model_pct": round(model_pct, 1),
+            "starting_price": sp,
+            "market_implied_pct": round(market_implied_pct, 1) if market_implied_pct else None,
+            "edge_pct": edge_pct,
+            "model_rank": 1,
+            "market_rank": market_rank,
+            "actual_position": pos,
+            "field_size": field_size,
+            "form_score": form_score,
+            "days_since_last_run": days_off,
+            "class_change": enriched.get("class_change"),
+            "runs_this_prep": enriched.get("runs_this_prep"),
+            "wins_last_10": enriched.get("wins_last_10"),
+            "starts_last_10": enriched.get("starts_last_10"),
+            "speed_map_position": enriched.get("speed_map_position"),
+            "trainer_overall_rate": enriched.get("trainer_overall_rate"),
+            "jockey_overall_rate": enriched.get("jockey_overall_rate"),
+            "win_rate_distance": enriched.get("win_rate_distance"),
+            "wet_track_record": enriched.get("wet_track_record"),
+            "key_flags": enriched.get("key_flags"),
+            "scheduled_time": p.scheduled_time,
+            "tags": tags,
+        })
+
+    # Sort by worst-edge first (biggest model-market disagreement)
+    anomalies.sort(key=lambda a: -(a.get("edge_pct") or 0))
+
+    # Tag frequency summary so we can see dominant failure modes
+    tag_counts: dict[str, int] = {}
+    for a in anomalies:
+        for t in a["tags"]:
+            tag_counts[t] = tag_counts.get(t, 0) + 1
+
+    return {
+        "window_days": days,
+        "filters": {
+            "min_model_pct": min_model_pct,
+            "min_sp": min_sp,
+            "max_position": max_position,
+        },
+        "total_anomalies": len(anomalies),
+        "failure_mode_counts": dict(sorted(tag_counts.items(), key=lambda x: -x[1])),
+        "anomalies": anomalies[:limit],
+    }
+
+
 @app.get("/api/admin/bets/clear-pair-backtest")
 async def clear_pair_backtest(
     days: int = 60,
