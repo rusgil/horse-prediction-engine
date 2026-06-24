@@ -768,6 +768,48 @@
     .page-nav-btn.about:hover { color: #d1d5db; }
     .page-nav-btn.admin { font-size: 11px; padding: 6px 9px; color: #6b7280; }
     .page-nav-btn.admin:hover { color: #d1d5db; }
+    /* Push About + Admin to the right on desktop */
+    .nav-spacer { flex: 1; min-width: 16px; }
+    /* Mobile: bottom-fixed nav, NRL-style */
+    @media (max-width: 760px) {
+      .page-nav {
+        position: fixed;
+        left: 0; right: 0; bottom: 0;
+        top: auto;
+        background: rgba(10,10,15,0.96);
+        -webkit-backdrop-filter: blur(10px);
+        backdrop-filter: blur(10px);
+        border-top: 1px solid rgba(255,255,255,0.12);
+        border-bottom: none;
+        padding: 6px 4px calc(6px + env(safe-area-inset-bottom, 0px));
+        gap: 2px;
+        z-index: 100;
+        box-shadow: 0 -4px 16px rgba(0,0,0,0.5);
+        justify-content: space-around;
+      }
+      .nav-spacer { display: none; }
+      .page-nav-btn {
+        flex: 1; min-width: 0;
+        padding: 8px 3px;
+        font-size: 10px;
+        letter-spacing: 0.02em;
+        text-align: center;
+        background: transparent;
+        border: none;
+        border-radius: 6px;
+        color: #6b7280;
+        justify-content: center;
+        white-space: nowrap;
+        overflow: hidden;
+      }
+      .page-nav-btn.about, .page-nav-btn.admin {
+        font-size: 10px;
+        padding: 8px 3px;
+        flex: 0 0 auto;
+        min-width: 40px;
+      }
+      body { padding-bottom: 70px; }
+    }
 
     /* Unified page header — same on every page. */
     .page-header {
@@ -1663,11 +1705,12 @@
 
 <nav class="page-nav">
   <a href="/"           class="page-nav-btn lounge">🛋️ Lounge</a>
-  <a href="/about"      class="page-nav-btn about">About</a>
   <a href="/edge"       class="page-nav-btn edge active">🎯 Edge</a>
   <a href="/hotseat"    class="page-nav-btn hot">🔥 Hot Seat</a>
   <a href="/funk-me-up" class="page-nav-btn funk">🎺 Funk Me Up</a>
   <a href="/lab"        class="page-nav-btn labs">🧪 Labs</a>
+  <span class="nav-spacer"></span>
+  <a href="/about"      class="page-nav-btn about">About</a>
 </nav>
 
 <div class="page">
