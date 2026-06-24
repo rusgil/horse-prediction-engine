@@ -890,9 +890,12 @@
   // Hot Seat users can act without leaving the page. Tagged Labs in both
   // the data layer (p.two_funk.tier === 'labs') and the UI marker — in
   // the future, only Labs members will see this panel.
+  // Renders for both upcoming AND finished races; on finished races the
+  // "place this bet" action block is dropped (no longer actionable).
   function renderTwoFunkPanel(p) {
     const tf = p.two_funk;
     if (!tf || !tf.qualified) return '';
+    const finished = isFinished(p.scheduled_time);
     const partnerOddsTxt = tf.partner_odds ? `$${Number(tf.partner_odds).toFixed(2)}` : '—';
     const winOddsTxt = (p.best_available_odds && p.best_available_odds > 1.0)
       ? `$${Number(p.best_available_odds).toFixed(2)}` : '—';
@@ -930,7 +933,7 @@
           Top-2 sum <strong>${tf.top2_win_sum_pct}%</strong>
           · <strong>${tf.rank2_rank3_gap_pct}pt</strong> cliff to rank-3
         </div>
-        ${potReturn ? `
+        ${(!finished && potReturn) ? `
         <div class="twofunk-action">
           $${stake} Quinella → ~$${potReturn.toFixed(2)} if it lands
           <small>Sportsbet → ${escHtml(venueDisplay(p.venue, {upper: true}))} → R${p.race_number} → Exotics → Quinella</small>
@@ -1127,8 +1130,8 @@
         <div class="pick ${isImminent ? 'imminent' : ''} ${isNow ? 'now' : ''} ${isHot ? 'hot' : ''} ${isPremium && !finished ? 'premium' : ''} ${finished ? 'finished' : ''}">
           ${barPct >= 0 ? `<div class="timer-bar"><div class="timer-bar-fill" style="width:${barPct}%"></div></div>` : ''}
           ${resultBanner}
-          ${(isPremium || p.two_funk?.qualified) && !finished ? `<div class="badge-row">
-            ${isPremium ? '<span class="badge">Premium</span>' : ''}
+          ${((isPremium && !finished) || p.two_funk?.qualified) ? `<div class="badge-row">
+            ${(isPremium && !finished) ? '<span class="badge">Premium</span>' : ''}
             ${p.two_funk?.qualified ? `<span class="badge twofunk" title="Top-2 dominate: ${p.two_funk.top2_win_sum_pct}% combined · ${p.two_funk.rank2_rank3_gap_pct}pt cliff to rank-3. Consider a Quinella with ${escHtml(p.two_funk.partner_horse_name)}.">🪩 2 Funk · Quinella w/ ${escHtml(p.two_funk.partner_horse_name)}<span class="tier-marker tier-labs">Labs</span></span>` : ''}
           </div>` : ''}
           <div class="pick-top">
@@ -1157,7 +1160,7 @@
               <div class="stat-label">Odds</div>
             </div>
           </div>
-          ${!finished ? renderTwoFunkPanel(p) : ''}
+          ${renderTwoFunkPanel(p)}
           ${renderFieldExpansion(p)}
         </div>`;
     }).join('');
