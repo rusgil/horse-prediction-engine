@@ -2644,7 +2644,7 @@ _edge_odds_cache: dict[str, tuple[datetime, dict[str, float]]] = {}  # race_id �
 _EDGE_RESPONSE_TTL = 120
 # Bump _EDGE_CACHE_VERSION whenever threshold or response shape changes so
 # old cached responses are invalidated on deploy without a manual restart.
-_EDGE_CACHE_VERSION = 5  # 2026-06-24: 2 Funk quinella div estimator (0.5 × W1 × W2)
+_EDGE_CACHE_VERSION = 6  # 2026-06-24: trifecta strip now mirrors Lab's committed core_top3/4 bets
 _edge_response_cache: tuple[datetime, dict, int] | None = None
 
 # Cache full list_meetings response for 10 min (weather + RA calls are expensive)
@@ -2935,6 +2935,28 @@ async def get_edge_picks():
             hist_race_ids = {r.race_id for r in hist_rows}
             mut_race_ids_list = [r.race_id for r in mut_rows]
 
+            # Batch-fetch the Lab's committed core_top3 / core_top4 bets for
+            # these races. The Edge trifecta strip mirrors what the Lab is
+            # actually paper-trading so both pages tell the same story for
+            # the same race — and races that don't pass the Lab's gates
+            # (top-3 sum ≤55%, field ≤11) get no strip at all.
+            all_race_ids_for_bets = list(hist_race_ids | set(mut_race_ids_list))
+            lab_top3_by_race: dict[str, BetRecommendationRow] = {}
+            lab_top4_by_race: dict[str, BetRecommendationRow] = {}
+            if all_race_ids_for_bets:
+                lab_bet_rows = (await session.execute(
+                    select(BetRecommendationRow)
+                    .where(BetRecommendationRow.race_id.in_(all_race_ids_for_bets))
+                    .where(BetRecommendationRow.strategy_label.in_(("core_top3", "core_top4")))
+                )).scalars().all()
+                # If multiple bets per (race, strategy) somehow exist, prefer the
+                # most recently recommended one.
+                for b in sorted(lab_bet_rows, key=lambda x: x.recommended_at or datetime.min):
+                    if b.strategy_label == "core_top3":
+                        lab_top3_by_race[b.race_id] = b
+                    elif b.strategy_label == "core_top4":
+                        lab_top4_by_race[b.race_id] = b
+
             # Batch-fetch place model runners for trifecta legs
             place_rows_list: list = []
             if hist_race_ids:
@@ -3088,33 +3110,76 @@ async def get_edge_picks():
             hot = model_pct >= 45
             _, venue_code, race_num = _parse_race_id(runner_row.race_id)
 
-            # Build trifecta legs: win pick + top 2 place-model picks (excluding win)
-            place_runners = trifecta_map.get(runner_row.race_id, [])
-            place_excl = [pr for pr in place_runners if pr.horse_name != runner_row.horse_name]
-            def _leg(pr):
-                return {
-                    "tab_number": pr.tab_number,
-                    "horse_name": pr.horse_name,
-                    "place_pct": round(pr.place_probability * 100, 1) if pr.place_probability else None,
-                }
-            win_leg = {
-                "tab_number": runner_row.tab_number,
-                "horse_name": runner_row.horse_name,
-                "place_pct": round(runner_row.place_probability * 100, 1) if runner_row.place_probability else None,
-            }
-            tri_legs = [win_leg] + [_leg(pr) for pr in place_excl[:2]]
-            ff_legs  = [win_leg] + [_leg(pr) for pr in place_excl[:3]]
-            # Approximate combined hit rate: product of individual place probabilities
-            tri_probs = [l["place_pct"] for l in tri_legs if l["place_pct"] is not None]
+            # Build trifecta legs by mirroring the Lab's committed paper bets.
+            # 'core_top3' = 3-horse trifecta box (top-3 win model). 'core_top4'
+            # = 4-horse first-four box. Races that don't pass the Lab's gating
+            # criteria (top-3 sum ≤55, field ≤11) won't have these rows, which
+            # means no strip on Edge — by design.
+            lab_top3 = lab_top3_by_race.get(runner_row.race_id)
+            lab_top4 = lab_top4_by_race.get(runner_row.race_id)
+            # Build a per-race horse lookup so we can attach place_pct + tab
+            # to each leg. Prefer the place model row (so place_pct matches
+            # what the Lab is using), fall back to the win pick itself or
+            # field_map (which carries every runner).
+            tri_horse_by_name = {pr.horse_name: pr for pr in trifecta_map.get(runner_row.race_id, [])}
+            field_for_race = field_map.get(runner_row.race_id, [])
+            tri_field_by_name = {f["horse_name"]: f for f in field_for_race}
+
+            def _leg_from_lab(name: str) -> Optional[dict]:
+                pr = tri_horse_by_name.get(name)
+                if pr is not None:
+                    return {
+                        "tab_number": pr.tab_number,
+                        "horse_name": pr.horse_name,
+                        "place_pct": round((pr.place_probability or 0) * 100, 1) if pr.place_probability else None,
+                    }
+                fr = tri_field_by_name.get(name)
+                if fr is not None:
+                    return {
+                        "tab_number": fr.get("tab_number"),
+                        "horse_name": name,
+                        "place_pct": fr.get("place_pct"),
+                    }
+                # Last resort: leg with just the name + tab (from the Lab bet)
+                return {"tab_number": None, "horse_name": name, "place_pct": None}
+
+            tri_legs: list[dict] = []
+            ff_legs: list[dict] = []
+            if lab_top3:
+                try:
+                    names = json.loads(lab_top3.box_horse_names_json or "[]")
+                    tabs = json.loads(lab_top3.box_horses_json or "[]")
+                    for nm, tab in zip(names, tabs):
+                        leg = _leg_from_lab(nm) or {"tab_number": tab, "horse_name": nm, "place_pct": None}
+                        if leg.get("tab_number") is None and tab is not None:
+                            leg["tab_number"] = tab
+                        tri_legs.append(leg)
+                except Exception:
+                    tri_legs = []
+            if lab_top4:
+                try:
+                    names = json.loads(lab_top4.box_horse_names_json or "[]")
+                    tabs = json.loads(lab_top4.box_horses_json or "[]")
+                    for nm, tab in zip(names, tabs):
+                        leg = _leg_from_lab(nm) or {"tab_number": tab, "horse_name": nm, "place_pct": None}
+                        if leg.get("tab_number") is None and tab is not None:
+                            leg["tab_number"] = tab
+                        ff_legs.append(leg)
+                except Exception:
+                    ff_legs = []
+            # Combined-probability estimate: any-order trifecta hit rate. The
+            # naive product-of-place-probs (the old formula) ignores that
+            # filling one of the three slots raises the conditional chance
+            # of the others. Use it as an approximation, no overround divisor.
+            tri_probs = [l["place_pct"] for l in tri_legs if l.get("place_pct") is not None]
             tri_combined = round(tri_probs[0] * tri_probs[1] * tri_probs[2] / 10000, 1) if len(tri_probs) == 3 else None
-            ff_probs = [l["place_pct"] for l in ff_legs if l["place_pct"] is not None]
+            ff_probs = [l["place_pct"] for l in ff_legs if l.get("place_pct") is not None]
             ff_combined = round(ff_probs[0] * ff_probs[1] * ff_probs[2] * ff_probs[3] / 1000000, 1) if len(ff_probs) == 4 else None
             # Exotic alignment: compare exotic model's top-3 against win pick
             exotic_top3 = exotic_top3_map.get(runner_row.race_id, set())
             if not exotic_top3:
                 exotic_alignment = "no_exotic"
             elif runner_row.horse_name in exotic_top3:
-                # Check if win horse is exotic leg 1 (rank 1)
                 exotic_leg1 = next(
                     (er.horse_name for er in exotic_rows_list
                      if er.race_id == runner_row.race_id and er.exotic_model_rank == 1),
@@ -3130,6 +3195,7 @@ async def get_edge_picks():
                 "first_four": ff_legs if len(ff_legs) >= 4 else None,
                 "first_four_combined_pct": ff_combined,
                 "exotic_alignment": exotic_alignment,
+                "source": "lab",  # mirror of BetRecommendationRow core_top3/4
             } if len(tri_legs) >= 3 else None
 
             # Insurance hedge: only computed when pick odds >= threshold
