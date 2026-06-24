@@ -278,6 +278,11 @@
       border-bottom: 1px solid var(--border);
       font-weight: 500;
     }
+    .result-banner.twofunk-hit {
+      background: linear-gradient(90deg, rgba(236,72,153,0.30) 0%, rgba(236,72,153,0.05) 100%);
+      color: #f9a8d4;
+      border-bottom: 1px solid rgba(236,72,153,0.45);
+    }
     .pick.finished { opacity: 0.92; }
     .pick.finished .countdown { color: var(--text-muted); }
 
@@ -1079,8 +1084,15 @@
 
       // Result banner (only shown for finished races within the 3-min window).
       // Picks data is annotated by /api/edge: won, placed, actual_position, sp.
+      // The 2 Funk Quinella-hit banner stacks ABOVE the main result so a
+      // race like Warwick R1 (rank-1 2nd, rank-2 1st) advertises the
+      // Labs-feature hit even when the rank-1 win pick narrowly missed.
       let resultBanner = '';
+      let twofunkHitBanner = '';
       if (finished) {
+        if (p.two_funk?.qualified && p.two_funk?.hit === true) {
+          twofunkHitBanner = `<div class="result-banner twofunk-hit">🪩 2 Funk HIT · Quinella landed (${escHtml(p.horse_name)} + ${escHtml(p.two_funk.partner_horse_name)})</div>`;
+        }
         const pos = p.actual_position;
         if (pos != null) {
           const posLabel = pos === 1 ? '1st' : pos === 2 ? '2nd' : pos === 3 ? '3rd' : `${pos}th`;
@@ -1129,6 +1141,7 @@
       return `
         <div class="pick ${isImminent ? 'imminent' : ''} ${isNow ? 'now' : ''} ${isHot ? 'hot' : ''} ${isPremium && !finished ? 'premium' : ''} ${finished ? 'finished' : ''}">
           ${barPct >= 0 ? `<div class="timer-bar"><div class="timer-bar-fill" style="width:${barPct}%"></div></div>` : ''}
+          ${twofunkHitBanner}
           ${resultBanner}
           ${((isPremium && !finished) || p.two_funk?.qualified) ? `<div class="badge-row">
             ${(isPremium && !finished) ? '<span class="badge">Premium</span>' : ''}

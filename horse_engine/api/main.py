@@ -2644,7 +2644,7 @@ _edge_odds_cache: dict[str, tuple[datetime, dict[str, float]]] = {}  # race_id â
 _EDGE_RESPONSE_TTL = 120
 # Bump _EDGE_CACHE_VERSION whenever threshold or response shape changes so
 # old cached responses are invalidated on deploy without a manual restart.
-_EDGE_CACHE_VERSION = 7  # 2026-06-24: trifecta + hedge tagged with membership tier
+_EDGE_CACHE_VERSION = 8  # 2026-06-24: two_funk.hit annotated for finished races
 _edge_response_cache: tuple[datetime, dict, int] | None = None
 
 # Cache full list_meetings response for 10 min (weather + RA calls are expensive)
@@ -3339,6 +3339,15 @@ async def get_edge_picks():
                 p["won"] = pos == 1
                 p["placed"] = pos <= 3
                 p["sp"] = db_sp.get((p["race_id"], p["horse_name"]))
+            # 2 Funk: annotate partner position + quinella hit so the card
+            # can celebrate when both rank-1 and rank-2 fill the placings.
+            tf = p.get("two_funk")
+            if tf and tf.get("partner_horse_name"):
+                partner_pos = db_positions.get((p["race_id"], tf["partner_horse_name"]))
+                if partner_pos is not None:
+                    tf["partner_actual_position"] = partner_pos
+                if pos is not None and partner_pos is not None:
+                    tf["hit"] = {pos, partner_pos} == {1, 2}
 
         for p in finished_picks:
             tri = p.get("trifecta")
