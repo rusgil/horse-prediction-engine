@@ -2644,7 +2644,7 @@ _edge_odds_cache: dict[str, tuple[datetime, dict[str, float]]] = {}  # race_id �
 _EDGE_RESPONSE_TTL = 120
 # Bump _EDGE_CACHE_VERSION whenever threshold or response shape changes so
 # old cached responses are invalidated on deploy without a manual restart.
-_EDGE_CACHE_VERSION = 6  # 2026-06-24: trifecta strip now mirrors Lab's committed core_top3/4 bets
+_EDGE_CACHE_VERSION = 7  # 2026-06-24: trifecta + hedge tagged with membership tier
 _edge_response_cache: tuple[datetime, dict, int] | None = None
 
 # Cache full list_meetings response for 10 min (weather + RA calls are expensive)
@@ -2805,6 +2805,46 @@ def _compute_hedge(pick_odds: float, field_size: int, hedge_horses: list[dict]) 
 
 _TWO_FUNK_TOP2_MIN = 55.0  # rank-1 + rank-2 win sum threshold (percentage points)
 _TWO_FUNK_GAP_MIN = 10.0   # rank-2 vs rank-3 win gap threshold (pt)
+
+# ── Feature → membership-tier registry ─────────────────────────────────
+# Single source of truth for which feature belongs to which paid tier.
+# Used by API responses to tag returned objects with their tier so the
+# frontend (and the future gating layer) can paywall/hide consistently.
+# Tiers escalate: edge < pro < labs. A user with "pro" gets everything
+# tagged "edge" or "pro"; "labs" gets all three; the hidden "admin"
+# tier (Russell-only) gets everything plus backtest/admin tooling.
+FEATURE_TIERS: dict[str, str] = {
+    # Edge tier — base predictions + edge picks
+    "edge_picks": "edge",
+    "field_expansion": "edge",
+    # Pro tier — race-card analytics
+    "hot_seat": "pro",
+    "funk_me_up": "pro",
+    "trifecta": "pro",       # edge race-card trifecta strip
+    "first_four": "pro",     # edge race-card first-4 row
+    "hedge": "pro",          # insurance-hedge calculator on edge cards
+    # Funk-Me-Up play kinds — each play inherits its tier
+    "play_lock": "pro",
+    "play_bonus": "pro",
+    "play_double": "pro",
+    "play_banker": "pro",
+    # Labs tier — premium analytics
+    "lab": "labs",
+    "two_funk": "labs",
+    "lab_trifecta_box": "labs",
+    "play_lab": "labs",
+    "play_twofunk": "labs",
+    # Legacy / retired play kinds — kept for historical (yesterday) renders
+    "play_spine": "pro",
+    "play_wave": "pro",
+}
+
+
+def feature_tier(feature: str) -> str:
+    """Look up the membership tier that owns a feature. Defaults to 'edge'
+    (i.e. base tier) if a feature is unmapped, so we never accidentally
+    paywall something we haven't classified."""
+    return FEATURE_TIERS.get(feature, "edge")
 
 
 def _compute_two_funk(rank1_win_prob: float, hedge_runners: list, hedge_candidates: list[dict]) -> dict | None:
@@ -3196,6 +3236,8 @@ async def get_edge_picks():
                 "first_four_combined_pct": ff_combined,
                 "exotic_alignment": exotic_alignment,
                 "source": "lab",  # mirror of BetRecommendationRow core_top3/4
+                "tier": feature_tier("trifecta"),       # paywall hint — "pro"
+                "first_four_tier": feature_tier("first_four"),
             } if len(tri_legs) >= 3 else None
 
             # Insurance hedge: only computed when pick odds >= threshold
@@ -3213,7 +3255,11 @@ async def get_edge_picks():
                         "win_odds": w,
                     })
             hedge = _compute_hedge(odds, field_sizes.get(runner_row.race_id, 8), hedge_candidates)
+            if hedge:
+                hedge["tier"] = feature_tier("hedge")  # paywall hint — "pro"
             two_funk = _compute_two_funk(runner_row.win_probability, hedge_runners, hedge_candidates)
+            if two_funk:
+                two_funk["tier"] = feature_tier("two_funk")  # paywall hint — "labs"
 
             # Last-10 form (wins / placings / starts) for the horse-card display
             # — same source as _runner_response uses: enriched_json on the pred row.
@@ -3318,6 +3364,7 @@ async def get_edge_picks():
     body = {
         "generated_at": datetime.utcnow().isoformat(),
         "threshold_pct": int(threshold * 100),
+        "tier": feature_tier("edge_picks"),       # surface tier — "edge"
         "picks": picks,
     }
     _edge_response_cache = (datetime.utcnow(), body, _EDGE_CACHE_VERSION)
@@ -5410,6 +5457,13 @@ async def funk_me_up_today(date: Optional[str] = None):
     except Exception as e:
         log.warning("[funk-me-up] lab pick failed for %s: %s", target_date, e)
 
+    # Tag each play with its membership tier (matches the UI tier-marker).
+    # Per-play kind is the authority — Lab Pick + 2 Funk are Labs, the rest
+    # are Pro. Defaults to "pro" if a future kind is unmapped (Funk Me Up
+    # itself is a Pro surface) so we never accidentally over-paywall.
+    for p in plays:
+        p["tier"] = feature_tier(f"play_{p.get('kind') or ''}") if FEATURE_TIERS.get(f"play_{p.get('kind') or ''}") else "pro"
+
     # Resolve outcomes for past dates
     if is_past:
         for p in plays:
@@ -5439,6 +5493,7 @@ async def funk_me_up_today(date: Optional[str] = None):
     return {
         "date": target_date,
         "is_past": is_past,
+        "tier": feature_tier("funk_me_up"),      # surface tier — "pro"
         "base_stake": _FUNK_BASE_STAKE,
         "hero_kind": hero.get("kind") if hero else None,
         "plays": plays,
@@ -6299,7 +6354,11 @@ async def list_bet_races(
     running.sort(key=lambda r: _jump_dt(r) or now_utc, reverse=True)
     upcoming.sort(key=lambda r: _jump_dt(r) or now_utc)
     past.sort(key=lambda r: _jump_dt(r) or now_utc, reverse=True)
-    return {"days": days, "races": running + upcoming + past}
+    return {
+        "days": days,
+        "tier": feature_tier("lab"),        # surface tier — "labs"
+        "races": running + upcoming + past,
+    }
 
 
 @app.post("/api/admin/bets/generate/{race_id}")
