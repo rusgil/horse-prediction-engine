@@ -3559,6 +3559,11 @@
 
   async function load() {
     try {
+      // Populate the win/place legend strip at page load (was only firing
+      // when the Wins→Insights subtab was opened, so first-time visitors
+      // saw "— · — races" placeholders against Hot Pick / High Confidence).
+      if (!trackRecordLoaded) loadTrackRecord();
+
       const todayStr = new Date().toLocaleDateString('en-CA', { timeZone: 'Australia/Sydney' });
       const tomorrowDate = new Date(); tomorrowDate.setDate(tomorrowDate.getDate() + 1);
       const tomorrowStr = tomorrowDate.toLocaleDateString('en-CA', { timeZone: 'Australia/Sydney' });
