@@ -526,7 +526,14 @@ async def save_race_predictions(session: AsyncSession, race_id: str, predictions
     # odds/derived fields before the delete and restore them if the new
     # values are empty — the next live-odds refresh will overwrite with
     # fresh data when upstream recovers.
+    #
+    # Also preserve cancelled=True across re-enrichment: when upstream lags
+    # behind Sportsbet/stewards on a scratching, the morning enrich would
+    # otherwise resurrect a scratched horse (e.g. Winchman/Doomben R3 on
+    # 2026-06-24). The cancellation only clears when an admin explicitly
+    # calls /api/admin/restore-cancelled.
     existing_market: dict[str, dict] = {}
+    existing_cancelled: set[str] = set()
     existing_rows = (await session.execute(
         select(
             RunnerPredictionRow.horse_name,
@@ -534,9 +541,10 @@ async def save_race_predictions(session: AsyncSession, race_id: str, predictions
             RunnerPredictionRow.market_rank,
             RunnerPredictionRow.overlay,
             RunnerPredictionRow.value_rating,
+            RunnerPredictionRow.cancelled,
         ).where(RunnerPredictionRow.race_id == race_id)
     )).fetchall()
-    for horse_name, bao, mrank, overlay, vrating in existing_rows:
+    for horse_name, bao, mrank, overlay, vrating, cancelled in existing_rows:
         if bao and bao > 1.0:
             existing_market[horse_name] = {
                 "best_available_odds": bao,
@@ -544,6 +552,8 @@ async def save_race_predictions(session: AsyncSession, race_id: str, predictions
                 "overlay": overlay,
                 "value_rating": vrating,
             }
+        if cancelled and horse_name:
+            existing_cancelled.add(horse_name)
 
     # Write to mutable table
     await session.execute(delete(RunnerPredictionRow).where(RunnerPredictionRow.race_id == race_id))
@@ -561,6 +571,9 @@ async def save_race_predictions(session: AsyncSession, race_id: str, predictions
                     p["overlay"] = prev["overlay"]
                 if prev.get("value_rating") is not None:
                     p["value_rating"] = prev["value_rating"]
+        if p.get("horse_name") in existing_cancelled:
+            p = dict(p)
+            p["cancelled"] = True
         row = RunnerPredictionRow(**p)
         session.add(row)
         rows.append(row)
