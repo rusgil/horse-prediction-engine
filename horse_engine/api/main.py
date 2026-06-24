@@ -7315,7 +7315,7 @@ async def clear_pair_backtest(
     return {
         "days": days,
         "filter": f"top-2 win sum ≥ {top2_min}% AND rank2-rank3 gap ≥ {gap_min}pt",
-        "double_sharp_filter": f"{f} PLUS both partners' place_model_rank ≤ {place_top}".format(f="(above)"),
+        "double_sharp_filter": f"(above) PLUS both partners' place_model_rank ≤ {place_top}",
         "stake_per_horse": stake,
         "baseline_all_races": _summarise(baseline),
         "qualified": _summarise(qualified),
