@@ -736,6 +736,11 @@
       color: var(--purple-bright);
       border: 1px solid rgba(168, 85, 247, 0.45);
     }
+    .tier-marker.tier-pro {
+      background: rgba(59, 130, 246, 0.22);
+      color: #60a5fa;
+      border: 1px solid rgba(59, 130, 246, 0.45);
+    }
 
     /* Trifecta card legs table */
     .tri-card-legs {
@@ -2238,7 +2243,7 @@
             return `<div class="tri-ff-row"><span class="tri-ff-label">First 4</span><span class="tri-ff-legs">${ffNums}</span>${ffPct}${ffVerdict}<span class="tri-ff-names">${ffNames}</span></div>`;
           })() : '';
           return `<div class="trifecta-strip">
-            <span class="tri-label">🎯 Trifecta</span>
+            <span class="tri-label">🎯 Trifecta<span class="tier-marker tier-pro">Pro</span></span>
             <span class="tri-legs">${triNums}</span>
             ${triPct}${verdict}
             <span class="tri-names">${triNames}</span>
@@ -3241,7 +3246,7 @@
             return `<div class="tri-ff-row"><span class="tri-ff-label">First 4</span><span class="tri-ff-legs">${ffNums}</span>${ffPct}${ffVerdict}<span class="tri-ff-names">${ffNames}</span></div>`;
           })() : '';
           return `<div class="trifecta-strip">
-            <span class="tri-label">🎯 Trifecta</span>
+            <span class="tri-label">🎯 Trifecta<span class="tier-marker tier-pro">Pro</span></span>
             <span class="tri-legs">${triNums}</span>
             ${triPct}${verdict}
             <span class="tri-names">${triNames}</span>
