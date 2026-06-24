@@ -10146,6 +10146,10 @@ async def cancel_runner(
     # of an extra RA fetch on the next list_meetings call is trivial.
     date_part, venue_part, _ = _parse_race_id(race_id)
     _invalidate_meeting_caches(date_part, venue_part)
+    # Bust the edge response cache so /api/edge (and downstream consumers like
+    # /api/funk-me-up/today) drop the cancelled horse on the next fetch.
+    global _edge_response_cache
+    _edge_response_cache = None
     return {
         "updated": result.rowcount,
         "history_updated": hist_result.rowcount,
