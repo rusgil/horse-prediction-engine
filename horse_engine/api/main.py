@@ -7372,6 +7372,40 @@ async def admin_bust_meetings_cache(
     return {"ok": True, "date": race_date}
 
 
+@app.get("/api/admin/cancelled-today")
+async def admin_cancelled_today(x_cron_secret: Optional[str] = Header(None)):
+    """List every cancelled runner for today across the mutable predictions
+    table. Used to verify which scratchings the sweep has picked up vs which
+    are still missing from our upstream feed."""
+    _check_admin(x_cron_secret)
+    today = _today_aest().isoformat()
+    async with get_session() as session:
+        rows = (await session.execute(
+            select(
+                RunnerPredictionRow.race_id,
+                RunnerPredictionRow.horse_name,
+                RunnerPredictionRow.model_rank,
+                RunnerPredictionRow.win_probability,
+            )
+            .where(RunnerPredictionRow.race_id.like(f"{today}_%"))
+            .where(RunnerPredictionRow.cancelled.is_(True))
+            .order_by(RunnerPredictionRow.race_id, RunnerPredictionRow.horse_name)
+        )).fetchall()
+    return {
+        "today": today,
+        "count": len(rows),
+        "cancelled": [
+            {
+                "race_id": r.race_id,
+                "horse_name": r.horse_name,
+                "stale_model_rank": r.model_rank,
+                "win_probability": r.win_probability,
+            }
+            for r in rows
+        ],
+    }
+
+
 @app.post("/api/admin/scratch-sweep-now")
 async def admin_scratch_sweep_now(x_cron_secret: Optional[str] = Header(None)):
     """Run the today-scratch detection immediately and bust the edge cache so
