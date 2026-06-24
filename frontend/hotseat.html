@@ -776,10 +776,25 @@
     return `${parts[2]}-${parts[1]}-${parts[0]}`;
   }
 
+  // Apply just the filter axes (Sharp/win/place/venue) — no time-window
+  // check, no sort. Used by the daily-stats banner so the live hit rate
+  // reflects whatever the user has filtered to.
+  function applyFilterAxes(picks) {
+    let out = picks.slice();
+    if (state.mode === 'sharp') out = out.filter(isSharpPick);
+    if (state.winFilter === 'win30') out = out.filter(p => (p.model_pct || 0) >= 30);
+    else if (state.winFilter === 'win40') out = out.filter(p => (p.model_pct || 0) >= 40);
+    if (state.placeFilter === 'place40') out = out.filter(p => (p.place_probability ?? 0) >= 40);
+    else if (state.placeFilter === 'place55') out = out.filter(p => (p.place_probability ?? 0) >= 55);
+    else if (state.placeFilter === 'place70') out = out.filter(p => (p.place_probability ?? 0) >= 70);
+    if (state.venue && state.venue !== 'all') out = out.filter(p => p.venue === state.venue);
+    return out;
+  }
+
   function renderDailyStats() {
     const el = document.getElementById('dailyStats');
     if (!el) return;
-    const picks = state.picks || [];
+    const picks = applyFilterAxes(state.picks || []);
     // Picks where the race has actually finished + we have a result.
     // p.actual_position null = race ran but results not yet seeded.
     const resulted = picks.filter(p =>
