@@ -6686,6 +6686,196 @@ async def place_decisiveness_backtest(
     }
 
 
+@app.get("/api/admin/bets/clear-pair-backtest")
+async def clear_pair_backtest(
+    days: int = 60,
+    top2_min: float = 50.0,
+    gap_min: float = 8.0,
+    stake: float = 10.0,
+    x_cron_secret: Optional[str] = Header(None),
+):
+    """Backtest the 'clear pair' pattern: two horses way out in front
+    (top-2 win sum ≥ top2_min %), big cliff to rank-3 (rank2_win - rank3_win
+    ≥ gap_min pt).
+
+    For each qualifying race in the last N days:
+      - quinella hit = rank-1 AND rank-2 finished 1st-2nd (either order)
+      - split-win hit = rank-1 OR rank-2 won outright
+      - estimated split-win ROI = $stake on rank-1 + $stake on rank-2 at SP
+
+    Compared against an unfiltered baseline of all races in the window so
+    we can see whether the pattern actually lifts these outcomes.
+    """
+    _check_admin(x_cron_secret)
+    days = max(7, min(int(days), 365))
+    cutoff_date = (_today_aest() - timedelta(days=days)).isoformat()
+
+    async with get_session() as session:
+        pred_rows = (await session.execute(
+            select(
+                RunnerPredictionHistoryRow.race_id,
+                RunnerPredictionHistoryRow.horse_name,
+                RunnerPredictionHistoryRow.model_rank,
+                RunnerPredictionHistoryRow.win_probability,
+                RunnerPredictionHistoryRow.enriched_at,
+            )
+            .where(RunnerPredictionHistoryRow.race_id >= f"{cutoff_date}_")
+            .where(RunnerPredictionHistoryRow.model_rank.in_([1, 2, 3]))
+            .where(RunnerPredictionHistoryRow.cancelled.is_(False)
+                   | RunnerPredictionHistoryRow.cancelled.is_(None))
+            .where(RunnerPredictionHistoryRow.source == "live")
+            .order_by(RunnerPredictionHistoryRow.enriched_at.desc())
+        )).fetchall()
+        result_rows = (await session.execute(
+            select(HistoricalResultRow.race_id, HistoricalResultRow.position,
+                   HistoricalResultRow.horse_name, HistoricalResultRow.starting_price)
+            .where(HistoricalResultRow.race_id >= f"{cutoff_date}_")
+            .where(HistoricalResultRow.position.in_([1, 2]))
+        )).fetchall()
+
+    # Group predictions: latest snapshot per (race, horse)
+    seen: set = set()
+    per_race: dict[str, dict] = {}
+    for rid, name, rank, wp, enr in pred_rows:
+        key = (rid, _normalize_horse(name))
+        if key in seen:
+            continue
+        seen.add(key)
+        per_race.setdefault(rid, {})[int(rank)] = {
+            "horse_name": _normalize_horse(name),
+            "win_prob": float(wp or 0),
+        }
+
+    # Results: race_id → {position: (horse_normalised, sp)}
+    results_by_race: dict[str, dict] = {}
+    for rid, pos, name, sp in result_rows:
+        if pos is None:
+            continue
+        results_by_race.setdefault(rid, {})[int(pos)] = (_normalize_horse(name or ""), float(sp or 0))
+
+    def _score_race(ranks: dict, winners_map: dict, stake_each: float) -> dict | None:
+        if not all(r in ranks for r in (1, 2)):
+            return None
+        if not all(p in winners_map for p in (1, 2)):
+            return None
+        r1 = ranks[1]["horse_name"]
+        r2 = ranks[2]["horse_name"]
+        winner, w_sp = winners_map[1]
+        runnerup, _ = winners_map[2]
+        finishers = {winner, runnerup}
+        quinella_hit = (r1 in finishers) and (r2 in finishers)
+        win_hit_r1 = (r1 == winner)
+        win_hit_r2 = (r2 == winner)
+        split_win_hit = win_hit_r1 or win_hit_r2
+        # Split-win ROI: stake on r1 + stake on r2 at SP. Only the winner's leg pays.
+        # If the SP is missing we skip ROI on that race.
+        payout = 0.0
+        sp_available = False
+        for rank_name in (r1, r2):
+            if rank_name == winner and w_sp > 1.0:
+                payout = w_sp * stake_each
+                sp_available = True
+                break
+        cost = 2 * stake_each
+        roi_pl = (payout - cost) if sp_available or not split_win_hit else None
+        return {
+            "quinella_hit": quinella_hit,
+            "split_win_hit": split_win_hit,
+            "split_win_pl_dollars": roi_pl if (sp_available or not split_win_hit) else None,
+            "cost_dollars": cost,
+        }
+
+    # Baseline: every race with rank-1 + rank-2 + a result
+    baseline = {"races": 0, "quin_hits": 0, "split_hits": 0, "pl_sum": 0.0, "pl_races": 0}
+    qualified = {"races": 0, "quin_hits": 0, "split_hits": 0, "pl_sum": 0.0, "pl_races": 0}
+    bucket_defs = [
+        ("8-10pt", 8.0, 10.0),
+        ("10-12pt", 10.0, 12.0),
+        ("12-15pt", 12.0, 15.0),
+        ("15-20pt", 15.0, 20.0),
+        ("20pt+", 20.0, 999.0),
+    ]
+    buckets = {b[0]: {"races": 0, "quin_hits": 0, "split_hits": 0, "pl_sum": 0.0, "pl_races": 0} for b in bucket_defs}
+
+    for rid, ranks in per_race.items():
+        winners_map = results_by_race.get(rid)
+        if not winners_map:
+            continue
+        scored = _score_race(ranks, winners_map, stake)
+        if scored is None:
+            continue
+        # Baseline counts every race we can score.
+        baseline["races"] += 1
+        if scored["quinella_hit"]: baseline["quin_hits"] += 1
+        if scored["split_win_hit"]: baseline["split_hits"] += 1
+        if scored["split_win_pl_dollars"] is not None:
+            baseline["pl_sum"] += scored["split_win_pl_dollars"]
+            baseline["pl_races"] += 1
+        # Filter check
+        if not all(r in ranks for r in (1, 2, 3)):
+            continue
+        top2_sum = (ranks[1]["win_prob"] + ranks[2]["win_prob"]) * 100
+        gap23 = (ranks[2]["win_prob"] - ranks[3]["win_prob"]) * 100
+        if top2_sum < top2_min or gap23 < gap_min:
+            continue
+        qualified["races"] += 1
+        if scored["quinella_hit"]: qualified["quin_hits"] += 1
+        if scored["split_win_hit"]: qualified["split_hits"] += 1
+        if scored["split_win_pl_dollars"] is not None:
+            qualified["pl_sum"] += scored["split_win_pl_dollars"]
+            qualified["pl_races"] += 1
+        # Bucket by gap size
+        for label, lo, hi in bucket_defs:
+            if lo <= gap23 < hi:
+                b = buckets[label]
+                b["races"] += 1
+                if scored["quinella_hit"]: b["quin_hits"] += 1
+                if scored["split_win_hit"]: b["split_hits"] += 1
+                if scored["split_win_pl_dollars"] is not None:
+                    b["pl_sum"] += scored["split_win_pl_dollars"]
+                    b["pl_races"] += 1
+                break
+
+    def _summarise(d: dict) -> dict:
+        n = d["races"]
+        roi_pct = None
+        if d["pl_races"] > 0:
+            cost = d["pl_races"] * 2 * stake
+            roi_pct = round(d["pl_sum"] / cost * 100, 1)
+        return {
+            "races": n,
+            "quinella_hit_pct": round(d["quin_hits"] / n * 100, 1) if n else 0,
+            "split_win_hit_pct": round(d["split_hits"] / n * 100, 1) if n else 0,
+            "split_win_pl_dollars": round(d["pl_sum"], 2),
+            "split_win_pl_races": d["pl_races"],
+            "split_win_roi_pct": roi_pct,
+        }
+
+    out_buckets = [
+        {"bucket": label, **_summarise(buckets[label])}
+        for label, _, _ in bucket_defs
+    ]
+
+    return {
+        "days": days,
+        "filter": f"top-2 win sum ≥ {top2_min}% AND rank2-rank3 gap ≥ {gap_min}pt",
+        "stake_per_horse": stake,
+        "baseline_all_races": _summarise(baseline),
+        "qualified": _summarise(qualified),
+        "by_gap_bucket": out_buckets,
+        "lift_pts": {
+            "quinella": round(
+                (_summarise(qualified)["quinella_hit_pct"] or 0) - (_summarise(baseline)["quinella_hit_pct"] or 0),
+                1,
+            ),
+            "split_win": round(
+                (_summarise(qualified)["split_win_hit_pct"] or 0) - (_summarise(baseline)["split_win_hit_pct"] or 0),
+                1,
+            ),
+        },
+    }
+
+
 @app.get("/api/admin/bets/all-tactics-filtered-backtest")
 async def all_tactics_filtered_backtest(
     days: int = 90,
