@@ -651,6 +651,48 @@
     .pick-footer-chip strong { color: var(--text-secondary); font-weight: 600; }
     .pick-footer-sep { color: var(--border); font-size: 0.7rem; }
 
+    /* Full-field dropdown (same shape as Hot Seat). Lives inside .pick-card
+       below the body so it expands the card's footprint. */
+    .edge-field-toggle {
+      margin: 0 16px;
+      text-align: center;
+      font-size: 11px;
+      color: var(--text-dim);
+      cursor: pointer;
+      user-select: none;
+      padding: 6px 0;
+      border-top: 1px dashed var(--border);
+    }
+    .edge-field-toggle:active { color: var(--text-secondary); }
+    .edge-field-table {
+      margin: 4px 16px 12px;
+      font-size: 11px;
+      width: calc(100% - 32px);
+      border-collapse: collapse;
+      font-variant-numeric: tabular-nums;
+    }
+    .edge-field-table th {
+      text-align: right;
+      font-weight: 600;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.4px;
+      font-size: 9px;
+      padding: 4px 4px;
+      border-bottom: 1px solid var(--border);
+    }
+    .edge-field-table th.l { text-align: left; }
+    .edge-field-table td {
+      padding: 3px 4px;
+      border-bottom: 1px solid rgba(255,255,255,0.04);
+      color: var(--text-dim);
+    }
+    .edge-field-table td.name { text-align: left; color: var(--text-secondary); font-weight: 500; }
+    .edge-field-table td.r { text-align: right; }
+    .edge-field-table tr.scratched td { text-decoration: line-through; color: var(--text-muted); opacity: 0.6; }
+    .edge-field-table tr.rank1 td { color: var(--green-bright); font-weight: 600; }
+    .edge-field-table tr.rank1 td.name { color: var(--green-bright); }
+
     /* Trifecta card legs table */
     .tri-card-legs {
       display: flex; flex-direction: column; gap: 6px;
@@ -2302,7 +2344,49 @@
             </div>
           </div>`;
         })() : ''}
+        ${renderFieldExpansion(pick)}
       </div>`;
+  }
+
+  // Full-field dropdown — same data shape as Hot Seat. `pick.field` is
+  // populated by /api/edge and contains every runner with model rank,
+  // win/place % and current odds. State toggle is delegated below.
+  function renderFieldExpansion(pick) {
+    const field = Array.isArray(pick.field) ? pick.field : [];
+    if (!field.length) return '';
+    const isOpen = _expandedFields.has(pick.race_id);
+    if (!isOpen) {
+      return `<div class="edge-field-toggle" data-race="${escHtml(pick.race_id)}">Full field (${field.length}) ▾</div>`;
+    }
+    const rows = field.map(f => {
+      const oddsTxt = f.odds && f.odds > 1.0 ? '$' + f.odds.toFixed(2) : '—';
+      const placeTxt = f.place_pct != null ? f.place_pct.toFixed(0) + '%' : '—';
+      const winTxt = (f.win_pct ?? 0).toFixed(1) + '%';
+      const rankCls = f.rank === 1 ? 'rank1' : '';
+      const scrCls = f.scratched ? 'scratched' : '';
+      return `
+        <tr class="${rankCls} ${scrCls}">
+          <td class="r">${f.rank ?? '—'}</td>
+          <td class="name">${escHtml(f.horse_name)}</td>
+          <td class="r">${winTxt}</td>
+          <td class="r">${placeTxt}</td>
+          <td class="r">${oddsTxt}</td>
+        </tr>`;
+    }).join('');
+    return `
+      <div class="edge-field-toggle" data-race="${escHtml(pick.race_id)}">Hide full field ▴</div>
+      <table class="edge-field-table">
+        <thead>
+          <tr>
+            <th class="r">#</th>
+            <th class="l">Horse</th>
+            <th class="r">Win</th>
+            <th class="r">Place</th>
+            <th class="r">Odds</th>
+          </tr>
+        </thead>
+        <tbody>${rows}</tbody>
+      </table>`;
   }
 
   function renderMeetingsWeather(meetings) {
@@ -2502,6 +2586,9 @@
   let sortMode = 'best';
   let exoticSortMode = 'next';
   let trifectasData = null;
+  // Race IDs whose full field is currently expanded on edge cards.
+  // Persists across re-renders; click handler is delegated below.
+  const _expandedFields = new Set();
 
   function setExoticSortMode(mode) {
     exoticSortMode = mode;
@@ -3695,6 +3782,20 @@
     const stake = parseFloat(this.value) || 10;
     document.getElementById('stakeInputYesterday').value = stake;
     if (yesterdayData) renderYesterdayContent(yesterdayData, stake);
+  });
+
+  // Field-expansion toggle on pick cards — delegated so it survives re-renders.
+  document.body.addEventListener('click', (e) => {
+    const t = e.target.closest('.edge-field-toggle');
+    if (!t) return;
+    const raceId = t.dataset.race;
+    if (!raceId) return;
+    if (_expandedFields.has(raceId)) _expandedFields.delete(raceId);
+    else _expandedFields.add(raceId);
+    if (picksData) {
+      const stake = parseFloat(document.getElementById('stakeInput').value) || 10;
+      renderContent(picksData, stake, resultsMap);
+    }
   });
 
   load();
