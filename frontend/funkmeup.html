@@ -501,14 +501,15 @@
   const API = 'https://web-production-dec62.up.railway.app';
 
   const KIND_META = {
-    lock:   { emoji: '💪' },
-    bonus:  { emoji: '⭐' },
-    double: { emoji: '🪜' },
-    banker: { emoji: '🏦' },
-    lab:    { emoji: '🧪' },
+    lock:    { emoji: '💪' },
+    bonus:   { emoji: '⭐' },
+    double:  { emoji: '🪜' },
+    banker:  { emoji: '🏦' },
+    twofunk: { emoji: '🪩' },
+    lab:     { emoji: '🧪' },
     // Legacy kinds kept so historical (yesterday) data still renders
-    spine:  { emoji: '🎯' },
-    wave:   { emoji: '🌊' },
+    spine:   { emoji: '🎯' },
+    wave:    { emoji: '🌊' },
   };
 
   function escHtml(s) {
@@ -587,6 +588,10 @@
         parts.push(`  ${i+1}. ${venueLabel(l.venue)} R${l.race_number} · ${l.horse_name} · Place`);
       });
       parts.push(`  Place Multi ~$${p.raw_multi_odds} · stake $${p.stake_dollars}`);
+    } else if (p.kind === 'twofunk') {
+      parts.push(`  ${venueLabel(p.venue)} R${p.race_number} · Quinella`);
+      parts.push(`  ${p.horse_name} ($${p.leg1_odds}) + ${p.partner_horse_name} ($${p.partner_odds})`);
+      parts.push(`  stake $${p.stake_dollars} · top-2 sum ${p.top2_win_sum_pct}% · gap to rk3 ${p.rank2_rank3_gap_pct}pt`);
     } else if (p.kind === 'banker') {
       parts.push(`  ${venueLabel(p.venue)} R${p.race_number} · ${p.horse_name} · Place ~$${p.place_odds_est}`);
       parts.push(`  stake $${p.stake_dollars} · model place ${Math.round(p.place_prob*100)}%`);
@@ -670,6 +675,17 @@
         returnIf: `Returns ~${fmtMoneyPlain(p.potential_return_dollars)} if it finishes top 3`,
       };
     }
+    if (p.kind === 'twofunk') {
+      const ret = p.potential_return_dollars
+        ? `Est. ${fmtMoneyPlain(p.potential_return_dollars)} if the Quinella lands`
+        : `Quinella pays if these two fill 1-2 in any order`;
+      return {
+        verb: 'PLACE THIS QUINELLA',
+        product: `$${p.stake_dollars.toFixed(0)} Quinella · ${p.horse_name} + ${p.partner_horse_name}`,
+        path: `Sportsbet → Racing → ${venueLabel(p.venue)} → R${p.race_number} → Exotics → Quinella → tap both horses`,
+        returnIf: ret,
+      };
+    }
     return null;
   }
 
@@ -733,6 +749,30 @@
         </div>
         <div class="leg-odds">$${p.place_odds_est}</div>
       </div></div>`;
+    } else if (p.kind === 'twofunk') {
+      const leg1Odds = p.leg1_odds ? `$${p.leg1_odds.toFixed(2)}` : '—';
+      const leg2Odds = p.partner_odds ? `$${p.partner_odds.toFixed(2)}` : '—';
+      legsHtml = `<div class="legs">
+        <div class="leg">
+          <div>
+            <div class="leg-horse">${escHtml(p.horse_name)}</div>
+            <div class="leg-meta">${escHtml(venueLabel(p.venue))} R${p.race_number}${p.scheduled_time ? ' · ' + fmtJump(p.scheduled_time) : ''} · win ${p.model_pct}% · rank 1</div>
+          </div>
+          <div class="leg-odds">${leg1Odds}</div>
+        </div>
+        <div class="leg">
+          <div>
+            <div class="leg-horse">${escHtml(p.partner_horse_name)}</div>
+            <div class="leg-meta">Quinella partner · win ${p.partner_win_pct}% · rank 2</div>
+          </div>
+          <div class="leg-odds">${leg2Odds}</div>
+        </div>
+        <div class="leg" style="background: rgba(236,72,153,0.10); border-color: rgba(236,72,153,0.3);">
+          <div style="font-size:11px; color: var(--text-muted);">
+            Top-2 sum ${p.top2_win_sum_pct}% · ${p.rank2_rank3_gap_pct}pt cliff to rank-3
+          </div>
+        </div>
+      </div>`;
     }
 
     const evCls = (p.expected_value_dollars || 0) >= 0 ? 'pos' : 'neg';

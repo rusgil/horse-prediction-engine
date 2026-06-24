@@ -516,6 +516,11 @@
       color: var(--purple-bright);
       border: 1px solid var(--purple);
     }
+    .badge.twofunk {
+      background: rgba(236, 72, 153, 0.18);
+      color: #f9a8d4;
+      border-color: #db2777;
+    }
 
     /* Desktop: slightly bigger */
     @media (min-width: 600px) {
@@ -599,10 +604,10 @@
     lastFetch: 0,
   };
 
-  // Sharp = the niche bucket where the model has historically hit 30-35%.
-  // Requires either a confident rank-1 (≥30%) OR a concentrated race
-  // (top-3 sum ≥60% — fewer plausible winners). Either is a strong signal
-  // independently; combined they overlap so this OR captures both.
+  // Sharp = high-confidence niche AND market hasn't already priced it in.
+  // - Confidence: model_pct ≥ 30 OR top-3 sum ≥ 60 (concentrated race)
+  // - Edge: edge_pct ≥ 0 (or unknown). Filters out cases like CRYOSEISMS
+  //   at $1.75 with -9.5pt edge — model is confident but market is sharper.
   function isSharpPick(p) {
     const modelPct = p.model_pct || 0;
     const field = p.field || [];
@@ -611,7 +616,10 @@
       .sort((a, b) => (b.win_pct || 0) - (a.win_pct || 0))
       .slice(0, 3)
       .reduce((s, f) => s + (f.win_pct || 0), 0);
-    return modelPct >= 30 || top3Sum >= 60;
+    const confident = modelPct >= 30 || top3Sum >= 60;
+    const edge = p.edge_pct;
+    const edgeOk = edge == null || edge >= 0;
+    return confident && edgeOk;
   }
 
   // Display-only aliases for venue labels. Slug stays the same in the DB
@@ -956,7 +964,10 @@
         <div class="pick ${isImminent ? 'imminent' : ''} ${isNow ? 'now' : ''} ${isHot ? 'hot' : ''} ${isPremium && !finished ? 'premium' : ''} ${finished ? 'finished' : ''}">
           ${barPct >= 0 ? `<div class="timer-bar"><div class="timer-bar-fill" style="width:${barPct}%"></div></div>` : ''}
           ${resultBanner}
-          ${isPremium && !finished ? '<div class="badge-row"><span class="badge">Premium</span></div>' : ''}
+          ${(isPremium || p.two_funk?.qualified) && !finished ? `<div class="badge-row">
+            ${isPremium ? '<span class="badge">Premium</span>' : ''}
+            ${p.two_funk?.qualified ? `<span class="badge twofunk" title="Top-2 dominate: ${p.two_funk.top2_win_sum_pct}% combined · ${p.two_funk.rank2_rank3_gap_pct}pt cliff to rank-3. Consider a Quinella with ${escHtml(p.two_funk.partner_horse_name)}.">🪩 2 Funk · Quinella w/ ${escHtml(p.two_funk.partner_horse_name)}</span>` : ''}
+          </div>` : ''}
           <div class="pick-top">
             <div>
               <div class="countdown ${cd.cls}">${cd.text}</div>
