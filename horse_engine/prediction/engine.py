@@ -78,6 +78,11 @@ def enrich_runner(
     # days_since_last_run as a separate feature but it doesn't override
     # a strong form signal on its own.
     fs = form_enricher.discount_form_for_layoff(fs, days_last)
+    # Discount form_score for thin records — a 0.85 form on 2 starts is
+    # small-sample noise, not a confident signal (OSAKA CASTLE,
+    # ballarat R5 2026-06-12). Applied after the layoff discount so a
+    # horse with both gets compounded penalty toward the no-form baseline.
+    fs = form_enricher.discount_form_for_thin_record(fs, len(starts) if starts else 0)
     runs_prep = form_enricher.runs_this_prep(starts)
     class_chg = form_enricher.class_change_flag(starts, race.race_class)
     spell_w = form_enricher.spell_weeks(starts)

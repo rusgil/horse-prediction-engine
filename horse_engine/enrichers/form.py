@@ -53,6 +53,39 @@ LAYOFF_DISCOUNT_FULL_DAYS = 365
 LAYOFF_BASELINE_SCORE = 0.3  # matches weighted_form_score's no-data fallback
 
 
+def discount_form_for_thin_record(form_score: float, starts_last_10: int) -> float:
+    """Discount form_score toward the no-form baseline when the recent
+    record is too thin to support a confident reading.
+
+    Triggered by OSAKA CASTLE/sportsbet-ballarat R5 on 2026-06-12: 2
+    starts in the last 10, form score 0.62, model gave it 31% and rank
+    1. SP $31 (market rank 1, so the market was also confused), finished
+    10th of 11. A 0.62 form score on a 2-start sample is fragile and
+    shouldn't drive a rank-1 pick.
+
+    Discount weights:
+        ≥ 3 starts → form_score unchanged (sample is workable)
+        2 starts   → pull 35% toward the no-form baseline (0.3)
+        1 start    → pull 70% toward the no-form baseline
+        0 starts   → return baseline (handled by weighted_form_score's
+                     no-form prior already, but defended here too)
+
+    Like the layoff discount, this is a no-op for horses already at or
+    below the baseline — thin record shouldn't make a poor performer
+    look worse.
+    """
+    if starts_last_10 is None:
+        return form_score
+    if starts_last_10 >= 3:
+        return form_score
+    if form_score <= LAYOFF_BASELINE_SCORE:
+        return form_score
+    if starts_last_10 <= 0:
+        return LAYOFF_BASELINE_SCORE
+    weight = {1: 0.7, 2: 0.35}.get(starts_last_10, 0.0)
+    return round(form_score - (form_score - LAYOFF_BASELINE_SCORE) * weight, 4)
+
+
 def discount_form_for_layoff(form_score: float, days_since_last_run: int) -> float:
     """Discount form_score toward the no-form baseline when the horse has
     been off the track for an unusually long time.
