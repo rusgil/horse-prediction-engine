@@ -572,11 +572,30 @@
 
     /* Unified page header — same on every page. */
     .page-header {
+      position: static;
+      top: auto;
+      z-index: auto;
+      background: transparent;
+      -webkit-backdrop-filter: none;
+      backdrop-filter: none;
       text-align: center;
-      padding: 22px 16px 16px;
+      padding: 26px 16px 18px;
       border-bottom: 1px solid rgba(255,255,255,0.06);
       margin-bottom: 16px;
     }
+    .page-header::after {
+      content: '';
+      display: block;
+      width: 80px; height: 3px;
+      background: var(--page-accent, #9ca3af);
+      border-radius: 2px;
+      margin: 14px auto -19px;
+    }
+    .page-header.lounge { --page-accent: #f5c842; }
+    .page-header.edge   { --page-accent: #4ade80; }
+    .page-header.hot    { --page-accent: #fb923c; }
+    .page-header.funk   { --page-accent: #c084fc; }
+    .page-header.labs   { --page-accent: #a855f7; }
     .page-title {
       font-family: 'Barlow Condensed', sans-serif;
       font-size: 36px;
@@ -612,7 +631,7 @@
     <span class="nav-spacer"></span>
     <a href="/about"      class="page-nav-btn about">About</a>
   </nav>
-  <header class="page-header">
+  <header class="page-header funk">
     <h1 class="page-title">🎺 Funk Me Up <span class="tier-badge tier-pro">Pro</span></h1>
     <p class="page-subtitle" id="pageSubtitle">Today's lower-variance playbook · 🎯 Sharp picks · $10 base stake</p>
   </header>
