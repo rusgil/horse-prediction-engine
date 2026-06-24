@@ -2644,7 +2644,7 @@ _edge_odds_cache: dict[str, tuple[datetime, dict[str, float]]] = {}  # race_id �
 _EDGE_RESPONSE_TTL = 120
 # Bump _EDGE_CACHE_VERSION whenever threshold or response shape changes so
 # old cached responses are invalidated on deploy without a manual restart.
-_EDGE_CACHE_VERSION = 4  # 2026-06-24: added two_funk per pick
+_EDGE_CACHE_VERSION = 5  # 2026-06-24: 2 Funk quinella div estimator (0.5 × W1 × W2)
 _edge_response_cache: tuple[datetime, dict, int] | None = None
 
 # Cache full list_meetings response for 10 min (weather + RA calls are expensive)
@@ -4976,13 +4976,16 @@ def _build_two_funk(edge_picks: list[dict]) -> Optional[dict]:
     tf = pick["two_funk"]
     leg1_odds = pick.get("best_available_odds") or 0
     leg2_odds = tf.get("partner_odds") or 0
-    # Approximate quinella dividend on a $1 unit: if both legs paid a
-    # win price, the quinella usually pays close to the geometric mean of
-    # the two win dividends scaled by ~0.5 (pool dynamics). Treat this as
-    # an estimate only — we don't have real pool data here.
+    # Approximate quinella dividend on a $1 unit: AU pari-mutuel quinellas
+    # for two well-priced horses pay roughly 0.5 × W1 × W2 (a standard
+    # pool heuristic). Earlier formula used the geometric mean × 0.6
+    # which undershot badly — e.g. 7.50/2.50 produced $2.60 (real
+    # quinella expectation: ~$9–10), pushing EV negative on what is
+    # actually a +EV pattern in the 60-day backtest. Treat as an
+    # estimate only; the actual dividend is set by the pool at jump.
     quinella_est = None
     if leg1_odds > 1.0 and leg2_odds > 1.0:
-        quinella_est = round((leg1_odds * leg2_odds) ** 0.5 * 0.6, 2)
+        quinella_est = round(leg1_odds * leg2_odds * 0.5, 2)
     # Combined model probability that BOTH finish 1-2 in either order is
     # roughly 2 * P(r1) * P(r2) for two independent picks — an over-
     # estimate because they compete with each other, but useful as an
