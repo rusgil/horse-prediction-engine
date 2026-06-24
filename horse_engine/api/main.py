@@ -615,6 +615,15 @@ async def _rerank_race_after_scratch(session, race_id: str) -> bool:
                 exotic_model_rank=exotic_rank[row.id],
             )
         )
+    # Null out ranks on cancelled rows. Acts as a "re-rank applied" marker so the
+    # retroactive scan can identify races still needing re-ranking by looking for
+    # cancelled rows that still have a non-null model_rank.
+    await session.execute(
+        sa_update(RunnerPredictionRow)
+        .where(RunnerPredictionRow.race_id == race_id)
+        .where(RunnerPredictionRow.cancelled.is_(True))
+        .values(model_rank=None, place_model_rank=None, exotic_model_rank=None)
+    )
 
     # Mirror into history's latest snapshot so settled-race code sees the
     # corrected ranking too. Only touches uncancelled history rows.
@@ -788,15 +797,16 @@ async def _check_scratches_today() -> int:
         log.warning("[scratch-check] History sync failed: %s", e)
 
     # Retroactive re-rank: races flagged cancelled before this fix shipped never
-    # had their ranks rebuilt. Detect "stale-ranked" races (those where rank 1
-    # is on a cancelled runner) and re-rank them once.
+    # had their ranks rebuilt. Detect "stale-ranked" races by looking for any
+    # cancelled row that still has a model_rank set — the rerank helper clears
+    # those, so a non-null rank on a cancelled row means we haven't run yet.
     try:
         async with get_session() as session:
             stale_race_ids = (await session.execute(
                 select(RunnerPredictionRow.race_id).distinct()
                 .where(RunnerPredictionRow.race_id.like(f"{today}_%"))
                 .where(RunnerPredictionRow.cancelled.is_(True))
-                .where(RunnerPredictionRow.model_rank == 1)
+                .where(RunnerPredictionRow.model_rank.is_not(None))
             )).scalars().all()
         for race_id in set(stale_race_ids) | affected_race_ids:
             try:
@@ -10087,14 +10097,15 @@ async def cancel_runner(
         )
         await session.commit()
     # Re-rank + renormalise so the Lab's rank-1 queries pick up the promoted horse.
-    if result.rowcount:
-        try:
-            async with get_session() as rsession:
-                if await _rerank_race_after_scratch(rsession, race_id):
-                    await rsession.commit()
-                    reranked = True
-        except Exception as re:
-            log.warning("[cancel-runner] %s rerank failed: %s", race_id, re)
+    # Always fires (even on a no-op cancel) so idempotent retries can recover from
+    # an earlier cancel that landed before the rerank code was deployed.
+    try:
+        async with get_session() as rsession:
+            if await _rerank_race_after_scratch(rsession, race_id):
+                await rsession.commit()
+                reranked = True
+    except Exception as re:
+        log.warning("[cancel-runner] %s rerank failed: %s", race_id, re)
     # Clear the per-venue meeting cache so the scratch is immediately visible.
     # The helper also drops the list cache for this date — strictly unnecessary
     # for a single-runner scratch (the venue list rarely changes) but the cost
