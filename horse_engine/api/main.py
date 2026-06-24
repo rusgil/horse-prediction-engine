@@ -7131,6 +7131,7 @@ async def clear_pair_backtest(
     top2_min: float = 50.0,
     gap_min: float = 8.0,
     stake: float = 10.0,
+    place_top: int = 3,  # double-sharp variant: require both partners' place_model_rank ≤ this
     x_cron_secret: Optional[str] = Header(None),
 ):
     """Backtest the 'clear pair' pattern: two horses way out in front
@@ -7156,6 +7157,7 @@ async def clear_pair_backtest(
                 RunnerPredictionHistoryRow.horse_name,
                 RunnerPredictionHistoryRow.model_rank,
                 RunnerPredictionHistoryRow.win_probability,
+                RunnerPredictionHistoryRow.place_model_rank,
                 RunnerPredictionHistoryRow.enriched_at,
             )
             .where(RunnerPredictionHistoryRow.race_id >= f"{cutoff_date}_")
@@ -7175,7 +7177,7 @@ async def clear_pair_backtest(
     # Group predictions: latest snapshot per (race, horse)
     seen: set = set()
     per_race: dict[str, dict] = {}
-    for rid, name, rank, wp, enr in pred_rows:
+    for rid, name, rank, wp, prk, enr in pred_rows:
         key = (rid, _normalize_horse(name))
         if key in seen:
             continue
@@ -7183,6 +7185,7 @@ async def clear_pair_backtest(
         per_race.setdefault(rid, {})[int(rank)] = {
             "horse_name": _normalize_horse(name),
             "win_prob": float(wp or 0),
+            "place_model_rank": int(prk) if prk is not None else None,
         }
 
     # Results: race_id → {position: (horse_normalised, sp)}
@@ -7227,6 +7230,9 @@ async def clear_pair_backtest(
     # Baseline: every race with rank-1 + rank-2 + a result
     baseline = {"races": 0, "quin_hits": 0, "split_hits": 0, "pl_sum": 0.0, "pl_races": 0}
     qualified = {"races": 0, "quin_hits": 0, "split_hits": 0, "pl_sum": 0.0, "pl_races": 0}
+    # Double-sharp: same gate PLUS both partners' place_model_rank ≤ place_top.
+    # Tests whether requiring win + place model agreement boosts hit rate.
+    double_sharp = {"races": 0, "quin_hits": 0, "split_hits": 0, "pl_sum": 0.0, "pl_races": 0}
     bucket_defs = [
         ("8-10pt", 8.0, 10.0),
         ("10-12pt", 10.0, 12.0),
@@ -7263,6 +7269,17 @@ async def clear_pair_backtest(
         if scored["split_win_pl_dollars"] is not None:
             qualified["pl_sum"] += scored["split_win_pl_dollars"]
             qualified["pl_races"] += 1
+        # Double-sharp variant — both partners agree on place too
+        r1_plc = ranks[1].get("place_model_rank")
+        r2_plc = ranks[2].get("place_model_rank")
+        if (r1_plc is not None and r2_plc is not None
+                and r1_plc <= place_top and r2_plc <= place_top):
+            double_sharp["races"] += 1
+            if scored["quinella_hit"]: double_sharp["quin_hits"] += 1
+            if scored["split_win_hit"]: double_sharp["split_hits"] += 1
+            if scored["split_win_pl_dollars"] is not None:
+                double_sharp["pl_sum"] += scored["split_win_pl_dollars"]
+                double_sharp["pl_races"] += 1
         # Bucket by gap size
         for label, lo, hi in bucket_defs:
             if lo <= gap23 < hi:
@@ -7298,17 +7315,27 @@ async def clear_pair_backtest(
     return {
         "days": days,
         "filter": f"top-2 win sum ≥ {top2_min}% AND rank2-rank3 gap ≥ {gap_min}pt",
+        "double_sharp_filter": f"{f} PLUS both partners' place_model_rank ≤ {place_top}".format(f="(above)"),
         "stake_per_horse": stake,
         "baseline_all_races": _summarise(baseline),
         "qualified": _summarise(qualified),
+        "qualified_double_sharp": _summarise(double_sharp),
         "by_gap_bucket": out_buckets,
         "lift_pts": {
-            "quinella": round(
+            "quinella_qualified_vs_baseline": round(
                 (_summarise(qualified)["quinella_hit_pct"] or 0) - (_summarise(baseline)["quinella_hit_pct"] or 0),
                 1,
             ),
-            "split_win": round(
+            "quinella_double_sharp_vs_qualified": round(
+                (_summarise(double_sharp)["quinella_hit_pct"] or 0) - (_summarise(qualified)["quinella_hit_pct"] or 0),
+                1,
+            ),
+            "split_win_qualified_vs_baseline": round(
                 (_summarise(qualified)["split_win_hit_pct"] or 0) - (_summarise(baseline)["split_win_hit_pct"] or 0),
+                1,
+            ),
+            "split_win_double_sharp_vs_qualified": round(
+                (_summarise(double_sharp)["split_win_hit_pct"] or 0) - (_summarise(qualified)["split_win_hit_pct"] or 0),
                 1,
             ),
         },
