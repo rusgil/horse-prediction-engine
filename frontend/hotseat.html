@@ -521,6 +521,49 @@
       color: #f9a8d4;
       border-color: #db2777;
     }
+    /* Tier badges — preview of paid tier structure (no gating yet). */
+    .tier-badge {
+      display: inline-flex; align-items: center;
+      font-size: 10px;
+      font-weight: 800;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      padding: 4px 9px;
+      border-radius: 999px;
+      vertical-align: middle;
+      margin-left: 10px;
+    }
+    .tier-badge.tier-edge {
+      background: rgba(34, 197, 94, 0.14);
+      color: var(--green-bright);
+      border: 1px solid rgba(34, 197, 94, 0.4);
+    }
+    .tier-badge.tier-pro {
+      background: rgba(59, 130, 246, 0.14);
+      color: #60a5fa;
+      border: 1px solid rgba(59, 130, 246, 0.4);
+    }
+    .tier-badge.tier-labs {
+      background: rgba(168, 85, 247, 0.14);
+      color: var(--purple-bright);
+      border: 1px solid rgba(168, 85, 247, 0.45);
+    }
+    /* Tiny tier marker embedded inside another badge (e.g. 2 Funk → LABS). */
+    .tier-marker {
+      display: inline-block;
+      font-size: 8px;
+      font-weight: 800;
+      letter-spacing: 0.12em;
+      padding: 1px 5px;
+      border-radius: 999px;
+      margin-left: 6px;
+      vertical-align: middle;
+    }
+    .tier-marker.tier-labs {
+      background: rgba(168, 85, 247, 0.22);
+      color: var(--purple-bright);
+      border: 1px solid rgba(168, 85, 247, 0.45);
+    }
 
     /* Desktop: slightly bigger */
     @media (min-width: 600px) {
@@ -543,7 +586,7 @@
   <header>
     <div class="title-row">
       <div>
-        <h1 class="title"><span class="flame">🔥</span> Hot Seat</h1>
+        <h1 class="title"><span class="flame">🔥</span> Hot Seat<span class="tier-badge tier-pro">Pro</span></h1>
         <div class="subtitle">Next races · sorted by jump time</div>
       </div>
       <div>
@@ -966,7 +1009,7 @@
           ${resultBanner}
           ${(isPremium || p.two_funk?.qualified) && !finished ? `<div class="badge-row">
             ${isPremium ? '<span class="badge">Premium</span>' : ''}
-            ${p.two_funk?.qualified ? `<span class="badge twofunk" title="Top-2 dominate: ${p.two_funk.top2_win_sum_pct}% combined · ${p.two_funk.rank2_rank3_gap_pct}pt cliff to rank-3. Consider a Quinella with ${escHtml(p.two_funk.partner_horse_name)}.">🪩 2 Funk · Quinella w/ ${escHtml(p.two_funk.partner_horse_name)}</span>` : ''}
+            ${p.two_funk?.qualified ? `<span class="badge twofunk" title="Top-2 dominate: ${p.two_funk.top2_win_sum_pct}% combined · ${p.two_funk.rank2_rank3_gap_pct}pt cliff to rank-3. Consider a Quinella with ${escHtml(p.two_funk.partner_horse_name)}.">🪩 2 Funk · Quinella w/ ${escHtml(p.two_funk.partner_horse_name)}<span class="tier-marker tier-labs">Labs</span></span>` : ''}
           </div>` : ''}
           <div class="pick-top">
             <div>

@@ -65,6 +65,23 @@
       font-size: 12px;
       margin-top: 4px;
     }
+    /* Tier badge — preview of paid tier structure (no gating yet). */
+    .tier-badge {
+      display: inline-flex; align-items: center;
+      font-size: 10px;
+      font-weight: 800;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      padding: 4px 9px;
+      border-radius: 999px;
+      vertical-align: middle;
+      margin-left: 10px;
+    }
+    .tier-badge.tier-labs {
+      background: rgba(168, 85, 247, 0.14);
+      color: var(--purple-bright);
+      border: 1px solid rgba(168, 85, 247, 0.45);
+    }
     .nav-back {
       display: inline-block;
       padding: 6px 10px;
@@ -769,7 +786,7 @@
   <header>
     <div class="title-row">
       <div>
-        <h1 class="title">🧪 Funky IQ Labs</h1>
+        <h1 class="title">🧪 Funky IQ Labs<span class="tier-badge tier-labs">Labs</span></h1>
         <div class="subtitle">Paper-trading · $2 flexi-box trifectas · metro meetings only</div>
       </div>
       <a href="/hotseat" class="nav-back">🔥 Hot Seat →</a>

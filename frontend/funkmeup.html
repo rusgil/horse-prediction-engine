@@ -210,6 +210,48 @@
       letter-spacing: 0.4px;
       white-space: nowrap;
     }
+    /* Tier badges — preview of paid tier structure (no gating yet). */
+    .tier-badge {
+      display: inline-flex; align-items: center;
+      font-size: 10px;
+      font-weight: 800;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      padding: 4px 9px;
+      border-radius: 999px;
+      vertical-align: middle;
+      margin-left: 10px;
+    }
+    .tier-badge.tier-edge {
+      background: rgba(34, 197, 94, 0.14);
+      color: var(--green-bright);
+      border: 1px solid rgba(34, 197, 94, 0.4);
+    }
+    .tier-badge.tier-pro {
+      background: rgba(59, 130, 246, 0.14);
+      color: #60a5fa;
+      border: 1px solid rgba(59, 130, 246, 0.4);
+    }
+    .tier-badge.tier-labs {
+      background: rgba(168, 85, 247, 0.14);
+      color: var(--purple-bright);
+      border: 1px solid rgba(168, 85, 247, 0.45);
+    }
+    .tier-marker {
+      display: inline-block;
+      font-size: 8px;
+      font-weight: 800;
+      letter-spacing: 0.12em;
+      padding: 1px 5px;
+      border-radius: 999px;
+      margin-left: 6px;
+      vertical-align: middle;
+    }
+    .tier-marker.tier-labs {
+      background: rgba(168, 85, 247, 0.22);
+      color: var(--purple-bright);
+      border: 1px solid rgba(168, 85, 247, 0.45);
+    }
 
     /* Prescriptive action block — the 'do this exact bet' instruction */
     .action-block {
@@ -464,7 +506,7 @@
   <header>
     <div class="title-row">
       <div>
-        <h1 class="title">🎺 <span class="funk">Funk</span> Me Up</h1>
+        <h1 class="title">🎺 <span class="funk">Funk</span> Me Up<span class="tier-badge tier-pro">Pro</span></h1>
         <div class="subtitle" id="pageSubtitle">Today's lower-variance playbook · 🎯 Sharp picks · place-led · $10 base stake</div>
       </div>
       <div>
@@ -834,7 +876,7 @@
         ${heroTag}
         <div class="play-header">
           <div>
-            <h3 class="play-title"><span class="emoji">${meta.emoji}</span>${escHtml(p.title)}</h3>
+            <h3 class="play-title"><span class="emoji">${meta.emoji}</span>${escHtml(p.title)}${p.kind === 'twofunk' ? '<span class="tier-marker tier-labs">Labs</span>' : ''}</h3>
             <div class="play-subtitle">${escHtml(p.subtitle || '')}</div>
           </div>
           <div class="play-header-right">

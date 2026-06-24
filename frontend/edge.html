@@ -693,6 +693,50 @@
     .edge-field-table tr.rank1 td { color: var(--green-bright); font-weight: 600; }
     .edge-field-table tr.rank1 td.name { color: var(--green-bright); }
 
+    /* Tier badges — preview of paid tier structure (no gating yet). */
+    .tier-badge {
+      display: inline-flex; align-items: center;
+      font-size: 0.62rem;
+      font-weight: 800;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      padding: 4px 9px;
+      border-radius: 999px;
+      vertical-align: middle;
+      margin-left: 10px;
+    }
+    .tier-badge.tier-edge {
+      background: rgba(34, 197, 94, 0.14);
+      color: var(--green-bright);
+      border: 1px solid rgba(34, 197, 94, 0.4);
+    }
+    .tier-badge.tier-pro {
+      background: rgba(59, 130, 246, 0.14);
+      color: #60a5fa;
+      border: 1px solid rgba(59, 130, 246, 0.4);
+    }
+    .tier-badge.tier-labs {
+      background: rgba(168, 85, 247, 0.14);
+      color: var(--purple-bright);
+      border: 1px solid rgba(168, 85, 247, 0.45);
+    }
+    /* Tiny tier marker embedded inside another badge (e.g. 2 Funk → LABS). */
+    .tier-marker {
+      display: inline-block;
+      font-size: 0.55rem;
+      font-weight: 800;
+      letter-spacing: 0.12em;
+      padding: 1px 5px;
+      border-radius: 999px;
+      margin-left: 6px;
+      vertical-align: middle;
+    }
+    .tier-marker.tier-labs {
+      background: rgba(168, 85, 247, 0.22);
+      color: var(--purple-bright);
+      border: 1px solid rgba(168, 85, 247, 0.45);
+    }
+
     /* Trifecta card legs table */
     .tri-card-legs {
       display: flex; flex-direction: column; gap: 6px;
@@ -1562,7 +1606,7 @@
 
   <div class="hero">
     <div class="hero-eyebrow">AI Analysis · Expert Picks</div>
-    <div class="hero-title">The <span>Edge</span></div>
+    <div class="hero-title">The <span>Edge</span><span class="tier-badge tier-edge">Edge</span></div>
     <div style="display:inline-flex;align-items:center;gap:6px;margin-top:6px;margin-bottom:2px;font-size:0.7rem;font-weight:600;letter-spacing:0.1em;text-transform:uppercase;color:var(--text-dim);background:var(--bg-elevated);border:1px solid var(--border);border-radius:999px;padding:3px 10px;">Powered by <span style="color:var(--gold)">FunkyIQ™</span></div>
     <div class="hero-sub">Races where the model has highest confidence — compared against market odds so you can see exactly where the value is.</div>
     <div class="hero-meta" id="heroMeta">
@@ -2040,7 +2084,7 @@
 
     const premiumBadge = isPremium ? `<span class="pick-badge-premium">💎 Premium</span>` : '';
     const twoFunkBadge = (pick.two_funk?.qualified && !isPast)
-      ? `<span class="pick-badge-standard" style="background:rgba(236,72,153,0.14);color:#f9a8d4;border-color:rgba(219,39,119,0.45);" title="Top-2 dominate: ${pick.two_funk.top2_win_sum_pct}% combined · ${pick.two_funk.rank2_rank3_gap_pct}pt cliff to rank-3. Consider a Quinella with ${escHtml(pick.two_funk.partner_horse_name)}.">🪩 2 Funk · Quinella w/ ${escHtml(pick.two_funk.partner_horse_name)}</span>`
+      ? `<span class="pick-badge-standard" style="background:rgba(236,72,153,0.14);color:#f9a8d4;border-color:rgba(219,39,119,0.45);" title="Top-2 dominate: ${pick.two_funk.top2_win_sum_pct}% combined · ${pick.two_funk.rank2_rank3_gap_pct}pt cliff to rank-3. Consider a Quinella with ${escHtml(pick.two_funk.partner_horse_name)}.">🪩 2 Funk · Quinella w/ ${escHtml(pick.two_funk.partner_horse_name)}<span class="tier-marker tier-labs">Labs</span></span>`
       : '';
 
     // Result badge — shown for past races alongside tier badge
