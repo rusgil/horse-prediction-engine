@@ -764,6 +764,41 @@
     .page-nav-btn.funk.active { background: rgba(192,132,252,0.15);color: #c084fc; border-color: rgba(192,132,252,0.45); }
     .page-nav-btn.labs.active   { background: rgba(168,85,247,0.15); color: #c084fc; border-color: rgba(168,85,247,0.45); }
     .page-nav-btn.lounge.active { background: rgba(245,200,66,0.16); color: #f5c842; border-color: rgba(245,200,66,0.45); }
+    .page-nav-btn.about { font-size: 11px; padding: 6px 9px; color: #6b7280; }
+    .page-nav-btn.about:hover { color: #d1d5db; }
+    .page-nav-btn.admin { font-size: 11px; padding: 6px 9px; color: #6b7280; }
+    .page-nav-btn.admin:hover { color: #d1d5db; }
+
+    /* Unified page header — same on every page. */
+    .page-header {
+      text-align: center;
+      padding: 22px 16px 16px;
+      border-bottom: 1px solid rgba(255,255,255,0.06);
+      margin-bottom: 16px;
+    }
+    .page-title {
+      font-family: 'Barlow Condensed', sans-serif;
+      font-size: 36px;
+      font-weight: 800;
+      line-height: 1;
+      letter-spacing: 0.5px;
+      margin: 0 0 8px;
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+      justify-content: center;
+    }
+    .page-subtitle {
+      font-size: 13px;
+      color: #9ca3af;
+      margin: 0 auto;
+      max-width: 600px;
+      line-height: 1.4;
+    }
+    @media (max-width: 600px) {
+      .page-title { font-size: 28px; }
+    }
 
     /* Trifecta card legs table */
     .tri-card-legs {
@@ -1623,14 +1658,12 @@
       <div class="nav-dot"></div>
       FunkyIQ
     </a>
-    <a href="/dashboard" class="nav-back" style="margin-left:auto;margin-right:0">Admin</a>
-    <a href="/about" class="nav-back" style="margin-left:8px">About</a>
-    <a href="/" class="nav-back" style="margin-left:8px">← Predictions</a>
   </div>
 </nav>
 
 <nav class="page-nav">
   <a href="/"           class="page-nav-btn lounge">🛋️ Lounge</a>
+  <a href="/about"      class="page-nav-btn about">About</a>
   <a href="/edge"       class="page-nav-btn edge active">🎯 Edge</a>
   <a href="/hotseat"    class="page-nav-btn hot">🔥 Hot Seat</a>
   <a href="/funk-me-up" class="page-nav-btn funk">🎺 Funk Me Up</a>
@@ -1639,11 +1672,12 @@
 
 <div class="page">
 
-  <div class="hero">
-    <div class="hero-eyebrow">AI Analysis · Expert Picks</div>
-    <div class="hero-title">The <span>Edge</span><span class="tier-badge tier-edge">Edge</span></div>
-    <div style="display:inline-flex;align-items:center;gap:6px;margin-top:6px;margin-bottom:2px;font-size:0.7rem;font-weight:600;letter-spacing:0.1em;text-transform:uppercase;color:var(--text-dim);background:var(--bg-elevated);border:1px solid var(--border);border-radius:999px;padding:3px 10px;">Powered by <span style="color:var(--gold)">FunkyIQ™</span></div>
-    <div class="hero-sub">Races where the model has highest confidence — compared against market odds so you can see exactly where the value is.</div>
+  <header class="page-header">
+    <h1 class="page-title">🎯 The Edge <span class="tier-badge tier-edge">Edge</span></h1>
+    <p class="page-subtitle">High-confidence picks compared against market odds — where the value sits</p>
+  </header>
+  <div class="hero" style="text-align:center;padding-top:0">
+    <div class="hero-sub" style="display:none">spacer</div>
     <div class="hero-meta" id="heroMeta">
       <div class="hero-stat">
         <span class="hero-stat-num" id="statTotal">—</span>
