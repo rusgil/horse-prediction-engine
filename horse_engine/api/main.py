@@ -6839,6 +6839,7 @@ async def model_anomalies(
     min_sp: float = 8.0,
     max_position: int = 5,
     limit: int = 50,
+    include_backfill: bool = False,
     x_cron_secret: Optional[str] = Header(None),
 ):
     """Find races where:
@@ -6872,7 +6873,8 @@ async def model_anomalies(
             .where(RunnerPredictionHistoryRow.win_probability >= min_model_pct / 100.0)
             .where(RunnerPredictionHistoryRow.cancelled.is_(False)
                    | RunnerPredictionHistoryRow.cancelled.is_(None))
-            .where(RunnerPredictionHistoryRow.source == "live")
+            .where(RunnerPredictionHistoryRow.source.in_(("live", "backfill"))
+                   if include_backfill else RunnerPredictionHistoryRow.source == "live")
             .order_by(RunnerPredictionHistoryRow.enriched_at.desc())
         )).fetchall()
         result_rows = (await session.execute(
