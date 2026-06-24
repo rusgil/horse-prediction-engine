@@ -10070,6 +10070,7 @@ async def cancel_runner(
     """Mark a specific runner as cancelled (e.g. scratched from wrong race)."""
     _check_admin(x_cron_secret)
     from sqlalchemy import update as sa_update
+    reranked = False
     async with get_session() as session:
         result = await session.execute(
             sa_update(RunnerPredictionRow)
@@ -10085,6 +10086,15 @@ async def cancel_runner(
             .values(cancelled=True)
         )
         await session.commit()
+    # Re-rank + renormalise so the Lab's rank-1 queries pick up the promoted horse.
+    if result.rowcount:
+        try:
+            async with get_session() as rsession:
+                if await _rerank_race_after_scratch(rsession, race_id):
+                    await rsession.commit()
+                    reranked = True
+        except Exception as re:
+            log.warning("[cancel-runner] %s rerank failed: %s", race_id, re)
     # Clear the per-venue meeting cache so the scratch is immediately visible.
     # The helper also drops the list cache for this date — strictly unnecessary
     # for a single-runner scratch (the venue list rarely changes) but the cost
@@ -10094,6 +10104,7 @@ async def cancel_runner(
     return {
         "updated": result.rowcount,
         "history_updated": hist_result.rowcount,
+        "reranked": reranked,
         "race_id": race_id,
         "horse_name": horse_name,
     }
