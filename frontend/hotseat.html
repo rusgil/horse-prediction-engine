@@ -521,6 +521,58 @@
       color: #f9a8d4;
       border-color: #db2777;
     }
+    /* 2 Funk inline detail panel — shown on race cards where the
+       pattern qualifies. Pink-tinted like the badge. */
+    .twofunk-panel {
+      margin-top: 12px;
+      padding: 10px 12px;
+      background: rgba(236, 72, 153, 0.08);
+      border: 1px solid rgba(219, 39, 119, 0.30);
+      border-radius: 8px;
+      font-size: 11px;
+    }
+    .twofunk-panel-head {
+      display: flex; align-items: center; gap: 8px;
+      font-weight: 700; color: #f9a8d4; font-size: 12px;
+      margin-bottom: 8px;
+    }
+    .twofunk-leg {
+      display: flex; justify-content: space-between; align-items: center;
+      padding: 5px 0;
+      border-bottom: 1px solid rgba(219, 39, 119, 0.12);
+    }
+    .twofunk-leg:last-of-type { border-bottom: none; }
+    .twofunk-leg-name {
+      color: var(--text); font-weight: 600;
+    }
+    .twofunk-leg-rk {
+      display: inline-block; padding: 1px 6px; border-radius: 999px;
+      background: rgba(255,255,255,0.06); color: var(--text-muted);
+      font-size: 10px; font-weight: 600; margin-right: 8px;
+      vertical-align: middle;
+    }
+    .twofunk-leg-stats {
+      color: var(--text-muted); font-variant-numeric: tabular-nums;
+    }
+    .twofunk-leg-stats strong { color: var(--text); }
+    .twofunk-meta {
+      margin-top: 8px;
+      padding-top: 7px;
+      border-top: 1px dashed rgba(219, 39, 119, 0.25);
+      color: var(--text-muted); font-size: 10px;
+    }
+    .twofunk-meta strong { color: #f9a8d4; }
+    .twofunk-action {
+      margin-top: 8px;
+      padding: 6px 8px;
+      background: rgba(236, 72, 153, 0.10);
+      border-radius: 6px;
+      color: #f9a8d4; font-size: 10.5px; font-weight: 600;
+    }
+    .twofunk-action small {
+      display: block; color: var(--text-muted); font-weight: 400;
+      font-size: 10px; margin-top: 2px;
+    }
     /* Tier badges — preview of paid tier structure (no gating yet). */
     .tier-badge {
       display: inline-flex; align-items: center;
@@ -833,6 +885,59 @@
       </div>`;
   }
 
+  // Full 2 Funk panel — shown on race cards where the pattern qualifies.
+  // Mirrors the Funk Me Up play card's information density but inline so
+  // Hot Seat users can act without leaving the page. Tagged Labs in both
+  // the data layer (p.two_funk.tier === 'labs') and the UI marker — in
+  // the future, only Labs members will see this panel.
+  function renderTwoFunkPanel(p) {
+    const tf = p.two_funk;
+    if (!tf || !tf.qualified) return '';
+    const partnerOddsTxt = tf.partner_odds ? `$${Number(tf.partner_odds).toFixed(2)}` : '—';
+    const winOddsTxt = (p.best_available_odds && p.best_available_odds > 1.0)
+      ? `$${Number(p.best_available_odds).toFixed(2)}` : '—';
+    // Approximate quinella est: 0.5 × W1 × W2 (same heuristic as backend).
+    const w1 = (p.best_available_odds && p.best_available_odds > 1.0) ? p.best_available_odds : null;
+    const w2 = (tf.partner_odds && tf.partner_odds > 1.0) ? tf.partner_odds : null;
+    const quinEst = (w1 && w2) ? (0.5 * w1 * w2) : null;
+    const stake = 10;
+    const potReturn = quinEst ? Math.round(quinEst * stake * 100) / 100 : null;
+    return `
+      <div class="twofunk-panel">
+        <div class="twofunk-panel-head">
+          🪩 2 Funk · Quinella
+          <span class="tier-marker tier-labs">Labs</span>
+        </div>
+        <div class="twofunk-leg">
+          <div>
+            <span class="twofunk-leg-rk">RK 1</span>
+            <span class="twofunk-leg-name">${escHtml(p.horse_name)}</span>
+          </div>
+          <div class="twofunk-leg-stats">
+            <strong>${p.model_pct}%</strong> · ${winOddsTxt}
+          </div>
+        </div>
+        <div class="twofunk-leg">
+          <div>
+            <span class="twofunk-leg-rk">RK 2</span>
+            <span class="twofunk-leg-name">${escHtml(tf.partner_horse_name)}</span>
+          </div>
+          <div class="twofunk-leg-stats">
+            <strong>${tf.partner_win_pct}%</strong> · ${partnerOddsTxt}
+          </div>
+        </div>
+        <div class="twofunk-meta">
+          Top-2 sum <strong>${tf.top2_win_sum_pct}%</strong>
+          · <strong>${tf.rank2_rank3_gap_pct}pt</strong> cliff to rank-3
+        </div>
+        ${potReturn ? `
+        <div class="twofunk-action">
+          $${stake} Quinella → ~$${potReturn.toFixed(2)} if it lands
+          <small>Sportsbet → ${escHtml(venueDisplay(p.venue, {upper: true}))} → R${p.race_number} → Exotics → Quinella</small>
+        </div>` : ''}
+      </div>`;
+  }
+
   function renderFieldExpansion(p) {
     const field = Array.isArray(p.field) ? p.field : [];
     if (!field.length) return '';
@@ -1052,6 +1157,7 @@
               <div class="stat-label">Odds</div>
             </div>
           </div>
+          ${!finished ? renderTwoFunkPanel(p) : ''}
           ${renderFieldExpansion(p)}
         </div>`;
     }).join('');
