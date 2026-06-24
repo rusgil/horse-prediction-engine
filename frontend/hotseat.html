@@ -1126,18 +1126,41 @@
   // rule). Each user lands on a slightly different cadence.
   setInterval(loadPicks, 30000 + Math.random() * 10000);
 
-  // Filter pills — two independent axes (win / place). Each pill carries
-  // data-axis to scope the active state to its own row, so picking a place
-  // threshold doesn't deactivate the win threshold.
+  // Filter pills — Sharp is a mutually-exclusive PRESET, win/place are
+  // independent layered filters.
+  //   - Clicking Sharp resets win/place to 'All' (the Sharp niche is the
+  //     only filter in play).
+  //   - Clicking a win/place pill exits Sharp mode (the user is now
+  //     layering their own thresholds).
+  function _activatePill(axis, filter) {
+    document.querySelectorAll(`.filter-pill[data-axis="${axis}"]`).forEach(b => {
+      b.classList.toggle('active', b.dataset.filter === filter);
+    });
+  }
   document.querySelectorAll('.filter-pill').forEach(btn => {
     btn.addEventListener('click', () => {
       const axis = btn.dataset.axis;
-      document.querySelectorAll(`.filter-pill[data-axis="${axis}"]`)
-        .forEach(b => b.classList.remove('active'));
-      btn.classList.add('active');
-      if (axis === 'win') state.winFilter = btn.dataset.filter;
-      else if (axis === 'place') state.placeFilter = btn.dataset.filter;
-      else if (axis === 'mode') state.mode = btn.dataset.filter;
+      const filter = btn.dataset.filter;
+      _activatePill(axis, filter);
+      if (axis === 'mode') {
+        state.mode = filter;
+        if (filter === 'sharp') {
+          // Sharp preset: clear any custom win/place layering so it's
+          // not double-filtered.
+          state.winFilter = 'all';
+          state.placeFilter = 'all';
+          _activatePill('win', 'all');
+          _activatePill('place', 'all');
+        }
+      } else if (axis === 'win' || axis === 'place') {
+        if (axis === 'win') state.winFilter = filter;
+        else state.placeFilter = filter;
+        // Touching a custom threshold exits Sharp mode.
+        if (state.mode === 'sharp') {
+          state.mode = 'all';
+          _activatePill('mode', 'all');
+        }
+      }
       renderList();
     });
   });
