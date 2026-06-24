@@ -72,6 +72,12 @@ def enrich_runner(
     avg_beaten = form_enricher.avg_beaten_margin_last5(starts)
     best_finish = form_enricher.best_finish_at_distance(starts, race.distance)
     days_last = form_enricher.days_since_last_run(starts)
+    # Discount form_score for long layoffs — a 15-month-spell horse with
+    # "great recent form" 15 months ago shouldn't look like a 30% pick
+    # (BULLETIN BEAU, Pinjarra R5 2026-06-24). The model already gets
+    # days_since_last_run as a separate feature but it doesn't override
+    # a strong form signal on its own.
+    fs = form_enricher.discount_form_for_layoff(fs, days_last)
     runs_prep = form_enricher.runs_this_prep(starts)
     class_chg = form_enricher.class_change_flag(starts, race.race_class)
     spell_w = form_enricher.spell_weeks(starts)

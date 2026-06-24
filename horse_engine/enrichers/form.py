@@ -43,6 +43,48 @@ def weighted_form_score(starts: list[FormStart]) -> float:
     return round(sum(scores) / total_w, 4)
 
 
+# Layoff thresholds for the form-score discount below. A normal racing
+# spell is 3-6 months; anything past 120 days starts to compromise the
+# signal that "recent form" is conveying. Past a year off the track the
+# horse hasn't shown the public anything in a long time and we treat
+# the form record as effectively unknown.
+LAYOFF_DISCOUNT_START_DAYS = 120
+LAYOFF_DISCOUNT_FULL_DAYS = 365
+LAYOFF_BASELINE_SCORE = 0.3  # matches weighted_form_score's no-data fallback
+
+
+def discount_form_for_layoff(form_score: float, days_since_last_run: int) -> float:
+    """Discount form_score toward the no-form baseline when the horse has
+    been off the track for an unusually long time.
+
+    Triggered by BULLETIN BEAU/Pinjarra R5 on 2026-06-24: 468 days off
+    the track, model rank 1 (31%, +23pt edge), market rank 6 (the market
+    knew better), finished 12th of 12. The recency-weighted form score
+    was 0.85 because his last 5 starts were genuinely good — but those
+    starts were 15 months old, so "recent" was misleading.
+
+    Curve (and rationale):
+        ≤ 120 days   → form_score unchanged (normal racing spell)
+        120-365 days → linear taper toward the no-form baseline (0.3)
+        ≥ 365 days   → baseline (treat as no-form info)
+
+    A horse whose form is already below the baseline is left alone — a
+    layoff shouldn't make a poor performer look worse, just stop a good
+    one looking better than it should.
+    """
+    if days_since_last_run is None or days_since_last_run < 0:
+        return form_score
+    if days_since_last_run <= LAYOFF_DISCOUNT_START_DAYS:
+        return form_score
+    if form_score <= LAYOFF_BASELINE_SCORE:
+        return form_score
+    if days_since_last_run >= LAYOFF_DISCOUNT_FULL_DAYS:
+        return LAYOFF_BASELINE_SCORE
+    span = LAYOFF_DISCOUNT_FULL_DAYS - LAYOFF_DISCOUNT_START_DAYS
+    progress = (days_since_last_run - LAYOFF_DISCOUNT_START_DAYS) / span
+    return round(form_score - (form_score - LAYOFF_BASELINE_SCORE) * progress, 4)
+
+
 def win_rate_at_distance(starts: list[FormStart], race_distance: int, tolerance: int = 200) -> float:
     relevant = [s for s in starts if abs(s.distance - race_distance) <= tolerance]
     if not relevant:
