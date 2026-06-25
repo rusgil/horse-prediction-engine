@@ -394,6 +394,15 @@
       cursor: pointer;
     }
     .play-foot button:hover { border-color: var(--purple); color: var(--purple-bright); }
+    .play-foot .bonus-dismiss {
+      color: var(--text-dim);
+      font-size: 11px;
+      padding: 5px 9px;
+    }
+    .play-foot .bonus-dismiss:hover {
+      border-color: rgba(248,113,113,0.5);
+      color: #f87171;
+    }
     .past-stat {
       font-size: 11px;
       color: var(--text-dim);
@@ -1058,6 +1067,7 @@
         <div class="play-foot">
           <span class="past-stat">Potential return: ${fmtMoneyPlain(p.potential_return_dollars)}</span>
           <button data-copy="${p.kind}">Copy plan</button>
+          ${p.kind === 'bonus' ? `<button class="bonus-dismiss" data-dismiss-bonus="1" title="Hide this card for the rest of today — bonus bets refresh daily, so it'll show again tomorrow.">✕ Already used</button>` : ''}
         </div>
       </div>`;
   }
@@ -1132,6 +1142,15 @@
       if (!planRes.ok) throw new Error('HTTP ' + planRes.status);
       const data = await planRes.json();
       window._funkData = data;
+      // Hide the Bonus play if the user has already used their bonus today.
+      // localStorage key is dated so dismissal auto-clears tomorrow when
+      // most Sportsbet promos / bonus bets refresh.
+      try {
+        const dismissed = localStorage.getItem('funkmeup:bonusDismissed') === targetDate;
+        if (dismissed && Array.isArray(data.plays)) {
+          data.plays = data.plays.filter(p => p.kind !== 'bonus');
+        }
+      } catch (e) {}
       renderExposure(data);
       if (!data.plays || !data.plays.length) {
         const msg = day === 'tomorrow'
@@ -1178,6 +1197,16 @@
           const kind = btn.dataset.copy;
           const p = (window._funkData.plays || []).find(x => x.kind === kind);
           if (p) copyPlan(playToText(p));
+        });
+      });
+      // 'Already used' on the Bonus card — set today's dismissal flag and
+      // re-render the day so the card disappears without a full reload.
+      root.querySelectorAll('[data-dismiss-bonus]').forEach(btn => {
+        btn.addEventListener('click', () => {
+          try {
+            localStorage.setItem('funkmeup:bonusDismissed', targetDate);
+          } catch (e) {}
+          load(currentDay);
         });
       });
     } catch (e) {
