@@ -993,8 +993,8 @@
       .nav-spacer { display: none; }
       .page-nav-btn {
         flex: 1; min-width: 0;
-        padding: 8px 3px;
-        font-size: 10px;
+        padding: 11px 4px;
+        font-size: 12px;
         letter-spacing: 0.02em;
         text-align: center;
         background: transparent;
@@ -1006,12 +1006,12 @@
         overflow: hidden;
       }
       .page-nav-btn.about, .page-nav-btn.admin {
-        font-size: 10px;
-        padding: 8px 3px;
+        font-size: 12px;
+        padding: 11px 4px;
         flex: 0 0 auto;
-        min-width: 40px;
+        min-width: 48px;
       }
-      body { padding-bottom: 70px; }
+      body { padding-bottom: 80px; }
     }
 
     /* Unified page header — same on every page. */
@@ -1153,21 +1153,6 @@
   <!-- Race content -->
   <div id="raceContent"></div>
 </div>
-
-<nav class="bottom-nav">
-  <button class="bottom-tab active" onclick="scrollToTop()">
-    <span class="bottom-tab-icon">🐎</span>
-    <span class="bottom-tab-label">Meetings</span>
-  </button>
-  <button class="bottom-tab" onclick="scrollToRaces()">
-    <span class="bottom-tab-icon">📋</span>
-    <span class="bottom-tab-label">Races</span>
-  </button>
-  <button class="bottom-tab" onclick="window.open('https://funkyiq.com','_blank')">
-    <span class="bottom-tab-icon">⚡</span>
-    <span class="bottom-tab-label">FunkyIQ</span>
-  </button>
-</nav>
 
 <script>
   const API = 'https://web-production-dec62.up.railway.app';
