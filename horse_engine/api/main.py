@@ -3138,14 +3138,39 @@ async def get_edge_picks():
         race_times: dict[str, str | None] = {}
         live_odds_by_race: dict[str, dict[str, float]] = {}
         if not ra_blocked:
-            # For races where rank-2/3 hedge candidates have 0 odds, fetch live odds in parallel
+            # For races where rank-2/3 hedge candidates have 0 odds, fetch
+            # live odds — but ONLY for races within the next 4 hours. Future
+            # races (afternoon / next-day / day-after) get their odds
+            # refreshed by the 15-min _scheduled_pre_race_enrich_and_scratch
+            # cron once they enter the 2h window. Pre-this-change cold-cache
+            # /api/edge fired ~30+ concurrent RA hits and waited on them all,
+            # blowing wall time past 60s and violating the no-API-hammer rule.
+            now_utc = datetime.utcnow().replace(tzinfo=timezone.utc)
+            horizon = now_utc + timedelta(hours=4)
+            def _imminent(row) -> bool:
+                st = row.scheduled_time
+                if not st:
+                    return False
+                try:
+                    jump = datetime.fromisoformat(str(st).replace("Z", "+00:00"))
+                except ValueError:
+                    return False
+                return now_utc <= jump <= horizon
             races_needing_live_odds = [
                 r.race_id for r in rows
-                if any((hr.best_available_odds or 0) <= 1.0 for hr in hedge_map.get(r.race_id, []))
+                if _imminent(r)
+                and any((hr.best_available_odds or 0) <= 1.0 for hr in hedge_map.get(r.race_id, []))
             ]
-            live_odds_results = await asyncio.gather(*[
-                _fetch_live_odds(client, rid) for rid in races_needing_live_odds
-            ])
+            # Cap concurrency at 3 via semaphore so we never stampede the
+            # proxy. asyncio.gather still preserves request ordering, but
+            # only 3 fly at a time.
+            _live_odds_sem = asyncio.Semaphore(3)
+            async def _fetch_capped(rid: str):
+                async with _live_odds_sem:
+                    return await _fetch_live_odds(client, rid)
+            live_odds_results = await asyncio.gather(
+                *[_fetch_capped(rid) for rid in races_needing_live_odds]
+            )
             live_odds_by_race = dict(zip(races_needing_live_odds, live_odds_results))
 
         for runner_row in rows:
