@@ -1010,14 +1010,39 @@ class RacingAustraliaClient:
             # Cache miss + no DB row — fall through to the actual RA fetch,
             # still inside the lock so concurrent callers don't all hit RA.
             ra_date = _ra_date(race_date)
-            try:
-                html = await self._get(f"{_BASE}/Calendar.aspx?State={state}")
-            except Exception as e:
-                log.warning("Calendar fetch failed for %s: %s", state, e)
-                # Cache the failure for 5 minutes so we don't death-spiral
-                # the proxy when it's returning 503 (cap hit). Empty list
-                # is a valid 'no meetings today' so we serve that until
-                # the cap window rolls.
+            # Retry-with-backoff on 503 (RA transient overload). Without this
+            # a single 503 burst during the 8:30am cron silently kills the
+            # whole day's enrichment for that state. Three attempts: 2s, 5s,
+            # 15s waits. Other status codes (e.g. 403 trip the breaker, 404
+            # is a real "no such page") aren't retried.
+            html = None
+            for attempt, wait in enumerate((2, 5, 15), start=1):
+                try:
+                    html = await self._get(f"{_BASE}/Calendar.aspx?State={state}")
+                    break
+                except httpx.HTTPStatusError as e:
+                    sc = e.response.status_code if e.response is not None else None
+                    if sc == 503 and attempt < 3:
+                        log.warning(
+                            "Calendar 503 for %s (attempt %d/3) — sleeping %ds then retrying",
+                            state, attempt, wait,
+                        )
+                        await asyncio.sleep(wait)
+                        continue
+                    log.warning("Calendar fetch failed for %s: %s", state, e)
+                    # Cache the failure for 5 minutes so we don't death-spiral
+                    # the proxy when it's returning 503 (cap hit). Empty list
+                    # is a valid 'no meetings today' so we serve that until
+                    # the cap window rolls.
+                    self._calendar_cache[cache_key] = (datetime.utcnow() - timedelta(seconds=3300), [])
+                    return []
+                except Exception as e:
+                    log.warning("Calendar fetch failed for %s: %s", state, e)
+                    self._calendar_cache[cache_key] = (datetime.utcnow() - timedelta(seconds=3300), [])
+                    return []
+            if html is None:
+                # Exhausted retries on 503
+                log.warning("Calendar fetch failed for %s after 3 attempts (503)", state)
                 self._calendar_cache[cache_key] = (datetime.utcnow() - timedelta(seconds=3300), [])
                 return []
 
@@ -1091,18 +1116,33 @@ class RacingAustraliaClient:
 
     async def get_meetings(self, race_date: str | None = None) -> list[dict]:
         d = race_date or date.today().isoformat()
-        tasks = [self._fetch_state_calendar(s, d) for s in _AU_STATES]
-        results = await asyncio.gather(*tasks, return_exceptions=True)
+        # Sequential per-state fetch with 3s stagger. Was parallel via
+        # asyncio.gather — fired 8 Calendar.aspx requests within ~1s,
+        # which is what triggered RA's 503-throttling during the 8:30am
+        # cron on 2026-06-25. Staggering trades ~24s of cron runtime for
+        # massively higher reliability. Cache hits and DB hits return
+        # instantly inside _fetch_state_calendar, so most days the stagger
+        # only matters on a true cold-cache enrich.
         meetings: list[dict] = []
         seen_slugs: set[str] = set()
-        for r in results:
-            if isinstance(r, list):
-                for m in r:
-                    slug = m.get("slug", "")
-                    if slug and slug in seen_slugs:
-                        continue
-                    seen_slugs.add(slug)
-                    meetings.append(m)
+        for i, s in enumerate(_AU_STATES):
+            try:
+                r = await self._fetch_state_calendar(s, d)
+                if isinstance(r, list):
+                    for m in r:
+                        slug = m.get("slug", "")
+                        if slug and slug in seen_slugs:
+                            continue
+                        seen_slugs.add(slug)
+                        meetings.append(m)
+            except Exception as e:
+                log.warning("get_meetings: %s failed: %s", s, e)
+            # Stagger between cold-cache RA hits — skip sleep on the last
+            # state to avoid wasted wait, and skip on cache hits (the
+            # underlying _request already has a 0.6-1.2s jitter, but that
+            # only delays in-flight requests, not the spacing between them).
+            if i < len(_AU_STATES) - 1:
+                await asyncio.sleep(3)
         log.info("Found %d AU meetings on %s (Racing Australia)", len(meetings), d)
         return meetings
 
