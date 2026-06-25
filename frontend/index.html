@@ -954,6 +954,25 @@
     .page-nav-btn.admin:hover { color: #d1d5db; }
     /* Spacer is a no-op now — nav buttons centre as one group on every breakpoint. */
     .nav-spacer { display: none; }
+
+    /* Unified brand strip — same on every page, sits above the .page-nav button row. */
+    .brand-bar {
+      display: flex; align-items: center; justify-content: center;
+      gap: 14px; padding: 14px 16px 8px; flex-wrap: wrap;
+    }
+    .brand-bar-logo {
+      display: inline-flex; align-items: center; gap: 8px;
+      color: #f5c842; text-decoration: none;
+      font-weight: 800; font-size: 17px; letter-spacing: 0.02em;
+    }
+    .brand-bar-dot {
+      width: 10px; height: 10px; border-radius: 50%;
+      background: #f5c842;
+    }
+    .brand-bar-subtitle {
+      color: #9ca3af; font-size: 12px; font-weight: 600;
+      letter-spacing: 0.08em; text-transform: uppercase;
+    }
     /* Mobile: bottom-fixed nav, NRL-style */
     @media (max-width: 760px) {
       .page-nav {
@@ -1051,15 +1070,13 @@
 </head>
 <body>
 
-<nav class="nav">
-  <div class="nav-inner">
-    <a href="https://funkyiq.com" class="nav-brand">
-      <div class="nav-dot"></div>
-      FunkyIQ
-    </a>
-    <div class="nav-title">Horse Racing</div>
-  </div>
-</nav>
+<div class="brand-bar">
+  <a href="https://funkyiq.com" class="brand-bar-logo">
+    <span class="brand-bar-dot"></span>
+    FunkyIQ
+  </a>
+  <span class="brand-bar-subtitle">Horse Racing</span>
+</div>
 
 <nav class="page-nav">
   <a href="/"           class="page-nav-btn lounge active">🛋️ Lounge</a>
