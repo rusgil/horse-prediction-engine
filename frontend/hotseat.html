@@ -823,6 +823,13 @@
       <button class="filter-pill" data-axis="place" data-filter="place55">≥55%</button>
       <button class="filter-pill" data-axis="place" data-filter="place70">≥70%</button>
     </div>
+    <div class="filter-row">
+      <span class="filter-axis-label" title="Win % gap between the model's rank-1 and rank-2 horse. Bigger gap = clearer favourite.">Top-2 gap</span>
+      <button class="filter-pill active" data-axis="gap" data-filter="all">All</button>
+      <button class="filter-pill" data-axis="gap" data-filter="gap5">≥5pt</button>
+      <button class="filter-pill" data-axis="gap" data-filter="gap10">≥10pt</button>
+      <button class="filter-pill" data-axis="gap" data-filter="gap15">≥15pt</button>
+    </div>
     <div class="track-row">
       <label for="venueFilter" class="track-label">Track</label>
       <select id="venueFilter" class="track-select">
@@ -846,10 +853,22 @@
     mode: 'sharp',  // 'sharp' or 'all' — sharp is the high-confidence niche
     winFilter: 'all',
     placeFilter: 'all',
+    gapFilter: 'all',  // top-2 win % gap: 'all' | 'gap5' | 'gap10' | 'gap15'
     venue: 'all',
     expanded: new Set(),  // race_ids whose field is shown
     lastFetch: 0,
   };
+
+  // Top-2 win % gap = rank-1 win minus rank-2 win, both from p.field.
+  // Bigger gap = clearer favourite. Pulled live from the field array so we
+  // don't need backend changes — the same data already drives Sharp niche
+  // detection and 2 Funk qualification.
+  function top2Gap(p) {
+    const field = (p.field || []).filter(f => !f.scratched);
+    if (field.length < 2) return null;
+    const sorted = [...field].sort((a, b) => (b.win_pct || 0) - (a.win_pct || 0));
+    return (sorted[0].win_pct || 0) - (sorted[1].win_pct || 0);
+  }
 
   // Sharp = high-confidence niche AND market hasn't already priced it in.
   // - Confidence: model_pct ≥ 30 OR top-3 sum ≥ 60 (concentrated race)
@@ -991,6 +1010,9 @@
     if (state.placeFilter === 'place40') out = out.filter(p => (p.place_probability ?? 0) >= 40);
     else if (state.placeFilter === 'place55') out = out.filter(p => (p.place_probability ?? 0) >= 55);
     else if (state.placeFilter === 'place70') out = out.filter(p => (p.place_probability ?? 0) >= 70);
+    if (state.gapFilter === 'gap5')  out = out.filter(p => (top2Gap(p) ?? 0) >= 5);
+    else if (state.gapFilter === 'gap10') out = out.filter(p => (top2Gap(p) ?? 0) >= 10);
+    else if (state.gapFilter === 'gap15') out = out.filter(p => (top2Gap(p) ?? 0) >= 15);
     if (state.venue && state.venue !== 'all') out = out.filter(p => p.venue === state.venue);
     return out;
   }
@@ -1151,6 +1173,14 @@
       out = out.filter(p => (p.place_probability ?? 0) >= 55);
     } else if (placeFilter === 'place70') {
       out = out.filter(p => (p.place_probability ?? 0) >= 70);
+    }
+    // Top-2 gap — bigger gap means clearer favourite in the win model's view.
+    if (state.gapFilter === 'gap5') {
+      out = out.filter(p => (top2Gap(p) ?? 0) >= 5);
+    } else if (state.gapFilter === 'gap10') {
+      out = out.filter(p => (top2Gap(p) ?? 0) >= 10);
+    } else if (state.gapFilter === 'gap15') {
+      out = out.filter(p => (top2Gap(p) ?? 0) >= 15);
     }
     if (venue && venue !== 'all') {
       out = out.filter(p => p.venue === venue);
@@ -1429,16 +1459,19 @@
       if (axis === 'mode') {
         state.mode = filter;
         if (filter === 'sharp') {
-          // Sharp preset: clear any custom win/place layering so it's
+          // Sharp preset: clear any custom win/place/gap layering so it's
           // not double-filtered.
           state.winFilter = 'all';
           state.placeFilter = 'all';
+          state.gapFilter = 'all';
           _activatePill('win', 'all');
           _activatePill('place', 'all');
+          _activatePill('gap', 'all');
         }
-      } else if (axis === 'win' || axis === 'place') {
+      } else if (axis === 'win' || axis === 'place' || axis === 'gap') {
         if (axis === 'win') state.winFilter = filter;
-        else state.placeFilter = filter;
+        else if (axis === 'place') state.placeFilter = filter;
+        else state.gapFilter = filter;
         // Touching a custom threshold exits Sharp mode.
         if (state.mode === 'sharp') {
           state.mode = 'all';
