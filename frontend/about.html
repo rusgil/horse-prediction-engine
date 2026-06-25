@@ -12,7 +12,7 @@
       .catch(function(){ document.body.style.visibility='visible'; });
   </script>
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>About FunkyIQ™ Edge | AI Horse Racing Predictions</title>
+  <title>About FunkyIQ™ — Horse Racing Intelligence</title>
   <meta name="robots" content="noindex" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -216,30 +216,268 @@
     .signal-desc { font-size: 0.8rem; color: var(--text-secondary); line-height: 1.6; }
 
     .note { font-size: 0.72rem; color: var(--text-dim); margin-top: 14px; line-height: 1.6; }
+
+    /* Unified brand strip — matches every other page. */
+    .brand-bar {
+      display: flex; align-items: center; justify-content: center;
+      gap: 14px; padding: 14px 16px 8px; flex-wrap: wrap;
+    }
+    .brand-bar-logo {
+      display: inline-flex; align-items: center; gap: 8px;
+      color: #f5c842; text-decoration: none;
+      font-weight: 800; font-size: 17px; letter-spacing: 0.02em;
+    }
+    .brand-bar-dot {
+      width: 10px; height: 10px; border-radius: 50%;
+      background: #f5c842;
+    }
+    .brand-bar-subtitle {
+      color: #9ca3af; font-size: 12px; font-weight: 600;
+      letter-spacing: 0.08em; text-transform: uppercase;
+    }
+
+    /* Cross-page button nav strip. */
+    .page-nav {
+      display: flex; justify-content: center; align-items: center;
+      gap: 6px; padding: 10px 12px; flex-wrap: wrap;
+      background: rgba(10,10,15,0.85);
+      border-bottom: 1px solid rgba(255,255,255,0.08);
+    }
+    .page-nav-btn {
+      display: inline-flex; align-items: center; gap: 4px;
+      padding: 6px 12px; border-radius: 6px;
+      font-size: 12px; font-weight: 700; letter-spacing: 0.03em;
+      text-decoration: none; color: #9ca3af; white-space: nowrap;
+      background: rgba(255,255,255,0.03);
+      border: 1px solid rgba(255,255,255,0.10);
+      transition: all 0.15s ease;
+    }
+    .page-nav-btn:hover { background: rgba(255,255,255,0.07); color: #fff; }
+    .page-nav-btn.edge.active   { background: rgba(34,197,94,0.15);  color: #4ade80; border-color: rgba(34,197,94,0.45); }
+    .page-nav-btn.hot.active    { background: rgba(249,115,22,0.15); color: #fb923c; border-color: rgba(249,115,22,0.45); }
+    .page-nav-btn.funk.active   { background: rgba(192,132,252,0.15);color: #c084fc; border-color: rgba(192,132,252,0.45); }
+    .page-nav-btn.labs.active   { background: rgba(168,85,247,0.15); color: #c084fc; border-color: rgba(168,85,247,0.45); }
+    .page-nav-btn.lounge.active { background: rgba(245,200,66,0.16); color: #f5c842; border-color: rgba(245,200,66,0.45); }
+    .page-nav-btn.about         { font-size: 11px; padding: 6px 9px; color: #6b7280; }
+    .page-nav-btn.about:hover   { color: #d1d5db; }
+    .page-nav-btn.about.active  { background: rgba(255,255,255,0.08); color: #d1d5db; border-color: rgba(255,255,255,0.18); }
+    .nav-spacer { display: none; }
+
+    /* Mobile: bottom-fixed nav, NRL-style — matches other pages. */
+    @media (max-width: 760px) {
+      .page-nav {
+        position: fixed;
+        left: 0; right: 0; bottom: 0;
+        top: auto;
+        background: rgba(10,10,15,0.96);
+        -webkit-backdrop-filter: blur(10px);
+        backdrop-filter: blur(10px);
+        border-top: 1px solid rgba(255,255,255,0.12);
+        border-bottom: none;
+        padding: 6px 4px calc(6px + env(safe-area-inset-bottom, 0px));
+        gap: 2px;
+        z-index: 100;
+        box-shadow: 0 -4px 16px rgba(0,0,0,0.5);
+        justify-content: space-around;
+      }
+      .page-nav-btn {
+        flex: 1; min-width: 0;
+        padding: 8px 3px;
+        font-size: 10px;
+        background: transparent;
+        border: none;
+        color: #6b7280;
+        white-space: nowrap;
+      }
+      .page-nav-btn.about {
+        font-size: 10px;
+        padding: 8px 3px;
+        flex: 0 0 auto;
+        min-width: 40px;
+      }
+      body { padding-bottom: 70px; }
+    }
+
+    /* Feature directory cards — surface tile per product. */
+    .feature-dir {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 12px;
+    }
+    @media (min-width: 640px) {
+      .feature-dir { grid-template-columns: 1fr 1fr; }
+    }
+    .surface-tile {
+      display: block;
+      padding: 16px 16px 14px;
+      background: var(--bg-elevated);
+      border: 1px solid var(--border);
+      border-left-width: 3px;
+      border-radius: var(--radius);
+      text-decoration: none;
+      color: inherit;
+      transition: transform 0.15s ease, border-color 0.15s ease;
+    }
+    .surface-tile:hover { transform: translateY(-1px); }
+    .surface-tile.lounge { border-left-color: #f5c842; }
+    .surface-tile.edge   { border-left-color: #4ade80; }
+    .surface-tile.hot    { border-left-color: #fb923c; }
+    .surface-tile.funk   { border-left-color: #c084fc; }
+    .surface-tile.labs   { border-left-color: #a855f7; }
+    .surface-tile-head {
+      display: flex; align-items: baseline; gap: 8px; margin-bottom: 8px; flex-wrap: wrap;
+    }
+    .surface-tile-name {
+      font-family: 'Barlow Condensed', sans-serif;
+      font-size: 1.25rem; font-weight: 800;
+      color: var(--text-primary); letter-spacing: 0.02em;
+    }
+    .surface-tile-tier {
+      font-size: 0.6rem; font-weight: 800;
+      letter-spacing: 0.14em; text-transform: uppercase;
+      padding: 2px 7px; border-radius: 999px;
+    }
+    .surface-tile-tier.t-edge { background: rgba(34,197,94,0.15);  color: #4ade80; border: 1px solid rgba(34,197,94,0.4); }
+    .surface-tile-tier.t-pro  { background: rgba(59,130,246,0.14); color: #60a5fa; border: 1px solid rgba(59,130,246,0.4); }
+    .surface-tile-tier.t-labs { background: rgba(168,85,247,0.14); color: #c084fc; border: 1px solid rgba(168,85,247,0.45); }
+    .surface-tile-tier.t-free { background: rgba(245,200,66,0.14); color: #f5c842; border: 1px solid rgba(245,200,66,0.45); }
+    .surface-tile-desc { font-size: 0.82rem; color: var(--text-secondary); line-height: 1.55; margin-bottom: 8px; }
+    .surface-tile-bullets {
+      font-size: 0.72rem; color: var(--text-dim); line-height: 1.6;
+      padding-left: 16px;
+    }
+    .surface-tile-bullets li { margin-bottom: 2px; }
   </style>
 </head>
 <body>
 
-<nav class="nav">
-  <div class="nav-inner">
-    <a href="/" class="nav-brand">
-      <div class="nav-dot"></div>
-      FunkyIQ
-    </a>
-    <a href="/edge" class="nav-back">← The Edge</a>
-  </div>
+<div class="brand-bar">
+  <a href="https://funkyiq.com" class="brand-bar-logo">
+    <span class="brand-bar-dot"></span>
+    FunkyIQ
+  </a>
+  <span class="brand-bar-subtitle">Horse Racing</span>
+</div>
+
+<nav class="page-nav">
+  <a href="/"           class="page-nav-btn lounge">🛋️ Lounge</a>
+  <a href="/edge"       class="page-nav-btn edge">🎯 Edge</a>
+  <a href="/hotseat"    class="page-nav-btn hot">🔥 Hot Seat</a>
+  <a href="/funk-me-up" class="page-nav-btn funk">🎺 Funk Me Up</a>
+  <a href="/lab"        class="page-nav-btn labs">🧪 Labs</a>
+  <span class="nav-spacer"></span>
+  <a href="/about"      class="page-nav-btn about active">About</a>
 </nav>
 
 <div class="page">
 
   <div class="hero">
     <div class="hero-eyebrow">AI-Powered · Data Driven · Continuously Learning</div>
-    <h1 class="hero-title">About FunkyIQ™ <span>Edge</span></h1>
+    <h1 class="hero-title">About <span>FunkyIQ</span></h1>
     <p class="hero-desc">
-      FunkyIQ™ Edge is a progressive AI prediction engine that scans every Australian
-      thoroughbred race, processing millions of data points to surface the races where
-      the model has a genuine edge over the market. Not tips. Not gut feel. Pure data.
+      FunkyIQ™ is a progressive AI engine that scans every Australian thoroughbred race,
+      processing millions of data points to surface the races where the model has a
+      genuine edge over the market. Five surfaces, one engine — predictions, exotic
+      hunting, live betting tools, and paper-trading sandbox all powered by the same
+      36-feature win, place, and exotic models retrained nightly.
     </p>
+  </div>
+
+  <!-- Feature directory -->
+  <div class="section">
+    <div class="section-title">What's Inside</div>
+    <p style="font-size:0.85rem;color:var(--text-secondary);line-height:1.65;margin-bottom:18px;">
+      Five surfaces, each tuned for a different mode of play. The same model powers
+      all of them; the surfaces differ in how aggressively they filter and what kind
+      of bet they suggest.
+    </p>
+    <div class="feature-dir">
+
+      <a href="/" class="surface-tile lounge">
+        <div class="surface-tile-head">
+          <span class="surface-tile-name">🛋️ The Lounge</span>
+          <span class="surface-tile-tier t-free">Free</span>
+        </div>
+        <p class="surface-tile-desc">
+          Every Australian race today, ranked top-to-bottom by the model.
+          The foundation — every other surface drills into a subset of this.
+        </p>
+        <ul class="surface-tile-bullets">
+          <li>Today's meetings + every race</li>
+          <li>Win % and place % per horse</li>
+          <li>Pace and exotic ranks already factored in</li>
+        </ul>
+      </a>
+
+      <a href="/edge" class="surface-tile edge">
+        <div class="surface-tile-head">
+          <span class="surface-tile-name">🎯 The Edge</span>
+          <span class="surface-tile-tier t-edge">Edge</span>
+        </div>
+        <p class="surface-tile-desc">
+          High-confidence picks compared against market odds — where the
+          model materially disagrees with the bookies.
+        </p>
+        <ul class="surface-tile-bullets">
+          <li>Premium / Hot / High / Strong tiers</li>
+          <li>Live odds sparkline + hedge calculator</li>
+          <li>Trifecta + first-four mirror of the Lab</li>
+        </ul>
+      </a>
+
+      <a href="/hotseat" class="surface-tile hot">
+        <div class="surface-tile-head">
+          <span class="surface-tile-name">🔥 Hot Seat</span>
+          <span class="surface-tile-tier t-pro">Pro</span>
+        </div>
+        <p class="surface-tile-desc">
+          Live race-card view sorted by jump time — the mobile-first view
+          for tracking what to bet right now.
+        </p>
+        <ul class="surface-tile-bullets">
+          <li>Sharp preset + win / place filters</li>
+          <li>Full field dropdown per race</li>
+          <li>2 Funk panel on qualifying races</li>
+          <li>Today's running hit rate at the top</li>
+        </ul>
+      </a>
+
+      <a href="/funk-me-up" class="surface-tile funk">
+        <div class="surface-tile-head">
+          <span class="surface-tile-name">🎺 Funk Me Up</span>
+          <span class="surface-tile-tier t-pro">Pro</span>
+        </div>
+        <p class="surface-tile-desc">
+          Today's lower-variance playbook — concrete bets to place, with
+          Sportsbet paths and projected returns.
+        </p>
+        <ul class="surface-tile-bullets">
+          <li>The Lock · single win on day's strongest edge</li>
+          <li>The Bonus · $4-$10 value pick for bonus bets</li>
+          <li>The Double · 2-leg place multi</li>
+          <li>The Banker · single place</li>
+          <li>2 Funk · top-2 Quinella when the race shape qualifies</li>
+        </ul>
+      </a>
+
+      <a href="/lab" class="surface-tile labs">
+        <div class="surface-tile-head">
+          <span class="surface-tile-name">🧪 Funky IQ Labs</span>
+          <span class="surface-tile-tier t-labs">Labs</span>
+        </div>
+        <p class="surface-tile-desc">
+          Paper-trading sandbox — $2 flexi-box trifectas across every race
+          the strategy thinks is bettable. Full ledger, ROI, drift detection.
+        </p>
+        <ul class="surface-tile-bullets">
+          <li>Multi-strategy paper bets (Spread, Sweep, Net, Stack…)</li>
+          <li>Daily hit rate, ROI, and dividend tracking</li>
+          <li>Hero pick + daily P/L summary</li>
+          <li>Yesterday / Today / Tomorrow tabs with outcomes</li>
+        </ul>
+      </a>
+
+    </div>
   </div>
 
   <!-- How the model works -->
@@ -424,9 +662,10 @@
 
   <!-- Footer note -->
   <div style="padding: 24px 24px; font-size: 0.75rem; color: var(--text-dim); line-height: 1.7;">
-    FunkyIQ™ Edge is an AI-based prediction tool provided for informational purposes only.
-    The data, signals, and win rates shown reflect historical model performance and do not
-    guarantee future outcomes. Racing involves inherent unpredictability — no model eliminates that.
+    FunkyIQ™ is an AI-based prediction tool provided for informational purposes only.
+    The data, signals, win rates, and ROI figures shown reflect historical model performance
+    and do not guarantee future outcomes. Racing involves inherent unpredictability — no model
+    eliminates that. Please gamble responsibly · GambleAware 1800 858 858.
   </div>
 
 </div>
