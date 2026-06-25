@@ -5532,7 +5532,10 @@ async def funk_me_up_today(date: Optional[str] = None):
     # 2026-06-23 rethink: dropped Spine (4-leg Top4 multi, -39% ROI) and
     # Wave (Quaddie, -100%) for high variance. Added Double (2-leg place
     # multi, +71% ROI) and Banker (single place) for low variance.
-    for build_fn in (_build_lock, _build_bonus, _build_double, _build_banker, _build_two_funk):
+    # _build_bonus removed 2026-06-26 — user feedback: focus on real-money
+    # plays only, don't condition cards on holding a Sportsbet bonus bet.
+    # Function kept in code in case of a future opt-in toggle.
+    for build_fn in (_build_lock, _build_double, _build_banker, _build_two_funk):
         try:
             play = build_fn(picks_for_date)
         except Exception as e:
