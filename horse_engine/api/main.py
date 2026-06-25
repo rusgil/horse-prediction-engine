@@ -2275,6 +2275,13 @@ async def lifespan(app: FastAPI):
     # data fresh as their jump windows open.
     scheduler.add_job(_scheduled_enrich, CronTrigger(hour=8,  minute=30, timezone="Australia/Sydney"))
     scheduler.add_job(_scheduled_enrich, CronTrigger(hour=10, minute=30, timezone="Australia/Sydney"))
+    # 11:30 AEST safety-net tick — recovers from days when the 8:30 + 10:30
+    # runs were partially eaten by RA 503s. _enrich_date is idempotent
+    # (force=True only on today; tomorrow/day-after use cached field), so
+    # an extra run on a healthy morning costs ~24s of background work and
+    # one set of Calendar.aspx hits, all post-stagger so RA-friendly. On a
+    # day RA is flaky this is the cron tick that saves the afternoon.
+    scheduler.add_job(_scheduled_enrich, CronTrigger(hour=11, minute=30, timezone="Australia/Sydney"))
     scheduler.add_job(_scheduled_prerace_snapshot, CronTrigger(hour=9, minute=0, timezone="Australia/Sydney"))
     # Results seeding — every 30 min during racing hours. Previously only
     # fired at sparse hours (14/15/17/19/23), meaning a 16:00 race would
