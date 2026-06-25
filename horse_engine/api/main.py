@@ -7125,6 +7125,149 @@ async def model_anomalies(
     }
 
 
+@app.get("/api/admin/bets/top2-gap-backtest")
+async def top2_gap_backtest(
+    days: int = 60,
+    stake: float = 10.0,
+    sharp_only: bool = False,
+    x_cron_secret: Optional[str] = Header(None),
+):
+    """Backtest the Hot Seat 'Top-2 gap' filter — does picking the model's
+    rank-1 horse in races where it has a big lead over rank-2 actually
+    result in higher win rate and/or positive ROI vs the baseline?
+
+    For each race in the window with rank-1 + rank-2 + a result:
+      - gap = (rank1 win prob) - (rank2 win prob) in percentage points
+      - Bucket by gap size (<2pt, 2-5pt, 5-10pt, 10-15pt, 15-20pt, 20pt+)
+      - Per bucket: win rate of rank-1, avg SP, P&L at flat stake, ROI%
+
+    sharp_only mirrors the Hot Seat default — also require Sharp niche:
+    model_pct ≥ 30 OR top-3 sum ≥ 60.
+    """
+    _check_admin(x_cron_secret)
+    days = max(7, min(int(days), 365))
+    cutoff_date = (_today_aest() - timedelta(days=days)).isoformat()
+
+    async with get_session() as session:
+        pred_rows = (await session.execute(
+            select(
+                RunnerPredictionHistoryRow.race_id,
+                RunnerPredictionHistoryRow.horse_name,
+                RunnerPredictionHistoryRow.model_rank,
+                RunnerPredictionHistoryRow.win_probability,
+                RunnerPredictionHistoryRow.enriched_at,
+            )
+            .where(RunnerPredictionHistoryRow.race_id >= f"{cutoff_date}_")
+            .where(RunnerPredictionHistoryRow.model_rank.in_([1, 2, 3]))
+            .where(RunnerPredictionHistoryRow.cancelled.is_(False)
+                   | RunnerPredictionHistoryRow.cancelled.is_(None))
+            .where(RunnerPredictionHistoryRow.source == "live")
+            .order_by(RunnerPredictionHistoryRow.enriched_at.desc())
+        )).fetchall()
+        result_rows = (await session.execute(
+            select(HistoricalResultRow.race_id, HistoricalResultRow.position,
+                   HistoricalResultRow.horse_name, HistoricalResultRow.starting_price)
+            .where(HistoricalResultRow.race_id >= f"{cutoff_date}_")
+            .where(HistoricalResultRow.position == 1)
+        )).fetchall()
+
+    # Latest snapshot per (race, horse)
+    seen: set = set()
+    per_race: dict[str, dict] = {}
+    for rid, name, rank, wp, enr in pred_rows:
+        key = (rid, _normalize_horse(name))
+        if key in seen:
+            continue
+        seen.add(key)
+        per_race.setdefault(rid, {})[int(rank)] = {
+            "horse_name": _normalize_horse(name),
+            "win_prob": float(wp or 0),
+        }
+
+    # Winner per race
+    winners: dict[str, tuple[str, float]] = {}
+    for rid, pos, name, sp in result_rows:
+        if pos == 1 and rid not in winners:
+            winners[rid] = (_normalize_horse(name or ""), float(sp or 0))
+
+    bucket_defs = [
+        ("<2pt (toss-up)",   -999.0,  2.0),
+        ("2-5pt",              2.0,   5.0),
+        ("5-10pt",             5.0,  10.0),
+        ("10-15pt",           10.0,  15.0),
+        ("15-20pt",           15.0,  20.0),
+        ("20pt+ (dominant)",  20.0, 999.0),
+    ]
+    buckets = {b[0]: {"races": 0, "wins": 0, "sp_sum": 0.0, "pl": 0.0, "pl_races": 0}
+               for b in bucket_defs}
+    baseline = {"races": 0, "wins": 0, "sp_sum": 0.0, "pl": 0.0, "pl_races": 0}
+
+    for rid, ranks in per_race.items():
+        if not all(r in ranks for r in (1, 2)):
+            continue
+        winner = winners.get(rid)
+        if not winner:
+            continue
+        winner_name, w_sp = winner
+        # Optional Sharp gate (matches Hot Seat default)
+        if sharp_only:
+            top3_sum = sum((ranks.get(r, {}).get("win_prob") or 0) for r in (1, 2, 3)) * 100
+            r1_pct = ranks[1]["win_prob"] * 100
+            if not (r1_pct >= 30 or top3_sum >= 60):
+                continue
+        gap = (ranks[1]["win_prob"] - ranks[2]["win_prob"]) * 100
+        won = (ranks[1]["horse_name"] == winner_name)
+        # Baseline
+        baseline["races"] += 1
+        if won: baseline["wins"] += 1
+        if w_sp > 1.0:
+            baseline["sp_sum"] += w_sp
+            baseline["pl_races"] += 1
+            baseline["pl"] += (w_sp * stake - stake) if won else -stake
+        # Bucket
+        for label, lo, hi in bucket_defs:
+            if lo <= gap < hi:
+                b = buckets[label]
+                b["races"] += 1
+                if won: b["wins"] += 1
+                if w_sp > 1.0:
+                    b["sp_sum"] += w_sp
+                    b["pl_races"] += 1
+                    b["pl"] += (w_sp * stake - stake) if won else -stake
+                break
+
+    def _summarise(d: dict) -> dict:
+        n = d["races"]
+        win_pct = round(d["wins"] / n * 100, 1) if n else 0
+        avg_sp = round(d["sp_sum"] / d["pl_races"], 2) if d["pl_races"] else None
+        roi_pct = None
+        if d["pl_races"] > 0:
+            cost = d["pl_races"] * stake
+            roi_pct = round(d["pl"] / cost * 100, 1)
+        return {
+            "races": n,
+            "wins": d["wins"],
+            "win_pct": win_pct,
+            "avg_winner_sp": avg_sp,
+            "pl_dollars": round(d["pl"], 2),
+            "pl_sample": d["pl_races"],
+            "roi_pct": roi_pct,
+        }
+
+    base_sum = _summarise(baseline)
+    return {
+        "days": days,
+        "stake_per_bet": stake,
+        "sharp_only": sharp_only,
+        "baseline": base_sum,
+        "by_gap_bucket": [
+            {"bucket": label, **_summarise(buckets[label]),
+             "win_lift_pts": round(_summarise(buckets[label])["win_pct"] - base_sum["win_pct"], 1)}
+            for label, _, _ in bucket_defs
+        ],
+    }
+
+
 @app.get("/api/admin/bets/clear-pair-backtest")
 async def clear_pair_backtest(
     days: int = 60,
