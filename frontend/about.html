@@ -282,20 +282,24 @@
       }
       .page-nav-btn {
         flex: 1; min-width: 0;
-        padding: 11px 4px;
-        font-size: 12px;
+        padding: 8px 3px 6px;
+        flex-direction: column;
+        gap: 3px;
         background: transparent;
         border: none;
         color: #6b7280;
         white-space: nowrap;
       }
+      .page-nav-btn .nav-ico { font-size: 22px; line-height: 1; }
+      .page-nav-btn .nav-lab { font-size: 10px; font-weight: 700; line-height: 1; letter-spacing: 0.04em; }
       .page-nav-btn.about {
-        font-size: 12px;
-        padding: 11px 4px;
+        padding: 8px 3px 6px;
         flex: 0 0 auto;
-        min-width: 48px;
+        min-width: 52px;
       }
-      body { padding-bottom: 80px; }
+      .page-nav-btn.about .nav-ico { font-size: 18px; }
+      .page-nav-btn.about .nav-lab { font-size: 9.5px; }
+      body { padding-bottom: 86px; }
     }
 
     /* Feature directory cards — surface tile per product. */
@@ -360,13 +364,13 @@
 </div>
 
 <nav class="page-nav">
-  <a href="/"           class="page-nav-btn lounge">🛋️ Lounge</a>
-  <a href="/edge"       class="page-nav-btn edge">🎯 Edge</a>
-  <a href="/hotseat"    class="page-nav-btn hot">🔥 Hot Seat</a>
-  <a href="/funk-me-up" class="page-nav-btn funk">🎺 Funk Me Up</a>
-  <a href="/lab"        class="page-nav-btn labs">🧪 Labs</a>
+  <a href="/"           class="page-nav-btn lounge"><span class="nav-ico">🛋️</span><span class="nav-lab">Lounge</span></a>
+  <a href="/edge"       class="page-nav-btn edge"><span class="nav-ico">🎯</span><span class="nav-lab">Edge</span></a>
+  <a href="/hotseat"    class="page-nav-btn hot"><span class="nav-ico">🔥</span><span class="nav-lab">Hot Seat</span></a>
+  <a href="/funk-me-up" class="page-nav-btn funk"><span class="nav-ico">🎺</span><span class="nav-lab">Funk Me Up</span></a>
+  <a href="/lab"        class="page-nav-btn labs"><span class="nav-ico">🧪</span><span class="nav-lab">Labs</span></a>
   <span class="nav-spacer"></span>
-  <a href="/about"      class="page-nav-btn about active">About</a>
+  <a href="/about"      class="page-nav-btn about active"><span class="nav-ico">ℹ️</span><span class="nav-lab">About</span></a>
 </nav>
 
 <div class="page">

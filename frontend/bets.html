@@ -848,8 +848,9 @@
       .nav-spacer { display: none; }
       .page-nav-btn {
         flex: 1; min-width: 0;
-        padding: 11px 4px;
-        font-size: 12px;
+        padding: 8px 3px 6px;
+        flex-direction: column;
+        gap: 3px;
         letter-spacing: 0.02em;
         text-align: center;
         background: transparent;
@@ -860,13 +861,18 @@
         white-space: nowrap;
         overflow: hidden;
       }
+      .page-nav-btn .nav-ico { font-size: 22px; line-height: 1; }
+      .page-nav-btn .nav-lab { font-size: 10px; font-weight: 700; line-height: 1; letter-spacing: 0.04em; }
       .page-nav-btn.about, .page-nav-btn.admin {
-        font-size: 12px;
-        padding: 11px 4px;
+        padding: 8px 3px 6px;
         flex: 0 0 auto;
-        min-width: 48px;
+        min-width: 52px;
       }
-      body { padding-bottom: 80px; }
+      .page-nav-btn.about .nav-ico,
+      .page-nav-btn.admin .nav-ico { font-size: 18px; }
+      .page-nav-btn.about .nav-lab,
+      .page-nav-btn.admin .nav-lab { font-size: 9.5px; }
+      body { padding-bottom: 86px; }
     }
 
     /* Unified page header — same on every page. */
@@ -929,14 +935,14 @@
     <span class="brand-bar-subtitle">Horse Racing</span>
   </div>
   <nav class="page-nav">
-    <a href="/"           class="page-nav-btn lounge">🛋️ Lounge</a>
-    <a href="/edge"       class="page-nav-btn edge">🎯 Edge</a>
-    <a href="/hotseat"    class="page-nav-btn hot">🔥 Hot Seat</a>
-    <a href="/funk-me-up" class="page-nav-btn funk">🎺 Funk Me Up</a>
-    <a href="/lab"        class="page-nav-btn labs active">🧪 Labs</a>
+    <a href="/"           class="page-nav-btn lounge"><span class="nav-ico">🛋️</span><span class="nav-lab">Lounge</span></a>
+    <a href="/edge"       class="page-nav-btn edge"><span class="nav-ico">🎯</span><span class="nav-lab">Edge</span></a>
+    <a href="/hotseat"    class="page-nav-btn hot"><span class="nav-ico">🔥</span><span class="nav-lab">Hot Seat</span></a>
+    <a href="/funk-me-up" class="page-nav-btn funk"><span class="nav-ico">🎺</span><span class="nav-lab">Funk Me Up</span></a>
+    <a href="/lab"        class="page-nav-btn labs active"><span class="nav-ico">🧪</span><span class="nav-lab">Labs</span></a>
     <span class="nav-spacer"></span>
-    <a href="/about"      class="page-nav-btn about">About</a>
-    <a href="/dashboard"  class="page-nav-btn admin">Admin</a>
+    <a href="/about"      class="page-nav-btn about"><span class="nav-ico">ℹ️</span><span class="nav-lab">About</span></a>
+    <a href="/dashboard"  class="page-nav-btn admin"><span class="nav-ico">⚙️</span><span class="nav-lab">Admin</span></a>
   </nav>
   <header class="page-header labs">
     <h1 class="page-title">🧪 Funky IQ Labs <span class="tier-badge tier-labs">Labs</span></h1>
