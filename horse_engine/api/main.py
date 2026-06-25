@@ -7125,6 +7125,230 @@ async def model_anomalies(
     }
 
 
+@app.get("/api/admin/bets/signal-scan")
+async def signal_scan(
+    days: int = 60,
+    stake: float = 10.0,
+    min_sample: int = 30,
+    x_cron_secret: Optional[str] = Header(None),
+):
+    """Sweep a battery of candidate filter patterns against the rank-1 history
+    table and rank them by hit-rate lift + ROI vs baseline. Designed to surface
+    untapped signals — combinations of features that, applied as filters on top
+    of the existing model, deliver a meaningful edge.
+
+    Each signal: a name + description + a predicate over the rank-1 pick's
+    enriched features. We compute races, wins, win_pct, avg winner SP, P&L at
+    flat stake, ROI%, and the lift over the unfiltered baseline.
+    """
+    _check_admin(x_cron_secret)
+    days = max(7, min(int(days), 365))
+    cutoff_date = (_today_aest() - timedelta(days=days)).isoformat()
+
+    async with get_session() as session:
+        pred_rows = (await session.execute(
+            select(
+                RunnerPredictionHistoryRow.race_id,
+                RunnerPredictionHistoryRow.horse_name,
+                RunnerPredictionHistoryRow.win_probability,
+                RunnerPredictionHistoryRow.place_probability,
+                RunnerPredictionHistoryRow.market_rank,
+                RunnerPredictionHistoryRow.best_available_odds,
+                RunnerPredictionHistoryRow.overlay,
+                RunnerPredictionHistoryRow.enriched_json,
+                RunnerPredictionHistoryRow.enriched_at,
+            )
+            .where(RunnerPredictionHistoryRow.race_id >= f"{cutoff_date}_")
+            .where(RunnerPredictionHistoryRow.model_rank == 1)
+            .where(RunnerPredictionHistoryRow.cancelled.is_(False)
+                   | RunnerPredictionHistoryRow.cancelled.is_(None))
+            .where(RunnerPredictionHistoryRow.source == "live")
+            .order_by(RunnerPredictionHistoryRow.enriched_at.desc())
+        )).fetchall()
+        result_rows = (await session.execute(
+            select(HistoricalResultRow.race_id, HistoricalResultRow.horse_name,
+                   HistoricalResultRow.position, HistoricalResultRow.starting_price)
+            .where(HistoricalResultRow.race_id >= f"{cutoff_date}_")
+            .where(HistoricalResultRow.position == 1)
+        )).fetchall()
+
+    # Latest snapshot per (race, horse)
+    seen: set = set()
+    picks: list[dict] = []
+    for r in pred_rows:
+        key = (r.race_id, _normalize_horse(r.horse_name))
+        if key in seen:
+            continue
+        seen.add(key)
+        try:
+            enr = json.loads(r.enriched_json) if r.enriched_json else {}
+        except Exception:
+            enr = {}
+        picks.append({
+            "race_id": r.race_id,
+            "horse_name": _normalize_horse(r.horse_name),
+            "win_prob": float(r.win_probability or 0),
+            "place_prob": float(r.place_probability or 0),
+            "market_rank": int(r.market_rank) if r.market_rank else None,
+            "odds": float(r.best_available_odds or 0),
+            "overlay": float(r.overlay or 0),
+            "enr": enr,
+        })
+
+    # Winners per race
+    winners: dict[str, tuple[str, float]] = {}
+    for r in result_rows:
+        winners[r.race_id] = (_normalize_horse(r.horse_name or ""), float(r.starting_price or 0))
+
+    # Annotate each pick with outcome
+    scoreable: list[dict] = []
+    for p in picks:
+        w = winners.get(p["race_id"])
+        if not w:
+            continue
+        winner_name, w_sp = w
+        p["won"] = (p["horse_name"] == winner_name)
+        p["winner_sp"] = w_sp
+        scoreable.append(p)
+
+    def _score(pool: list[dict]) -> dict:
+        n = len(pool)
+        wins = sum(1 for p in pool if p.get("won"))
+        sp_sample = [p for p in pool if (p.get("winner_sp") or 0) > 1.0]
+        pl_races = len(sp_sample)
+        pl = 0.0
+        for p in sp_sample:
+            pl += (p["winner_sp"] * stake - stake) if p.get("won") else -stake
+        avg_sp = (sum(p["winner_sp"] for p in sp_sample) / pl_races) if pl_races else None
+        return {
+            "races": n,
+            "wins": wins,
+            "win_pct": round(wins / n * 100, 1) if n else 0,
+            "avg_winner_sp": round(avg_sp, 2) if avg_sp else None,
+            "pl_dollars": round(pl, 2),
+            "pl_sample": pl_races,
+            "roi_pct": round(pl / (pl_races * stake) * 100, 1) if pl_races else None,
+        }
+
+    base = _score(scoreable)
+
+    # Signal predicates — each is a function(pick) → bool. enr is the
+    # parsed enriched_json with all per-runner features.
+    def _gt(v, t): return v is not None and v >= t
+    def _eq(v, t): return v is not None and v == t
+
+    signals: list[tuple[str, str, callable]] = [
+        ("Sharp (current)",
+         "model_pct ≥ 30 AND edge ≥ 0",
+         lambda p: p["win_prob"] * 100 >= 30 and ((100 - (100 / p["odds"] if p["odds"] > 1 else 0)) if p["odds"] > 1 else None) is not None
+                   and (p["win_prob"] * 100) >= ((100 / p["odds"]) if p["odds"] > 1 else 0)),
+        ("Confident (no edge gate)",
+         "model_pct ≥ 30 — just the confidence half",
+         lambda p: p["win_prob"] * 100 >= 30),
+        ("Dominant favourite",
+         "rank-1 win_prob ≥ 40%",
+         lambda p: p["win_prob"] * 100 >= 40),
+        ("Premium overlay",
+         "model_pct ≥ 30 AND odds ≥ $3 AND edge ≥ 5pt",
+         lambda p: p["win_prob"] * 100 >= 30 and p["odds"] >= 3.0
+                   and (p["win_prob"] * 100 - (100 / p["odds"] if p["odds"] > 1 else 0)) >= 5),
+        ("Value overlay (mid-price)",
+         "edge ≥ 5pt AND $4 ≤ odds ≤ $10",
+         lambda p: p["odds"] >= 4.0 and p["odds"] <= 10.0
+                   and (p["win_prob"] * 100 - (100 / p["odds"] if p["odds"] > 1 else 0)) >= 5),
+        ("Market consensus",
+         "model_rank = 1 AND market_rank = 1 AND model_pct ≥ 25",
+         lambda p: p["win_prob"] * 100 >= 25 and p.get("market_rank") == 1),
+        ("Model contrarian",
+         "market_rank ≥ 4 AND edge ≥ 10pt (model finds value market missed)",
+         lambda p: (p.get("market_rank") or 0) >= 4
+                   and (p["win_prob"] * 100 - (100 / p["odds"] if p["odds"] > 1 else 0)) >= 10),
+        ("Hot trainer + confident",
+         "trainer_overall_rate ≥ 25% AND model_pct ≥ 25",
+         lambda p: _gt(p["enr"].get("trainer_overall_rate"), 25) and p["win_prob"] * 100 >= 25),
+        ("Hot jockey + confident",
+         "jockey_overall_rate ≥ 20% AND model_pct ≥ 25",
+         lambda p: _gt(p["enr"].get("jockey_overall_rate"), 20) and p["win_prob"] * 100 >= 25),
+        ("Class drop in form",
+         "class_change = -1 AND form_score ≥ 0.75 AND model_pct ≥ 25",
+         lambda p: _eq(p["enr"].get("class_change"), -1) and _gt(p["enr"].get("form_score"), 0.75)
+                   and p["win_prob"] * 100 >= 25),
+        ("Distance specialist",
+         "win_rate_distance ≥ 0.30 AND starts_last_10 ≥ 3 AND model_pct ≥ 25",
+         lambda p: _gt(p["enr"].get("win_rate_distance"), 0.30)
+                   and _gt(p["enr"].get("starts_last_10"), 3)
+                   and p["win_prob"] * 100 >= 25),
+        ("Fresh horse (7-21d)",
+         "days_since_last_run 7-21d AND model_pct ≥ 30",
+         lambda p: 7 <= (p["enr"].get("days_since_last_run") or 0) <= 21
+                   and p["win_prob"] * 100 >= 30),
+        ("Speed-map leader",
+         "speed_map_position = 'leader' AND model_pct ≥ 25",
+         lambda p: p["enr"].get("speed_map_position") == "leader"
+                   and p["win_prob"] * 100 >= 25),
+        ("Outstanding recent form",
+         "form_score ≥ 0.85 AND starts_last_10 ≥ 3 AND model_pct ≥ 25",
+         lambda p: _gt(p["enr"].get("form_score"), 0.85)
+                   and _gt(p["enr"].get("starts_last_10"), 3)
+                   and p["win_prob"] * 100 >= 25),
+        ("Open race fav",
+         "model_pct ≥ 30 AND top-2 horses sum < 50% (race is open)",
+         lambda p: p["win_prob"] * 100 >= 30
+                   # No top2 sum here — approximate via place_prob being similar to win_prob (implies open)
+                   and (p["place_prob"] * 100) <= (p["win_prob"] * 100 + 5)),
+        ("Concentrated favourite",
+         "model_pct ≥ 40 AND place_prob ≥ 30% (model dominates)",
+         lambda p: p["win_prob"] * 100 >= 40 and p["place_prob"] * 100 >= 30),
+        ("Premium price + confidence",
+         "model_pct ≥ 30 AND $5 ≤ odds ≤ $15",
+         lambda p: p["win_prob"] * 100 >= 30 and 5.0 <= p["odds"] <= 15.0),
+        ("Steamed (market backing)",
+         "is_steamed = true AND model_pct ≥ 25",
+         lambda p: p["enr"].get("is_steamed") is True and p["win_prob"] * 100 >= 25),
+        ("Drifted (market fading)",
+         "is_drifted = true AND model_pct ≥ 25 — for filtering OUT",
+         lambda p: p["enr"].get("is_drifted") is True and p["win_prob"] * 100 >= 25),
+        ("Long layoff resumer",
+         "days_since_last_run ≥ 180 AND model_pct ≥ 25 — for filtering OUT",
+         lambda p: _gt(p["enr"].get("days_since_last_run"), 180) and p["win_prob"] * 100 >= 25),
+        ("Wet track specialist",
+         "track in (soft, heavy) AND wet_track_record ≥ 0.5 AND model_pct ≥ 25",
+         lambda p: p["enr"].get("track_condition_category") in ("soft", "heavy")
+                   and _gt(p["enr"].get("wet_track_record"), 0.5)
+                   and p["win_prob"] * 100 >= 25),
+    ]
+
+    out_signals = []
+    for name, desc, pred in signals:
+        try:
+            pool = [p for p in scoreable if pred(p)]
+        except Exception as e:
+            log.warning(f"signal-scan '{name}' failed: {e}")
+            continue
+        s = _score(pool)
+        s["name"] = name
+        s["description"] = desc
+        s["win_lift_pts"] = round(s["win_pct"] - base["win_pct"], 1)
+        s["roi_lift_pts"] = round((s["roi_pct"] or 0) - (base["roi_pct"] or 0), 1) if s["roi_pct"] is not None else None
+        s["thin_sample"] = s["races"] < min_sample
+        out_signals.append(s)
+
+    # Sort: ROI desc among samples ≥ min_sample, then by win_lift
+    def _sort_key(s):
+        if s["thin_sample"]:
+            return (1, 0, 0)
+        return (0, -(s["roi_pct"] or -999), -(s["win_lift_pts"] or -999))
+    out_signals.sort(key=_sort_key)
+
+    return {
+        "days": days,
+        "stake_per_bet": stake,
+        "min_sample": min_sample,
+        "baseline_rank1": base,
+        "signals_ranked_by_roi": out_signals,
+    }
+
+
 @app.get("/api/admin/bets/top2-gap-backtest")
 async def top2_gap_backtest(
     days: int = 60,
