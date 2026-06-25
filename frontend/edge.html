@@ -768,8 +768,8 @@
     .page-nav-btn.about:hover { color: #d1d5db; }
     .page-nav-btn.admin { font-size: 11px; padding: 6px 9px; color: #6b7280; }
     .page-nav-btn.admin:hover { color: #d1d5db; }
-    /* Push About + Admin to the right on desktop */
-    .nav-spacer { flex: 1; min-width: 16px; }
+    /* Spacer is a no-op now — nav buttons centre as one group on every breakpoint. */
+    .nav-spacer { display: none; }
     /* Mobile: bottom-fixed nav, NRL-style */
     @media (max-width: 760px) {
       .page-nav {
