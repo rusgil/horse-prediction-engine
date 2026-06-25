@@ -830,11 +830,11 @@
       <button class="filter-pill" data-axis="place" data-filter="place70">≥70%</button>
     </div>
     <div class="filter-row">
-      <span class="filter-axis-label" title="Win % gap between the model's rank-1 and rank-2 horse. Bigger gap = clearer favourite.">Top-2 gap</span>
+      <span class="filter-axis-label" title="Win % gap between the model's rank-1 and rank-2 horse. 60-day backtest: only ≥20pt was historically +EV at flat stake (33.7% win, +2% ROI).">Top-2 gap</span>
       <button class="filter-pill active" data-axis="gap" data-filter="all">All</button>
-      <button class="filter-pill" data-axis="gap" data-filter="gap5">≥5pt</button>
       <button class="filter-pill" data-axis="gap" data-filter="gap10">≥10pt</button>
       <button class="filter-pill" data-axis="gap" data-filter="gap15">≥15pt</button>
+      <button class="filter-pill" data-axis="gap" data-filter="gap20">≥20pt</button>
     </div>
     <div class="track-row">
       <label for="venueFilter" class="track-label">Track</label>
@@ -1016,9 +1016,9 @@
     if (state.placeFilter === 'place40') out = out.filter(p => (p.place_probability ?? 0) >= 40);
     else if (state.placeFilter === 'place55') out = out.filter(p => (p.place_probability ?? 0) >= 55);
     else if (state.placeFilter === 'place70') out = out.filter(p => (p.place_probability ?? 0) >= 70);
-    if (state.gapFilter === 'gap5')  out = out.filter(p => (top2Gap(p) ?? 0) >= 5);
-    else if (state.gapFilter === 'gap10') out = out.filter(p => (top2Gap(p) ?? 0) >= 10);
+    if (state.gapFilter === 'gap10') out = out.filter(p => (top2Gap(p) ?? 0) >= 10);
     else if (state.gapFilter === 'gap15') out = out.filter(p => (top2Gap(p) ?? 0) >= 15);
+    else if (state.gapFilter === 'gap20') out = out.filter(p => (top2Gap(p) ?? 0) >= 20);
     if (state.venue && state.venue !== 'all') out = out.filter(p => p.venue === state.venue);
     return out;
   }
@@ -1181,12 +1181,14 @@
       out = out.filter(p => (p.place_probability ?? 0) >= 70);
     }
     // Top-2 gap — bigger gap means clearer favourite in the win model's view.
-    if (state.gapFilter === 'gap5') {
-      out = out.filter(p => (top2Gap(p) ?? 0) >= 5);
-    } else if (state.gapFilter === 'gap10') {
+    // 60-day backtest: the ≥20pt bucket is the +EV slice (33.7%% win / +2%% ROI);
+    // ≥10 and ≥15 narrow the list but don't flip ROI positive on their own.
+    if (state.gapFilter === 'gap10') {
       out = out.filter(p => (top2Gap(p) ?? 0) >= 10);
     } else if (state.gapFilter === 'gap15') {
       out = out.filter(p => (top2Gap(p) ?? 0) >= 15);
+    } else if (state.gapFilter === 'gap20') {
+      out = out.filter(p => (top2Gap(p) ?? 0) >= 20);
     }
     if (venue && venue !== 'all') {
       out = out.filter(p => p.venue === venue);
