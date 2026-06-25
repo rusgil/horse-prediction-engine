@@ -778,6 +778,67 @@
     .page-header.hot    { --page-accent: #fb923c; }
     .page-header.funk   { --page-accent: #c084fc; }
     .page-header.labs   { --page-accent: #10b981; }
+    /* Mobile-only: compact Hot Seat header. Saves vertical real estate
+       by hiding the brand strip + subtitle + accent, then laying the
+       title left-justified with a Funky IQ Labs shortcut on the right. */
+    .header-side-link { display: none; }
+    @media (max-width: 760px) {
+      .brand-bar { display: none; }
+      .page-header.hot {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        text-align: left;
+        padding: 12px 14px 10px;
+        margin-bottom: 8px;
+        gap: 8px;
+      }
+      .page-header.hot .page-title {
+        font-size: 24px;
+        margin: 0;
+        gap: 6px;
+      }
+      .page-header.hot .page-subtitle { display: none; }
+      .page-header.hot::after { display: none; }
+      .header-side-link {
+        display: inline-flex; align-items: center; gap: 4px;
+        font-size: 11px; font-weight: 700;
+        letter-spacing: 0.04em;
+        color: #34d399;
+        text-decoration: none;
+        padding: 5px 8px;
+        border: 1px solid rgba(16,185,129,0.40);
+        background: rgba(16,185,129,0.10);
+        border-radius: 6px;
+        white-space: nowrap;
+        flex-shrink: 0;
+      }
+      .header-side-link:hover { background: rgba(16,185,129,0.18); color: #4ade80; }
+    }
+
+    /* Collapsible filter section — collapsed by default on mobile, open
+       on desktop. Toggle button reads 'Filters ▾' / 'Filters ▴'. */
+    .filters-toggle {
+      display: none;
+      width: 100%;
+      margin: 0 0 8px 0;
+      padding: 9px 12px;
+      background: var(--bg-card, #0e1220);
+      color: var(--text-dim, #9ca3af);
+      border: 1px solid var(--border, rgba(255,255,255,0.08));
+      border-radius: 6px;
+      font-size: 12px; font-weight: 700;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      cursor: pointer;
+      text-align: left;
+    }
+    .filters-toggle:hover { color: var(--text, #fff); border-color: rgba(255,255,255,0.18); }
+    .filters-toggle .toggle-caret { float: right; font-size: 11px; }
+    @media (max-width: 760px) {
+      .filters-toggle { display: block; }
+      .filters-body[hidden] { display: none; }
+    }
     .page-title {
       font-family: 'Barlow Condensed', sans-serif;
       font-size: 36px;
@@ -823,9 +884,14 @@
   <header class="page-header hot">
     <h1 class="page-title">🔥 Hot Seat <span class="tier-badge tier-pro">Pro</span></h1>
     <p class="page-subtitle">Next races · sorted by jump time</p>
+    <a href="/lab" class="header-side-link">🧪 Funky IQ Labs →</a>
   </header>
   <header>
     <div class="refresh-status" style="text-align:center;margin-bottom:8px"><span class="dot"></span><span id="refreshLabel">Loading…</span></div>
+    <button id="filtersToggle" class="filters-toggle" type="button" aria-expanded="false">
+      Filters <span class="toggle-caret" id="filtersCaret">▾</span>
+    </button>
+    <div id="filtersBody" class="filters-body">
     <div class="filter-help">
       <strong>Win %</strong> = model's chance the horse wins ·
       <strong>Place %</strong> = chance of finishing top 3 ·
@@ -873,6 +939,7 @@
         <option value="all">All tracks</option>
       </select>
     </div>
+    </div><!-- /filters-body -->
     <div id="dailyStats" class="daily-stats"></div>
   </header>
 
@@ -1552,6 +1619,44 @@
     state.venue = e.target.value;
     renderList();
   });
+
+  // Collapsible filters — collapsed by default on mobile (≤760px), open
+  // on desktop. Toggle state persists via sessionStorage so a user who
+  // opens the panel keeps it open across reloads.
+  (() => {
+    const toggleBtn = document.getElementById('filtersToggle');
+    const body = document.getElementById('filtersBody');
+    const caret = document.getElementById('filtersCaret');
+    if (!toggleBtn || !body) return;
+    const KEY = 'hotseat:filtersOpen';
+    const isMobile = () => window.matchMedia('(max-width: 760px)').matches;
+    const apply = (open) => {
+      body.hidden = isMobile() ? !open : false;
+      toggleBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
+      if (caret) caret.textContent = open ? '▴' : '▾';
+    };
+    let initialOpen;
+    try {
+      const stored = sessionStorage.getItem(KEY);
+      initialOpen = stored === null ? !isMobile() : stored === '1';
+    } catch (e) {
+      initialOpen = !isMobile();
+    }
+    apply(initialOpen);
+    toggleBtn.addEventListener('click', () => {
+      const nowOpen = body.hidden;  // currently hidden → opening
+      apply(nowOpen);
+      try { sessionStorage.setItem(KEY, nowOpen ? '1' : '0'); } catch (e) {}
+    });
+    // If the viewport crosses the breakpoint (e.g. rotate), re-evaluate
+    // so desktop always shows filters and mobile honours the stored choice.
+    window.matchMedia('(max-width: 760px)').addEventListener('change', () => {
+      let open;
+      try { open = sessionStorage.getItem(KEY) === '1' || !isMobile(); }
+      catch (e) { open = !isMobile(); }
+      apply(open);
+    });
+  })();
 
   // Field-expansion toggle (delegated — cards re-render every second).
   document.getElementById('list').addEventListener('click', (e) => {
