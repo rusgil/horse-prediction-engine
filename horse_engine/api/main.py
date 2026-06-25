@@ -7130,6 +7130,7 @@ async def signal_scan(
     days: int = 60,
     stake: float = 10.0,
     min_sample: int = 30,
+    include_backfill: bool = False,
     x_cron_secret: Optional[str] = Header(None),
 ):
     """Sweep a battery of candidate filter patterns against the rank-1 history
@@ -7162,7 +7163,8 @@ async def signal_scan(
             .where(RunnerPredictionHistoryRow.model_rank == 1)
             .where(RunnerPredictionHistoryRow.cancelled.is_(False)
                    | RunnerPredictionHistoryRow.cancelled.is_(None))
-            .where(RunnerPredictionHistoryRow.source == "live")
+            .where(RunnerPredictionHistoryRow.source.in_(("live", "backfill"))
+                   if include_backfill else RunnerPredictionHistoryRow.source == "live")
             .order_by(RunnerPredictionHistoryRow.enriched_at.desc())
         )).fetchall()
         result_rows = (await session.execute(
