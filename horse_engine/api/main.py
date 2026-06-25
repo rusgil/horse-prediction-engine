@@ -2644,7 +2644,7 @@ _edge_odds_cache: dict[str, tuple[datetime, dict[str, float]]] = {}  # race_id �
 _EDGE_RESPONSE_TTL = 120
 # Bump _EDGE_CACHE_VERSION whenever threshold or response shape changes so
 # old cached responses are invalidated on deploy without a manual restart.
-_EDGE_CACHE_VERSION = 8  # 2026-06-24: two_funk.hit annotated for finished races
+_EDGE_CACHE_VERSION = 9  # 2026-06-25: two_funk.recommend gates on EV > 0
 _edge_response_cache: tuple[datetime, dict, int] | None = None
 
 # Cache full list_meetings response for 10 min (weather + RA calls are expensive)
@@ -3260,6 +3260,23 @@ async def get_edge_picks():
             two_funk = _compute_two_funk(runner_row.win_probability, hedge_runners, hedge_candidates)
             if two_funk:
                 two_funk["tier"] = feature_tier("two_funk")  # paywall hint — "labs"
+                # EV gate — recommend the Quinella only when the math is +EV.
+                # Both partners short-priced (e.g. $2.25 + $2.50) gives a
+                # ~$2.81 dividend that doesn't cover the loss rate.
+                _l1 = odds if odds and odds > 1.0 else 0
+                _l2 = two_funk.get("partner_odds") or 0
+                if _l1 > 1.0 and _l2 > 1.0:
+                    _quin_est = 0.5 * _l1 * _l2
+                    _hit_prob = 2 * (runner_row.win_probability or 0) * ((two_funk.get("partner_win_pct") or 0) / 100)
+                    _ev = _hit_prob * _quin_est * 10 - 10  # $10 flat stake
+                    two_funk["quinella_est_dividend"] = round(_quin_est, 2)
+                    two_funk["estimated_ev_dollars"] = round(_ev, 2)
+                    two_funk["recommend"] = bool(two_funk.get("qualified")) and _ev > 0
+                else:
+                    # No live odds on one or both partners — can't compute EV
+                    # accurately. Don't recommend; surface as informational only.
+                    two_funk["estimated_ev_dollars"] = None
+                    two_funk["recommend"] = False
 
             # Last-10 form (wins / placings / starts) for the horse-card display
             # — same source as _runner_response uses: enriched_json on the pred row.
@@ -5118,6 +5135,12 @@ def _build_two_funk(edge_picks: list[dict]) -> Optional[dict]:
     base_stake = _FUNK_BASE_STAKE
     pot_return = round(quinella_est * base_stake, 2) if quinella_est else None
     ev = round((quin_prob * pot_return - base_stake), 2) if (quin_prob and pot_return) else None
+    # EV gate — don't recommend the Quinella when the math says no. Two
+    # short-priced co-favourites (e.g. $2.25 + $2.50) qualify on win-side
+    # concentration but yield a Quinella dividend too small to cover the
+    # ~84%% loss rate. Suppress the play card entirely in that case.
+    if ev is None or ev <= 0:
+        return None
     return {
         "kind": "twofunk",
         "title": "2 Funk",

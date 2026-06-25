@@ -2188,8 +2188,8 @@
     }
 
     const premiumBadge = isPremium ? `<span class="pick-badge-premium">💎 Premium</span>` : '';
-    const twoFunkBadge = (pick.two_funk?.qualified && !isPast)
-      ? `<span class="pick-badge-standard" style="background:rgba(236,72,153,0.14);color:#f9a8d4;border-color:rgba(219,39,119,0.45);" title="Top-2 dominate: ${pick.two_funk.top2_win_sum_pct}% combined · ${pick.two_funk.rank2_rank3_gap_pct}pt cliff to rank-3. Consider a Quinella with ${escHtml(pick.two_funk.partner_horse_name)}.">🪩 2 Funk · Quinella w/ ${escHtml(pick.two_funk.partner_horse_name)}<span class="tier-marker tier-labs">Labs</span></span>`
+    const twoFunkBadge = (pick.two_funk?.recommend && !isPast)
+      ? `<span class="pick-badge-standard" style="background:rgba(236,72,153,0.14);color:#f9a8d4;border-color:rgba(219,39,119,0.45);" title="Top-2 dominate: ${pick.two_funk.top2_win_sum_pct}% combined · ${pick.two_funk.rank2_rank3_gap_pct}pt cliff to rank-3. Quinella with ${escHtml(pick.two_funk.partner_horse_name)}: est. $${pick.two_funk.quinella_est_dividend} dividend, EV +$${pick.two_funk.estimated_ev_dollars}.">🪩 2 Funk · Quinella w/ ${escHtml(pick.two_funk.partner_horse_name)}<span class="tier-marker tier-labs">Labs</span></span>`
       : '';
 
     // Result badge — shown for past races alongside tier badge

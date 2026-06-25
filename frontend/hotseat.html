@@ -1117,7 +1117,10 @@
   // "place this bet" action block is dropped (no longer actionable).
   function renderTwoFunkPanel(p) {
     const tf = p.two_funk;
-    if (!tf || !tf.qualified) return '';
+    // Gate on `recommend` (qualified AND EV > 0) so we don't show a
+    // Quinella card when the dividend math is negative — Northam R4
+    // 2026-06-25 (ADMIRE+SESH at $2.25/$2.50) was the trigger case.
+    if (!tf || !tf.recommend) return '';
     const finished = isFinished(p.scheduled_time);
     const partnerOddsTxt = tf.partner_odds ? `$${Number(tf.partner_odds).toFixed(2)}` : '—';
     const winOddsTxt = (p.best_available_odds && p.best_available_odds > 1.0)
@@ -1379,9 +1382,9 @@
           ${barPct >= 0 ? `<div class="timer-bar"><div class="timer-bar-fill" style="width:${barPct}%"></div></div>` : ''}
           ${twofunkHitBanner}
           ${resultBanner}
-          ${((isPremium && !finished) || p.two_funk?.qualified) ? `<div class="badge-row">
+          ${((isPremium && !finished) || p.two_funk?.recommend) ? `<div class="badge-row">
             ${(isPremium && !finished) ? '<span class="badge">Premium</span>' : ''}
-            ${p.two_funk?.qualified ? `<span class="badge twofunk" title="Top-2 dominate: ${p.two_funk.top2_win_sum_pct}% combined · ${p.two_funk.rank2_rank3_gap_pct}pt cliff to rank-3. Consider a Quinella with ${escHtml(p.two_funk.partner_horse_name)}.">🪩 2 Funk · Quinella w/ ${escHtml(p.two_funk.partner_horse_name)}<span class="tier-marker tier-labs">Labs</span></span>` : ''}
+            ${p.two_funk?.recommend ? `<span class="badge twofunk" title="Top-2 dominate: ${p.two_funk.top2_win_sum_pct}% combined · ${p.two_funk.rank2_rank3_gap_pct}pt cliff to rank-3. Quinella with ${escHtml(p.two_funk.partner_horse_name)}: est. $${p.two_funk.quinella_est_dividend} dividend, EV +$${p.two_funk.estimated_ev_dollars}.">🪩 2 Funk · Quinella w/ ${escHtml(p.two_funk.partner_horse_name)}<span class="tier-marker tier-labs">Labs</span></span>` : ''}
           </div>` : ''}
           <div class="pick-top">
             <div>
