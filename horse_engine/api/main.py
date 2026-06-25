@@ -8431,6 +8431,17 @@ async def admin_cancelled_today(x_cron_secret: Optional[str] = Header(None)):
     }
 
 
+@app.post("/api/admin/enrich-now")
+async def admin_enrich_now(x_cron_secret: Optional[str] = Header(None)):
+    """Manually trigger the full morning-enrichment pass (today + next 2 days).
+    Use this after a proxy outage or to backfill races that the 8:30am cron
+    couldn't reach. Runs in the background so the request returns immediately;
+    the actual enrich takes 5-10 minutes for a full day."""
+    _check_admin(x_cron_secret)
+    asyncio.create_task(_scheduled_enrich())
+    return {"ok": True, "queued": True, "note": "Enrich running in background — takes 5-10 min for a full day"}
+
+
 @app.post("/api/admin/scratch-sweep-now")
 async def admin_scratch_sweep_now(x_cron_secret: Optional[str] = Header(None)):
     """Run the today-scratch detection immediately and bust the edge cache so
