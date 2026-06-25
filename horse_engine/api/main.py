@@ -2282,6 +2282,26 @@ async def lifespan(app: FastAPI):
     # one set of Calendar.aspx hits, all post-stagger so RA-friendly. On a
     # day RA is flaky this is the cron tick that saves the afternoon.
     scheduler.add_job(_scheduled_enrich, CronTrigger(hour=11, minute=30, timezone="Australia/Sydney"))
+
+    # Edge cache warm-up ticks at strategic times. The continuous prewarm
+    # task (`_prewarm_edge_cache` below) refreshes every 60-90s once it
+    # spins up, but it can lag right after a redeploy or if the Railway
+    # container was idle. These targeted ticks force a fresh build of the
+    # cache before users hit the page in significant numbers — first thing
+    # in the morning, after each scheduled enrich completes (so the new
+    # predictions land in the cache rather than the stale set), and at
+    # the start of metro racing.
+    async def _warm_edge():
+        try:
+            await get_edge_picks()
+            log.info("[edge-warm] scheduled tick complete")
+        except Exception as e:
+            log.warning("[edge-warm] scheduled tick failed: %s", e)
+    scheduler.add_job(_warm_edge, CronTrigger(hour=6,  minute=30, timezone="Australia/Sydney"))  # pre-morning
+    scheduler.add_job(_warm_edge, CronTrigger(hour=8,  minute=45, timezone="Australia/Sydney"))  # post 8:30 enrich
+    scheduler.add_job(_warm_edge, CronTrigger(hour=10, minute=45, timezone="Australia/Sydney"))  # post 10:30 enrich
+    scheduler.add_job(_warm_edge, CronTrigger(hour=11, minute=45, timezone="Australia/Sydney"))  # post 11:30 enrich
+    scheduler.add_job(_warm_edge, CronTrigger(hour=12, minute=15, timezone="Australia/Sydney"))  # pre-metro
     scheduler.add_job(_scheduled_prerace_snapshot, CronTrigger(hour=9, minute=0, timezone="Australia/Sydney"))
     # Results seeding — every 30 min during racing hours. Previously only
     # fired at sparse hours (14/15/17/19/23), meaning a 16:00 race would
@@ -2918,7 +2938,13 @@ async def get_edge_picks():
     # overrides and scheduled-time enrichment.
     ra_blocked = _ra_breaker_open(client)
 
-    for i in range(4):
+    # One-day horizon — was 4 days (today + next 3) which generated ~75%
+    # wasted work because tomorrow's predictions don't exist yet in the
+    # morning and day-after is empty. Drop to today only; users who want
+    # tomorrow's picks can wait until tomorrow. The morning enrich still
+    # processes today + next 2 days into the DB, so the data exists if a
+    # future endpoint wants it.
+    for i in range(1):
         target_date = (today + timedelta(days=i)).isoformat()
         prefix = f"{target_date}_"
         async with get_session() as session:
