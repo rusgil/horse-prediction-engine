@@ -7209,6 +7209,189 @@ async def model_anomalies(
     }
 
 
+@app.get("/api/admin/bets/going-calibration")
+async def going_calibration(
+    days: int = 90,
+    include_backfill: bool = True,
+    x_cron_secret: Optional[str] = Header(None),
+):
+    """Per-going calibration test for rank-1 picks. Bins by model_pct
+    and reports actual win rate per bin per going category. If 'soft'
+    horses with 30%% model_pct actually win 15%% of the time, the model
+    is over-confident on soft tracks by ~2x and we should apply a
+    going-specific multiplier.
+
+    Returns a per-bin × per-going table plus a recommended multiplier
+    per going (= overall actual / actual on this going).
+    """
+    _check_admin(x_cron_secret)
+    days = max(7, min(int(days), 365))
+    cutoff_date = (_today_aest() - timedelta(days=days)).isoformat()
+
+    async with get_session() as session:
+        pred_rows = (await session.execute(
+            select(
+                RunnerPredictionHistoryRow.race_id,
+                RunnerPredictionHistoryRow.horse_name,
+                RunnerPredictionHistoryRow.win_probability,
+                RunnerPredictionHistoryRow.enriched_json,
+                RunnerPredictionHistoryRow.enriched_at,
+            )
+            .where(RunnerPredictionHistoryRow.race_id >= f"{cutoff_date}_")
+            .where(RunnerPredictionHistoryRow.model_rank == 1)
+            .where(RunnerPredictionHistoryRow.cancelled.is_(False)
+                   | RunnerPredictionHistoryRow.cancelled.is_(None))
+            .where(RunnerPredictionHistoryRow.source.in_(("live", "backfill"))
+                   if include_backfill else RunnerPredictionHistoryRow.source == "live")
+            .order_by(RunnerPredictionHistoryRow.enriched_at.desc())
+        )).fetchall()
+        result_rows = (await session.execute(
+            select(HistoricalResultRow.race_id, HistoricalResultRow.horse_name,
+                   HistoricalResultRow.position, HistoricalResultRow.starting_price)
+            .where(HistoricalResultRow.race_id >= f"{cutoff_date}_")
+            .where(HistoricalResultRow.position == 1)
+        )).fetchall()
+
+    seen: set = set()
+    picks: list[dict] = []
+    for r in pred_rows:
+        key = (r.race_id, _normalize_horse(r.horse_name))
+        if key in seen:
+            continue
+        seen.add(key)
+        try:
+            enr = json.loads(r.enriched_json) if r.enriched_json else {}
+        except Exception:
+            enr = {}
+        picks.append({
+            "race_id": r.race_id,
+            "horse_name": _normalize_horse(r.horse_name),
+            "win_prob": float(r.win_probability or 0),
+            "enr": enr,
+        })
+
+    winners: dict[str, str] = {}
+    sp_by_race: dict[str, float] = {}
+    for r in result_rows:
+        winners[r.race_id] = _normalize_horse(r.horse_name or "")
+        sp_by_race[r.race_id] = float(r.starting_price or 0)
+
+    scoreable: list[dict] = []
+    for p in picks:
+        winner_norm = winners.get(p["race_id"])
+        if winner_norm is None:
+            continue
+        p["won"] = (p["horse_name"] == winner_norm)
+        p["sp"] = sp_by_race.get(p["race_id"], 0)
+        scoreable.append(p)
+
+    if not scoreable:
+        return {"days": days, "rank1_picks": 0}
+
+    bin_defs = [
+        ("<20%",  0.0,  0.20),
+        ("20-30%", 0.20, 0.30),
+        ("30-40%", 0.30, 0.40),
+        (">=40%",  0.40, 1.01),
+    ]
+    going_buckets = ("good", "soft", "heavy", "firm")
+
+    def _bin_for(prob: float) -> Optional[str]:
+        for label, lo, hi in bin_defs:
+            if lo <= prob < hi:
+                return label
+        return None
+
+    # rows[going][bin] = {n, wins}
+    rows: dict[str, dict[str, dict]] = {g: {b[0]: {"n": 0, "wins": 0, "sp_won_sum": 0.0}
+                                              for b in bin_defs} for g in going_buckets}
+    overall: dict[str, dict] = {b[0]: {"n": 0, "wins": 0} for b in bin_defs}
+    overall_total = {"n": 0, "wins": 0}
+
+    for p in scoreable:
+        going = (p["enr"].get("track_condition_category") or "").lower()
+        if going not in going_buckets:
+            continue
+        b = _bin_for(p["win_prob"])
+        if b is None:
+            continue
+        rows[going][b]["n"] += 1
+        if p["won"]:
+            rows[going][b]["wins"] += 1
+            rows[going][b]["sp_won_sum"] += p["sp"]
+        overall[b]["n"] += 1
+        if p["won"]:
+            overall[b]["wins"] += 1
+        overall_total["n"] += 1
+        if p["won"]:
+            overall_total["wins"] += 1
+
+    # Per-going recommended multiplier — overall win % on good / actual win % on this going
+    # ratio'd so that applying it brings the displayed model_pct in line.
+    overall_good_win = (rows["good"][b[0]] for b in bin_defs)
+    good_total_n = sum(rows["good"][b[0]]["n"] for b in bin_defs)
+    good_total_wins = sum(rows["good"][b[0]]["wins"] for b in bin_defs)
+    good_win_rate = good_total_wins / good_total_n if good_total_n else None
+
+    recommended_multiplier = {}
+    for g in going_buckets:
+        n = sum(rows[g][b[0]]["n"] for b in bin_defs)
+        w = sum(rows[g][b[0]]["wins"] for b in bin_defs)
+        if n < 5 or good_win_rate is None:
+            recommended_multiplier[g] = {"sample": n, "multiplier": None,
+                                          "note": "thin sample"}
+            continue
+        actual = w / n
+        # Multiplier brings the model's expected output in line with actual.
+        # If model expects 27%% good baseline and soft horses actually win 17%%,
+        # multiplier = 17/27 = 0.63.
+        mult = round(actual / good_win_rate, 3) if good_win_rate else None
+        recommended_multiplier[g] = {
+            "sample": n,
+            "actual_win_pct": round(actual * 100, 1),
+            "good_baseline_win_pct": round(good_win_rate * 100, 1),
+            "multiplier": mult,
+        }
+
+    out_rows = []
+    for g in going_buckets:
+        bin_rows = []
+        for b_label, _, _ in bin_defs:
+            d = rows[g][b_label]
+            if d["n"] == 0:
+                continue
+            bin_rows.append({
+                "model_pct_bin": b_label,
+                "n": d["n"],
+                "wins": d["wins"],
+                "actual_win_pct": round(d["wins"]/d["n"]*100, 1),
+                "avg_winner_sp": round(d["sp_won_sum"]/d["wins"], 2) if d["wins"] else None,
+            })
+        if bin_rows:
+            out_rows.append({"going": g, "bins": bin_rows})
+
+    overall_bins = []
+    for b_label, _, _ in bin_defs:
+        d = overall[b_label]
+        if d["n"] == 0:
+            continue
+        overall_bins.append({
+            "model_pct_bin": b_label,
+            "n": d["n"],
+            "wins": d["wins"],
+            "actual_win_pct": round(d["wins"]/d["n"]*100, 1),
+        })
+
+    return {
+        "days": days,
+        "include_backfill": include_backfill,
+        "rank1_picks_with_going": overall_total["n"],
+        "overall_by_bin": overall_bins,
+        "by_going_and_bin": out_rows,
+        "recommended_multiplier_per_going": recommended_multiplier,
+    }
+
+
 @app.get("/api/admin/bets/winner-vs-loser-features")
 async def winner_vs_loser_features(
     days: int = 1,
