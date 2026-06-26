@@ -7209,6 +7209,244 @@ async def model_anomalies(
     }
 
 
+@app.get("/api/admin/bets/winner-vs-loser-features")
+async def winner_vs_loser_features(
+    days: int = 1,
+    include_picks: bool = True,
+    include_backfill: bool = False,
+    x_cron_secret: Optional[str] = Header(None),
+):
+    """Deep-dive comparison of rank-1 picks: winners vs losers across all
+    enriched features. For each numerical feature, reports mean / median
+    in each cohort and a 'lift' = loser_mean - winner_mean. Features with
+    big absolute lifts are candidates for model refinement (the model
+    isn't already weighting them enough to discriminate).
+
+    For each categorical feature reports win rate per category.
+
+    include_picks=true also returns the per-pick detail (race_id, won,
+    placed, key features). Useful for the per-race walkthrough on a short
+    window (yesterday). Turn off for week+ windows to keep payload small.
+    """
+    _check_admin(x_cron_secret)
+    days = max(1, min(int(days), 365))
+    cutoff_date = (_today_aest() - timedelta(days=days)).isoformat()
+
+    async with get_session() as session:
+        pred_rows = (await session.execute(
+            select(
+                RunnerPredictionHistoryRow.race_id,
+                RunnerPredictionHistoryRow.horse_name,
+                RunnerPredictionHistoryRow.win_probability,
+                RunnerPredictionHistoryRow.market_rank,
+                RunnerPredictionHistoryRow.best_available_odds,
+                RunnerPredictionHistoryRow.enriched_json,
+                RunnerPredictionHistoryRow.enriched_at,
+            )
+            .where(RunnerPredictionHistoryRow.race_id >= f"{cutoff_date}_")
+            .where(RunnerPredictionHistoryRow.model_rank == 1)
+            .where(RunnerPredictionHistoryRow.cancelled.is_(False)
+                   | RunnerPredictionHistoryRow.cancelled.is_(None))
+            .where(RunnerPredictionHistoryRow.source.in_(("live", "backfill"))
+                   if include_backfill else RunnerPredictionHistoryRow.source == "live")
+            .order_by(RunnerPredictionHistoryRow.enriched_at.desc())
+        )).fetchall()
+        result_rows = (await session.execute(
+            select(HistoricalResultRow.race_id, HistoricalResultRow.horse_name,
+                   HistoricalResultRow.position, HistoricalResultRow.starting_price)
+            .where(HistoricalResultRow.race_id >= f"{cutoff_date}_")
+        )).fetchall()
+
+    # Latest snapshot per (race, horse)
+    seen: set = set()
+    picks: list[dict] = []
+    for r in pred_rows:
+        key = (r.race_id, _normalize_horse(r.horse_name))
+        if key in seen:
+            continue
+        seen.add(key)
+        try:
+            enr = json.loads(r.enriched_json) if r.enriched_json else {}
+        except Exception:
+            enr = {}
+        picks.append({
+            "race_id": r.race_id,
+            "horse_name": _normalize_horse(r.horse_name),
+            "display_name": r.horse_name,
+            "win_prob": float(r.win_probability or 0),
+            "odds": float(r.best_available_odds or 0),
+            "market_rank": r.market_rank,
+            "enr": enr,
+        })
+
+    # Positions per (race, horse) — keep both rank-1 result and the actual top-3 horses
+    pos_by_key: dict[tuple[str, str], tuple[int, float]] = {}
+    for r in result_rows:
+        if r.position is None:
+            continue
+        pos_by_key[(r.race_id, _normalize_horse(r.horse_name or ""))] = (
+            int(r.position), float(r.starting_price or 0)
+        )
+
+    # Annotate each pick with outcome
+    scoreable: list[dict] = []
+    for p in picks:
+        result = pos_by_key.get((p["race_id"], p["horse_name"]))
+        if not result:
+            continue
+        pos, sp = result
+        p["actual_position"] = pos
+        p["sp"] = sp
+        p["won"] = pos == 1
+        p["placed"] = pos <= 3
+        scoreable.append(p)
+
+    if not scoreable:
+        return {"days": days, "settled_rank1_picks": 0, "note": "no settled picks in window"}
+
+    winners = [p for p in scoreable if p["won"]]
+    placers = [p for p in scoreable if p["placed"] and not p["won"]]
+    losers = [p for p in scoreable if not p["placed"]]
+    n = len(scoreable)
+
+    # Numerical features to compare. These are the enriched_json keys the
+    # model sees (subset of FEATURE_NAMES_BASE plus useful derived signals).
+    NUMERICAL_FEATURES = [
+        "form_score", "days_since_last_run", "runs_this_prep", "starts_last_10",
+        "wins_last_10", "places_last_10", "win_rate_distance", "trainer_overall_rate",
+        "jockey_overall_rate", "trainer_track_rate", "trainer_distance_rate",
+        "jockey_track_rate", "wet_track_record", "pedigree_distance_match",
+        "pedigree_wet_score", "dosage_index", "weight", "barrier",
+        "win_rate_career", "place_rate_career", "win_rate_track", "career_starts",
+        "class_change", "best_finish_distance", "avg_beaten_margin_last5",
+    ]
+    CATEGORICAL_FEATURES = [
+        "speed_map_position", "distance_aptitude", "track_condition_category",
+        "is_steamed", "is_drifted",
+    ]
+    # Derived signals not in raw enriched_json
+    def _derive(p: dict) -> dict:
+        d = {
+            "win_prob_pct": p["win_prob"] * 100,
+            "odds": p["odds"],
+            "market_rank": p["market_rank"] or 0,
+            "model_pct_edge": (p["win_prob"] * 100) - ((100 / p["odds"]) if p["odds"] > 1 else 0),
+        }
+        return d
+    DERIVED_FEATURES = ["win_prob_pct", "odds", "market_rank", "model_pct_edge"]
+
+    def _vals(cohort: list[dict], feat: str) -> list[float]:
+        if feat in DERIVED_FEATURES:
+            return [_derive(p)[feat] for p in cohort if _derive(p).get(feat) is not None]
+        return [p["enr"].get(feat) for p in cohort
+                if isinstance(p["enr"].get(feat), (int, float))]
+
+    def _stats(vals: list[float]) -> dict:
+        if not vals:
+            return {"n": 0, "mean": None, "median": None}
+        s = sorted(vals)
+        m = sum(s) / len(s)
+        median = s[len(s)//2] if len(s) % 2 else (s[len(s)//2-1] + s[len(s)//2]) / 2
+        return {"n": len(vals), "mean": round(m, 4), "median": round(median, 4)}
+
+    feature_breakdown: list[dict] = []
+    for feat in NUMERICAL_FEATURES + DERIVED_FEATURES:
+        w_stats = _stats(_vals(winners, feat))
+        l_stats = _stats(_vals(losers, feat))
+        if w_stats["mean"] is None or l_stats["mean"] is None:
+            continue
+        lift = round(l_stats["mean"] - w_stats["mean"], 4)
+        feature_breakdown.append({
+            "feature": feat,
+            "winner": w_stats,
+            "loser": l_stats,
+            "loser_minus_winner": lift,
+            "abs_lift": abs(lift),
+        })
+    feature_breakdown.sort(key=lambda f: -f["abs_lift"])
+
+    # Categorical breakdown: for each category, win rate
+    categorical_breakdown: list[dict] = []
+    for feat in CATEGORICAL_FEATURES:
+        counts: dict[str, dict] = {}
+        for p in scoreable:
+            v = p["enr"].get(feat)
+            if v is None:
+                continue
+            key = str(v)
+            d = counts.setdefault(key, {"n": 0, "wins": 0, "placed": 0})
+            d["n"] += 1
+            if p["won"]:
+                d["wins"] += 1
+            if p["placed"]:
+                d["placed"] += 1
+        cats = []
+        for cat, d in counts.items():
+            if d["n"] < 3:
+                continue
+            cats.append({
+                "category": cat,
+                "n": d["n"],
+                "win_pct": round(d["wins"] / d["n"] * 100, 1),
+                "place_pct": round(d["placed"] / d["n"] * 100, 1),
+            })
+        cats.sort(key=lambda c: -c["win_pct"])
+        if cats:
+            categorical_breakdown.append({"feature": feat, "categories": cats})
+
+    # Suggested refinements — features with biggest absolute lift AND
+    # decent sample on both sides. Note: these are descriptive observations,
+    # not validated until backtested.
+    refinements: list[dict] = []
+    for f in feature_breakdown[:10]:
+        if f["winner"]["n"] < 5 or f["loser"]["n"] < 5:
+            continue
+        direction = "lower" if f["loser_minus_winner"] > 0 else "higher"
+        refinements.append({
+            "feature": f["feature"],
+            "observation": (
+                f"Winners average {f['winner']['mean']} ({f['winner']['n']} samples). "
+                f"Losers average {f['loser']['mean']} ({f['loser']['n']} samples). "
+                f"Winners tend to be {direction} on this feature."
+            ),
+            "candidate_filter": f"Consider de-emphasising rank-1 picks where {f['feature']} is "
+                                f"closer to the loser mean ({f['loser']['mean']}).",
+        })
+
+    response = {
+        "days": days,
+        "include_backfill": include_backfill,
+        "settled_rank1_picks": n,
+        "winners": len(winners),
+        "placed_no_win": len(placers),
+        "losers": len(losers),
+        "win_pct": round(len(winners) / n * 100, 1) if n else 0,
+        "place_pct": round((len(winners) + len(placers)) / n * 100, 1) if n else 0,
+        "numerical_features_ranked": feature_breakdown,
+        "categorical_features": categorical_breakdown,
+        "candidate_refinements": refinements[:5],
+    }
+    if include_picks:
+        response["per_pick_detail"] = [{
+            "race_id": p["race_id"],
+            "horse": p["display_name"],
+            "model_win_pct": round(p["win_prob"] * 100, 1),
+            "odds": p["odds"],
+            "actual_position": p["actual_position"],
+            "won": p["won"],
+            "placed": p["placed"],
+            "sp": p["sp"],
+            "form_score": p["enr"].get("form_score"),
+            "days_since_last_run": p["enr"].get("days_since_last_run"),
+            "starts_last_10": p["enr"].get("starts_last_10"),
+            "speed_map_position": p["enr"].get("speed_map_position"),
+            "win_rate_distance": p["enr"].get("win_rate_distance"),
+            "trainer_overall_rate": p["enr"].get("trainer_overall_rate"),
+            "jockey_overall_rate": p["enr"].get("jockey_overall_rate"),
+        } for p in scoreable]
+    return response
+
+
 @app.get("/api/admin/bets/signal-scan")
 async def signal_scan(
     days: int = 60,
