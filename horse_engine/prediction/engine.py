@@ -375,6 +375,17 @@ def predict_race(race: Race, model: HorseModel, venue_calibration: dict[str, flo
         pred._exotic_score = exotic_scores_list[i] if i < len(exotic_scores_list) else 0.0
         predictions.append(pred)
 
+    # Midfield penalty — 90-day winner-vs-loser feature analysis showed
+    # rank-1 picks with speed_map_position='midfield' won at 22.7% vs
+    # 29-31% for leader/on-pace (n=1,108 midfield over 90d). The raw
+    # model treats all pace profiles the same. Apply a 0.85× multiplier
+    # to win_prob for midfield horses — pulls them down relative to
+    # front-runners without changing rank within an all-midfield field.
+    # No renormalisation: the display reflects the corrected confidence.
+    for p in predictions:
+        if getattr(p.enriched, "speed_map_position", None) == "midfield":
+            p.win_prob = round(p.win_prob * 0.85, 4)
+
     # Rank by win probability
     predictions.sort(key=lambda p: p.win_prob, reverse=True)
     for rank, p in enumerate(predictions, 1):

@@ -86,36 +86,60 @@ def discount_form_for_thin_record(form_score: float, starts_last_10: int) -> flo
     return round(form_score - (form_score - LAYOFF_BASELINE_SCORE) * weight, 4)
 
 
+# Extreme-layoff floor — applied beyond LAYOFF_DISCOUNT_FULL_DAYS. Past
+# a year off the track the recency signal is effectively zero; past two
+# years it's actively misleading. Drop the score below the no-form
+# baseline so the model can tell the difference between 'never raced
+# recently' and 'so far in the past that we shouldn't trust it'.
+LAYOFF_EXTREME_DAYS = 730  # 2 years
+LAYOFF_EXTREME_SCORE = 0.15
+
+
 def discount_form_for_layoff(form_score: float, days_since_last_run: int) -> float:
     """Discount form_score toward the no-form baseline when the horse has
     been off the track for an unusually long time.
 
     Triggered by BULLETIN BEAU/Pinjarra R5 on 2026-06-24: 468 days off
     the track, model rank 1 (31%, +23pt edge), market rank 6 (the market
-    knew better), finished 12th of 12. The recency-weighted form score
-    was 0.85 because his last 5 starts were genuinely good — but those
-    starts were 15 months old, so "recent" was misleading.
+    knew better), finished 12th of 12.
 
-    Curve (and rationale):
-        ≤ 120 days   → form_score unchanged (normal racing spell)
-        120-365 days → linear taper toward the no-form baseline (0.3)
-        ≥ 365 days   → baseline (treat as no-form info)
+    Curve:
+        ≤ 120 days     → form_score unchanged (normal racing spell)
+        120-365 days   → linear taper toward the no-form baseline (0.3)
+        365-730 days   → linear taper from 0.3 down to 0.15 (NEW —
+                         OFFENBACH/Northam R7 2026-06-25 at 426 days was
+                         still rank-1 with form 0.71 → 12th of 13; the
+                         old curve floored at 0.3 from 365d onwards so
+                         these extreme cases were under-penalised).
+        ≥ 730 days     → 0.15 (treat as actively misleading)
 
-    A horse whose form is already below the baseline is left alone — a
-    layoff shouldn't make a poor performer look worse, just stop a good
-    one looking better than it should.
+    A horse whose form is already at/below the floor is left alone — a
+    layoff shouldn't make a poor performer look worse.
     """
     if days_since_last_run is None or days_since_last_run < 0:
         return form_score
     if days_since_last_run <= LAYOFF_DISCOUNT_START_DAYS:
         return form_score
-    if form_score <= LAYOFF_BASELINE_SCORE:
+    if form_score <= LAYOFF_EXTREME_SCORE:
         return form_score
-    if days_since_last_run >= LAYOFF_DISCOUNT_FULL_DAYS:
-        return LAYOFF_BASELINE_SCORE
-    span = LAYOFF_DISCOUNT_FULL_DAYS - LAYOFF_DISCOUNT_START_DAYS
-    progress = (days_since_last_run - LAYOFF_DISCOUNT_START_DAYS) / span
-    return round(form_score - (form_score - LAYOFF_BASELINE_SCORE) * progress, 4)
+    # First segment: 120-365 days, taper toward baseline 0.3
+    if days_since_last_run < LAYOFF_DISCOUNT_FULL_DAYS:
+        span = LAYOFF_DISCOUNT_FULL_DAYS - LAYOFF_DISCOUNT_START_DAYS
+        progress = (days_since_last_run - LAYOFF_DISCOUNT_START_DAYS) / span
+        target = form_score - (form_score - LAYOFF_BASELINE_SCORE) * progress
+        return round(target, 4)
+    # Second segment: 365-730 days, taper from baseline 0.3 → extreme floor 0.15
+    if days_since_last_run < LAYOFF_EXTREME_DAYS:
+        # Anchor: at 365d we're at baseline (or form_score, whichever lower).
+        start_score = min(form_score, LAYOFF_BASELINE_SCORE)
+        if start_score <= LAYOFF_EXTREME_SCORE:
+            return round(start_score, 4)
+        span = LAYOFF_EXTREME_DAYS - LAYOFF_DISCOUNT_FULL_DAYS
+        progress = (days_since_last_run - LAYOFF_DISCOUNT_FULL_DAYS) / span
+        target = start_score - (start_score - LAYOFF_EXTREME_SCORE) * progress
+        return round(target, 4)
+    # Third segment: ≥730d → extreme floor
+    return LAYOFF_EXTREME_SCORE
 
 
 def win_rate_at_distance(starts: list[FormStart], race_distance: int, tolerance: int = 200) -> float:
