@@ -386,6 +386,22 @@ def predict_race(race: Race, model: HorseModel, venue_calibration: dict[str, flo
         if getattr(p.enriched, "speed_map_position", None) == "midfield":
             p.win_prob = round(p.win_prob * 0.85, 4)
 
+    # Going calibration — 90-day going-calibration test (n=85 soft, n=41 heavy)
+    # showed the model is ~3-4× over-confident on off-going. Examples:
+    #   <20% model bin on SOFT  → actual 5.3% win (vs 20.9% on good)
+    #   <20% model bin on HEAVY → actual 10.0% win
+    # Avg winner SP on soft <20% bucket was $14.47 (the market knows
+    # off-going is chaotic; our model doesn't). Conservative ship: apply
+    # 0.55 multiplier on soft + heavy across the whole field. This
+    # de-confidences every rank but doesn't reshuffle the order, so a
+    # rank-1 stays rank-1 — just with realistic odds against backing it.
+    # Aggressive raw-data multipliers were 0.28/0.38 but we're starting
+    # from 0.55 to weather the small-sample variance; tighten later.
+    for p in predictions:
+        going = getattr(p.enriched, "track_condition_category", None)
+        if going in ("soft", "heavy"):
+            p.win_prob = round(p.win_prob * 0.55, 4)
+
     # Rank by win probability
     predictions.sort(key=lambda p: p.win_prob, reverse=True)
     for rank, p in enumerate(predictions, 1):
