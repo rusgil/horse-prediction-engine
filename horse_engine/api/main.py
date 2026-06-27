@@ -15395,15 +15395,20 @@ async def performance_summary(
         winner = winners.get(race_id)
         if not winner:
             continue  # race has no known winner yet
+        actual = result_by_key.get((race_id, _normalize_horse(pick.horse_name)))
+        # Scratched-rank-1 races aren't model misses — the horse didn't run.
+        # Drop them from both numerator and denominator so win-rate reflects
+        # the slice the model actually competed in. Matches the nightly
+        # review's "rank1_races_with_result" denominator.
+        if not actual or not actual.position or actual.position <= 0:
+            continue
         d = by_date.setdefault(race_date, {
             "races": 0, "wins": 0, "places": 0, "value_pnl": 0.0, "value_bets": 0,
             "tier_premium": 0, "tier_hot": 0, "tier_high": 0, "tier_strong": 0,
         })
         d["races"] += 1
         act_won = _normalize_horse(pick.horse_name) == _normalize_horse(winner)
-        # Look up pick horse for SP and place check (may be absent if scratched)
-        actual = result_by_key.get((race_id, _normalize_horse(pick.horse_name)))
-        act_placed = bool(actual and actual.position and actual.position <= 3) or act_won
+        act_placed = bool(actual.position and actual.position <= 3) or act_won
         if act_won:
             d["wins"] += 1
         if act_placed:
