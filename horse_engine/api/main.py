@@ -4373,11 +4373,12 @@ async def _settle_bets_for_race(race_id: str) -> int:
     the number of rows updated. No-op if the race has no historical
     results or no trifecta dividend yet.
 
-    If the race is >48h past its scheduled time and still has no top-3
+    If the race is >24h past its scheduled time and still has no top-3
     results in HistoricalResultRow (RA never published or meeting was
     abandoned), the open bets are *voided* rather than left pending.
     Same semantics as a scratched runner — bet doesn't count toward P&L
-    or hit rate."""
+    or hit rate. 24h is well past RA's normal publish lag (minutes to
+    hours), so anything still missing after a day isn't coming."""
     async with get_session() as session:
         result_rows = (await session.execute(
             select(HistoricalResultRow.tab_number, HistoricalResultRow.position,
@@ -4386,7 +4387,7 @@ async def _settle_bets_for_race(race_id: str) -> int:
             .where(HistoricalResultRow.position.in_([1, 2, 3]))
         )).fetchall()
         if len(result_rows) < 3:
-            # Look up scheduled_time — if the race jumped >48h ago and
+            # Look up scheduled_time — if the race jumped >24h ago and
             # still has <3 results, RA isn't going to publish them. Void
             # the open bets so the Lab ledger doesn't carry phantom
             # 'pending' rows indefinitely.
@@ -4397,7 +4398,7 @@ async def _settle_bets_for_race(race_id: str) -> int:
             try:
                 from datetime import timezone as _tz
                 sched_dt = datetime.fromisoformat(str(sched_row).replace("Z", "+00:00")) if sched_row else None
-                stale = sched_dt is not None and (datetime.utcnow().replace(tzinfo=_tz.utc) - sched_dt).total_seconds() > 48 * 3600
+                stale = sched_dt is not None and (datetime.utcnow().replace(tzinfo=_tz.utc) - sched_dt).total_seconds() > 24 * 3600
             except (ValueError, TypeError):
                 stale = False
             if stale:
