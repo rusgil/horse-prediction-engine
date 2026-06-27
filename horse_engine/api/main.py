@@ -4395,12 +4395,27 @@ async def _settle_bets_for_race(race_id: str) -> int:
                 select(func.max(RunnerPredictionRow.scheduled_time))
                 .where(RunnerPredictionRow.race_id == race_id)
             )).scalar()
+            from datetime import timezone as _tz
+            stale = False
             try:
-                from datetime import timezone as _tz
-                sched_dt = datetime.fromisoformat(str(sched_row).replace("Z", "+00:00")) if sched_row else None
-                stale = sched_dt is not None and (datetime.utcnow().replace(tzinfo=_tz.utc) - sched_dt).total_seconds() > 24 * 3600
+                if sched_row:
+                    sched_dt = datetime.fromisoformat(str(sched_row).replace("Z", "+00:00"))
+                    stale = (datetime.utcnow().replace(tzinfo=_tz.utc) - sched_dt).total_seconds() > 24 * 3600
             except (ValueError, TypeError):
-                stale = False
+                pass
+            # Fallback: parse the YYYY-MM-DD prefix off race_id. Older
+            # RunnerPredictionRows can have NULL scheduled_time but the
+            # race_id always carries the racing date, and "raced two
+            # calendar days ago with no results" is conclusive on its
+            # own.
+            if not stale:
+                try:
+                    date_prefix = race_id.split("_", 1)[0]
+                    race_date = datetime.strptime(date_prefix, "%Y-%m-%d").date()
+                    days_old = (_today_aest() - race_date).days
+                    stale = days_old >= 2
+                except (ValueError, IndexError):
+                    pass
             if stale:
                 from sqlalchemy import update as sa_update
                 upd = (await session.execute(
