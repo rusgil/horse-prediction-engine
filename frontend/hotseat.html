@@ -131,9 +131,15 @@
       align-items: center;
       gap: 4px;
     }
-    /* Tiny info chip next to a filter row label — desktop shows the
-       backtest tooltip on hover, mobile users can tap to focus and the
-       native browser tooltip pops up. */
+    /* Tiny info chip next to a filter row label. Native title="" tooltips
+       don't render on mobile and are slow on desktop, so we use a real
+       popover: hover on desktop, tap to focus on mobile (tap elsewhere
+       blurs and hides). */
+    .filter-info-wrap {
+      position: relative;
+      display: inline-flex;
+      align-items: center;
+    }
     .filter-info {
       display: inline-flex;
       align-items: center; justify-content: center;
@@ -146,8 +152,37 @@
       cursor: help;
       text-transform: none;
       letter-spacing: 0;
+      padding: 0;
     }
-    .filter-info:hover { background: rgba(245,200,66,0.22); color: #f7d56b; }
+    .filter-info:hover, .filter-info:focus { background: rgba(245,200,66,0.22); color: #f7d56b; outline: none; }
+    .filter-info-tip {
+      position: absolute;
+      top: calc(100% + 6px);
+      left: 0;
+      z-index: 200;
+      width: min(300px, calc(100vw - 32px));
+      background: var(--bg-card, #0e1220);
+      color: var(--text-secondary, #c3cee0);
+      border: 1px solid rgba(245,200,66,0.35);
+      border-radius: 10px;
+      padding: 10px 12px;
+      font-size: 12px;
+      font-weight: 400;
+      line-height: 1.45;
+      letter-spacing: 0;
+      text-transform: none;
+      box-shadow: 0 8px 24px rgba(0,0,0,0.35);
+      opacity: 0;
+      pointer-events: none;
+      transform: translateY(-4px);
+      transition: opacity 0.12s ease, transform 0.12s ease;
+    }
+    .filter-info-wrap:hover .filter-info-tip,
+    .filter-info-wrap:focus-within .filter-info-tip {
+      opacity: 1;
+      pointer-events: auto;
+      transform: translateY(0);
+    }
     .filter-pill {
       flex: 0 0 auto;
       padding: 6px 12px;
@@ -916,7 +951,13 @@
       <button class="filter-pill" data-axis="place" data-filter="place70">≥70%</button>
     </div>
     <div class="filter-row">
-      <span class="filter-axis-label" title="Win % gap between the model's rank-1 and rank-2 horse. 60-day backtest: only ≥20pt was historically +EV at flat stake (33.7% win, +2% ROI).">Top-2 gap</span>
+      <span class="filter-axis-label">
+        Top-2 gap
+        <span class="filter-info-wrap">
+          <button type="button" class="filter-info" aria-label="What is Top-2 gap?">ⓘ</button>
+          <span class="filter-info-tip" role="tooltip">Win % gap between the model's rank-1 and rank-2 horse. Bigger gap = clearer favourite. 60-day backtest: only ≥20pt was historically +EV at flat stake (33.7% win, +2% ROI).</span>
+        </span>
+      </span>
       <button class="filter-pill active" data-axis="gap" data-filter="all">All</button>
       <button class="filter-pill" data-axis="gap" data-filter="gap10">≥10pt</button>
       <button class="filter-pill" data-axis="gap" data-filter="gap15">≥15pt</button>
@@ -925,9 +966,10 @@
     <div class="filter-row">
       <span class="filter-axis-label">
         💎 Value
-        <span class="filter-info"
-              tabindex="0"
-              title="Picks where the model gives the rank-1 horse at least 5pt more win chance than the market implies, AND the bookmaker is offering $4–$10. 180-day backtest: 220 races, 19.1% win rate, $5.48 avg winner SP, +32.7% ROI at flat $10 stake. Mid-priced overlays — the model thinks the market has them too long.">ⓘ</span>
+        <span class="filter-info-wrap">
+          <button type="button" class="filter-info" aria-label="What is Value?">ⓘ</button>
+          <span class="filter-info-tip" role="tooltip">Picks where the model gives the rank-1 horse at least 5pt more win chance than the market implies, AND the bookmaker is offering $4–$10. 180-day backtest: 220 races, 19.1% win rate, $5.48 avg winner SP, +32.7% ROI at flat $10 stake. Mid-priced overlays — the model thinks the market has them too long.</span>
+        </span>
       </span>
       <button class="filter-pill active" data-axis="value" data-filter="all">All</button>
       <button class="filter-pill" data-axis="value" data-filter="value5">Edge ≥5pt · $4–10</button>
