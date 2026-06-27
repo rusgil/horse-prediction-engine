@@ -4371,11 +4371,14 @@ async def _fetch_trifecta_dividend(race_id: str) -> Optional[float]:
 async def _settle_bets_for_race(race_id: str) -> int:
     """Settle every unsettled BetRecommendationRow for one race. Returns
     the number of rows updated. No-op if the race has no historical
-    results or no trifecta dividend yet."""
+    results or no trifecta dividend yet.
+
+    If the race is >48h past its scheduled time and still has no top-3
+    results in HistoricalResultRow (RA never published or meeting was
+    abandoned), the open bets are *voided* rather than left pending.
+    Same semantics as a scratched runner — bet doesn't count toward P&L
+    or hit rate."""
     async with get_session() as session:
-        # Top-3 finishers — fetch tab + horse_name so we can backfill
-        # tab_number from the prediction tables when seed didn't capture
-        # it (older HistoricalResultRow rows have tab_number = NULL).
         result_rows = (await session.execute(
             select(HistoricalResultRow.tab_number, HistoricalResultRow.position,
                    HistoricalResultRow.horse_name)
@@ -4383,6 +4386,38 @@ async def _settle_bets_for_race(race_id: str) -> int:
             .where(HistoricalResultRow.position.in_([1, 2, 3]))
         )).fetchall()
         if len(result_rows) < 3:
+            # Look up scheduled_time — if the race jumped >48h ago and
+            # still has <3 results, RA isn't going to publish them. Void
+            # the open bets so the Lab ledger doesn't carry phantom
+            # 'pending' rows indefinitely.
+            sched_row = (await session.execute(
+                select(func.max(RunnerPredictionRow.scheduled_time))
+                .where(RunnerPredictionRow.race_id == race_id)
+            )).scalar()
+            try:
+                from datetime import timezone as _tz
+                sched_dt = datetime.fromisoformat(str(sched_row).replace("Z", "+00:00")) if sched_row else None
+                stale = sched_dt is not None and (datetime.utcnow().replace(tzinfo=_tz.utc) - sched_dt).total_seconds() > 48 * 3600
+            except (ValueError, TypeError):
+                stale = False
+            if stale:
+                from sqlalchemy import update as sa_update
+                upd = (await session.execute(
+                    sa_update(BetRecommendationRow)
+                    .where(BetRecommendationRow.race_id == race_id)
+                    .where(BetRecommendationRow.settled.is_(False))
+                    .values(
+                        settled=True,
+                        voided=True,
+                        is_hit=False,
+                        settled_at=datetime.utcnow(),
+                    )
+                ))
+                await session.commit()
+                voided = upd.rowcount or 0
+                if voided:
+                    log.info("[bets] voided %d stale-no-result rows for %s", voided, race_id)
+                return voided
             return 0
 
         # Some seed paths inserted duplicate rows for the same position
