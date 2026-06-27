@@ -3876,19 +3876,27 @@ async def refresh_edge_results(request: Request):
 
 
 _yesterday_response_cache: dict[str, tuple[datetime, dict]] = {}
-_YESTERDAY_CACHE_TTL = 1800  # 30 min — past dates are stable; only today refreshes
-_YESTERDAY_CACHE_VERSION = 1
+_YESTERDAY_CACHE_TTL = 1800  # 30 min — past dates are stable
+_YESTERDAY_CACHE_TTL_TODAY = 60  # 1 min — today's results land throughout the day
+_YESTERDAY_CACHE_VERSION = 2  # bumped to invalidate stale "all no_result" payloads
+
+
+def _yesterday_cache_ttl(target_date: str) -> int:
+    """Today's results stream in throughout the day; past dates are stable."""
+    return _YESTERDAY_CACHE_TTL_TODAY if target_date == _today_aest().isoformat() else _YESTERDAY_CACHE_TTL
+
 
 @app.get("/api/edge/yesterday")
 async def get_edge_yesterday(for_date: Optional[str] = Query(None, alias="date")):
     """Qualifying picks with actual results and SP odds from Racing Australia.
     Accepts ?date=YYYY-MM-DD (defaults to yesterday)."""
     target_date = for_date or (_today_aest() - timedelta(days=1)).isoformat()
-    # In-memory cache. Past-date results are stable; 30-min TTL is plenty.
+    ttl = _yesterday_cache_ttl(target_date)
+    # In-memory cache. Past-date results are stable; today refreshes every minute.
     cached = _yesterday_response_cache.get(target_date)
     if cached is not None:
         ts, body = cached
-        if (datetime.utcnow() - ts).total_seconds() < _YESTERDAY_CACHE_TTL:
+        if (datetime.utcnow() - ts).total_seconds() < ttl:
             return body
     # Fall through to DB-persisted cache. Survives container redeploys so
     # the first user post-deploy doesn't pay the 10s on-demand-seed cost.
@@ -3900,10 +3908,10 @@ async def get_edge_yesterday(for_date: Optional[str] = Query(None, alias="date")
             )).scalar_one_or_none()
         if row and row.cache_version == _YESTERDAY_CACHE_VERSION:
             age = (datetime.utcnow() - row.updated_at).total_seconds()
-            if age < _YESTERDAY_CACHE_TTL:
+            if age < ttl:
                 body = json.loads(row.payload_json)
                 # Re-populate the in-memory tier so subsequent hits don't
-                # round-trip to Postgres for the next 30 min.
+                # round-trip to Postgres.
                 _yesterday_response_cache[target_date] = (row.updated_at, body)
                 return body
     except Exception as e:
