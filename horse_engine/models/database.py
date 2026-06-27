@@ -351,6 +351,24 @@ class BetRecommendationRow(Base):
     dividend_estimated = Column(Boolean, default=False, nullable=True)
 
 
+class NightlyReviewRow(Base):
+    """One row per (review_date, source). Nightly Python analyser writes
+    source='python' rows; weekly Claude agent writes source='claude' rows.
+    suggestions_json is the canonical list of structured suggestions —
+    each item carries its own id, status, and notes so the admin UI can
+    tick items off independently."""
+    __tablename__ = "nightly_reviews"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    review_date = Column(String, index=True, nullable=False)  # YYYY-MM-DD (date being reviewed)
+    source = Column(String, nullable=False, default="python")  # 'python' | 'claude'
+    summary_markdown = Column(Text, nullable=False, default="")
+    suggestions_json = Column(Text, nullable=False, default="[]")
+    headline_stats_json = Column(Text, nullable=True)  # {top1_win_pct, top3_strike_pct, anomalies_count, ...}
+    created_at = Column(DateTime, default=datetime.utcnow, index=True)
+    updated_at = Column(DateTime, default=datetime.utcnow)
+
+
 async def init_db() -> None:
     import logging as _logging
     _log = _logging.getLogger(__name__)
@@ -414,6 +432,7 @@ async def init_db() -> None:
         "CREATE INDEX IF NOT EXISTS ix_hist_results_jockey ON historical_results (jockey)",
         "CREATE INDEX IF NOT EXISTS ix_hist_results_trainer ON historical_results (trainer)",
         "CREATE INDEX IF NOT EXISTS ix_hist_results_venue ON historical_results (venue)",
+        "CREATE UNIQUE INDEX IF NOT EXISTS uq_nightly_review_date_source ON nightly_reviews (review_date, source)",
     ]
     for stmt in migrations:
         try:

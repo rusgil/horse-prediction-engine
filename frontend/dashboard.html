@@ -155,6 +155,82 @@
     .model-tab:hover { color: var(--text-secondary); }
     .model-tab.active { color: var(--blue); border-bottom-color: var(--blue); }
     .model-tab.exotic.active { color: var(--teal); border-bottom-color: var(--teal); }
+    .model-tab.reviews.active { color: var(--purple-bright); border-bottom-color: var(--purple-bright); }
+
+    /* ── Nightly review styles ─────────────────────────────── */
+    .nr-review { background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius);
+                 margin-bottom: 14px; overflow: hidden; }
+    .nr-review-header { display: flex; align-items: center; justify-content: space-between; gap: 12px;
+                        padding: 14px 16px; cursor: pointer; user-select: none;
+                        background: linear-gradient(180deg, rgba(168,85,247,0.04), transparent); }
+    .nr-review-header:hover { background: linear-gradient(180deg, rgba(168,85,247,0.08), transparent); }
+    .nr-review-date { font-family: 'Barlow Condensed', sans-serif; font-size: 1.05rem; font-weight: 700;
+                      letter-spacing: 0.04em; color: var(--text-primary); }
+    .nr-review-meta { font-size: 0.72rem; color: var(--text-dim); }
+    .nr-source-pill { display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 0.62rem;
+                      font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase;
+                      margin-left: 6px; }
+    .nr-source-pill.python { background: rgba(59,130,246,0.18); color: var(--blue); }
+    .nr-source-pill.claude { background: rgba(168,85,247,0.18); color: var(--purple-bright); }
+    .nr-status-counts { display: flex; gap: 6px; font-size: 0.7rem; }
+    .nr-status-chip { padding: 3px 8px; border-radius: 10px; font-weight: 600; }
+    .nr-status-chip.pending  { background: rgba(245,184,58,0.14); color: var(--gold-light); }
+    .nr-status-chip.assessed { background: rgba(59,130,246,0.14); color: var(--blue); }
+    .nr-status-chip.applied  { background: rgba(34,197,94,0.16);  color: var(--green-bright); }
+    .nr-status-chip.dismissed{ background: rgba(74,90,122,0.20);  color: var(--text-secondary); }
+    .nr-review-body { display: none; padding: 0 16px 16px 16px; border-top: 1px solid var(--border); }
+    .nr-review.open .nr-review-body { display: block; }
+    .nr-headline { margin: 14px 0 16px 0; padding: 10px 12px; background: var(--bg-elevated);
+                   border-radius: var(--radius-sm); font-size: 0.78rem; color: var(--text-secondary); }
+    .nr-headline strong { color: var(--text-primary); font-weight: 700; }
+    .nr-suggestion { background: var(--bg-elevated); border: 1px solid var(--border); border-radius: var(--radius-sm);
+                     padding: 12px 14px; margin-bottom: 10px; }
+    .nr-suggestion.high   { border-left: 3px solid var(--red); }
+    .nr-suggestion.medium { border-left: 3px solid var(--gold-light); }
+    .nr-suggestion.low    { border-left: 3px solid var(--text-dim); }
+    .nr-sug-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px;
+                   margin-bottom: 8px; flex-wrap: wrap; }
+    .nr-sug-title { font-weight: 700; font-size: 0.92rem; color: var(--text-primary); }
+    .nr-sug-pattern { font-family: 'JetBrains Mono', monospace; font-size: 0.65rem; color: var(--text-dim);
+                      margin-top: 2px; }
+    .nr-sug-sev { font-size: 0.62rem; font-weight: 700; padding: 2px 8px; border-radius: 10px;
+                  text-transform: uppercase; letter-spacing: 0.06em; }
+    .nr-sug-sev.high   { background: rgba(239,68,68,0.18);  color: var(--red); }
+    .nr-sug-sev.medium { background: rgba(245,184,58,0.18); color: var(--gold-light); }
+    .nr-sug-sev.low    { background: rgba(74,90,122,0.25);  color: var(--text-secondary); }
+    .nr-sug-body { font-size: 0.8rem; color: var(--text-secondary); line-height: 1.55; }
+    .nr-sug-code { font-family: 'JetBrains Mono', monospace; font-size: 0.7rem; color: var(--text-dim);
+                   margin-top: 6px; }
+    .nr-paste-block { position: relative; margin-top: 10px; background: #07090f; border: 1px solid var(--border);
+                      border-radius: var(--radius-sm); padding: 10px 12px; font-family: 'JetBrains Mono', monospace;
+                      font-size: 0.72rem; color: var(--text-primary); line-height: 1.5;
+                      max-height: 200px; overflow: auto; white-space: pre-wrap; word-break: break-word; }
+    .nr-paste-copy { position: absolute; top: 6px; right: 6px; background: var(--bg-elevated);
+                     border: 1px solid var(--border); color: var(--text-secondary);
+                     padding: 4px 10px; border-radius: 6px; font-size: 0.68rem; cursor: pointer; }
+    .nr-paste-copy:hover { color: var(--text-primary); border-color: var(--purple); }
+    .nr-paste-copy.copied { color: var(--green-bright); border-color: var(--green-bright); }
+    .nr-evidence { margin-top: 8px; font-size: 0.7rem; }
+    .nr-evidence summary { cursor: pointer; color: var(--text-dim); }
+    .nr-evidence pre { margin-top: 6px; padding: 8px; background: #07090f; border-radius: var(--radius-sm);
+                      font-size: 0.65rem; color: var(--text-secondary); overflow: auto; max-height: 180px; }
+    .nr-sug-actions { display: flex; gap: 8px; margin-top: 10px; align-items: center; flex-wrap: wrap; }
+    .nr-action-btn { background: var(--bg-card); border: 1px solid var(--border); color: var(--text-secondary);
+                     padding: 5px 12px; border-radius: 6px; font-size: 0.72rem; cursor: pointer; font-weight: 600; }
+    .nr-action-btn:hover { color: var(--text-primary); border-color: var(--blue); }
+    .nr-action-btn.active.pending  { color: var(--gold-light); border-color: var(--gold-light); background: rgba(245,184,58,0.10); }
+    .nr-action-btn.active.assessed { color: var(--blue);       border-color: var(--blue);       background: rgba(59,130,246,0.10); }
+    .nr-action-btn.active.applied  { color: var(--green-bright);border-color: var(--green-bright);background: rgba(34,197,94,0.12); }
+    .nr-action-btn.active.dismissed{ color: var(--text-secondary); border-color: var(--text-secondary); background: rgba(74,90,122,0.18); }
+    .nr-notes { width: 100%; margin-top: 10px; background: var(--bg-card); border: 1px solid var(--border);
+                color: var(--text-primary); padding: 8px 10px; border-radius: var(--radius-sm); font-family: inherit;
+                font-size: 0.78rem; resize: vertical; min-height: 36px; }
+    .nr-filters { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; margin: 12px 0 16px 0; }
+    .nr-filter-btn { background: var(--bg-card); border: 1px solid var(--border); color: var(--text-secondary);
+                     padding: 6px 12px; border-radius: 6px; font-size: 0.74rem; cursor: pointer; }
+    .nr-filter-btn.active { color: var(--purple-bright); border-color: var(--purple-bright); background: rgba(168,85,247,0.10); }
+    .nr-empty { padding: 30px 16px; text-align: center; color: var(--text-dim); font-size: 0.85rem; }
+    .nr-generate { margin: 0 0 16px 0; display: flex; gap: 10px; flex-wrap: wrap; }
 
     /* ── Section ─────────────────────────────────────────── */
     .section { margin-bottom: 32px; }
@@ -478,9 +554,12 @@
     activeTab = tab;
     document.getElementById('tabWin').classList.toggle('active', tab === 'win');
     document.getElementById('tabExotic').classList.toggle('active', tab === 'exotic');
+    document.getElementById('tabReviews').classList.toggle('active', tab === 'reviews');
     document.getElementById('panelWin').style.display = tab === 'win' ? '' : 'none';
     document.getElementById('panelExotic').style.display = tab === 'exotic' ? '' : 'none';
+    document.getElementById('panelReviews').style.display = tab === 'reviews' ? '' : 'none';
     if (tab === 'exotic' && !exoticBacktestLoaded) loadExoticBacktest();
+    if (tab === 'reviews' && !reviewsLoaded) loadReviews();
   }
 
   let exoticBacktestLoaded = false;
@@ -543,16 +622,19 @@
   }
 
   function renderShell(calData, perfData, analysisData, prodData, premData) {
-    const winContent  = buildWinContent(calData, perfData, analysisData, prodData, premData);
-    const exoContent  = buildExoticPlaceholder();
+    const winContent     = buildWinContent(calData, perfData, analysisData, prodData, premData);
+    const exoContent     = buildExoticPlaceholder();
+    const reviewsContent = buildReviewsPlaceholder();
 
     document.getElementById('dashContent').innerHTML = `
       <div class="model-tabs">
         <button class="model-tab active" id="tabWin" onclick="switchTab('win')">Win &amp; Placement</button>
         <button class="model-tab exotic" id="tabExotic" onclick="switchTab('exotic')">Exotics (beta)</button>
+        <button class="model-tab reviews" id="tabReviews" onclick="switchTab('reviews')">Nightly Reviews</button>
       </div>
       <div id="panelWin">${winContent}</div>
       <div id="panelExotic" style="display:none">${exoContent}</div>
+      <div id="panelReviews" style="display:none">${reviewsContent}</div>
     `;
 
     mountWinCharts(calData, perfData);
@@ -1111,6 +1193,277 @@
           <div class="exotic-placeholder-sub">Click <strong>Run Exotic Backtest</strong> above to train window candidates and run feature ablation. Results will show the best training window and which features drive trifecta box accuracy.</div>
         </div>
       </div>`;
+  }
+
+  /* ═══════════════════════════════════════════════════════
+     NIGHTLY REVIEWS TAB
+  ══════════════════════════════════════════════════════════ */
+
+  let reviewsLoaded = false;
+  let reviewsCache = [];          // list of review summaries from /api/admin/nightly-reviews
+  let openReviews = new Set();    // 'YYYY-MM-DD::python' keys currently expanded
+  let reviewDetails = {};         // key → full review (suggestions)
+  let reviewFilter = 'all';       // 'all' | 'pending' | 'assessed' | 'applied' | 'dismissed'
+
+  function buildReviewsPlaceholder() {
+    return `
+      <div class="nr-generate">
+        <button class="btn" id="nrRunBtn" onclick="generateReviewNow()">Generate Review — Yesterday</button>
+        <input type="date" id="nrGenDate" class="nr-notes" style="width:auto;margin:0;min-height:0;padding:6px 10px"/>
+        <button class="btn" onclick="generateReviewNow(true)">Run for date above</button>
+        <span class="btn-status" id="nrStatus"></span>
+      </div>
+      <div class="nr-filters" id="nrFilters">
+        <span style="font-size:0.72rem;color:var(--text-dim)">Filter:</span>
+        <button class="nr-filter-btn active" data-filter="all"      onclick="setReviewFilter('all')">All</button>
+        <button class="nr-filter-btn"        data-filter="pending"  onclick="setReviewFilter('pending')">Has pending</button>
+        <button class="nr-filter-btn"        data-filter="assessed" onclick="setReviewFilter('assessed')">Has assessed</button>
+        <button class="nr-filter-btn"        data-filter="applied"  onclick="setReviewFilter('applied')">Has applied</button>
+        <button class="nr-filter-btn"        data-filter="dismissed"onclick="setReviewFilter('dismissed')">Has dismissed</button>
+      </div>
+      <div id="nrReviewsList" class="nr-empty">Loading…</div>
+    `;
+  }
+
+  async function loadReviews() {
+    reviewsLoaded = true;
+    try {
+      const url = reviewFilter === 'all'
+        ? `${API}/api/admin/nightly-reviews?limit=60`
+        : `${API}/api/admin/nightly-reviews?limit=60&status_filter=${reviewFilter}`;
+      const res = await fetch(url, { headers: { 'x-cron-secret': adminSecret } });
+      if (!res.ok) {
+        document.getElementById('nrReviewsList').innerHTML =
+          `<div class="nr-empty">Failed to load reviews (${res.status})</div>`;
+        return;
+      }
+      const data = await res.json();
+      reviewsCache = data.reviews || [];
+      renderReviewsList();
+    } catch (e) {
+      document.getElementById('nrReviewsList').innerHTML =
+        `<div class="nr-empty">${e.message}</div>`;
+    }
+  }
+
+  function renderReviewsList() {
+    const wrap = document.getElementById('nrReviewsList');
+    if (!reviewsCache.length) {
+      wrap.className = 'nr-empty';
+      wrap.innerHTML = `No reviews yet. Click <strong>Generate Review — Yesterday</strong> above.`;
+      return;
+    }
+    wrap.className = '';
+    wrap.innerHTML = reviewsCache.map(r => {
+      const key = `${r.review_date}::${r.source}`;
+      const isOpen = openReviews.has(key);
+      const counts = r.status_counts || {};
+      const chips = ['pending','assessed','applied','dismissed']
+        .filter(k => counts[k])
+        .map(k => `<span class="nr-status-chip ${k}">${counts[k]} ${k}</span>`)
+        .join('');
+      const wp = r.headline_stats?.rank1_win_pct;
+      const pp = r.headline_stats?.rank1_place_pct;
+      const races = r.headline_stats?.rank1_races_with_result ?? 0;
+      const headlineLine = races
+        ? `${races} rank-1 races · ${wp?.toFixed(1) ?? '—'}% win · ${pp?.toFixed(1) ?? '—'}% placed`
+        : 'No rank-1 races on this date';
+      return `
+        <div class="nr-review ${isOpen ? 'open' : ''}" id="nr-${key.replace(/[^a-z0-9_-]/gi,'_')}">
+          <div class="nr-review-header" onclick="toggleReview('${key}')">
+            <div>
+              <div class="nr-review-date">${r.review_date}
+                <span class="nr-source-pill ${r.source}">${r.source}</span>
+              </div>
+              <div class="nr-review-meta">${headlineLine}</div>
+            </div>
+            <div style="text-align:right">
+              <div style="font-size:0.72rem;color:var(--text-dim);margin-bottom:6px">${r.suggestion_count} suggestion${r.suggestion_count===1?'':'s'}</div>
+              <div class="nr-status-counts">${chips}</div>
+            </div>
+          </div>
+          <div class="nr-review-body" id="nr-body-${key.replace(/[^a-z0-9_-]/gi,'_')}">
+            ${isOpen ? renderReviewBody(key) : ''}
+          </div>
+        </div>
+      `;
+    }).join('');
+  }
+
+  async function toggleReview(key) {
+    if (openReviews.has(key)) {
+      openReviews.delete(key);
+      renderReviewsList();
+      return;
+    }
+    openReviews.add(key);
+    if (!reviewDetails[key]) {
+      const [date, source] = key.split('::');
+      try {
+        const res = await fetch(`${API}/api/admin/nightly-reviews/${date}?source=${source}`,
+          { headers: { 'x-cron-secret': adminSecret } });
+        if (res.ok) reviewDetails[key] = await res.json();
+      } catch (e) { /* render-time will show placeholder */ }
+    }
+    renderReviewsList();
+  }
+
+  function renderReviewBody(key) {
+    const detail = reviewDetails[key];
+    if (!detail) return `<div class="nr-empty" style="padding:14px">Loading…</div>`;
+    const head = detail.headline_stats || {};
+    const hs = head.rank1_races_with_result
+      ? `<strong>${head.rank1_wins}/${head.rank1_races_with_result}</strong> rank-1 wins
+         (${head.rank1_win_pct?.toFixed(1) ?? '—'}%) ·
+         <strong>${head.rank1_places}</strong> placed (${head.rank1_place_pct?.toFixed(1) ?? '—'}%)`
+      : 'No rank-1 races settled on this date';
+    const suggestions = (detail.suggestions || []).map(renderSuggestion).join('');
+    return `
+      <div class="nr-headline">${hs}</div>
+      ${detail.suggestions?.length ? suggestions : `<div class="nr-empty">No suggestions on this date.</div>`}
+    `;
+  }
+
+  function renderSuggestion(s) {
+    const safeId = (s.id || '').replace(/[^a-z0-9_]/gi,'_');
+    const statuses = ['pending','assessed','applied','dismissed'];
+    const buttons = statuses.map(st =>
+      `<button class="nr-action-btn ${s.status === st ? 'active ' + st : ''}"
+               onclick="setSuggestionStatus('${s.id}', '${st}', this)">${st}</button>`
+    ).join('');
+    const evidence = (s.evidence && s.evidence.length)
+      ? `<details class="nr-evidence"><summary>Evidence (${s.evidence.length})</summary>
+         <pre>${escapeHtml(JSON.stringify(s.evidence, null, 2))}</pre></details>`
+      : '';
+    const codePtr = s.code_pointer
+      ? `<div class="nr-sug-code">→ ${escapeHtml(s.code_pointer)}</div>`
+      : '';
+    return `
+      <div class="nr-suggestion ${s.severity}" id="nr-sug-${safeId}" data-suggestion-id="${escapeAttr(s.id)}">
+        <div class="nr-sug-head">
+          <div>
+            <div class="nr-sug-title">${escapeHtml(s.title)}</div>
+            <div class="nr-sug-pattern">${escapeHtml(s.pattern_id)}</div>
+          </div>
+          <span class="nr-sug-sev ${s.severity}">${s.severity}</span>
+        </div>
+        <div class="nr-sug-body">${escapeHtml(s.rationale)}</div>
+        ${codePtr}
+        ${evidence}
+        <div class="nr-paste-block" id="nr-paste-${safeId}">${escapeHtml(s.paste_prompt || '(no paste prompt)')}<button class="nr-paste-copy" onclick="copyPaste('${safeId}', this)">Copy</button></div>
+        <div class="nr-sug-actions">${buttons}</div>
+        <textarea class="nr-notes" placeholder="Notes — what did you change, what did you measure?"
+                  onchange="updateNotes('${s.id}', this.value)">${escapeHtml(s.notes || '')}</textarea>
+      </div>
+    `;
+  }
+
+  function escapeHtml(s) {
+    if (s == null) return '';
+    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+                     .replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+  }
+  function escapeAttr(s) { return escapeHtml(s).replace(/"/g,'&quot;'); }
+
+  function copyPaste(safeId, btn) {
+    const blk = document.getElementById('nr-paste-' + safeId);
+    if (!blk) return;
+    const text = blk.childNodes[0]?.textContent || blk.innerText || '';
+    navigator.clipboard.writeText(text).then(() => {
+      btn.textContent = 'Copied';
+      btn.classList.add('copied');
+      setTimeout(() => { btn.textContent = 'Copy'; btn.classList.remove('copied'); }, 1500);
+    }).catch(() => { btn.textContent = 'Failed'; });
+  }
+
+  async function setSuggestionStatus(suggestionId, status, btn) {
+    const review = btn.closest('.nr-review');
+    if (!review) return;
+    // Read date + source from the visible header — the DOM id is a sanitised slug, not parseable.
+    const date = review.querySelector('.nr-review-date')?.firstChild?.textContent?.trim();
+    const source = review.querySelector('.nr-source-pill')?.textContent?.trim() || 'python';
+    if (!date) return;
+    try {
+      const res = await fetch(
+        `${API}/api/admin/nightly-reviews/${date}/suggestions/${encodeURIComponent(suggestionId)}?source=${source}`,
+        {
+          method: 'PATCH',
+          headers: { 'x-cron-secret': adminSecret, 'Content-Type': 'application/json' },
+          body: JSON.stringify({ status }),
+        }
+      );
+      if (!res.ok) throw new Error(`${res.status}`);
+      const data = await res.json();
+      // Update local cache so re-render shows the new state.
+      const cacheKey = `${date}::${source}`;
+      if (reviewDetails[cacheKey]) {
+        const idx = reviewDetails[cacheKey].suggestions.findIndex(s => s.id === suggestionId);
+        if (idx >= 0) reviewDetails[cacheKey].suggestions[idx] = data.suggestion;
+      }
+      // Update the parent review's status_counts in the list.
+      await loadReviews();
+    } catch (e) {
+      alert('Failed to update: ' + e.message);
+    }
+  }
+
+  let notesDebounce = {};
+  async function updateNotes(suggestionId, notes) {
+    clearTimeout(notesDebounce[suggestionId]);
+    notesDebounce[suggestionId] = setTimeout(async () => {
+      // Find the parent review.
+      const sugEl = document.querySelector(`[data-suggestion-id="${suggestionId.replace(/"/g,'\\"')}"]`);
+      const review = sugEl?.closest('.nr-review');
+      if (!review) return;
+      const date = review.querySelector('.nr-review-date')?.firstChild?.textContent?.trim();
+      const source = review.querySelector('.nr-source-pill')?.textContent?.trim() || 'python';
+      if (!date) return;
+      try {
+        await fetch(
+          `${API}/api/admin/nightly-reviews/${date}/suggestions/${encodeURIComponent(suggestionId)}?source=${source}`,
+          {
+            method: 'PATCH',
+            headers: { 'x-cron-secret': adminSecret, 'Content-Type': 'application/json' },
+            body: JSON.stringify({ notes }),
+          }
+        );
+      } catch (e) { /* swallow */ }
+    }, 600);
+  }
+
+  function setReviewFilter(f) {
+    reviewFilter = f;
+    document.querySelectorAll('#nrFilters .nr-filter-btn').forEach(b => {
+      b.classList.toggle('active', b.dataset.filter === f);
+    });
+    loadReviews();
+  }
+
+  async function generateReviewNow(useGenDate) {
+    const btn = document.getElementById('nrRunBtn');
+    const status = document.getElementById('nrStatus');
+    const prevLabel = btn.textContent;
+    btn.disabled = true; btn.textContent = 'Running…';
+    status.textContent = '';
+    try {
+      let url = `${API}/api/admin/nightly-reviews/generate`;
+      if (useGenDate) {
+        const d = document.getElementById('nrGenDate').value;
+        if (!d) { status.textContent = 'Pick a date'; btn.disabled = false; btn.textContent = prevLabel; return; }
+        url += `?date=${d}`;
+      }
+      const res = await fetch(url, { method: 'POST', headers: { 'x-cron-secret': adminSecret } });
+      if (!res.ok) throw new Error(`${res.status}`);
+      const data = await res.json();
+      status.textContent = `Generated ${data.suggestions_count} suggestion(s) for ${data.review_date}`;
+      // Reset detail cache for that date so the next open re-fetches.
+      Object.keys(reviewDetails).forEach(k => { if (k.startsWith(data.review_date + '::')) delete reviewDetails[k]; });
+      await loadReviews();
+    } catch (e) {
+      status.textContent = 'Failed: ' + e.message;
+    } finally {
+      btn.disabled = false; btn.textContent = prevLabel;
+    }
   }
 
   async function runExoticBacktest() {

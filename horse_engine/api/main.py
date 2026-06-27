@@ -52,6 +52,7 @@ from horse_engine.models.database import (
     CalibrationRow,
     ExoticBacktestRow,
     HistoricalResultRow,
+    NightlyReviewRow,
     OddsSnapshotRow,
     ResponseCacheRow,
     RunnerPredictionRow,
@@ -66,6 +67,9 @@ from horse_engine.models.database import (
     load_exotic_model_weights,
     save_exotic_model_weights,
     save_race_predictions,
+)
+from horse_engine.analysis.nightly_review import (
+    generate_review as _generate_nightly_review,
 )
 from horse_engine.bets import (
     STRATEGY_GROUP as _STRATEGY_GROUP,
@@ -2328,6 +2332,11 @@ async def lifespan(app: FastAPI):
     # timescale anyway. Sundays at 2am only.
     scheduler.add_job(_scheduled_calibrate,      CronTrigger(day_of_week="sun", hour=2,  minute=0, timezone="Australia/Sydney"))
     scheduler.add_job(_scheduled_exotic_retrain, CronTrigger(hour=3,  minute=0, timezone="Australia/Sydney"))
+    # Nightly review — 02:30 AEST, after the last evening race has settled
+    # but before the morning calibration kicks off. Reviews 'yesterday'
+    # (relative to AEST), persists structured suggestions to the dashboard.
+    scheduler.add_job(_scheduled_nightly_review,
+                      CronTrigger(hour=2, minute=30, timezone="Australia/Sydney"))
     scheduler.add_job(
         _scheduled_odds_snapshot,
         CronTrigger(hour="9-20", minute="0,15,30,45", timezone="Australia/Sydney")
@@ -7048,6 +7057,384 @@ async def place_decisiveness_backtest(
         "by_gap_bucket": out_buckets,
         "cumulative_threshold_test": thresholds,
     }
+
+
+# ─── Nightly review endpoints ─────────────────────────────────────────────
+
+async def _load_applied_pattern_ids(session, before_date: str) -> list[str]:
+    """All pattern_ids previously marked 'applied' — fed to the analyser so
+    it can soft-suppress repeat suggestions."""
+    rows = (await session.execute(
+        select(NightlyReviewRow.suggestions_json)
+        .where(NightlyReviewRow.review_date < before_date)
+    )).fetchall()
+    applied: set = set()
+    for r in rows:
+        try:
+            for s in json.loads(r.suggestions_json or "[]"):
+                if s.get("status") == "applied" and s.get("pattern_id"):
+                    applied.add(s["pattern_id"])
+        except Exception:
+            continue
+    return sorted(applied)
+
+
+async def _run_nightly_review(review_date: date, source: str = "python") -> dict:
+    """Generate + persist a review row. Idempotent on (review_date, source)."""
+    async with get_session() as session:
+        applied = await _load_applied_pattern_ids(session, review_date.isoformat())
+        result = await _generate_nightly_review(session, review_date, applied_pattern_ids=applied)
+
+        existing = (await session.execute(
+            select(NightlyReviewRow)
+            .where(NightlyReviewRow.review_date == review_date.isoformat())
+            .where(NightlyReviewRow.source == source)
+        )).scalar_one_or_none()
+
+        # Preserve per-suggestion status across re-runs: if a prior run already
+        # had this pattern_id in 'assessed'/'applied'/'dismissed', carry the
+        # status + notes forward rather than resetting to pending.
+        if existing:
+            try:
+                prior = {s["pattern_id"]: s for s in json.loads(existing.suggestions_json or "[]")}
+            except Exception:
+                prior = {}
+            for s in result["suggestions"]:
+                p = prior.get(s["pattern_id"])
+                if p and p.get("status") in ("assessed", "applied", "dismissed"):
+                    s["status"] = p["status"]
+                    s["notes"] = p.get("notes", "")
+                    s["applied_at"] = p.get("applied_at")
+                    s["dismissed_reason"] = p.get("dismissed_reason")
+            existing.summary_markdown = result["summary_markdown"]
+            existing.suggestions_json = json.dumps(result["suggestions"])
+            existing.headline_stats_json = json.dumps(result["headline_stats"])
+            existing.updated_at = datetime.utcnow()
+        else:
+            session.add(NightlyReviewRow(
+                review_date=review_date.isoformat(),
+                source=source,
+                summary_markdown=result["summary_markdown"],
+                suggestions_json=json.dumps(result["suggestions"]),
+                headline_stats_json=json.dumps(result["headline_stats"]),
+            ))
+        await session.commit()
+    return result
+
+
+async def _scheduled_nightly_review():
+    """APScheduler job — review yesterday at 02:00 AEST after all racing settled."""
+    yesterday = _today_aest() - timedelta(days=1)
+    log.info("[scheduler] Running nightly review for %s", yesterday.isoformat())
+    try:
+        result = await _run_nightly_review(yesterday, source="python")
+        log.info("[scheduler] Nightly review wrote %d suggestions", len(result["suggestions"]))
+    except Exception as e:
+        log.exception("[scheduler] Nightly review failed: %s", e)
+
+
+@app.post("/api/admin/nightly-reviews/generate")
+async def generate_nightly_review(
+    date: Optional[str] = None,
+    source: str = "python",
+    x_cron_secret: Optional[str] = Header(None),
+):
+    """Run the analyser now for the given date (defaults to yesterday).
+    Idempotent — re-running merges into the same row and preserves the
+    status of any suggestions already triaged."""
+    _check_admin(x_cron_secret)
+    if source not in ("python", "claude"):
+        raise HTTPException(400, "source must be 'python' or 'claude'")
+    if date:
+        _validate_date(date)
+        review_date = datetime.strptime(date, "%Y-%m-%d").date()
+    else:
+        review_date = _today_aest() - timedelta(days=1)
+    result = await _run_nightly_review(review_date, source=source)
+    return {
+        "review_date": review_date.isoformat(),
+        "source": source,
+        "summary_markdown": result["summary_markdown"],
+        "headline_stats": result["headline_stats"],
+        "suggestions_count": len(result["suggestions"]),
+    }
+
+
+@app.get("/api/admin/nightly-reviews")
+async def list_nightly_reviews(
+    limit: int = 60,
+    status_filter: Optional[str] = None,
+    x_cron_secret: Optional[str] = Header(None),
+):
+    """List recent reviews (one row per date+source). If status_filter is
+    set, only return reviews containing at least one suggestion with that
+    status — handy for filtering 'show me everything pending'."""
+    _check_admin(x_cron_secret)
+    limit = max(1, min(int(limit), 365))
+    async with get_session() as session:
+        rows = (await session.execute(
+            select(NightlyReviewRow)
+            .order_by(NightlyReviewRow.review_date.desc(), NightlyReviewRow.source.asc())
+            .limit(limit * 2)  # × 2 because we filter post-fetch
+        )).scalars().all()
+
+    out = []
+    for r in rows:
+        try:
+            suggestions = json.loads(r.suggestions_json or "[]")
+        except Exception:
+            suggestions = []
+        if status_filter and not any(s.get("status") == status_filter for s in suggestions):
+            continue
+        status_counts: dict[str, int] = {}
+        for s in suggestions:
+            status_counts[s.get("status", "pending")] = status_counts.get(s.get("status", "pending"), 0) + 1
+        try:
+            headline = json.loads(r.headline_stats_json or "{}")
+        except Exception:
+            headline = {}
+        out.append({
+            "review_date": r.review_date,
+            "source": r.source,
+            "suggestion_count": len(suggestions),
+            "status_counts": status_counts,
+            "headline_stats": headline,
+            "created_at": r.created_at.isoformat() if r.created_at else None,
+            "updated_at": r.updated_at.isoformat() if r.updated_at else None,
+        })
+        if len(out) >= limit:
+            break
+    return {"reviews": out}
+
+
+@app.get("/api/admin/nightly-reviews/{review_date}")
+async def get_nightly_review(
+    review_date: str,
+    source: str = "python",
+    x_cron_secret: Optional[str] = Header(None),
+):
+    """Full content of one review — markdown summary + every suggestion
+    with its current status, notes, paste-prompt, etc."""
+    _check_admin(x_cron_secret)
+    _validate_date(review_date)
+    if source not in ("python", "claude"):
+        raise HTTPException(400, "source must be 'python' or 'claude'")
+    async with get_session() as session:
+        row = (await session.execute(
+            select(NightlyReviewRow)
+            .where(NightlyReviewRow.review_date == review_date)
+            .where(NightlyReviewRow.source == source)
+        )).scalar_one_or_none()
+    if not row:
+        raise HTTPException(404, "No review for that date+source")
+    try:
+        suggestions = json.loads(row.suggestions_json or "[]")
+    except Exception:
+        suggestions = []
+    try:
+        headline = json.loads(row.headline_stats_json or "{}")
+    except Exception:
+        headline = {}
+    return {
+        "review_date": row.review_date,
+        "source": row.source,
+        "summary_markdown": row.summary_markdown,
+        "headline_stats": headline,
+        "suggestions": suggestions,
+        "created_at": row.created_at.isoformat() if row.created_at else None,
+        "updated_at": row.updated_at.isoformat() if row.updated_at else None,
+    }
+
+
+class _SuggestionPatch(BaseModel):
+    status: Optional[str] = None  # 'pending' | 'assessed' | 'applied' | 'dismissed'
+    notes: Optional[str] = None
+    dismissed_reason: Optional[str] = None
+
+
+@app.patch("/api/admin/nightly-reviews/{review_date}/suggestions/{suggestion_id}")
+async def patch_nightly_suggestion(
+    review_date: str,
+    suggestion_id: str,
+    patch: _SuggestionPatch,
+    source: str = "python",
+    x_cron_secret: Optional[str] = Header(None),
+):
+    """Update the status / notes of a single suggestion. Sets applied_at
+    automatically when transitioning into 'applied'."""
+    _check_admin(x_cron_secret)
+    _validate_date(review_date)
+    if source not in ("python", "claude"):
+        raise HTTPException(400, "source must be 'python' or 'claude'")
+    if patch.status and patch.status not in ("pending", "assessed", "applied", "dismissed"):
+        raise HTTPException(400, "invalid status")
+
+    async with get_session() as session:
+        row = (await session.execute(
+            select(NightlyReviewRow)
+            .where(NightlyReviewRow.review_date == review_date)
+            .where(NightlyReviewRow.source == source)
+        )).scalar_one_or_none()
+        if not row:
+            raise HTTPException(404, "review not found")
+        try:
+            suggestions = json.loads(row.suggestions_json or "[]")
+        except Exception:
+            suggestions = []
+        target = None
+        for s in suggestions:
+            if s.get("id") == suggestion_id:
+                target = s
+                break
+        if target is None:
+            raise HTTPException(404, "suggestion not found in review")
+        if patch.status is not None:
+            target["status"] = patch.status
+            if patch.status == "applied" and not target.get("applied_at"):
+                target["applied_at"] = datetime.utcnow().isoformat()
+            if patch.status != "applied":
+                target["applied_at"] = None
+        if patch.notes is not None:
+            target["notes"] = patch.notes
+        if patch.dismissed_reason is not None:
+            target["dismissed_reason"] = patch.dismissed_reason
+        row.suggestions_json = json.dumps(suggestions)
+        row.updated_at = datetime.utcnow()
+        await session.commit()
+    return {"ok": True, "suggestion": target}
+
+
+class _ClaudeSuggestion(BaseModel):
+    pattern_id: str
+    title: str
+    severity: str = "medium"  # 'high' | 'medium' | 'low'
+    rationale: str
+    paste_prompt: str = ""
+    code_pointer: str = ""
+    evidence: list[dict] = []
+
+
+class _ClaudeReviewSubmit(BaseModel):
+    review_date: str           # YYYY-MM-DD
+    summary_markdown: str
+    headline_stats: dict = {}
+    suggestions: list[_ClaudeSuggestion] = []
+
+
+@app.post("/api/admin/nightly-reviews/submit")
+async def submit_claude_nightly_review(
+    payload: _ClaudeReviewSubmit,
+    x_cron_secret: Optional[str] = Header(None),
+):
+    """Submission endpoint for the weekly Claude agent. The agent does its
+    own analysis (against /api/admin/model-anomalies, /api/admin/bets/*
+    etc.) and POSTs a structured review here. Each suggestion is assigned
+    a stable id of `{pattern_id}__{review_date}` so the dashboard can
+    dedupe across runs. Re-submitting for the same date merges and
+    preserves status (same as the Python /generate endpoint)."""
+    _check_admin(x_cron_secret)
+    _validate_date(payload.review_date)
+    for s in payload.suggestions:
+        if s.severity not in ("high", "medium", "low"):
+            raise HTTPException(400, f"bad severity '{s.severity}' on {s.pattern_id}")
+
+    new_suggestions = [{
+        "id": f"{s.pattern_id}__{payload.review_date}",
+        "pattern_id": s.pattern_id,
+        "title": s.title,
+        "severity": s.severity,
+        "rationale": s.rationale,
+        "evidence": s.evidence,
+        "paste_prompt": s.paste_prompt,
+        "code_pointer": s.code_pointer,
+        "metric_delta": {},
+        "status": "pending",
+        "notes": "",
+        "applied_at": None,
+        "dismissed_reason": None,
+    } for s in payload.suggestions]
+
+    async with get_session() as session:
+        existing = (await session.execute(
+            select(NightlyReviewRow)
+            .where(NightlyReviewRow.review_date == payload.review_date)
+            .where(NightlyReviewRow.source == "claude")
+        )).scalar_one_or_none()
+
+        if existing:
+            try:
+                prior = {s["pattern_id"]: s for s in json.loads(existing.suggestions_json or "[]")}
+            except Exception:
+                prior = {}
+            for s in new_suggestions:
+                p = prior.get(s["pattern_id"])
+                if p and p.get("status") in ("assessed", "applied", "dismissed"):
+                    s["status"] = p["status"]
+                    s["notes"] = p.get("notes", "")
+                    s["applied_at"] = p.get("applied_at")
+                    s["dismissed_reason"] = p.get("dismissed_reason")
+            existing.summary_markdown = payload.summary_markdown
+            existing.suggestions_json = json.dumps(new_suggestions)
+            existing.headline_stats_json = json.dumps(payload.headline_stats)
+            existing.updated_at = datetime.utcnow()
+        else:
+            session.add(NightlyReviewRow(
+                review_date=payload.review_date,
+                source="claude",
+                summary_markdown=payload.summary_markdown,
+                suggestions_json=json.dumps(new_suggestions),
+                headline_stats_json=json.dumps(payload.headline_stats),
+            ))
+        await session.commit()
+    return {"ok": True, "review_date": payload.review_date, "source": "claude",
+            "suggestions_persisted": len(new_suggestions)}
+
+
+@app.get("/api/admin/nightly-reviews/applied/history")
+async def applied_suggestions_history(
+    limit: int = 100,
+    pattern_id: Optional[str] = None,
+    x_cron_secret: Optional[str] = Header(None),
+):
+    """Every suggestion ever marked 'applied' — fed to the weekly Claude
+    agent so it can see what's already shipped. Optional pattern_id filter."""
+    _check_admin(x_cron_secret)
+    limit = max(1, min(int(limit), 500))
+    async with get_session() as session:
+        rows = (await session.execute(
+            select(NightlyReviewRow)
+            .order_by(NightlyReviewRow.review_date.desc())
+            .limit(365)
+        )).scalars().all()
+
+    applied: list[dict] = []
+    for r in rows:
+        try:
+            suggestions = json.loads(r.suggestions_json or "[]")
+        except Exception:
+            continue
+        for s in suggestions:
+            if s.get("status") != "applied":
+                continue
+            if pattern_id and s.get("pattern_id") != pattern_id:
+                continue
+            applied.append({
+                "review_date": r.review_date,
+                "source": r.source,
+                "pattern_id": s.get("pattern_id"),
+                "title": s.get("title"),
+                "applied_at": s.get("applied_at"),
+                "notes": s.get("notes", ""),
+                "code_pointer": s.get("code_pointer", ""),
+            })
+            if len(applied) >= limit:
+                break
+        if len(applied) >= limit:
+            break
+    return {"applied": applied}
+
+
+# ─── /Nightly review endpoints ────────────────────────────────────────────
 
 
 @app.get("/api/admin/model-anomalies")
