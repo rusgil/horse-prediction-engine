@@ -2306,7 +2306,14 @@
     })() : '';
     const valueChip = '';
 
-    const cardStyle = pick.cancelled ? 'opacity:0.55;filter:grayscale(0.4);' : (isPast && result && !result.winner && !result.scratched ? 'opacity:0.75;' : '');
+    // Grey out the whole card when the race was abandoned (pick.cancelled)
+    // OR the rank-1 pick itself was scratched — both mean "no real bet
+    // outcome", so visually they should fade out the same way. A losing
+    // settled race uses a lighter dim so misses are still readable.
+    const isScratched = !!(result && result.scratched);
+    const cardStyle = (pick.cancelled || isScratched)
+      ? 'opacity:0.55;filter:grayscale(0.4);'
+      : (isPast && result && !result.winner ? 'opacity:0.75;' : '');
     const pastAttr  = isPast && result ? 'data-past-result="true"' : '';
 
     return `
