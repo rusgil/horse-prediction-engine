@@ -7496,6 +7496,65 @@ async def applied_suggestions_history(
 # ─── /Nightly review endpoints ────────────────────────────────────────────
 
 
+@app.post("/api/admin/bets/void-stale-noresult")
+async def admin_void_stale_noresult(
+    days_back: int = 2,
+    x_cron_secret: Optional[str] = Header(None),
+):
+    """One-shot void for any unsettled bet whose race is >=days_back days
+    old AND has <3 top-finishers in historical_results. Returns the
+    voided count synchronously — unlike /api/admin/bets/settle which
+    fires asyncio.create_task and swallows errors at log.debug level."""
+    _check_admin(x_cron_secret)
+    days_back = max(1, min(int(days_back), 30))
+    cutoff_date = (_today_aest() - timedelta(days=days_back)).isoformat()
+    voided_per_race: dict[str, int] = {}
+    examined = 0
+    errors = []
+    async with get_session() as session:
+        # Distinct unsettled race_ids whose calendar date is <= cutoff.
+        unsettled_race_ids = (await session.execute(
+            select(BetRecommendationRow.race_id).distinct()
+            .where(BetRecommendationRow.settled.is_(False))
+            .where(BetRecommendationRow.race_id <= f"{cutoff_date}_￿")
+        )).scalars().all()
+        examined = len(unsettled_race_ids)
+
+        for rid in unsettled_race_ids:
+            try:
+                top3 = (await session.execute(
+                    select(HistoricalResultRow.position)
+                    .where(HistoricalResultRow.race_id == rid)
+                    .where(HistoricalResultRow.position.in_([1, 2, 3]))
+                )).fetchall()
+                if len(top3) >= 3:
+                    continue  # has results — normal settle should handle
+                from sqlalchemy import update as sa_update
+                upd = await session.execute(
+                    sa_update(BetRecommendationRow)
+                    .where(BetRecommendationRow.race_id == rid)
+                    .where(BetRecommendationRow.settled.is_(False))
+                    .values(
+                        settled=True,
+                        voided=True,
+                        is_hit=False,
+                        settled_at=datetime.utcnow(),
+                    )
+                )
+                if upd.rowcount:
+                    voided_per_race[rid] = upd.rowcount
+            except Exception as e:
+                errors.append(f"{rid}: {type(e).__name__}: {e}")
+        await session.commit()
+    return {
+        "examined_race_ids": examined,
+        "voided_race_ids": len(voided_per_race),
+        "voided_rows_total": sum(voided_per_race.values()),
+        "voided_per_race": voided_per_race,
+        "errors": errors,
+    }
+
+
 @app.get("/api/admin/horse-history")
 async def admin_horse_history(
     name: str,
