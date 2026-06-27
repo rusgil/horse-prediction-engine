@@ -7496,6 +7496,130 @@ async def applied_suggestions_history(
 # ─── /Nightly review endpoints ────────────────────────────────────────────
 
 
+@app.get("/api/admin/horse-history")
+async def admin_horse_history(
+    name: str,
+    days: int = 90,
+    x_cron_secret: Optional[str] = Header(None),
+):
+    """Every prediction we made for one horse over the last N days, joined
+    with the actual result. Country-code-suffix-insensitive name match
+    (so 'DAKOTA LEE' matches 'DAKOTA LEE (NZ)'). Use when checking how
+    accurate the model has been on a specific runner."""
+    _check_admin(x_cron_secret)
+    days = max(7, min(int(days), 365))
+    cutoff_date = (_today_aest() - timedelta(days=days)).isoformat()
+    norm_target = _normalize_horse(name)
+
+    async with get_session() as session:
+        pred_rows = (await session.execute(
+            select(
+                RunnerPredictionHistoryRow.race_id,
+                RunnerPredictionHistoryRow.horse_name,
+                RunnerPredictionHistoryRow.win_probability,
+                RunnerPredictionHistoryRow.place_probability,
+                RunnerPredictionHistoryRow.model_rank,
+                RunnerPredictionHistoryRow.market_rank,
+                RunnerPredictionHistoryRow.enriched_at,
+                RunnerPredictionHistoryRow.scheduled_time,
+            )
+            .where(RunnerPredictionHistoryRow.race_id >= f"{cutoff_date}_")
+            .where(RunnerPredictionHistoryRow.cancelled.is_(False)
+                   | RunnerPredictionHistoryRow.cancelled.is_(None))
+            .where(RunnerPredictionHistoryRow.source == "live")
+            .order_by(RunnerPredictionHistoryRow.race_id.desc(),
+                      RunnerPredictionHistoryRow.enriched_at.desc())
+        )).fetchall()
+
+        # Filter by normalised name in Python — country-code suffixes vary.
+        matched = [r for r in pred_rows if _normalize_horse(r.horse_name) == norm_target]
+        # Dedupe to latest snapshot per race.
+        seen: set = set()
+        latest = []
+        for r in matched:
+            if r.race_id in seen:
+                continue
+            seen.add(r.race_id)
+            latest.append(r)
+        if not latest:
+            return {"horse_name": name, "days": days, "races": [], "summary": None}
+
+        race_ids = [r.race_id for r in latest]
+        result_rows = (await session.execute(
+            select(HistoricalResultRow.race_id, HistoricalResultRow.horse_name,
+                   HistoricalResultRow.position, HistoricalResultRow.starting_price,
+                   HistoricalResultRow.field_size)
+            .where(HistoricalResultRow.race_id.in_(race_ids))
+        )).fetchall()
+
+    results_by_race: dict[str, dict] = {}
+    for r in result_rows:
+        if _normalize_horse(r.horse_name or "") == norm_target:
+            results_by_race[r.race_id] = {
+                "position": r.position,
+                "starting_price": float(r.starting_price or 0),
+                "field_size": r.field_size,
+            }
+
+    out_races = []
+    rank1_picks = 0
+    rank1_wins = 0
+    rank1_placed = 0
+    rank1_with_result = 0
+    any_wins = 0
+    any_placed = 0
+    any_with_result = 0
+    for r in latest:
+        actual = results_by_race.get(r.race_id, {})
+        pos = actual.get("position")
+        actually_won = pos == 1
+        actually_placed = bool(pos and pos <= 3)
+        out_races.append({
+            "race_id": r.race_id,
+            "model_pct": round((r.win_probability or 0) * 100, 1),
+            "model_rank": r.model_rank,
+            "market_rank": r.market_rank,
+            "position": pos,
+            "starting_price": actual.get("starting_price") or None,
+            "field_size": actual.get("field_size"),
+            "won": actually_won,
+            "placed": actually_placed,
+            "scheduled_time": r.scheduled_time,
+        })
+        if pos is not None and pos > 0:
+            any_with_result += 1
+            if actually_won:
+                any_wins += 1
+            if actually_placed:
+                any_placed += 1
+            if r.model_rank == 1:
+                rank1_with_result += 1
+                if actually_won:
+                    rank1_wins += 1
+                if actually_placed:
+                    rank1_placed += 1
+        if r.model_rank == 1:
+            rank1_picks += 1
+
+    return {
+        "horse_name": name,
+        "days": days,
+        "races": out_races,
+        "summary": {
+            "total_races_predicted": len(out_races),
+            "rank1_picks": rank1_picks,
+            "rank1_with_result": rank1_with_result,
+            "rank1_wins": rank1_wins,
+            "rank1_placed": rank1_placed,
+            "rank1_win_pct": round(rank1_wins / rank1_with_result * 100, 1) if rank1_with_result else None,
+            "rank1_place_pct": round(rank1_placed / rank1_with_result * 100, 1) if rank1_with_result else None,
+            "any_with_result": any_with_result,
+            "any_wins": any_wins,
+            "any_placed": any_placed,
+        },
+    }
+
+
 @app.get("/api/admin/model-anomalies")
 async def model_anomalies(
     days: int = 90,
