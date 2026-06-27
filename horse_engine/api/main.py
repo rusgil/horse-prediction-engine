@@ -7496,6 +7496,28 @@ async def applied_suggestions_history(
 # ─── /Nightly review endpoints ────────────────────────────────────────────
 
 
+@app.get("/api/admin/inspect-historical-results")
+async def admin_inspect_historical_results(
+    race_id: str,
+    x_cron_secret: Optional[str] = Header(None),
+):
+    """Dump every HistoricalResultRow for one race_id. Debug aid."""
+    _check_admin(x_cron_secret)
+    async with get_session() as session:
+        rows = (await session.execute(
+            select(HistoricalResultRow.position, HistoricalResultRow.horse_name,
+                   HistoricalResultRow.tab_number, HistoricalResultRow.starting_price)
+            .where(HistoricalResultRow.race_id == race_id)
+        )).fetchall()
+    return {
+        "race_id": race_id,
+        "row_count": len(rows),
+        "rows": [{"position": r.position, "horse": r.horse_name,
+                  "tab": r.tab_number, "sp": float(r.starting_price or 0)} for r in rows],
+        "top3_count": sum(1 for r in rows if r.position in (1, 2, 3)),
+    }
+
+
 @app.post("/api/admin/bets/void-stale-noresult")
 async def admin_void_stale_noresult(
     days_back: int = 2,
