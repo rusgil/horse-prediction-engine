@@ -8143,6 +8143,271 @@ async def going_calibration(
     }
 
 
+@app.get("/api/admin/bets/lab-winner-vs-loser-features")
+async def lab_winner_vs_loser_features(
+    days: int = 14,
+    include_races: bool = True,
+    include_backfill: bool = False,
+    x_cron_secret: Optional[str] = Header(None),
+):
+    """Lab-Sharp equivalent of /winner-vs-loser-features.
+
+    Scope: races that pass the Lab Sharp gate (top-3 sum ≤55% AND
+    field_size ≤11) over the last N days. Outcome: did our predicted
+    top-3 box contain the actual top-3 finishers (in any order)?
+
+    For each per-race numerical feature, reports mean / median between
+    hits and misses with `loser_minus_winner` = misses_mean − hits_mean.
+    For each categorical feature, reports hit rate per category. Large
+    abs_lift values are candidates for a new Lab Sharp gate (e.g.,
+    `lab_sharp_exclude_<slice>`).
+
+    Per the 'keep it sharp' rule, the analyser only surfaces TIGHTENING
+    candidates — slices to exclude from Lab Sharp. The recommendation
+    layer can be wired to refuse loosening suggestions.
+    """
+    _check_admin(x_cron_secret)
+    days = max(1, min(int(days), 365))
+    cutoff_date = (_today_aest() - timedelta(days=days)).isoformat()
+
+    async with get_session() as session:
+        # Pull top-3 predictions per race (rank 1-3, cancelled excluded)
+        pred_rows = (await session.execute(
+            select(
+                RunnerPredictionHistoryRow.race_id,
+                RunnerPredictionHistoryRow.horse_name,
+                RunnerPredictionHistoryRow.win_probability,
+                RunnerPredictionHistoryRow.model_rank,
+                RunnerPredictionHistoryRow.market_rank,
+                RunnerPredictionHistoryRow.enriched_json,
+                RunnerPredictionHistoryRow.enriched_at,
+            )
+            .where(RunnerPredictionHistoryRow.race_id >= f"{cutoff_date}_")
+            .where(RunnerPredictionHistoryRow.model_rank.in_([1, 2, 3]))
+            .where(RunnerPredictionHistoryRow.cancelled.is_(False)
+                   | RunnerPredictionHistoryRow.cancelled.is_(None))
+            .where(RunnerPredictionHistoryRow.source.in_(("live", "backfill"))
+                   if include_backfill else RunnerPredictionHistoryRow.source == "live")
+            .order_by(RunnerPredictionHistoryRow.enriched_at.desc())
+        )).fetchall()
+        # Field-size lookup — distinct uncancelled runners per race
+        field_rows = (await session.execute(
+            select(RunnerPredictionHistoryRow.race_id, RunnerPredictionHistoryRow.horse_name)
+            .where(RunnerPredictionHistoryRow.race_id >= f"{cutoff_date}_")
+            .where(RunnerPredictionHistoryRow.cancelled.is_(False)
+                   | RunnerPredictionHistoryRow.cancelled.is_(None))
+            .where(RunnerPredictionHistoryRow.source.in_(("live", "backfill"))
+                   if include_backfill else RunnerPredictionHistoryRow.source == "live")
+        )).fetchall()
+        result_rows = (await session.execute(
+            select(HistoricalResultRow.race_id, HistoricalResultRow.horse_name,
+                   HistoricalResultRow.position, HistoricalResultRow.starting_price)
+            .where(HistoricalResultRow.race_id >= f"{cutoff_date}_")
+            .where(HistoricalResultRow.position.in_([1, 2, 3]))
+        )).fetchall()
+
+    # Field size per race (distinct horses)
+    field_size_by_race: dict[str, set] = {}
+    for r in field_rows:
+        field_size_by_race.setdefault(r.race_id, set()).add(_normalize_horse(r.horse_name))
+    field_size_by_race = {k: len(v) for k, v in field_size_by_race.items()}
+
+    # Latest snapshot per (race, horse, rank). Build top-3 box per race.
+    seen: set = set()
+    top3_by_race: dict[str, list[dict]] = {}
+    for r in pred_rows:
+        key = (r.race_id, _normalize_horse(r.horse_name))
+        if key in seen:
+            continue
+        seen.add(key)
+        try:
+            enr = json.loads(r.enriched_json) if r.enriched_json else {}
+        except Exception:
+            enr = {}
+        top3_by_race.setdefault(r.race_id, []).append({
+            "horse_norm": _normalize_horse(r.horse_name),
+            "horse_name": r.horse_name,
+            "win_prob": float(r.win_probability or 0),
+            "model_rank": r.model_rank,
+            "market_rank": r.market_rank,
+            "enr": enr,
+        })
+    # Sort by rank, keep first 3
+    for rid, runners in top3_by_race.items():
+        runners.sort(key=lambda x: x["model_rank"] or 99)
+        top3_by_race[rid] = runners[:3]
+
+    # Actual top-3 finishers per race
+    actual_top3: dict[str, set] = {}
+    for r in result_rows:
+        if r.position and r.position in (1, 2, 3):
+            actual_top3.setdefault(r.race_id, set()).add(
+                _normalize_horse(r.horse_name or "")
+            )
+
+    # Build per-race records
+    races: list[dict] = []
+    for rid, top3 in top3_by_race.items():
+        if len(top3) < 3:
+            continue
+        field_size = field_size_by_race.get(rid, 0)
+        top3_sum = sum(r["win_prob"] for r in top3) * 100
+        # Lab Sharp gate: top-3 ≤55% AND field ≤11
+        if top3_sum > 55 or field_size > 11:
+            continue
+        actual = actual_top3.get(rid)
+        if not actual or len(actual) < 3:
+            continue
+        predicted = {r["horse_norm"] for r in top3}
+        # Trifecta box HIT: all 3 actual top-3 are in our predicted top-3.
+        # (For a 3-horse box, that means our top-3 == actual top-3 as sets.)
+        hit = actual.issubset(predicted)
+        rank1, rank2, rank3 = top3[0], top3[1], top3[2]
+        # Per-race features
+        days_off = [r["enr"].get("days_since_last_run") for r in top3]
+        days_off_valid = [d for d in days_off if isinstance(d, (int, float))]
+        form = [r["enr"].get("form_score") for r in top3]
+        form_valid = [f for f in form if isinstance(f, (int, float))]
+        starts10 = [r["enr"].get("starts_last_10") for r in top3]
+        starts10_valid = [s for s in starts10 if isinstance(s, (int, float))]
+        market_aligned_count = sum(
+            1 for r in top3 if isinstance(r.get("market_rank"), int) and r["market_rank"] <= 3
+        )
+        rank1_pct = rank1["win_prob"] * 100
+        rank2_pct = rank2["win_prob"] * 100
+        rank3_pct = rank3["win_prob"] * 100
+        rank1_rank2_gap = rank1_pct - rank2_pct
+        rank2_rank3_gap = rank2_pct - rank3_pct
+        # Race-level context (from rank-1's enriched_json)
+        enr1 = rank1["enr"]
+        races.append({
+            "race_id": rid,
+            "hit": hit,
+            "field_size": field_size,
+            "top3_sum_pct": round(top3_sum, 2),
+            "rank1_pct": round(rank1_pct, 2),
+            "rank2_pct": round(rank2_pct, 2),
+            "rank3_pct": round(rank3_pct, 2),
+            "rank1_rank2_gap_pp": round(rank1_rank2_gap, 2),
+            "rank2_rank3_gap_pp": round(rank2_rank3_gap, 2),
+            "avg_days_off_top3": round(sum(days_off_valid)/len(days_off_valid), 1) if days_off_valid else None,
+            "max_days_off_top3": max(days_off_valid) if days_off_valid else None,
+            "avg_form_top3": round(sum(form_valid)/len(form_valid), 3) if form_valid else None,
+            "avg_starts10_top3": round(sum(starts10_valid)/len(starts10_valid), 1) if starts10_valid else None,
+            "market_aligned_top3_count": market_aligned_count,
+            "track_condition_category": enr1.get("track_condition_category"),
+            "distance_aptitude": enr1.get("distance_aptitude"),
+            "distance": enr1.get("distance") or enr1.get("race_distance"),
+        })
+
+    if not races:
+        return {"days": days, "lab_eligible_races": 0,
+                "note": "no settled Lab-Sharp eligible races in window"}
+
+    hits = [r for r in races if r["hit"]]
+    misses = [r for r in races if not r["hit"]]
+    n = len(races)
+
+    # Numerical breakdown
+    NUMERICAL_FEATURES = [
+        "field_size", "top3_sum_pct", "rank1_pct", "rank2_pct", "rank3_pct",
+        "rank1_rank2_gap_pp", "rank2_rank3_gap_pp",
+        "avg_days_off_top3", "max_days_off_top3",
+        "avg_form_top3", "avg_starts10_top3",
+        "market_aligned_top3_count", "distance",
+    ]
+    CATEGORICAL_FEATURES = ["track_condition_category", "distance_aptitude"]
+
+    def _vals(cohort: list[dict], feat: str) -> list[float]:
+        return [r[feat] for r in cohort if isinstance(r.get(feat), (int, float))]
+
+    def _stats(vals: list[float]) -> dict:
+        if not vals:
+            return {"n": 0, "mean": None, "median": None}
+        s = sorted(vals)
+        m = sum(s) / len(s)
+        median = s[len(s)//2] if len(s) % 2 else (s[len(s)//2-1] + s[len(s)//2]) / 2
+        return {"n": len(vals), "mean": round(m, 4), "median": round(median, 4)}
+
+    feature_breakdown = []
+    for feat in NUMERICAL_FEATURES:
+        hit_stats = _stats(_vals(hits, feat))
+        miss_stats = _stats(_vals(misses, feat))
+        if hit_stats["mean"] is None or miss_stats["mean"] is None:
+            continue
+        lift = round(miss_stats["mean"] - hit_stats["mean"], 4)
+        feature_breakdown.append({
+            "feature": feat,
+            "hit": hit_stats,
+            "miss": miss_stats,
+            "miss_minus_hit": lift,
+            "abs_lift": abs(lift),
+        })
+    feature_breakdown.sort(key=lambda f: -f["abs_lift"])
+
+    categorical_breakdown = []
+    for feat in CATEGORICAL_FEATURES:
+        counts: dict[str, dict] = {}
+        for r in races:
+            v = r.get(feat)
+            if v is None:
+                continue
+            key = str(v)
+            d = counts.setdefault(key, {"n": 0, "hits": 0})
+            d["n"] += 1
+            if r["hit"]:
+                d["hits"] += 1
+        cats = []
+        for cat, d in counts.items():
+            if d["n"] < 3:
+                continue
+            cats.append({
+                "category": cat,
+                "n": d["n"],
+                "hit_pct": round(d["hits"] / d["n"] * 100, 1),
+            })
+        cats.sort(key=lambda c: -c["hit_pct"])
+        if cats:
+            categorical_breakdown.append({"feature": feat, "categories": cats})
+
+    # Tightening-only candidate refinements: only suggest excluding the
+    # *worse* side of the split (i.e., the side closer to the miss mean).
+    refinements = []
+    for f in feature_breakdown[:8]:
+        if f["hit"]["n"] < 5 or f["miss"]["n"] < 5:
+            continue
+        direction = "lower" if f["miss_minus_hit"] > 0 else "higher"
+        worse_mean = f["miss"]["mean"]
+        refinements.append({
+            "feature": f["feature"],
+            "observation": (
+                f"Trifecta-hit races average {f['hit']['mean']} ({f['hit']['n']} samples). "
+                f"Miss races average {f['miss']['mean']} ({f['miss']['n']} samples). "
+                f"Hits tend to be {direction} on this feature."
+            ),
+            "candidate_gate": (
+                f"Consider excluding Lab Sharp races where {f['feature']} is closer to "
+                f"the miss mean ({worse_mean}). Pattern_id: "
+                f"`lab_sharp_exclude_{f['feature']}_drift`."
+            ),
+        })
+
+    response = {
+        "days": days,
+        "include_backfill": include_backfill,
+        "lab_eligible_races": n,
+        "hits": len(hits),
+        "misses": len(misses),
+        "hit_pct": round(len(hits) / n * 100, 1) if n else 0,
+        "numerical_features_ranked": feature_breakdown,
+        "categorical_features": categorical_breakdown,
+        "candidate_refinements": refinements[:5],
+    }
+    if include_races:
+        response["per_race_detail"] = races
+    return response
+
+
 @app.get("/api/admin/bets/winner-vs-loser-features")
 async def winner_vs_loser_features(
     days: int = 1,
