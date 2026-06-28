@@ -71,6 +71,9 @@ from horse_engine.models.database import (
 from horse_engine.analysis.nightly_review import (
     generate_review as _generate_nightly_review,
 )
+from horse_engine.analysis.weekly_review import (
+    generate_weekly_review as _generate_weekly_review,
+)
 from horse_engine.bets import (
     STRATEGY_GROUP as _STRATEGY_GROUP,
     STRATEGY_GROUP_LABELS as _STRATEGY_GROUP_LABELS,
@@ -2337,6 +2340,12 @@ async def lifespan(app: FastAPI):
     # (relative to AEST), persists structured suggestions to the dashboard.
     scheduler.add_job(_scheduled_nightly_review,
                       CronTrigger(hour=2, minute=30, timezone="Australia/Sydney"))
+    # Weekly review — 03:00 AEST every Monday. Reviews the past 7 days
+    # (Mon→Sun) and writes a separate NightlyReviewRow with source='weekly'.
+    # Detectors use week-sized denominators (more credible signal than the
+    # nightly's single-day window).
+    scheduler.add_job(_scheduled_weekly_review,
+                      CronTrigger(day_of_week="mon", hour=3, minute=0, timezone="Australia/Sydney"))
     scheduler.add_job(
         _scheduled_odds_snapshot,
         CronTrigger(hour="9-20", minute="0,15,30,45", timezone="Australia/Sydney")
@@ -7192,6 +7201,85 @@ async def _scheduled_nightly_review():
         log.exception("[scheduler] Nightly review failed: %s", e)
 
 
+async def _run_weekly_review(end_date: date) -> dict:
+    """Generate + persist a weekly review row. Idempotent on review_date+source='weekly'."""
+    async with get_session() as session:
+        applied = await _load_applied_pattern_ids(session, end_date.isoformat())
+        result = await _generate_weekly_review(session, end_date, applied_pattern_ids=applied)
+
+        existing = (await session.execute(
+            select(NightlyReviewRow)
+            .where(NightlyReviewRow.review_date == end_date.isoformat())
+            .where(NightlyReviewRow.source == "weekly")
+        )).scalar_one_or_none()
+
+        # Preserve per-suggestion triage state across re-runs (same as
+        # nightly).
+        if existing:
+            try:
+                prior = {s["pattern_id"]: s for s in json.loads(existing.suggestions_json or "[]")}
+            except Exception:
+                prior = {}
+            for s in result["suggestions"]:
+                p = prior.get(s["pattern_id"])
+                if p and p.get("status") in ("assessed", "applied", "dismissed"):
+                    s["status"] = p["status"]
+                    s["notes"] = p.get("notes", "")
+                    s["applied_at"] = p.get("applied_at")
+                    s["dismissed_reason"] = p.get("dismissed_reason")
+            existing.summary_markdown = result["summary_markdown"]
+            existing.suggestions_json = json.dumps(result["suggestions"])
+            existing.headline_stats_json = json.dumps(result["headline_stats"])
+            existing.updated_at = datetime.utcnow()
+        else:
+            session.add(NightlyReviewRow(
+                review_date=end_date.isoformat(),
+                source="weekly",
+                summary_markdown=result["summary_markdown"],
+                suggestions_json=json.dumps(result["suggestions"]),
+                headline_stats_json=json.dumps(result["headline_stats"]),
+            ))
+        await session.commit()
+    return result
+
+
+async def _scheduled_weekly_review():
+    """APScheduler job — review the past 7 days every Monday at 03:00 AEST.
+    end_date is set to yesterday (= last Sunday), so the review window is
+    Mon→Sun ending the day before the cron fires."""
+    end_date = _today_aest() - timedelta(days=1)
+    log.info("[scheduler] Running weekly review for week ending %s", end_date.isoformat())
+    try:
+        result = await _run_weekly_review(end_date)
+        log.info("[scheduler] Weekly review wrote %d suggestions", len(result["suggestions"]))
+    except Exception as e:
+        log.exception("[scheduler] Weekly review failed: %s", e)
+
+
+@app.post("/api/admin/weekly-reviews/generate")
+async def generate_weekly_review_endpoint(
+    end_date: Optional[str] = None,
+    x_cron_secret: Optional[str] = Header(None),
+):
+    """Run the weekly analyser now. `end_date` defaults to yesterday
+    (= last Sunday if fired Monday morning). Idempotent — merging into
+    an existing weekly row preserves prior triage state."""
+    _check_admin(x_cron_secret)
+    if end_date:
+        _validate_date(end_date)
+        target = datetime.strptime(end_date, "%Y-%m-%d").date()
+    else:
+        target = _today_aest() - timedelta(days=1)
+    result = await _run_weekly_review(target)
+    return {
+        "review_date": target.isoformat(),
+        "source": "weekly",
+        "summary_markdown": result["summary_markdown"],
+        "headline_stats": result["headline_stats"],
+        "suggestions_count": len(result["suggestions"]),
+    }
+
+
 @app.post("/api/admin/nightly-reviews/generate")
 async def generate_nightly_review(
     date: Optional[str] = None,
@@ -7202,8 +7290,8 @@ async def generate_nightly_review(
     Idempotent — re-running merges into the same row and preserves the
     status of any suggestions already triaged."""
     _check_admin(x_cron_secret)
-    if source not in ("python", "claude"):
-        raise HTTPException(400, "source must be 'python' or 'claude'")
+    if source not in ("python", "claude", "weekly"):
+        raise HTTPException(400, "source must be 'python', 'claude', or 'weekly'")
     if date:
         _validate_date(date)
         review_date = datetime.strptime(date, "%Y-%m-%d").date()
@@ -7276,8 +7364,8 @@ async def get_nightly_review(
     with its current status, notes, paste-prompt, etc."""
     _check_admin(x_cron_secret)
     _validate_date(review_date)
-    if source not in ("python", "claude"):
-        raise HTTPException(400, "source must be 'python' or 'claude'")
+    if source not in ("python", "claude", "weekly"):
+        raise HTTPException(400, "source must be 'python', 'claude', or 'weekly'")
     async with get_session() as session:
         row = (await session.execute(
             select(NightlyReviewRow)
@@ -7323,8 +7411,8 @@ async def patch_nightly_suggestion(
     automatically when transitioning into 'applied'."""
     _check_admin(x_cron_secret)
     _validate_date(review_date)
-    if source not in ("python", "claude"):
-        raise HTTPException(400, "source must be 'python' or 'claude'")
+    if source not in ("python", "claude", "weekly"):
+        raise HTTPException(400, "source must be 'python', 'claude', or 'weekly'")
     if patch.status and patch.status not in ("pending", "assessed", "applied", "dismissed"):
         raise HTTPException(400, "invalid status")
 
