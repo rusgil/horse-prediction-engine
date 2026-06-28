@@ -2689,7 +2689,7 @@ _edge_odds_cache: dict[str, tuple[datetime, dict[str, float]]] = {}  # race_id �
 _EDGE_RESPONSE_TTL = 120
 # Bump _EDGE_CACHE_VERSION whenever threshold or response shape changes so
 # old cached responses are invalidated on deploy without a manual restart.
-_EDGE_CACHE_VERSION = 9  # 2026-06-25: two_funk.recommend gates on EV > 0
+_EDGE_CACHE_VERSION = 10  # 2026-06-29: is_sharp now requires days_off ≤ 180
 _edge_response_cache: tuple[datetime, dict, int] | None = None
 
 # Cache full list_meetings response for 10 min (weather + RA calls are expensive)
@@ -3363,6 +3363,15 @@ async def get_edge_picks():
             wins_last_10 = enriched_json_payload.get("wins_last_10")
             places_last_10 = enriched_json_payload.get("places_last_10")
             starts_last_10 = enriched_json_payload.get("starts_last_10")
+            days_since_last_run = enriched_json_payload.get("days_since_last_run")
+            # Server-computed is_sharp flag — single source of truth for the
+            # Sharp niche across all surfaces (Edge / Hot Seat / Lounge).
+            # Gates: (model_pct ≥30 OR top-3 sum ≥60) AND days_off ≤180.
+            field_top3 = (field_map.get(runner_row.race_id, []) or [])[:3]
+            top3_sum_pct = sum(f.get("win_pct") or 0 for f in field_top3)
+            _high_conf = (model_pct or 0) >= 30 or top3_sum_pct >= 60
+            _layoff_ok = not (isinstance(days_since_last_run, (int, float)) and days_since_last_run > 180)
+            is_sharp = bool(_high_conf and _layoff_ok)
 
             picks.append({
                 "date": target_date,
@@ -3398,6 +3407,9 @@ async def get_edge_picks():
                 "wins_last_10": wins_last_10,
                 "places_last_10": places_last_10,
                 "starts_last_10": starts_last_10,
+                "days_since_last_run": days_since_last_run,
+                "is_sharp": is_sharp,
+                "top3_sum_pct": round(top3_sum_pct, 1),
                 "trifecta": trifecta,
                 "hedge": hedge,
                 "two_funk": two_funk,
@@ -15720,12 +15732,29 @@ async def performance_summary(
                 if p is None:
                     continue
                 top3_by_race[rid] = top3_by_race.get(rid, 0) + float(p) * 100
+            # Sharp filter gates:
+            #   - rank-1 model_pct ≥ 30 OR top-3 sum ≥ 60 (high-conviction race)
+            #   - AND days_since_last_run ≤ 180 (long-layoff horses don't qualify)
+            # The layoff exclusion came from the 2026-06-28 weekly review:
+            # over the last 7 days, Sharp picks with >180d off lost 82.8% of
+            # the time (29 picks). Removing them lifted Sharp win-rate from
+            # 30.9% to 41.0% on the same sample. See pattern_id
+            # `edge_sharp_exclude_long_layoff_180d`.
             keep: dict[str, RunnerPredictionHistoryRow] = {}
             for rid, pick in top_picks.items():
                 rank1_pct = (pick.win_probability or 0) * 100
                 t3_sum = top3_by_race.get(rid, 0)
-                if rank1_pct >= 30 or t3_sum >= 60:
-                    keep[rid] = pick
+                if not (rank1_pct >= 30 or t3_sum >= 60):
+                    continue
+                # days_since_last_run check — pulled from enriched_json
+                try:
+                    enriched = json.loads(pick.enriched_json) if pick.enriched_json else {}
+                except Exception:
+                    enriched = {}
+                days_off = enriched.get("days_since_last_run")
+                if isinstance(days_off, (int, float)) and days_off > 180:
+                    continue  # long-layoff horse — excluded from Sharp niche
+                keep[rid] = pick
             top_picks = keep
 
     # Winner per race (position==1) — used for accurate act_won comparison

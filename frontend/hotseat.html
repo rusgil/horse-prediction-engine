@@ -1048,11 +1048,22 @@
     return edge >= minEdge && odds >= 4.0 && odds <= 10.0;
   }
 
-  // Sharp = high-confidence niche AND market hasn't already priced it in.
-  // - Confidence: model_pct ≥ 30 OR top-3 sum ≥ 60 (concentrated race)
-  // - Edge: edge_pct ≥ 0 (or unknown). Filters out cases like CRYOSEISMS
-  //   at $1.75 with -9.5pt edge — model is confident but market is sharper.
+  // Sharp = high-confidence niche AND market hasn't already priced it in
+  // AND the horse isn't on a >180d layoff. Server now ships `p.is_sharp`
+  // as a single source of truth; the local fallback below is kept for
+  // backward compatibility during deploys when older /api/edge payloads
+  // are still in cache.
+  //   Gates:
+  //   - Confidence: model_pct ≥ 30 OR top-3 sum ≥ 60 (concentrated race)
+  //   - Edge: edge_pct ≥ 0 (or unknown). Filters out cases like
+  //     CRYOSEISMS at $1.75 with -9.5pt edge — model confident, market sharper.
+  //   - Layoff: days_since_last_run ≤ 180. Long-layoff Sharp picks lost
+  //     83% of the time across 2026-06-22→28 (pattern_id
+  //     `edge_sharp_exclude_long_layoff_180d`).
   function isSharpPick(p) {
+    const edge = p.edge_pct;
+    const edgeOk = edge == null || edge >= 0;
+    if (typeof p.is_sharp === 'boolean') return p.is_sharp && edgeOk;
     const modelPct = p.model_pct || 0;
     const field = p.field || [];
     const top3Sum = field
@@ -1061,9 +1072,9 @@
       .slice(0, 3)
       .reduce((s, f) => s + (f.win_pct || 0), 0);
     const confident = modelPct >= 30 || top3Sum >= 60;
-    const edge = p.edge_pct;
-    const edgeOk = edge == null || edge >= 0;
-    return confident && edgeOk;
+    const daysOff = p.days_since_last_run;
+    const layoffOk = daysOff == null || daysOff <= 180;
+    return confident && edgeOk && layoffOk;
   }
 
   // Display-only aliases for venue labels. Slug stays the same in the DB

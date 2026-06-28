@@ -2569,11 +2569,18 @@
     section.style.display = '';
   }
 
-  // Sharp niche — historical 30-35% win rate vs 16-20% baseline. A
-  // pick qualifies if model_pct ≥30 OR top-3 sum ≥60% (race is
-  // concentrated). The niche-analysis backtest showed these two
-  // signals each lift win rate +10-18 points.
+  // Sharp niche — historical 30-35% win rate vs 16-20% baseline.
+  // Server now ships `p.is_sharp` as the single source of truth (combines
+  // high-confidence + days_off ≤180 gate). Local fallback retained for
+  // backward compat during deploy crossover.
+  //   Gates: (model_pct ≥30 OR top-3 sum ≥60) AND days_since_last_run ≤180.
+  //   Layoff exclusion: pattern_id `edge_sharp_exclude_long_layoff_180d`
+  //   (weekly review 2026-06-28: long-layoff Sharp picks lost 83%).
   function isSharpEdgePick(p) {
+    if (typeof p.is_sharp === 'boolean') return p.is_sharp;
+    const daysOff = p.days_since_last_run;
+    const layoffOk = daysOff == null || daysOff <= 180;
+    if (!layoffOk) return false;
     if ((p.model_pct || 0) >= 30) return true;
     const field = p.field || [];
     const top3Sum = field
