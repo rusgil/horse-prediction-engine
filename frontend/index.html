@@ -1434,7 +1434,12 @@ const cls = pct >= 25 ? 'good' : pct >= 18 ? 'ok' : 'bad';
         verdictEl.textContent = '✓ Top pick won';
         verdictEl.className = 'model-verdict correct';
       } else if (modelPlaced === true) {
-        verdictEl.textContent = '~ Top pick placed (not 1st)';
+        // Find the top pick's actual finishing position so we can show
+        // '2nd' / '3rd' instead of the generic 'placed (not 1st)'.
+        const topPick = (data?.runners || []).find(r => r.is_top_pick);
+        const pos = topPick?.actual_position;
+        const ord = pos === 2 ? '2nd' : pos === 3 ? '3rd' : (pos ? pos + 'th' : '');
+        verdictEl.textContent = ord ? `~ Top pick placed (${ord})` : '~ Top pick placed';
         verdictEl.className = 'model-verdict placed';
       } else {
         verdictEl.textContent = '✗ Top pick didn\'t place';
