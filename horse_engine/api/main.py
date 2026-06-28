@@ -12613,10 +12613,16 @@ async def debug_meeting_picks(
 
 
 @app.get("/api/admin/probe-ra-results")
-async def probe_ra_results(race_date: str = "", x_cron_secret: Optional[str] = Header(None)):
+async def probe_ra_results(
+    race_date: str = "",
+    venue_filter: str = "",
+    x_cron_secret: Optional[str] = Header(None),
+):
     """
     Diagnostic: for each venue on race_date, show stored venue/state, keys tried, and
     whether RA returned results. Helps diagnose why seed-ra-results gets 0.
+    `venue_filter` is a case-insensitive substring filter to keep probing fast (the
+    full sweep does 7×venues RA fetches and times out under busy load).
     """
     _check_admin(x_cron_secret)
     from horse_engine.clients.racing_australia import _ra_date as _make_ra_date
@@ -12652,7 +12658,10 @@ async def probe_ra_results(race_date: str = "", x_cron_secret: Optional[str] = H
 
     detail = []
     prefixes = [""] + [p for p in ra._SPONSOR_PREFIXES]
+    vf = (venue_filter or "").lower()
     for (venue_name, state), race_ids in venue_state.items():
+        if vf and vf not in venue_name.lower():
+            continue
         tried = []
         found_key = None
         for prefix in prefixes:
