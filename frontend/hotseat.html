@@ -425,6 +425,28 @@
       margin: 0 0 8px;
       line-height: 1.1;
       color: var(--text);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+    /* Tab/horse number chip — what punters use to identify a runner. */
+    .tab-chip {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      min-width: 26px;
+      height: 26px;
+      padding: 0 6px;
+      border-radius: 6px;
+      background: rgba(245,200,66,0.14);
+      color: #f5c842;
+      border: 1px solid rgba(245,200,66,0.4);
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 13px;
+      font-weight: 700;
+      letter-spacing: 0;
+      flex: 0 0 auto;
     }
     .horse-meta {
       font-size: 11px;
@@ -1505,7 +1527,7 @@
               ${p.distance ? escHtml(p.distance) + 'm · ' : ''}${p.track_condition ? escHtml(p.track_condition) : ''}
             </div>
           </div>
-          <h2 class="horse">${escHtml(p.horse_name)}</h2>
+          <h2 class="horse">${p.tab_number != null ? `<span class="tab-chip">#${p.tab_number}</span>` : ''}<span>${escHtml(p.horse_name)}</span></h2>
           ${horseMeta.length ? `<div class="horse-meta">${horseMeta.join(' · ')}</div>` : ''}
           <div class="stats">
             <div class="stat">
