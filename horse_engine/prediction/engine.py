@@ -386,20 +386,22 @@ def predict_race(race: Race, model: HorseModel, venue_calibration: dict[str, flo
         if getattr(p.enriched, "speed_map_position", None) == "midfield":
             p.win_prob = round(p.win_prob * 0.85, 4)
 
-    # Going calibration — 90-day going-calibration test (n=85 soft, n=41 heavy)
-    # showed the model is ~3-4× over-confident on off-going. Examples:
-    #   <20% model bin on SOFT  → actual 5.3% win (vs 20.9% on good)
-    #   <20% model bin on HEAVY → actual 10.0% win
-    # Avg winner SP on soft <20% bucket was $14.47 (the market knows
-    # off-going is chaotic; our model doesn't). Conservative ship: apply
-    # 0.55 multiplier on soft + heavy across the whole field. This
-    # de-confidences every rank but doesn't reshuffle the order, so a
-    # rank-1 stays rank-1 — just with realistic odds against backing it.
-    # Aggressive raw-data multipliers were 0.28/0.38 but we're starting
-    # from 0.55 to weather the small-sample variance; tighten later.
+    # Going calibration — split per-going multipliers (was a unified 0.55
+    # for both soft and heavy). 60-day going-calibration backtest on
+    # 2026-06-30 (n=85 soft, n=41 heavy) showed soft and heavy diverge
+    # by ~0.15 in actual win rate, justifying separate multipliers:
+    #   soft  →  7.1% actual win vs good baseline 17.6%  → mult 0.40
+    #   heavy →  9.8% actual win vs good baseline 17.6%  → mult 0.55
+    # Soft is roughly 2.5× over-confident — slightly more chaotic for
+    # the model than heavy. Avg winner SP on soft <20% bin was $14.47
+    # (market also flags off-going as chaotic). Multipliers de-confidence
+    # every rank in the field — rank order is preserved, just at lower
+    # absolute probabilities.
     for p in predictions:
         going = getattr(p.enriched, "track_condition_category", None)
-        if going in ("soft", "heavy"):
+        if going == "soft":
+            p.win_prob = round(p.win_prob * 0.40, 4)
+        elif going == "heavy":
             p.win_prob = round(p.win_prob * 0.55, 4)
 
     # Rank by win probability
