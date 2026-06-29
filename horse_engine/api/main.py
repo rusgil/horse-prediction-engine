@@ -2367,15 +2367,17 @@ async def lifespan(app: FastAPI):
     # timescale anyway. Sundays at 2am only.
     scheduler.add_job(_scheduled_calibrate,      CronTrigger(day_of_week="sun", hour=2,  minute=0, timezone="Australia/Sydney"))
     scheduler.add_job(_scheduled_exotic_retrain, CronTrigger(hour=3,  minute=0, timezone="Australia/Sydney"))
-    # Nightly review — 02:30 AEST, after the last evening race has settled
-    # but before the morning calibration kicks off. Reviews 'yesterday'
-    # (relative to AEST), persists structured suggestions to the dashboard.
-    scheduler.add_job(_scheduled_nightly_review,
-                      CronTrigger(hour=2, minute=30, timezone="Australia/Sydney"))
+    # Nightly review intentionally DISABLED (2026-06-30) — single-day
+    # denominators were too small to surface actionable signals; weekly
+    # carried all the value. _scheduled_nightly_review (and its analyser
+    # in horse_engine/analysis/nightly_review.py) are kept on disk in
+    # case we want it back — just re-add the scheduler.add_job line.
+    # scheduler.add_job(_scheduled_nightly_review,
+    #                   CronTrigger(hour=2, minute=30, timezone="Australia/Sydney"))
     # Weekly review — 03:00 AEST every Monday. Reviews the past 7 days
-    # (Mon→Sun) and writes a separate NightlyReviewRow with source='weekly'.
-    # Detectors use week-sized denominators (more credible signal than the
-    # nightly's single-day window).
+    # (Mon→Sun) and writes a NightlyReviewRow with source='weekly'.
+    # Detectors use week-sized denominators (more credible signal than
+    # the nightly's single-day window).
     scheduler.add_job(_scheduled_weekly_review,
                       CronTrigger(day_of_week="mon", hour=3, minute=0, timezone="Australia/Sydney"))
     scheduler.add_job(
