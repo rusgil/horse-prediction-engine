@@ -2723,7 +2723,7 @@ _edge_odds_cache: dict[str, tuple[datetime, dict[str, float]]] = {}  # race_id �
 _EDGE_RESPONSE_TTL = 120
 # Bump _EDGE_CACHE_VERSION whenever threshold or response shape changes so
 # old cached responses are invalidated on deploy without a manual restart.
-_EDGE_CACHE_VERSION = 10  # 2026-06-29: is_sharp now requires days_off ≤ 180
+_EDGE_CACHE_VERSION = 11  # 2026-06-30: Edge trifecta now sources from Lab's trio_only (place-model top-3)
 _edge_response_cache: tuple[datetime, dict, int] | None = None
 
 # Cache full list_meetings response for 10 min (weather + RA calls are expensive)
@@ -3060,11 +3060,22 @@ async def get_edge_picks():
             hist_race_ids = {r.race_id for r in hist_rows}
             mut_race_ids_list = [r.race_id for r in mut_rows]
 
-            # Batch-fetch the Lab's committed core_top3 / core_top4 bets for
+            # Batch-fetch the Lab's committed trio_only + core_top4 bets for
             # these races. The Edge trifecta strip mirrors what the Lab is
             # actually paper-trading so both pages tell the same story for
             # the same race — and races that don't pass the Lab's gates
             # (top-3 sum ≤55%, field ≤11) get no strip at all.
+            #
+            # Switched trifecta from core_top3 → trio_only on 2026-06-30.
+            # 60-day comparison showed trio_only beats core_top3 on both
+            # hit rate (11.8% vs 8.6%) and P&L (+$1386 vs +$1158) over
+            # the same 144 / 163 settled bets. trio_only uses the PLACE
+            # model's top-3 — structurally the right model for trifecta
+            # since you need 3 horses to finish in placings, not 1 to win.
+            #
+            # First-four still uses core_top4. Quad_only had higher hit
+            # rate (20.1% vs 17.8%) but lower $/box ($4.41 vs $5.01) —
+            # we keep the better P&L variant.
             all_race_ids_for_bets = list(hist_race_ids | set(mut_race_ids_list))
             lab_top3_by_race: dict[str, BetRecommendationRow] = {}
             lab_top4_by_race: dict[str, BetRecommendationRow] = {}
@@ -3072,12 +3083,12 @@ async def get_edge_picks():
                 lab_bet_rows = (await session.execute(
                     select(BetRecommendationRow)
                     .where(BetRecommendationRow.race_id.in_(all_race_ids_for_bets))
-                    .where(BetRecommendationRow.strategy_label.in_(("core_top3", "core_top4")))
+                    .where(BetRecommendationRow.strategy_label.in_(("trio_only", "core_top4")))
                 )).scalars().all()
                 # If multiple bets per (race, strategy) somehow exist, prefer the
                 # most recently recommended one.
                 for b in sorted(lab_bet_rows, key=lambda x: x.recommended_at or datetime.min):
-                    if b.strategy_label == "core_top3":
+                    if b.strategy_label == "trio_only":
                         lab_top3_by_race[b.race_id] = b
                     elif b.strategy_label == "core_top4":
                         lab_top4_by_race[b.race_id] = b
@@ -3345,7 +3356,7 @@ async def get_edge_picks():
                 "first_four": ff_legs if len(ff_legs) >= 4 else None,
                 "first_four_combined_pct": ff_combined,
                 "exotic_alignment": exotic_alignment,
-                "source": "lab",  # mirror of BetRecommendationRow core_top3/4
+                "source": "lab",  # mirror of BetRecommendationRow trio_only + core_top4
                 "tier": feature_tier("trifecta"),       # paywall hint — "pro"
                 "first_four_tier": feature_tier("first_four"),
             } if len(tri_legs) >= 3 else None
