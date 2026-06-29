@@ -284,6 +284,12 @@ class RunnerPredictionHistoryRow(Base):
 
     recorded_at = Column(DateTime, default=datetime.utcnow, index=True)  # when history was written
     batch_id = Column(String, nullable=True, index=True)    # UUID shared by all runners in one enrichment run
+    # Sharp eligibility frozen at snapshot time. Set on rank-1 picks
+    # using the Sharp gate active when the row was written. Once written
+    # it is never recomputed — future gate refinements only affect new
+    # races. /api/performance?sharp=true reads this flag instead of
+    # re-evaluating the current gate against historical data.
+    is_sharp = Column(Boolean, nullable=True, index=True)
 
 
 class RaCalendarCacheRow(Base):
@@ -433,6 +439,9 @@ async def init_db() -> None:
         "CREATE INDEX IF NOT EXISTS ix_hist_results_trainer ON historical_results (trainer)",
         "CREATE INDEX IF NOT EXISTS ix_hist_results_venue ON historical_results (venue)",
         "CREATE UNIQUE INDEX IF NOT EXISTS uq_nightly_review_date_source ON nightly_reviews (review_date, source)",
+        # Sharp eligibility snapshot — see RunnerPredictionHistoryRow.is_sharp.
+        "ALTER TABLE runner_prediction_history ADD COLUMN IF NOT EXISTS is_sharp BOOLEAN",
+        "CREATE INDEX IF NOT EXISTS ix_hist_is_sharp ON runner_prediction_history (is_sharp)",
     ]
     for stmt in migrations:
         try:
@@ -440,6 +449,55 @@ async def init_db() -> None:
                 await conn.execute(text(stmt))
         except Exception as e:
             _log.warning("[init_db] migration skipped (%s): %s", stmt[:60], e)
+
+    # One-shot backfill: populate is_sharp for existing rows using the
+    # ORIGINAL gate (model_pct >= 0.30 OR top3_sum >= 0.60), NOT the
+    # newer days_off ≤ 180 rule. This pins historical Sharp percentages
+    # to whatever they were before the gate refinement landed, so past
+    # numbers stop shifting. Only runs once per row — once is_sharp is
+    # set (True or False), it's never touched.
+    backfills = [
+        # rank-1 with prob ≥ 0.30 → Sharp regardless of top-3 sum
+        """
+        UPDATE runner_prediction_history
+        SET is_sharp = TRUE
+        WHERE model_rank = 1
+          AND is_sharp IS NULL
+          AND win_probability >= 0.30
+        """,
+        # rank-1 with prob < 0.30 but race's top-3 sum ≥ 0.60 → Sharp
+        # Compute top-3 sum per race using a correlated subquery that
+        # works on both SQLite and Postgres (avoids window functions).
+        """
+        UPDATE runner_prediction_history AS h
+        SET is_sharp = TRUE
+        WHERE h.model_rank = 1
+          AND h.is_sharp IS NULL
+          AND (
+            SELECT COALESCE(SUM(win_probability), 0)
+            FROM runner_prediction_history
+            WHERE race_id = h.race_id
+              AND model_rank IN (1, 2, 3)
+              AND (cancelled IS FALSE OR cancelled IS NULL)
+          ) >= 0.60
+        """,
+        # Everything else on rank-1 → not Sharp. Sets explicit FALSE so
+        # the IS NULL guard above doesn't re-run on every startup.
+        """
+        UPDATE runner_prediction_history
+        SET is_sharp = FALSE
+        WHERE model_rank = 1 AND is_sharp IS NULL
+        """,
+        # Non-rank-1 rows: leave is_sharp NULL (the Sharp gate only
+        # applies to rank-1 picks per the definition).
+    ]
+    for stmt in backfills:
+        try:
+            async with engine.begin() as conn:
+                result = await conn.execute(text(stmt))
+                _log.info("[init_db] is_sharp backfill: %s rows", result.rowcount)
+        except Exception as e:
+            _log.warning("[init_db] is_sharp backfill skipped: %s", e)
 
 
 async def backfill_prediction_history(session: AsyncSession) -> int:

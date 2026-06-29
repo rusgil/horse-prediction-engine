@@ -2202,6 +2202,27 @@ async def _snapshot_prerace_predictions() -> int:
     async with get_session() as session:
         for race_id, runners in races.items():
             batch_id = str(_uuid.uuid4())  # shared across all runners in this enrichment batch
+            # Compute Sharp eligibility for this race, frozen at snapshot time.
+            # Gates: (rank-1 prob ≥0.30 OR top-3 sum ≥0.60)
+            #        AND rank-1 days_since_last_run ≤180
+            # The flag is set ONLY on the rank-1 row (Sharp is a race-level
+            # property scored via the rank-1 pick). Other rows leave is_sharp NULL.
+            active = [rr for rr in runners if not rr.cancelled]
+            active_sorted = sorted(active, key=lambda rr: rr.model_rank or 99)
+            rank1 = active_sorted[0] if active_sorted else None
+            top3_sum = sum((rr.win_probability or 0) for rr in active_sorted[:3])
+            race_is_sharp = None
+            if rank1 is not None:
+                _high_conf = ((rank1.win_probability or 0) >= 0.30) or (top3_sum >= 0.60)
+                _days_off = None
+                if rank1.enriched_json:
+                    try:
+                        _e = json.loads(rank1.enriched_json)
+                        _days_off = _e.get("days_since_last_run")
+                    except Exception:
+                        _days_off = None
+                _layoff_ok = not (isinstance(_days_off, (int, float)) and _days_off > 180)
+                race_is_sharp = bool(_high_conf and _layoff_ok)
             for r in runners:
                 try:
                     session.add(RunnerPredictionHistoryRow(
@@ -2239,6 +2260,8 @@ async def _snapshot_prerace_predictions() -> int:
                         source="live",
                         batch_id=batch_id,
                         recorded_at=now_utc,
+                        # Only the rank-1 row carries the race-level Sharp flag.
+                        is_sharp=race_is_sharp if r.model_rank == 1 else None,
                     ))
                 except Exception:
                     pass  # unique constraint: row already exists for this race+horse, skip
@@ -16008,48 +16031,12 @@ async def performance_summary(
             if p.race_id not in top_picks:
                 top_picks[p.race_id] = p
 
-        # When sharp=true: pull rank 1-3 win_probability per race to
-        # compute top3_sum. Then keep only races where rank-1 model_pct
-        # ≥ 30 OR top-3 sum ≥ 60. This mirrors the frontend's Sharp niche.
+        # Sharp filter — read the snapshot-time `is_sharp` flag straight
+        # off the rank-1 row. The flag is frozen at race time so future
+        # gate refinements don't retroactively rewrite historical Sharp
+        # counts. See RunnerPredictionHistoryRow.is_sharp.
         if sharp and top_picks:
-            top3_rows = (await session.execute(
-                select(RunnerPredictionHistoryRow.race_id,
-                       RunnerPredictionHistoryRow.model_rank,
-                       RunnerPredictionHistoryRow.win_probability)
-                .where(RunnerPredictionHistoryRow.race_id.in_(list(top_picks)))
-                .where(RunnerPredictionHistoryRow.model_rank.in_([1, 2, 3]))
-                .where(RunnerPredictionHistoryRow.cancelled.is_(False)
-                       | RunnerPredictionHistoryRow.cancelled.is_(None))
-            )).fetchall()
-            top3_by_race: dict[str, float] = {}
-            for rid, rank, p in top3_rows:
-                if p is None:
-                    continue
-                top3_by_race[rid] = top3_by_race.get(rid, 0) + float(p) * 100
-            # Sharp filter gates:
-            #   - rank-1 model_pct ≥ 30 OR top-3 sum ≥ 60 (high-conviction race)
-            #   - AND days_since_last_run ≤ 180 (long-layoff horses don't qualify)
-            # The layoff exclusion came from the 2026-06-28 weekly review:
-            # over the last 7 days, Sharp picks with >180d off lost 82.8% of
-            # the time (29 picks). Removing them lifted Sharp win-rate from
-            # 30.9% to 41.0% on the same sample. See pattern_id
-            # `edge_sharp_exclude_long_layoff_180d`.
-            keep: dict[str, RunnerPredictionHistoryRow] = {}
-            for rid, pick in top_picks.items():
-                rank1_pct = (pick.win_probability or 0) * 100
-                t3_sum = top3_by_race.get(rid, 0)
-                if not (rank1_pct >= 30 or t3_sum >= 60):
-                    continue
-                # days_since_last_run check — pulled from enriched_json
-                try:
-                    enriched = json.loads(pick.enriched_json) if pick.enriched_json else {}
-                except Exception:
-                    enriched = {}
-                days_off = enriched.get("days_since_last_run")
-                if isinstance(days_off, (int, float)) and days_off > 180:
-                    continue  # long-layoff horse — excluded from Sharp niche
-                keep[rid] = pick
-            top_picks = keep
+            top_picks = {rid: p for rid, p in top_picks.items() if p.is_sharp is True}
 
     # Winner per race (position==1) — used for accurate act_won comparison
     winners: dict[str, str] = {}
