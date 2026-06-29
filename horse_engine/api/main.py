@@ -7641,6 +7641,65 @@ async def applied_suggestions_history(
 # ─── /Nightly review endpoints ────────────────────────────────────────────
 
 
+@app.get("/api/admin/debug-bet-generator")
+async def debug_bet_generator(
+    race_id: str,
+    x_cron_secret: Optional[str] = Header(None),
+):
+    """Mirror `_generate_bets_for_race` step by step and return what
+    each gate sees. Lets us tell exactly why bet generation produces
+    zero rows for a race."""
+    _check_admin(x_cron_secret)
+    async with get_session() as session:
+        rows = (await session.execute(
+            select(RunnerPredictionRow)
+            .where(RunnerPredictionRow.race_id == race_id)
+        )).scalars().all()
+        source = "mutable"
+        if not rows:
+            rows = (await session.execute(
+                select(RunnerPredictionHistoryRow)
+                .where(RunnerPredictionHistoryRow.race_id == race_id)
+            )).scalars().all()
+            source = "history"
+
+    if not rows:
+        return {"race_id": race_id, "source": None, "row_count": 0,
+                "note": "no rows in either mutable or history"}
+
+    prize_money = max((getattr(r, "prize_money", None) or 0) for r in rows)
+
+    runners = [{
+        "tab_number": getattr(r, "tab_number", None),
+        "horse_name": r.horse_name,
+        "win_probability": r.win_probability,
+        "place_probability": r.place_probability,
+        "model_rank": r.model_rank,
+        "cancelled": bool(r.cancelled),
+    } for r in rows]
+
+    active = [r for r in runners if not r.get("cancelled")]
+    active_with_tab_and_rank = [
+        r for r in active
+        if r.get("model_rank") is not None and r.get("tab_number") is not None
+    ]
+    bets = _build_bet_basket(runners) or []
+
+    return {
+        "race_id": race_id,
+        "source": source,
+        "row_count": len(rows),
+        "prize_money_max": prize_money,
+        "active_count": len(active),
+        "active_with_tab_and_rank": len(active_with_tab_and_rank),
+        "top1_win_prob": active_with_tab_and_rank[0]["win_probability"] if active_with_tab_and_rank else None,
+        "top1_win_pct": (active_with_tab_and_rank[0]["win_probability"] * 100) if active_with_tab_and_rank else None,
+        "bet_basket_count": len(bets),
+        "bet_basket_labels": [b["strategy_label"] for b in bets],
+        "first_3_runners": runners[:3],
+    }
+
+
 @app.get("/api/admin/inspect-historical-results")
 async def admin_inspect_historical_results(
     race_id: str,
