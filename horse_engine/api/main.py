@@ -2304,6 +2304,15 @@ async def lifespan(app: FastAPI):
             log.info("[edge-warm] scheduled tick complete")
         except Exception as e:
             log.warning("[edge-warm] scheduled tick failed: %s", e)
+        # Pre-warm /api/performance too — the Lounge fires this on every
+        # page load for the date pills, and a cold call is ~5-13s on a
+        # busy DB. Warming here keeps the Lounge snappy.
+        try:
+            await performance_summary(days=7, sharp=False)
+            await performance_summary(days=7, sharp=True)
+            log.info("[edge-warm] performance cache warmed")
+        except Exception as e:
+            log.warning("[edge-warm] performance warm failed: %s", e)
     scheduler.add_job(_warm_edge, CronTrigger(hour=6,  minute=30, timezone="Australia/Sydney"))  # pre-morning
     scheduler.add_job(_warm_edge, CronTrigger(hour=8,  minute=45, timezone="Australia/Sydney"))  # post 8:30 enrich
     scheduler.add_job(_warm_edge, CronTrigger(hour=10, minute=45, timezone="Australia/Sydney"))  # post 10:30 enrich
@@ -15937,6 +15946,12 @@ async def trifecta_analysis(x_cron_secret: Optional[str] = Header(None)):
     }
 
 
+_PERF_CACHE: dict[tuple[int, bool], tuple[datetime, dict]] = {}
+_PERF_CACHE_TTL_TODAY = 60        # 1 min — today's data still moves
+_PERF_CACHE_TTL_PAST = 30 * 60    # 30 min — past dates are stable
+_PERF_CACHE_MAX_ENTRIES = 16
+
+
 @app.get("/api/performance")
 async def performance_summary(
     days: int = Query(5, ge=1, le=365),
@@ -15950,7 +15965,21 @@ async def performance_summary(
     When sharp=true, filters to the high-confidence niche (rank-1
     model_pct ≥ 30 OR top-3 sum ≥ 60) — the band where the model
     historically hits 30-35% win rate vs the ~17% overall baseline.
+
+    Cached in-memory: 60s for windows that include today, 30 min for
+    pure past-date windows. The Lounge fires this on every page load so
+    caching takes the cold response from ~5s to ~5ms.
     """
+    cache_key = (int(days), bool(sharp))
+    # Today is always in the window since we look back N days from today,
+    # so the TTL is the "today" tier. (If you ever add an explicit
+    # `end_date` param, branch the TTL on whether end_date >= today.)
+    ttl = _PERF_CACHE_TTL_TODAY
+    cached = _PERF_CACHE.get(cache_key)
+    if cached is not None:
+        ts, body = cached
+        if (datetime.utcnow() - ts).total_seconds() < ttl:
+            return body
     cutoff = (_today_aest() - timedelta(days=days)).isoformat()
 
     async with get_session() as session:
@@ -16110,13 +16139,21 @@ async def performance_summary(
 
     total_races = sum(d["races"] for d in by_date.values())
     total_wins = sum(d["wins"] for d in by_date.values())
-    return {
+    body = {
         "days": days,
         "sharp": sharp,
         "overall_win_rate": round(total_wins / total_races, 3) if total_races else None,
         "overall_races": total_races,
         "summary": summary,
     }
+    # Cache the response. Trim to MAX_ENTRIES so we don't grow unbounded
+    # across (days, sharp) variations.
+    _PERF_CACHE[cache_key] = (datetime.utcnow(), body)
+    if len(_PERF_CACHE) > _PERF_CACHE_MAX_ENTRIES:
+        # drop the oldest entry by timestamp
+        oldest_key = min(_PERF_CACHE.items(), key=lambda kv: kv[1][0])[0]
+        _PERF_CACHE.pop(oldest_key, None)
+    return body
 
 
 @app.get("/api/admin/backtest-win")
