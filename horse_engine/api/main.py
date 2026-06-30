@@ -5027,12 +5027,15 @@ async def _build_early_quaddie(target_date: str) -> Optional[dict]:
     is_past = target_date < today_iso
 
     async with get_session() as session:
+        # Pull rank-1 AND rank-2 picks so we can offer both the straight
+        # quaddie (1 horse per leg) and the boxed variant (rank-1 +
+        # rank-2 per leg = 16 perms, hits if either picked horse wins
+        # each leg).
         if is_past:
-            # Past dates: read frozen history snapshot (mutable may be cleared).
             rows = (await session.execute(
                 select(RunnerPredictionHistoryRow)
                 .where(RunnerPredictionHistoryRow.race_id.like(f"{target_date}_%"))
-                .where(RunnerPredictionHistoryRow.model_rank == 1)
+                .where(RunnerPredictionHistoryRow.model_rank.in_([1, 2]))
                 .where(RunnerPredictionHistoryRow.cancelled.is_(False)
                        | RunnerPredictionHistoryRow.cancelled.is_(None))
                 .where(RunnerPredictionHistoryRow.source == "live")
@@ -5041,7 +5044,7 @@ async def _build_early_quaddie(target_date: str) -> Optional[dict]:
             rows = (await session.execute(
                 select(RunnerPredictionRow)
                 .where(RunnerPredictionRow.race_id.like(f"{target_date}_%"))
-                .where(RunnerPredictionRow.model_rank == 1)
+                .where(RunnerPredictionRow.model_rank.in_([1, 2]))
                 .where(RunnerPredictionRow.cancelled.is_(False)
                        | RunnerPredictionRow.cancelled.is_(None))
             )).scalars().all()
@@ -5049,30 +5052,48 @@ async def _build_early_quaddie(target_date: str) -> Optional[dict]:
     if not rows:
         return None
 
-    # Group by venue → race_number → row. venue_code from race_id is the
-    # canonical key (matches Edge / Lab venue references).
-    by_venue: dict[str, dict[int, object]] = {}
+    # Group by venue → race_number → {1: rank1_row, 2: rank2_row}
+    by_venue: dict[str, dict[int, dict[int, object]]] = {}
     for r in rows:
         try:
             _, vc, rn = _parse_race_id(r.race_id)
         except (ValueError, AttributeError):
             continue
-        if vc is None or rn is None:
+        if vc is None or rn is None or r.model_rank not in (1, 2):
             continue
-        by_venue.setdefault(vc, {})[rn] = r
+        by_venue.setdefault(vc, {}).setdefault(rn, {})[r.model_rank] = r
 
     def _try_legs(leg_range: tuple[int, ...]) -> list[dict]:
         out = []
         for vc, races in by_venue.items():
-            if not all(rn in races for rn in leg_range):
+            # Each race needs a rank-1 row. rank-2 is optional per-leg
+            # (a leg without rank-2 in the box still works for the
+            # straight version; the boxed combined_prob just uses
+            # rank-1 only for that leg).
+            if not all(rn in races and 1 in races[rn] for rn in leg_range):
                 continue
-            legs = [races[rn] for rn in leg_range]
-            combined = 1.0
-            for leg in legs:
-                combined *= (leg.win_probability or 0)
+            r1_legs = [races[rn][1] for rn in leg_range]
+            r2_legs = [races[rn].get(2) for rn in leg_range]
+            # Straight combined probability — product of rank-1 win probs.
+            combined_straight = 1.0
+            for leg in r1_legs:
+                combined_straight *= (leg.win_probability or 0)
+            # Boxed combined probability — product of (rank-1 + rank-2)
+            # per leg. Treats win-prob as disjoint per leg (only one
+            # horse can win each race), so the per-leg "any of our
+            # picks wins" probability is the sum.
+            combined_boxed = 1.0
+            box_complete = True
+            for r1, r2 in zip(r1_legs, r2_legs):
+                p1 = r1.win_probability or 0
+                p2 = (r2.win_probability or 0) if r2 is not None else 0
+                if r2 is None:
+                    box_complete = False
+                combined_boxed *= (p1 + p2)
+            # Straight multi odds = product of rank-1 best available.
             odds_product = 1.0
             any_missing_odds = False
-            for leg in legs:
+            for leg in r1_legs:
                 o = leg.best_available_odds
                 if not o or o < 1.0:
                     any_missing_odds = True
@@ -5081,8 +5102,11 @@ async def _build_early_quaddie(target_date: str) -> Optional[dict]:
             out.append({
                 "venue": vc,
                 "leg_range": leg_range,
-                "legs": legs,
-                "combined_prob": combined,
+                "legs": r1_legs,
+                "second_legs": r2_legs,
+                "combined_prob": combined_straight,
+                "combined_prob_boxed": combined_boxed if box_complete else None,
+                "box_complete": box_complete,
                 "odds_product": None if any_missing_odds else round(odds_product, 2),
             })
         return out
@@ -5094,25 +5118,45 @@ async def _build_early_quaddie(target_date: str) -> Optional[dict]:
     if not candidates:
         return None
 
-    best = max(candidates, key=lambda c: c["combined_prob"])
-    legs = best["legs"]
+    # Pick the candidate with highest BOXED probability if it's available
+    # (more achievable hit rate is the headline number), otherwise fall
+    # back to highest straight combined probability.
+    box_candidates = [c for c in candidates if c["combined_prob_boxed"] is not None]
+    pool = box_candidates if box_candidates else candidates
+    sort_key = "combined_prob_boxed" if box_candidates else "combined_prob"
+    best = max(pool, key=lambda c: c[sort_key])
+    r1_legs = best["legs"]
+    r2_legs = best["second_legs"]
     leg_range = best["leg_range"]
     venue_code = best["venue"]
-    venue_label = (getattr(legs[0], "venue", None) or venue_code).replace("-", " ").title()
+    venue_label = (getattr(r1_legs[0], "venue", None) or venue_code).replace("-", " ").title()
     raw_multi = best["odds_product"]
     combined_p = best["combined_prob"]
+    combined_p_boxed = best["combined_prob_boxed"]
     range_label = f"R{leg_range[0]}-R{leg_range[-1]}"
 
-    leg_dicts = [{
-        "race_id": l.race_id,
-        "venue": getattr(l, "venue", None) or venue_code,
-        "race_number": getattr(l, "race_number", None) or _parse_race_id(l.race_id)[2],
-        "horse_name": l.horse_name,
-        "tab_number": getattr(l, "tab_number", None),
-        "scheduled_time": getattr(l, "scheduled_time", None),
-        "model_pct": round((l.win_probability or 0) * 100, 1),
-        "best_available_odds": l.best_available_odds,
-    } for l in legs]
+    leg_dicts = []
+    for r1, r2 in zip(r1_legs, r2_legs):
+        leg = {
+            "race_id": r1.race_id,
+            "venue": getattr(r1, "venue", None) or venue_code,
+            "race_number": getattr(r1, "race_number", None) or _parse_race_id(r1.race_id)[2],
+            "horse_name": r1.horse_name,
+            "tab_number": getattr(r1, "tab_number", None),
+            "scheduled_time": getattr(r1, "scheduled_time", None),
+            "model_pct": round((r1.win_probability or 0) * 100, 1),
+            "best_available_odds": r1.best_available_odds,
+        }
+        if r2 is not None:
+            leg["second_horse_name"] = r2.horse_name
+            leg["second_tab_number"] = getattr(r2, "tab_number", None)
+            leg["second_model_pct"] = round((r2.win_probability or 0) * 100, 1)
+            leg["second_best_available_odds"] = r2.best_available_odds
+        leg_dicts.append(leg)
+
+    # Boxed quaddie = 2×2×2×2 = 16 perms. Standard $2/perm stake → $32.
+    box_perms = 16 if best["box_complete"] else None
+    boxed_stake = (box_perms * _FUNK_BASE_STAKE) if box_perms else None
 
     return {
         "kind": "quaddie",
@@ -5121,6 +5165,7 @@ async def _build_early_quaddie(target_date: str) -> Optional[dict]:
         "confidence": "C",
         "venue": venue_code,
         "legs": leg_dicts,
+        # Straight (1 horse per leg, 1 perm)
         "raw_multi_odds": raw_multi,
         "model_hit_probability": round(combined_p, 6),
         "stake_dollars": _FUNK_BASE_STAKE,
@@ -5128,6 +5173,13 @@ async def _build_early_quaddie(target_date: str) -> Optional[dict]:
         "expected_value_dollars": round(
             combined_p * raw_multi * _FUNK_BASE_STAKE - _FUNK_BASE_STAKE, 2
         ) if raw_multi else None,
+        # Boxed (2 horses per leg, 16 perms). Hit prob roughly 4× the
+        # straight version on average — better hit rate for a higher
+        # stake; the same fair return per perm.
+        "boxed_available": best["box_complete"],
+        "boxed_perms": box_perms,
+        "boxed_stake_dollars": boxed_stake,
+        "boxed_hit_probability": round(combined_p_boxed, 6) if combined_p_boxed else None,
     }
 
 

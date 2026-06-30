@@ -788,12 +788,14 @@
     } else if (p.kind === 'quaddie' && p.legs) {
       parts.push(`  Venue: ${venueLabel(p.venue)}`);
       p.legs.forEach((l, i) => {
-        parts.push(`  Leg ${i+1} (R${l.race_number}): ${l.horse_name} · win ${l.model_pct}%`);
+        const second = l.second_horse_name
+          ? ` (+ ${l.second_horse_name} ${l.second_model_pct}% for box)`
+          : '';
+        parts.push(`  Leg ${i+1} (R${l.race_number}): ${l.horse_name} · win ${l.model_pct}%${second}`);
       });
-      if (p.raw_multi_odds) {
-        parts.push(`  Quaddie ~$${p.raw_multi_odds} fair · stake $${p.stake_dollars}`);
-      } else {
-        parts.push(`  Quaddie · stake $${p.stake_dollars} · (odds TBA on one or more legs)`);
+      parts.push(`  Straight: stake $${p.stake_dollars} · hit ${(p.model_hit_probability*100).toFixed(2)}%`);
+      if (p.boxed_available) {
+        parts.push(`  Boxed (${p.boxed_perms} perms): stake $${p.boxed_stake_dollars} · hit ${(p.boxed_hit_probability*100).toFixed(2)}%`);
       }
     } else if (p.kind === 'twofunk') {
       parts.push(`  ${venueLabel(p.venue)} R${p.race_number} · Quinella`);
@@ -875,13 +877,22 @@
       };
     }
     if (p.kind === 'quaddie') {
+      const product = p.boxed_available
+        ? `$${p.stake_dollars.toFixed(0)} straight · OR $${p.boxed_stake_dollars} boxed (${p.boxed_perms} perms)`
+        : `$${p.stake_dollars.toFixed(0)} Quaddie · 1 horse × 4 legs`;
+      const path = p.boxed_available
+        ? `Sportsbet → Racing → ${venueLabel(p.venue)} → Quaddie → pick rank-1 only (straight) OR rank-1 + rank-2 in every leg (boxed)`
+        : `Sportsbet → Racing → ${venueLabel(p.venue)} → Quaddie → pick the rank-1 horse for each leg below`;
+      const ret = p.boxed_available
+        ? `Straight hit prob ${(p.model_hit_probability*100).toFixed(2)}% · boxed ${(p.boxed_hit_probability*100).toFixed(2)}%`
+        : (p.raw_multi_odds
+            ? `Est. ${fmtMoneyPlain(p.potential_return_dollars)} fair return if all 4 land`
+            : `4-leg quaddie — odds finalise closer to jump`);
       return {
         verb: 'PLACE THIS EARLY QUADDIE',
-        product: `$${p.stake_dollars.toFixed(0)} Quaddie · 1 horse × 4 legs`,
-        path: `Sportsbet → Racing → ${venueLabel(p.venue)} → Quaddie → pick the rank-1 horse for each leg below`,
-        returnIf: p.raw_multi_odds
-          ? `Est. ${fmtMoneyPlain(p.potential_return_dollars)} fair return if all 4 land`
-          : `4-leg quaddie — odds finalise closer to jump`,
+        product,
+        path,
+        returnIf: ret,
       };
     }
     if (p.kind === 'banker') {
@@ -967,14 +978,33 @@
         <div class="leg-odds">$${p.place_odds_est}</div>
       </div></div>`;
     } else if (p.kind === 'quaddie' && p.legs) {
-      legsHtml = `<div class="legs">${p.legs.map(l => `
+      const legsBody = p.legs.map(l => {
+        const second = l.second_horse_name
+          ? `<div class="leg-picks">+ ${escHtml(l.second_horse_name)} <span class="leg-meta">(${l.second_model_pct}%)</span></div>`
+          : '';
+        return `
         <div class="leg">
-          <div>
-            <div class="leg-horse">${escHtml(l.horse_name)}</div>
-            <div class="leg-meta">${escHtml(venueLabel(l.venue))} R${l.race_number}${l.scheduled_time ? ' · ' + fmtJump(l.scheduled_time) : ''} · win ${l.model_pct}%</div>
+          <div style="flex:1">
+            <div class="leg-horse">${escHtml(l.horse_name)} <span class="leg-meta">(${l.model_pct}%)</span></div>
+            <div class="leg-meta">${escHtml(venueLabel(l.venue))} R${l.race_number}${l.scheduled_time ? ' · ' + fmtJump(l.scheduled_time) : ''}</div>
+            ${second}
           </div>
           <div class="leg-odds">${l.best_available_odds ? '$' + l.best_available_odds.toFixed(2) : '—'}</div>
-        </div>`).join('')}</div>`;
+        </div>`;
+      }).join('');
+      // Boxed-quaddie footer — shown when rank-2 is available for all 4 legs.
+      const boxFooter = p.boxed_available ? `
+        <div class="leg" style="background: rgba(168,85,247,0.10); border-color: rgba(168,85,247,0.3);">
+          <div style="flex:1">
+            <div style="font-size:13px; font-weight:600; color: var(--text-primary)">
+              📦 Box rank-1 + rank-2 (${p.boxed_perms} perms)
+            </div>
+            <div style="font-size:11px; color: var(--text-muted)">
+              Hit prob ${(p.boxed_hit_probability * 100).toFixed(2)}% · stake $${p.boxed_stake_dollars}
+            </div>
+          </div>
+        </div>` : '';
+      legsHtml = `<div class="legs">${legsBody}${boxFooter}</div>`;
     } else if (p.kind === 'twofunk') {
       const leg1Odds = p.leg1_odds ? `$${p.leg1_odds.toFixed(2)}` : '—';
       const leg2Odds = p.partner_odds ? `$${p.partner_odds.toFixed(2)}` : '—';
