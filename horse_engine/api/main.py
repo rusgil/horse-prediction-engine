@@ -2907,6 +2907,7 @@ FEATURE_TIERS: dict[str, str] = {
     "play_bonus": "pro",
     "play_double": "pro",
     "play_banker": "pro",
+    "play_quaddie": "pro",
     # Labs tier — premium analytics
     "lab": "labs",
     "two_funk": "labs",
@@ -5008,6 +5009,96 @@ def _build_double(edge_picks: list[dict]) -> Optional[dict]:
     }
 
 
+def _build_early_quaddie(edge_picks: list[dict]) -> Optional[dict]:
+    """The Early Quaddie: 4-leg WIN multi on races 1-4 at one meeting.
+
+    Mirrors the TAB Early Quaddie product (most metro cards designate
+    R1-R4 as the early quaddie legs). The play forms when /api/edge
+    has all 4 early-race rank-1 picks at the SAME venue — i.e. all
+    four legs cleared the Edge confidence threshold (≥29.5%).
+
+    Across qualifying meetings, picks the one with the highest combined
+    model probability. Confidence is 'C' — 4-leg WIN multis are high
+    variance even with strong individual picks (each leg's miss kills
+    the whole bet).
+    """
+    # Group edge picks by venue → race_number → pick. /api/edge already
+    # filters to rank-1 picks above the confidence threshold, so any
+    # pick present here is a viable leg.
+    by_venue: dict[str, dict[int, dict]] = {}
+    for p in edge_picks:
+        rn = p.get("race_number")
+        vc = p.get("venue")
+        if not vc or not isinstance(rn, int):
+            continue
+        if rn < 1 or rn > 4:
+            continue
+        by_venue.setdefault(vc, {})[rn] = p
+
+    # Need all 4 of R1, R2, R3, R4 present at the same venue.
+    candidates = []
+    for vc, races in by_venue.items():
+        if not all(rn in races for rn in (1, 2, 3, 4)):
+            continue
+        legs = [races[rn] for rn in (1, 2, 3, 4)]
+        # Combined probability = product of individual model_pcts.
+        combined = 1.0
+        for leg in legs:
+            combined *= ((leg.get("model_pct") or 0) / 100.0)
+        # Combined fair-multi odds = product of individual decimal odds.
+        odds_product = 1.0
+        any_missing_odds = False
+        for leg in legs:
+            o = leg.get("best_available_odds")
+            if not o or o < 1.0:
+                any_missing_odds = True
+                break
+            odds_product *= o
+        candidates.append({
+            "venue": vc,
+            "legs": legs,
+            "combined_prob": combined,
+            "odds_product": None if any_missing_odds else round(odds_product, 2),
+        })
+
+    if not candidates:
+        return None
+
+    # Best meeting = highest combined model probability.
+    best = max(candidates, key=lambda c: c["combined_prob"])
+    legs = best["legs"]
+    venue_label = legs[0].get("venue") or best["venue"]
+    raw_multi = best["odds_product"]
+    combined_p = best["combined_prob"]
+
+    leg_dicts = [{
+        "race_id": l.get("race_id"),
+        "venue": l.get("venue"),
+        "race_number": l.get("race_number"),
+        "horse_name": l.get("horse_name"),
+        "tab_number": l.get("tab_number"),
+        "scheduled_time": l.get("scheduled_time"),
+        "model_pct": l.get("model_pct"),
+        "best_available_odds": l.get("best_available_odds"),
+    } for l in legs]
+
+    return {
+        "kind": "quaddie",
+        "title": "Early Quaddie",
+        "subtitle": f"{venue_label.replace('-',' ').title()} R1-R4 · 4-leg win multi",
+        "confidence": "C",
+        "venue": legs[0].get("venue"),
+        "legs": leg_dicts,
+        "raw_multi_odds": raw_multi,
+        "model_hit_probability": round(combined_p, 6),
+        "stake_dollars": _FUNK_BASE_STAKE,
+        "potential_return_dollars": round(raw_multi * _FUNK_BASE_STAKE, 2) if raw_multi else None,
+        "expected_value_dollars": round(
+            combined_p * raw_multi * _FUNK_BASE_STAKE - _FUNK_BASE_STAKE, 2
+        ) if raw_multi else None,
+    }
+
+
 def _build_banker(edge_picks: list[dict]) -> Optional[dict]:
     """The Banker: single place bet on the day's strongest place pick.
     Place_prob ≥ 70% AND ≥5pt rank-gap. Expected hit ~65%, modest payout."""
@@ -5669,7 +5760,7 @@ async def funk_me_up_today(date: Optional[str] = None):
     # _build_bonus removed 2026-06-26 — user feedback: focus on real-money
     # plays only, don't condition cards on holding a Sportsbet bonus bet.
     # Function kept in code in case of a future opt-in toggle.
-    for build_fn in (_build_lock, _build_double, _build_banker, _build_two_funk):
+    for build_fn in (_build_lock, _build_double, _build_banker, _build_early_quaddie, _build_two_funk):
         try:
             play = build_fn(picks_for_date)
         except Exception as e:

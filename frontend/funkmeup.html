@@ -701,6 +701,7 @@
     bonus:   { emoji: '⭐' },
     double:  { emoji: '🪜' },
     banker:  { emoji: '🏦' },
+    quaddie: { emoji: '🎰' },
     twofunk: { emoji: '🪩' },
     lab:     { emoji: '🧪' },
     // Legacy kinds kept so historical (yesterday) data still renders
@@ -784,6 +785,16 @@
         parts.push(`  ${i+1}. ${venueLabel(l.venue)} R${l.race_number} · ${l.horse_name} · Place`);
       });
       parts.push(`  Place Multi ~$${p.raw_multi_odds} · stake $${p.stake_dollars}`);
+    } else if (p.kind === 'quaddie' && p.legs) {
+      parts.push(`  Venue: ${venueLabel(p.venue)}`);
+      p.legs.forEach((l, i) => {
+        parts.push(`  Leg ${i+1} (R${l.race_number}): ${l.horse_name} · win ${l.model_pct}%`);
+      });
+      if (p.raw_multi_odds) {
+        parts.push(`  Quaddie ~$${p.raw_multi_odds} fair · stake $${p.stake_dollars}`);
+      } else {
+        parts.push(`  Quaddie · stake $${p.stake_dollars} · (odds TBA on one or more legs)`);
+      }
     } else if (p.kind === 'twofunk') {
       parts.push(`  ${venueLabel(p.venue)} R${p.race_number} · Quinella`);
       parts.push(`  ${p.horse_name} ($${p.leg1_odds}) + ${p.partner_horse_name} ($${p.partner_odds})`);
@@ -800,7 +811,7 @@
   function _earliestMs(p) {
     let best = Infinity;
     const ts = [];
-    if ((p.kind === 'spine' || p.kind === 'wave' || p.kind === 'double') && p.legs) {
+    if ((p.kind === 'spine' || p.kind === 'wave' || p.kind === 'double' || p.kind === 'quaddie') && p.legs) {
       p.legs.forEach(l => l.scheduled_time && ts.push(l.scheduled_time));
     } else if (p.scheduled_time) {
       ts.push(p.scheduled_time);
@@ -861,6 +872,16 @@
         product: `$${p.stake_dollars.toFixed(0)} 2-leg Place Multi`,
         path: `Sportsbet → Multi Builder → tap Place for each horse below → confirm 2 legs in betslip`,
         returnIf: `Returns ${fmtMoneyPlain(p.potential_return_dollars)} if both horses place (top 3)`,
+      };
+    }
+    if (p.kind === 'quaddie') {
+      return {
+        verb: 'PLACE THIS EARLY QUADDIE',
+        product: `$${p.stake_dollars.toFixed(0)} Quaddie · 1 horse × 4 legs`,
+        path: `Sportsbet → Racing → ${venueLabel(p.venue)} → Quaddie → pick the rank-1 horse for each leg below`,
+        returnIf: p.raw_multi_odds
+          ? `Est. ${fmtMoneyPlain(p.potential_return_dollars)} fair return if all 4 land`
+          : `4-leg quaddie — odds finalise closer to jump`,
       };
     }
     if (p.kind === 'banker') {
@@ -945,6 +966,15 @@
         </div>
         <div class="leg-odds">$${p.place_odds_est}</div>
       </div></div>`;
+    } else if (p.kind === 'quaddie' && p.legs) {
+      legsHtml = `<div class="legs">${p.legs.map(l => `
+        <div class="leg">
+          <div>
+            <div class="leg-horse">${escHtml(l.horse_name)}</div>
+            <div class="leg-meta">${escHtml(venueLabel(l.venue))} R${l.race_number}${l.scheduled_time ? ' · ' + fmtJump(l.scheduled_time) : ''} · win ${l.model_pct}%</div>
+          </div>
+          <div class="leg-odds">${l.best_available_odds ? '$' + l.best_available_odds.toFixed(2) : '—'}</div>
+        </div>`).join('')}</div>`;
     } else if (p.kind === 'twofunk') {
       const leg1Odds = p.leg1_odds ? `$${p.leg1_odds.toFixed(2)}` : '—';
       const leg2Odds = p.partner_odds ? `$${p.partner_odds.toFixed(2)}` : '—';
