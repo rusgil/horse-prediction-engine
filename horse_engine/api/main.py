@@ -5009,85 +5009,117 @@ def _build_double(edge_picks: list[dict]) -> Optional[dict]:
     }
 
 
-def _build_early_quaddie(edge_picks: list[dict]) -> Optional[dict]:
-    """The Early Quaddie: 4-leg WIN multi on races 1-4 at one meeting.
+async def _build_early_quaddie(target_date: str) -> Optional[dict]:
+    """The Early Quaddie: 4-leg WIN multi covering the early quaddie legs
+    at one meeting.
 
-    Mirrors the TAB Early Quaddie product (most metro cards designate
-    R1-R4 as the early quaddie legs). The play forms when /api/edge
-    has all 4 early-race rank-1 picks at the SAME venue — i.e. all
-    four legs cleared the Edge confidence threshold (≥29.5%).
+    Queries the prediction tables directly (not /api/edge) so quaddies
+    can form even when a single leg has a soft rank-1 pick below the
+    Edge confidence threshold. Tries R1-R4 first (the canonical TAB
+    early-quaddie nomination at most metro Saturday cards), then falls
+    back to R2-R5 (used at some country/twilight cards).
 
     Across qualifying meetings, picks the one with the highest combined
     model probability. Confidence is 'C' — 4-leg WIN multis are high
-    variance even with strong individual picks (each leg's miss kills
-    the whole bet).
+    variance even with strong individual picks.
     """
-    # Group edge picks by venue → race_number → pick. /api/edge already
-    # filters to rank-1 picks above the confidence threshold, so any
-    # pick present here is a viable leg.
-    by_venue: dict[str, dict[int, dict]] = {}
-    for p in edge_picks:
-        rn = p.get("race_number")
-        vc = p.get("venue")
-        if not vc or not isinstance(rn, int):
-            continue
-        if rn < 1 or rn > 4:
-            continue
-        by_venue.setdefault(vc, {})[rn] = p
+    today_iso = _today_aest().isoformat()
+    is_past = target_date < today_iso
 
-    # Need all 4 of R1, R2, R3, R4 present at the same venue.
-    candidates = []
-    for vc, races in by_venue.items():
-        if not all(rn in races for rn in (1, 2, 3, 4)):
-            continue
-        legs = [races[rn] for rn in (1, 2, 3, 4)]
-        # Combined probability = product of individual model_pcts.
-        combined = 1.0
-        for leg in legs:
-            combined *= ((leg.get("model_pct") or 0) / 100.0)
-        # Combined fair-multi odds = product of individual decimal odds.
-        odds_product = 1.0
-        any_missing_odds = False
-        for leg in legs:
-            o = leg.get("best_available_odds")
-            if not o or o < 1.0:
-                any_missing_odds = True
-                break
-            odds_product *= o
-        candidates.append({
-            "venue": vc,
-            "legs": legs,
-            "combined_prob": combined,
-            "odds_product": None if any_missing_odds else round(odds_product, 2),
-        })
+    async with get_session() as session:
+        if is_past:
+            # Past dates: read frozen history snapshot (mutable may be cleared).
+            rows = (await session.execute(
+                select(RunnerPredictionHistoryRow)
+                .where(RunnerPredictionHistoryRow.race_id.like(f"{target_date}_%"))
+                .where(RunnerPredictionHistoryRow.model_rank == 1)
+                .where(RunnerPredictionHistoryRow.cancelled.is_(False)
+                       | RunnerPredictionHistoryRow.cancelled.is_(None))
+                .where(RunnerPredictionHistoryRow.source == "live")
+            )).scalars().all()
+        else:
+            rows = (await session.execute(
+                select(RunnerPredictionRow)
+                .where(RunnerPredictionRow.race_id.like(f"{target_date}_%"))
+                .where(RunnerPredictionRow.model_rank == 1)
+                .where(RunnerPredictionRow.cancelled.is_(False)
+                       | RunnerPredictionRow.cancelled.is_(None))
+            )).scalars().all()
 
+    if not rows:
+        return None
+
+    # Group by venue → race_number → row. venue_code from race_id is the
+    # canonical key (matches Edge / Lab venue references).
+    by_venue: dict[str, dict[int, object]] = {}
+    for r in rows:
+        try:
+            _, vc, rn = _parse_race_id(r.race_id)
+        except (ValueError, AttributeError):
+            continue
+        if vc is None or rn is None:
+            continue
+        by_venue.setdefault(vc, {})[rn] = r
+
+    def _try_legs(leg_range: tuple[int, ...]) -> list[dict]:
+        out = []
+        for vc, races in by_venue.items():
+            if not all(rn in races for rn in leg_range):
+                continue
+            legs = [races[rn] for rn in leg_range]
+            combined = 1.0
+            for leg in legs:
+                combined *= (leg.win_probability or 0)
+            odds_product = 1.0
+            any_missing_odds = False
+            for leg in legs:
+                o = leg.best_available_odds
+                if not o or o < 1.0:
+                    any_missing_odds = True
+                    break
+                odds_product *= o
+            out.append({
+                "venue": vc,
+                "leg_range": leg_range,
+                "legs": legs,
+                "combined_prob": combined,
+                "odds_product": None if any_missing_odds else round(odds_product, 2),
+            })
+        return out
+
+    # Prefer R1-R4 (canonical TAB early quaddie); fall back to R2-R5.
+    candidates = _try_legs((1, 2, 3, 4))
+    if not candidates:
+        candidates = _try_legs((2, 3, 4, 5))
     if not candidates:
         return None
 
-    # Best meeting = highest combined model probability.
     best = max(candidates, key=lambda c: c["combined_prob"])
     legs = best["legs"]
-    venue_label = legs[0].get("venue") or best["venue"]
+    leg_range = best["leg_range"]
+    venue_code = best["venue"]
+    venue_label = (getattr(legs[0], "venue", None) or venue_code).replace("-", " ").title()
     raw_multi = best["odds_product"]
     combined_p = best["combined_prob"]
+    range_label = f"R{leg_range[0]}-R{leg_range[-1]}"
 
     leg_dicts = [{
-        "race_id": l.get("race_id"),
-        "venue": l.get("venue"),
-        "race_number": l.get("race_number"),
-        "horse_name": l.get("horse_name"),
-        "tab_number": l.get("tab_number"),
-        "scheduled_time": l.get("scheduled_time"),
-        "model_pct": l.get("model_pct"),
-        "best_available_odds": l.get("best_available_odds"),
+        "race_id": l.race_id,
+        "venue": getattr(l, "venue", None) or venue_code,
+        "race_number": getattr(l, "race_number", None) or _parse_race_id(l.race_id)[2],
+        "horse_name": l.horse_name,
+        "tab_number": getattr(l, "tab_number", None),
+        "scheduled_time": getattr(l, "scheduled_time", None),
+        "model_pct": round((l.win_probability or 0) * 100, 1),
+        "best_available_odds": l.best_available_odds,
     } for l in legs]
 
     return {
         "kind": "quaddie",
         "title": "Early Quaddie",
-        "subtitle": f"{venue_label.replace('-',' ').title()} R1-R4 · 4-leg win multi",
+        "subtitle": f"{venue_label} {range_label} · 4-leg win multi",
         "confidence": "C",
-        "venue": legs[0].get("venue"),
+        "venue": venue_code,
         "legs": leg_dicts,
         "raw_multi_odds": raw_multi,
         "model_hit_probability": round(combined_p, 6),
@@ -5760,7 +5792,7 @@ async def funk_me_up_today(date: Optional[str] = None):
     # _build_bonus removed 2026-06-26 — user feedback: focus on real-money
     # plays only, don't condition cards on holding a Sportsbet bonus bet.
     # Function kept in code in case of a future opt-in toggle.
-    for build_fn in (_build_lock, _build_double, _build_banker, _build_early_quaddie, _build_two_funk):
+    for build_fn in (_build_lock, _build_double, _build_banker, _build_two_funk):
         try:
             play = build_fn(picks_for_date)
         except Exception as e:
@@ -5768,6 +5800,14 @@ async def funk_me_up_today(date: Optional[str] = None):
             play = None
         if play:
             plays.append(play)
+    # Early Quaddie is async — queries the DB directly (not /api/edge)
+    # so it can include rank-1 picks that fall below the Edge threshold.
+    try:
+        quaddie_play = await _build_early_quaddie(target_date)
+        if quaddie_play:
+            plays.append(quaddie_play)
+    except Exception as e:
+        log.warning("[funk-me-up] _build_early_quaddie failed for %s: %s", target_date, e)
     try:
         lab_play = await _build_lab_pick(target_date)
         if lab_play:
