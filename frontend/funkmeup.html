@@ -728,7 +728,14 @@
 
   function fmtPct(p) {
     if (p == null) return '—';
-    return `${Math.round(p * 100)}%`;
+    const pct = p * 100;
+    // Auto-precision: integer for ≥10%, 1 decimal for 1-10%, 2 decimals
+    // for <1%. Without this, small multi-bet probabilities like 0.23%
+    // would round to "0%" and the card looks broken.
+    if (pct >= 10) return `${Math.round(pct)}%`;
+    if (pct >= 1)  return `${pct.toFixed(1)}%`;
+    if (pct > 0)   return `${pct.toFixed(2)}%`;
+    return '0%';
   }
 
   function fmtJump(iso) {
