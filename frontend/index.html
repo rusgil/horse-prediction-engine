@@ -1368,21 +1368,43 @@
 
   async function loadPerformanceStrip() {
     try {
+      // Always fetch BOTH sharp and all-races metrics — the Sharp filter
+      // on quiet country days compresses to n=2, which hides that the
+      // broader model actually went 4/6 or 5/14. Showing both lets the
+      // user see the full picture: Sharp is the high-conviction slice,
+      // All is the rank-1 baseline.
       const sharp = S.mainMode === 'sharp' ? '&sharp=true' : '';
-      const r = await fetch(`${API}/api/performance?days=7${sharp}`);
-      if (!r.ok) return;
-      const data = await r.json();
+      const [primaryRes, allRes] = await Promise.all([
+        fetch(`${API}/api/performance?days=7${sharp}`),
+        sharp
+          ? fetch(`${API}/api/performance?days=7`)
+          : Promise.resolve(null),
+      ]);
+      if (!primaryRes.ok) return;
+      const data = await primaryRes.json();
+      const allData = allRes && allRes.ok ? await allRes.json() : null;
       if (!data.summary || !data.summary.length) {
-        // When sharp filters everything, fall back gracefully — date pills
-        // will just show no annotations rather than break.
         S.perfByDate = {};
         renderDatePills();
         return;
       }
-      // Store per-date for date pills and day banners
+      const allByDate = {};
+      if (allData && allData.summary) {
+        for (const d of allData.summary) allByDate[d.date] = d;
+      }
       S.perfByDate = {};
-      for (const d of data.summary) S.perfByDate[d.date] = d;
-      renderDatePills(); // re-render with accuracy annotations
+      for (const d of data.summary) {
+        S.perfByDate[d.date] = {
+          ...d,
+          // Attach the broader "all rank-1" numbers when we're in Sharp
+          // mode. Day banner uses these to show both perspectives.
+          all_races: allByDate[d.date]?.races,
+          all_wins: allByDate[d.date]?.wins,
+          all_win_rate: allByDate[d.date]?.win_rate,
+          all_place_rate: allByDate[d.date]?.place_rate,
+        };
+      }
+      renderDatePills();
     } catch (e) { /* silent */ }
   }
 
@@ -1497,41 +1519,52 @@
     const perf = S.perfByDate[iso];
     if (!perf || iso >= todayISO()) { el.innerHTML = ''; return; }
     const complete = perf.data_complete !== false;
-    // Small-sample guard — the Sharp filter can compress country days
-    // down to races=2 where 1 win reads as "50%", which is misleading.
-    // For n < 5 we show raw win/place counts instead of percentages.
+    const inSharpMode = S.mainMode === 'sharp';
+    const hasAllContext = inSharpMode && perf.all_races != null && perf.all_races > 0;
+    // Small-sample guard — Sharp can compress country days to n=2 where
+    // 1 win reads as "50%". For n < 5 show the raw count instead of %.
     const smallSample = perf.races < 5;
     const pct = Math.round(perf.win_rate * 100);
     const placePct = Math.round(perf.place_rate * 100);
-    // Same thresholds as the date-pill colouring (see renderDatePills).
     const rateClass = smallSample ? 'ok' : (pct >= 25 ? 'good' : pct >= 18 ? 'ok' : 'bad');
-    const winDisplay = smallSample ? `${perf.wins}` : `${pct}%`;
+    // Primary metric (Sharp or All depending on mode)
+    const primaryLabel = inSharpMode ? 'Sharp' : 'All rank-1';
+    const winDisplay = smallSample ? `${perf.wins}/${perf.races}` : `${pct}%`;
     const placeDisplay = smallSample
-      ? `${Math.round(perf.place_rate * perf.races)}`  // count of placed picks
+      ? `${Math.round(perf.place_rate * perf.races)}/${perf.races}`
       : `${placePct}%`;
-    const winLabel = smallSample ? 'wins' : 'win';
-    const placeLabel = smallSample ? 'placed' : 'plc';
-    const smallSampleTip = smallSample
-      ? ` — small sample (n=${perf.races}); pcts are noisy on <5 races`
-      : '';
+    const smallSampleTip = smallSample ? ` — small sample (n=${perf.races})` : '';
     const pnlClass = perf.value_pnl >= 0 ? 'good' : 'bad';
     const pnlStr = perf.value_pnl >= 0 ? `+$${perf.value_pnl.toFixed(1)}` : `-$${Math.abs(perf.value_pnl).toFixed(1)}`;
+
+    // Secondary stat when in Sharp mode: show the broader all-rank-1
+    // context. If Sharp is 1/2 but the model actually went 5/14 across
+    // the day, the user sees both numbers side by side.
+    let secondaryHtml = '';
+    if (hasAllContext && perf.all_races !== perf.races) {
+      const allPct = Math.round((perf.all_win_rate || 0) * 100);
+      secondaryHtml = `
+        <div class="day-acc-stat" style="padding-left:8px;border-left:1px solid var(--border);margin-left:4px">
+          <span class="day-acc-val" style="color:var(--text-secondary);font-size:0.85em" title="Broader model performance — all rank-1 picks regardless of Sharp filter">
+            ${perf.all_wins}/${perf.all_races} (${allPct}%)
+            <span style="font-size:0.7em;opacity:0.6">all rank-1</span>
+          </span>
+        </div>`;
+    }
+
     el.innerHTML = `
       <div class="day-accuracy-bar">
         <div class="day-acc-stat">
-          <span class="day-acc-val ${rateClass}" title="Win rate${smallSampleTip}">${winDisplay} <span style="font-size:0.7em;opacity:0.6">${winLabel}</span></span>
+          <span class="day-acc-val ${rateClass}" title="${primaryLabel} win rate${smallSampleTip}">${winDisplay} <span style="font-size:0.7em;opacity:0.6">${inSharpMode ? 'sharp win' : 'win'}</span></span>
         </div>
         <div class="day-acc-stat">
-          <span class="day-acc-val" style="color:${complete ? '#60a5fa' : 'var(--text-dim)'};opacity:${complete ? 1 : 0.75}" title="Place rate (top 3)${smallSampleTip}">${placeDisplay} <span style="font-size:0.7em;opacity:0.6">${placeLabel}</span></span>
+          <span class="day-acc-val" style="color:${complete ? '#60a5fa' : 'var(--text-dim)'};opacity:${complete ? 1 : 0.75}" title="Place rate (top 3)${smallSampleTip}">${placeDisplay} <span style="font-size:0.7em;opacity:0.6">plc</span></span>
         </div>
-        <div class="day-acc-stat">
-          <span class="day-acc-val" title="Wins / qualifying picks">${perf.wins}/${perf.races} <span style="font-size:0.7em;opacity:0.6">picks</span></span>
-        </div>
+        ${secondaryHtml}
         ${perf.value_bets ? `
         <div class="day-acc-stat">
           <span class="day-acc-val ${pnlClass}" title="${perf.value_bets} value bets P&L">${pnlStr} <span style="font-size:0.7em;opacity:0.6">val</span></span>
         </div>` : ''}
-        ${smallSample ? `<div class="day-acc-stat"><span style="color:var(--text-dim);font-size:0.72rem" title="Sample too small for reliable percentages">small sample</span></div>` : ''}
         ${!complete ? `<div class="day-acc-stat"><span style="color:var(--text-dim);font-size:0.72rem" title="Not all results seeded yet">partial</span></div>` : ''}
       </div>`;
   }
