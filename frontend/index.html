@@ -1291,16 +1291,21 @@
       let accHtml = '';
       if (perf) {
         const complete = perf.data_complete !== false;
+        const smallSample = perf.races < 5;
         const pct = Math.round(perf.win_rate * 100);
         const placePct = Math.round((perf.place_rate || 0) * 100);
         // Realistic rank-1 win-rate thresholds. Market favourites win ~30-33% of
-// all races (the natural ceiling for retail predictions). Anything ≥25%
-// is genuinely strong; 18-24% is competitive; <18% trails the market
-// favourite baseline by a meaningful margin.
-const cls = pct >= 25 ? 'good' : pct >= 18 ? 'ok' : 'bad';
-        const winLabel = `${pct}%`;
-        const placeLabel = `${placePct}%`;
-        accHtml = `<span class="date-pill-acc ${cls}" title="${complete ? 'Win rate' : 'Win rate (partial)'}">${winLabel}</span><span class="date-pill-acc" style="color:#60a5fa;background:rgba(59,130,246,0.12);border-color:rgba(59,130,246,0.25);opacity:${complete ? 1 : 0.75}" title="${complete ? 'Place rate' : 'Place rate (partial)'}">${placeLabel}</span>`;
+        // all races (the natural ceiling for retail predictions). Anything ≥25%
+        // is genuinely strong; 18-24% is competitive; <18% trails the market
+        // favourite baseline by a meaningful margin.
+        // Small sample (<5 races) — pct is noisy; show fraction instead.
+        const cls = smallSample ? 'ok' : (pct >= 25 ? 'good' : pct >= 18 ? 'ok' : 'bad');
+        const winLabel = smallSample ? `${perf.wins}/${perf.races}` : `${pct}%`;
+        const placeLabel = smallSample
+          ? `${Math.round((perf.place_rate || 0) * perf.races)}/${perf.races}`
+          : `${placePct}%`;
+        const tipSuffix = smallSample ? ' — small sample' : '';
+        accHtml = `<span class="date-pill-acc ${cls}" title="${complete ? 'Win rate' : 'Win rate (partial)'}${tipSuffix}">${winLabel}</span><span class="date-pill-acc" style="color:#60a5fa;background:rgba(59,130,246,0.12);border-color:rgba(59,130,246,0.25);opacity:${complete ? 1 : 0.75}" title="${complete ? 'Place rate' : 'Place rate (partial)'}${tipSuffix}">${placeLabel}</span>`;
       }
       el.innerHTML = `<span class="date-pill-day">${formatDayLabel(iso)}</span><span class="date-pill-date">${formatShortDate(iso)}</span>${accHtml}`;
       el.addEventListener('click', () => selectDate(iso));
@@ -1492,21 +1497,32 @@ const cls = pct >= 25 ? 'good' : pct >= 18 ? 'ok' : 'bad';
     const perf = S.perfByDate[iso];
     if (!perf || iso >= todayISO()) { el.innerHTML = ''; return; }
     const complete = perf.data_complete !== false;
+    // Small-sample guard — the Sharp filter can compress country days
+    // down to races=2 where 1 win reads as "50%", which is misleading.
+    // For n < 5 we show raw win/place counts instead of percentages.
+    const smallSample = perf.races < 5;
     const pct = Math.round(perf.win_rate * 100);
     const placePct = Math.round(perf.place_rate * 100);
     // Same thresholds as the date-pill colouring (see renderDatePills).
-    const rateClass = pct >= 25 ? 'good' : pct >= 18 ? 'ok' : 'bad';
-    const winDisplay = `${pct}%`;
-    const placeDisplay = `${placePct}%`;
+    const rateClass = smallSample ? 'ok' : (pct >= 25 ? 'good' : pct >= 18 ? 'ok' : 'bad');
+    const winDisplay = smallSample ? `${perf.wins}` : `${pct}%`;
+    const placeDisplay = smallSample
+      ? `${Math.round(perf.place_rate * perf.races)}`  // count of placed picks
+      : `${placePct}%`;
+    const winLabel = smallSample ? 'wins' : 'win';
+    const placeLabel = smallSample ? 'placed' : 'plc';
+    const smallSampleTip = smallSample
+      ? ` — small sample (n=${perf.races}); pcts are noisy on <5 races`
+      : '';
     const pnlClass = perf.value_pnl >= 0 ? 'good' : 'bad';
     const pnlStr = perf.value_pnl >= 0 ? `+$${perf.value_pnl.toFixed(1)}` : `-$${Math.abs(perf.value_pnl).toFixed(1)}`;
     el.innerHTML = `
       <div class="day-accuracy-bar">
         <div class="day-acc-stat">
-          <span class="day-acc-val ${rateClass}" title="Win rate">${winDisplay} <span style="font-size:0.7em;opacity:0.6">win</span></span>
+          <span class="day-acc-val ${rateClass}" title="Win rate${smallSampleTip}">${winDisplay} <span style="font-size:0.7em;opacity:0.6">${winLabel}</span></span>
         </div>
         <div class="day-acc-stat">
-          <span class="day-acc-val" style="color:${complete ? '#60a5fa' : 'var(--text-dim)'};opacity:${complete ? 1 : 0.75}" title="Place rate (top 3)">${placeDisplay} <span style="font-size:0.7em;opacity:0.6">plc</span></span>
+          <span class="day-acc-val" style="color:${complete ? '#60a5fa' : 'var(--text-dim)'};opacity:${complete ? 1 : 0.75}" title="Place rate (top 3)${smallSampleTip}">${placeDisplay} <span style="font-size:0.7em;opacity:0.6">${placeLabel}</span></span>
         </div>
         <div class="day-acc-stat">
           <span class="day-acc-val" title="Wins / qualifying picks">${perf.wins}/${perf.races} <span style="font-size:0.7em;opacity:0.6">picks</span></span>
@@ -1515,6 +1531,7 @@ const cls = pct >= 25 ? 'good' : pct >= 18 ? 'ok' : 'bad';
         <div class="day-acc-stat">
           <span class="day-acc-val ${pnlClass}" title="${perf.value_bets} value bets P&L">${pnlStr} <span style="font-size:0.7em;opacity:0.6">val</span></span>
         </div>` : ''}
+        ${smallSample ? `<div class="day-acc-stat"><span style="color:var(--text-dim);font-size:0.72rem" title="Sample too small for reliable percentages">small sample</span></div>` : ''}
         ${!complete ? `<div class="day-acc-stat"><span style="color:var(--text-dim);font-size:0.72rem" title="Not all results seeded yet">partial</span></div>` : ''}
       </div>`;
   }
