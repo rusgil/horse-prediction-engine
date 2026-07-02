@@ -1291,20 +1291,27 @@
       let accHtml = '';
       if (perf) {
         const complete = perf.data_complete !== false;
-        const smallSample = perf.races < 5;
-        const pct = Math.round(perf.win_rate * 100);
-        const placePct = Math.round((perf.place_rate || 0) * 100);
+        // In Sharp mode, use sharp_meeting_* (rank-1 wins at Sharp
+        // meetings — the intuitive metric) instead of raw perf.win_rate
+        // which counts only individually Sharp-qualifying races.
+        const inSharp = S.mainMode === 'sharp';
+        const pillRaces = (inSharp && perf.sharp_meeting_races != null) ? perf.sharp_meeting_races : perf.races;
+        const pillWins  = (inSharp && perf.sharp_meeting_wins != null)  ? perf.sharp_meeting_wins  : perf.wins;
+        const pillWinRate = (inSharp && perf.sharp_meeting_win_rate != null) ? perf.sharp_meeting_win_rate : perf.win_rate;
+        const pillPlaceRate = (inSharp && perf.sharp_meeting_place_rate != null) ? perf.sharp_meeting_place_rate : (perf.place_rate || 0);
+        const smallSample = pillRaces < 5;
+        const pct = Math.round(pillWinRate * 100);
+        const placePct = Math.round(pillPlaceRate * 100);
         // Realistic rank-1 win-rate thresholds. Market favourites win ~30-33% of
         // all races (the natural ceiling for retail predictions). Anything ≥25%
         // is genuinely strong; 18-24% is competitive; <18% trails the market
         // favourite baseline by a meaningful margin.
-        // Small sample (<5 races) — pct is noisy; show fraction instead.
         const cls = smallSample ? 'ok' : (pct >= 25 ? 'good' : pct >= 18 ? 'ok' : 'bad');
-        const winLabel = smallSample ? `${perf.wins}/${perf.races}` : `${pct}%`;
+        const winLabel = smallSample ? `${pillWins}/${pillRaces}` : `${pct}%`;
         const placeLabel = smallSample
-          ? `${Math.round((perf.place_rate || 0) * perf.races)}/${perf.races}`
+          ? `${Math.round(pillPlaceRate * pillRaces)}/${pillRaces}`
           : `${placePct}%`;
-        const tipSuffix = smallSample ? ' — small sample' : '';
+        const tipSuffix = smallSample ? ' — small sample' : (inSharp ? ' (Sharp meetings)' : '');
         accHtml = `<span class="date-pill-acc ${cls}" title="${complete ? 'Win rate' : 'Win rate (partial)'}${tipSuffix}">${winLabel}</span><span class="date-pill-acc" style="color:#60a5fa;background:rgba(59,130,246,0.12);border-color:rgba(59,130,246,0.25);opacity:${complete ? 1 : 0.75}" title="${complete ? 'Place rate' : 'Place rate (partial)'}${tipSuffix}">${placeLabel}</span>`;
       }
       el.innerHTML = `<span class="date-pill-day">${formatDayLabel(iso)}</span><span class="date-pill-date">${formatShortDate(iso)}</span>${accHtml}`;
