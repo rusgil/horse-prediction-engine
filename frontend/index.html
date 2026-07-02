@@ -1394,14 +1394,21 @@
       }
       S.perfByDate = {};
       for (const d of data.summary) {
+        const allRow = allByDate[d.date];
         S.perfByDate[d.date] = {
           ...d,
-          // Attach the broader "all rank-1" numbers when we're in Sharp
-          // mode. Day banner uses these to show both perspectives.
-          all_races: allByDate[d.date]?.races,
-          all_wins: allByDate[d.date]?.wins,
-          all_win_rate: allByDate[d.date]?.win_rate,
-          all_place_rate: allByDate[d.date]?.place_rate,
+          // "Sharp meeting" metric — rank-1 wins across all races at any
+          // meeting that had at least one Sharp-qualifying race. Matches
+          // what a user sees clicking through Sharp mode on the Lounge:
+          // all 6 Ballarat races at a Sharp-qualifying Ballarat meeting.
+          sharp_meeting_races: allRow?.sharp_meeting_races,
+          sharp_meeting_wins: allRow?.sharp_meeting_wins,
+          sharp_meeting_win_rate: allRow?.sharp_meeting_win_rate,
+          sharp_meeting_place_rate: allRow?.sharp_meeting_place_rate,
+          all_races: allRow?.races,
+          all_wins: allRow?.wins,
+          all_win_rate: allRow?.win_rate,
+          all_place_rate: allRow?.place_rate,
         };
       }
       renderDatePills();
@@ -1520,34 +1527,47 @@
     if (!perf || iso >= todayISO()) { el.innerHTML = ''; return; }
     const complete = perf.data_complete !== false;
     const inSharpMode = S.mainMode === 'sharp';
-    const hasAllContext = inSharpMode && perf.all_races != null && perf.all_races > 0;
-    // Small-sample guard — Sharp can compress country days to n=2 where
-    // 1 win reads as "50%". For n < 5 show the raw count instead of %.
-    const smallSample = perf.races < 5;
-    const pct = Math.round(perf.win_rate * 100);
-    const placePct = Math.round(perf.place_rate * 100);
+    // In Sharp mode, use the "Sharp meetings" metric — rank-1 wins across
+    // all races at Sharp-qualifying meetings. This matches what the user
+    // actually sees when they click through Sharp mode (e.g., 4/6 at
+    // Ballarat, not the misleading 1/2 that only counts individually
+    // Sharp-qualifying races).
+    const displayRaces = (inSharpMode && perf.sharp_meeting_races != null)
+      ? perf.sharp_meeting_races : perf.races;
+    const displayWins = (inSharpMode && perf.sharp_meeting_wins != null)
+      ? perf.sharp_meeting_wins : perf.wins;
+    const displayWinRate = (inSharpMode && perf.sharp_meeting_win_rate != null)
+      ? perf.sharp_meeting_win_rate : perf.win_rate;
+    const displayPlaceRate = (inSharpMode && perf.sharp_meeting_place_rate != null)
+      ? perf.sharp_meeting_place_rate : perf.place_rate;
+    // Secondary context: when in Sharp mode, show the narrower "Sharp
+    // races only" figure as a chip so users can see both scopes.
+    const hasSharpRacesContext = inSharpMode && perf.races !== displayRaces;
+
+    const smallSample = displayRaces < 5;
+    const pct = Math.round(displayWinRate * 100);
+    const placePct = Math.round(displayPlaceRate * 100);
     const rateClass = smallSample ? 'ok' : (pct >= 25 ? 'good' : pct >= 18 ? 'ok' : 'bad');
-    // Primary metric (Sharp or All depending on mode)
-    const primaryLabel = inSharpMode ? 'Sharp' : 'All rank-1';
-    const winDisplay = smallSample ? `${perf.wins}/${perf.races}` : `${pct}%`;
+    const primaryLabel = inSharpMode ? 'Sharp meetings' : 'All rank-1';
+    const winDisplay = smallSample ? `${displayWins}/${displayRaces}` : `${pct}%`;
     const placeDisplay = smallSample
-      ? `${Math.round(perf.place_rate * perf.races)}/${perf.races}`
+      ? `${Math.round(displayPlaceRate * displayRaces)}/${displayRaces}`
       : `${placePct}%`;
-    const smallSampleTip = smallSample ? ` — small sample (n=${perf.races})` : '';
+    const smallSampleTip = smallSample ? ` — small sample (n=${displayRaces})` : '';
     const pnlClass = perf.value_pnl >= 0 ? 'good' : 'bad';
     const pnlStr = perf.value_pnl >= 0 ? `+$${perf.value_pnl.toFixed(1)}` : `-$${Math.abs(perf.value_pnl).toFixed(1)}`;
 
-    // Secondary stat when in Sharp mode: show the broader all-rank-1
-    // context. If Sharp is 1/2 but the model actually went 5/14 across
-    // the day, the user sees both numbers side by side.
+    // Secondary chip in Sharp mode: show the narrower "Sharp races only"
+    // count. Sharp meetings gives the intuitive metric (all rank-1 at
+    // Sharp-qualifying meetings), sharp races is the narrow high-conviction
+    // niche. Both are meaningful — display both when they differ.
     let secondaryHtml = '';
-    if (hasAllContext && perf.all_races !== perf.races) {
-      const allPct = Math.round((perf.all_win_rate || 0) * 100);
+    if (hasSharpRacesContext) {
       secondaryHtml = `
         <div class="day-acc-stat" style="padding-left:8px;border-left:1px solid var(--border);margin-left:4px">
-          <span class="day-acc-val" style="color:var(--text-secondary);font-size:0.85em" title="Broader model performance — all rank-1 picks regardless of Sharp filter">
-            ${perf.all_wins}/${perf.all_races} (${allPct}%)
-            <span style="font-size:0.7em;opacity:0.6">all rank-1</span>
+          <span class="day-acc-val" style="color:var(--text-secondary);font-size:0.85em" title="Individual Sharp-qualifying picks only (model ≥30% OR top-3 ≥60%)">
+            ${perf.wins}/${perf.races}
+            <span style="font-size:0.7em;opacity:0.6">sharp picks only</span>
           </span>
         </div>`;
     }

@@ -16379,6 +16379,62 @@ async def performance_summary(
             "data_complete": data_complete,
         })
 
+    # "Sharp meetings" metric — rank-1 wins across meetings that had at
+    # least one Sharp-qualifying race that day. Matches what a user sees
+    # when they click through Sharp mode on the Lounge (all races at
+    # each Sharp-qualifying meeting), rather than the narrower "only
+    # Sharp races" cut. E.g., Ballarat Tuesday had 1 Sharp race but the
+    # model went 4/6 across the whole card — this exposes that.
+    if not sharp:
+        # Find (date, venue_code) pairs that had at least one is_sharp=TRUE
+        # rank-1 pick. Uses the top_picks we already loaded.
+        sharp_venues_by_date: dict[str, set] = {}
+        for rid, pick in top_picks.items():
+            if pick.is_sharp is True:
+                d = rid[:10]
+                try:
+                    venue_code = rid.split("_", 2)[1]
+                except IndexError:
+                    continue
+                sharp_venues_by_date.setdefault(d, set()).add(venue_code)
+        # Now walk the full rank-1 set and count wins at Sharp meetings only.
+        for row in summary:
+            d = row["date"]
+            sharp_venues = sharp_venues_by_date.get(d, set())
+            if not sharp_venues:
+                row["sharp_meeting_races"] = 0
+                row["sharp_meeting_wins"] = 0
+                row["sharp_meeting_win_rate"] = None
+                row["sharp_meeting_place_rate"] = None
+                continue
+            sm_races = 0
+            sm_wins = 0
+            sm_placed = 0
+            for rid, pick in top_picks.items():
+                if not rid.startswith(f"{d}_"):
+                    continue
+                try:
+                    venue_code = rid.split("_", 2)[1]
+                except IndexError:
+                    continue
+                if venue_code not in sharp_venues:
+                    continue
+                winner = winners.get(rid)
+                if not winner:
+                    continue
+                actual = result_by_key.get((rid, _normalize_horse(pick.horse_name)))
+                if not actual or not actual.position or actual.position <= 0:
+                    continue
+                sm_races += 1
+                if _normalize_horse(pick.horse_name) == _normalize_horse(winner):
+                    sm_wins += 1
+                if actual.position <= 3:
+                    sm_placed += 1
+            row["sharp_meeting_races"] = sm_races
+            row["sharp_meeting_wins"] = sm_wins
+            row["sharp_meeting_win_rate"] = round(sm_wins / sm_races, 3) if sm_races else None
+            row["sharp_meeting_place_rate"] = round(sm_placed / sm_races, 3) if sm_races else None
+
     total_races = sum(d["races"] for d in by_date.values())
     total_wins = sum(d["wins"] for d in by_date.values())
     body = {
