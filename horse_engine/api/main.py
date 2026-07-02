@@ -11901,7 +11901,11 @@ async def live_odds(race_id: str):
     # Skip when RA breaker is open — saves the 5s timeout pain. Page falls
     # back to DB-only positions, which is correct for settled races and
     # acceptable degradation for unsettled.
-    if not _ra_breaker_open(client):
+    # Also skip entirely for settled past races — SP + positions are
+    # already in HistoricalResultRow, so the TAB call is pure latency for
+    # zero new data. Cuts live-odds endpoint from ~5s to ~50ms for past
+    # dates. Only call TAB when the race is still open (no DB results).
+    if not db_settled and not _ra_breaker_open(client):
         try:
             slug = _meeting_slug(venue_code, race_date)
             # Timeout 15s → 5s. Was burning 15s/race-page-load when RA
