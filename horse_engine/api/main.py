@@ -11516,44 +11516,51 @@ async def get_meeting(race_date: str, venue_code: str):
     race_list.sort(key=lambda r: r["race_number"])
 
     # ── Step 2: top-up with live RA data (best-effort) ───────────────────────
-    # Adds: live status for open/closed races + any races not yet enriched
+    # Adds: live status for open/closed races + any races not yet enriched.
+    # For PAST dates every race is already settled, race times + names are
+    # already in the DB, and RA has nothing new to add — skip the 25s TAB
+    # call entirely. The Lounge fires this endpoint per meeting on every
+    # date click, so past-date pages were paying 25s × N meetings of pure
+    # latency for zero information gain.
     ra_times: dict[str, str] = {}  # race_id → startTime, for DB back-fill
-    try:
-        client = get_tab_client()
-        slug = _meeting_slug(venue_code, race_date)
-        raw_races = await asyncio.wait_for(client.get_meeting_races(slug), timeout=25)
-        ra_by_num = {r.get("eventNumber"): r for r in raw_races}
-        existing_nums = {r["race_number"] for r in race_list}
-        for r_num, r in ra_by_num.items():
-            race_id = f"{race_date}_{venue_code}_R{r_num}"
-            start_time = r.get("startTime")
-            if start_time:
-                ra_times[race_id] = start_time
-            if r_num in existing_nums:
-                for item in race_list:
-                    if item["race_number"] == r_num:
-                        item["status"] = r.get("status")
-                        if not item["race_name"]:   item["race_name"]   = r.get("name")
-                        if not item["distance"]:    item["distance"]    = r.get("distance")
-                        if not item["scheduled_time"]: item["scheduled_time"] = start_time
-                        if not item["time"]:        item["time"]        = start_time
-                        break
-            else:
-                race_list.append({
-                    "race_id": race_id,
-                    "race_number": r_num,
-                    "race_name": r.get("name"),
-                    "distance": r.get("distance"),
-                    "scheduled_time": start_time,
-                    "time": start_time,
-                    "status": r.get("status"),
-                    "track_condition": None,
-                    "field_size": None,
-                    "prize_money": None,
-                })
-        race_list.sort(key=lambda r: r["race_number"])
-    except Exception as e:
-        log.warning("[get_meeting] RA fallback failed for %s/%s: %s", venue_code, race_date, e)
+    is_past_date = race_date < _today_aest().isoformat()
+    if not is_past_date:
+        try:
+            client = get_tab_client()
+            slug = _meeting_slug(venue_code, race_date)
+            raw_races = await asyncio.wait_for(client.get_meeting_races(slug), timeout=25)
+            ra_by_num = {r.get("eventNumber"): r for r in raw_races}
+            existing_nums = {r["race_number"] for r in race_list}
+            for r_num, r in ra_by_num.items():
+                race_id = f"{race_date}_{venue_code}_R{r_num}"
+                start_time = r.get("startTime")
+                if start_time:
+                    ra_times[race_id] = start_time
+                if r_num in existing_nums:
+                    for item in race_list:
+                        if item["race_number"] == r_num:
+                            item["status"] = r.get("status")
+                            if not item["race_name"]:   item["race_name"]   = r.get("name")
+                            if not item["distance"]:    item["distance"]    = r.get("distance")
+                            if not item["scheduled_time"]: item["scheduled_time"] = start_time
+                            if not item["time"]:        item["time"]        = start_time
+                            break
+                else:
+                    race_list.append({
+                        "race_id": race_id,
+                        "race_number": r_num,
+                        "race_name": r.get("name"),
+                        "distance": r.get("distance"),
+                        "scheduled_time": start_time,
+                        "time": start_time,
+                        "status": r.get("status"),
+                        "track_condition": None,
+                        "field_size": None,
+                        "prize_money": None,
+                    })
+            race_list.sort(key=lambda r: r["race_number"])
+        except Exception as e:
+            log.warning("[get_meeting] RA fallback failed for %s/%s: %s", venue_code, race_date, e)
 
     race_ids = [r["race_id"] for r in race_list]
 
