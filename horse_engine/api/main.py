@@ -11256,10 +11256,15 @@ async def list_meetings(race_date: str = _today()):
     except Exception as e:
         log.debug("[list_meetings] DB cache read skipped: %s", e)
     client = get_tab_client()
-    # When RA's breaker is open, client.get_meetings just hits the breaker and
-    # returns empty after the timeout. Skip to the DB-fallback path directly
-    # so the cache miss doesn't burn that time.
-    if _ra_breaker_open(client):
+    # PAST DATES: skip RA entirely. Every meeting that ran that day is
+    # already in the DB (via RacePredictionRow / RunnerPredictionRow /
+    # HistoricalResultRow). Hitting RA for past dates was contributing to
+    # the ~30s past-day page-load — same class of bug as the meeting-
+    # detail + live-odds fixes shipped earlier today.
+    is_past_date = race_date < _today_aest().isoformat()
+    if is_past_date:
+        meetings = []
+    elif _ra_breaker_open(client):
         log.info("[list_meetings] RA breaker open — using DB-only path for %s", race_date)
         meetings = []
     else:
