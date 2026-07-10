@@ -3302,6 +3302,10 @@
     let payoutHtml;
     if (p.scratched) {
       payoutHtml = `<div class="no-odds">Scratched — no bet</div>`;
+    } else if (p.no_result) {
+      // Race not seeded yet — don't treat it as a $10 loss.
+      // Card matches the summary strip's exclusion (activePicks filter).
+      payoutHtml = `<div class="no-odds">No result yet — awaiting seed</div>`;
     } else if (isWin && p.sp) {
       payoutHtml = `
         <div class="payout-box">
