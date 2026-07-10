@@ -1240,10 +1240,13 @@ class RacingAustraliaClient:
             if cached and (datetime.utcnow() - cached[0]).total_seconds() < 21600:
                 return cached[1]
             from urllib.parse import quote
-            # Racing Australia moved Results.aspx under /FreeFields/ some
-            # time on 2026-07-10. Old /Results.aspx returns 404 for all
-            # keys. Every scraper hitting the old path broke simultaneously.
-            url = f"{_BASE}/FreeFields/Results.aspx?Key={quote(ra_key, safe='')}"
+            # _BASE already ends in "/FreeFields" — do NOT prepend a second
+            # /FreeFields/. A previous edit (2026-07-10) added one under the
+            # false belief that RA had moved the endpoint. The site never
+            # moved; the double-nested path just 404s. Verified via curl:
+            #   /FreeFields/Results.aspx        → 200 (~28KB)
+            #   /FreeFields/FreeFields/Results  → 404
+            url = f"{_BASE}/Results.aspx?Key={quote(ra_key, safe='')}"
             try:
                 html = await self._get(url)
             except Exception as e:
