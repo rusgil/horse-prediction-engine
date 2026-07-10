@@ -404,6 +404,23 @@ def predict_race(race: Race, model: HorseModel, venue_calibration: dict[str, flo
         elif going == "heavy":
             p.win_prob = round(p.win_prob * 0.55, 4)
 
+    # Thin-record penalty — the model can't distinguish a lightly-raced
+    # horse's genuine form from lucky variance. Even at 3 starts a 1-3-3
+    # record could equally be 1-lucky-2 (5-length beaten places we can't
+    # see) or 1-genuine-3. The form_score discount in form.py handles the
+    # feature-side pull; this multiplier attacks the OUTPUT for whatever
+    # pathway drove the confidence (trainer/jockey/distance stacking).
+    # Shipped 2026-07-10 after COAL SEAM/mackay R1 went 68.8% → 6th of 8.
+    for p in predictions:
+        n = getattr(p.enriched, "starts_last_10", None)
+        if isinstance(n, (int, float)):
+            if n <= 1:
+                p.win_prob = round(p.win_prob * 0.50, 4)
+            elif n == 2:
+                p.win_prob = round(p.win_prob * 0.70, 4)
+            elif n == 3:
+                p.win_prob = round(p.win_prob * 0.85, 4)
+
     # Rank by win probability
     predictions.sort(key=lambda p: p.win_prob, reverse=True)
     for rank, p in enumerate(predictions, 1):

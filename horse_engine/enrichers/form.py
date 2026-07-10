@@ -60,12 +60,20 @@ def discount_form_for_thin_record(form_score: float, starts_last_10: int) -> flo
     Triggered by OSAKA CASTLE/sportsbet-ballarat R5 on 2026-06-12: 2
     starts in the last 10, form score 0.62, model gave it 31% and rank
     1. SP $31 (market rank 1, so the market was also confused), finished
-    10th of 11. A 0.62 form score on a 2-start sample is fragile and
-    shouldn't drive a rank-1 pick.
+    10th of 11.
+
+    Extended on 2026-07-10 after COAL SEAM/mackay R1: 3 starts (1 win,
+    3 places = 100% place strike rate), 182 days off, form score
+    0.7495, model gave it 68.8% and rank 1 with an 11× confidence gap
+    to rank-2. Finished 6th of 8. Three starts is still thin — a
+    1-3-3 record looks elite but two of those places could have been
+    5-length beaten seconds and we'd never know. The old '≥3 starts
+    → unchanged' rule treated 3 starts as a workable sample; it isn't.
 
     Discount weights:
-        ≥ 3 starts → form_score unchanged (sample is workable)
-        2 starts   → pull 35% toward the no-form baseline (0.3)
+        ≥ 4 starts → form_score unchanged (workable sample)
+        3 starts   → pull 15% toward the no-form baseline (0.3) — NEW
+        2 starts   → pull 35% toward the no-form baseline
         1 start    → pull 70% toward the no-form baseline
         0 starts   → return baseline (handled by weighted_form_score's
                      no-form prior already, but defended here too)
@@ -76,13 +84,13 @@ def discount_form_for_thin_record(form_score: float, starts_last_10: int) -> flo
     """
     if starts_last_10 is None:
         return form_score
-    if starts_last_10 >= 3:
+    if starts_last_10 >= 4:
         return form_score
     if form_score <= LAYOFF_BASELINE_SCORE:
         return form_score
     if starts_last_10 <= 0:
         return LAYOFF_BASELINE_SCORE
-    weight = {1: 0.7, 2: 0.35}.get(starts_last_10, 0.0)
+    weight = {1: 0.7, 2: 0.35, 3: 0.15}.get(starts_last_10, 0.0)
     return round(form_score - (form_score - LAYOFF_BASELINE_SCORE) * weight, 4)
 
 
