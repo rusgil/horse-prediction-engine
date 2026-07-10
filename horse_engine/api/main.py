@@ -3946,7 +3946,7 @@ async def refresh_edge_results(request: Request):
 _yesterday_response_cache: dict[str, tuple[datetime, dict]] = {}
 _YESTERDAY_CACHE_TTL = 1800  # 30 min — past dates are stable
 _YESTERDAY_CACHE_TTL_TODAY = 60  # 1 min — today's results land throughout the day
-_YESTERDAY_CACHE_VERSION = 2  # bumped to invalidate stale "all no_result" payloads
+_YESTERDAY_CACHE_VERSION = 3  # bumped to invalidate stale "all no_result" payloads from the 2026-07-10/11 RA outage
 
 
 def _yesterday_cache_ttl(target_date: str) -> int:
