@@ -276,7 +276,7 @@ def _detect_weekly_dominant_failure(
         paste_prompt=(
             f"This week's dominant rank-1 failure mode was '{top_tag}' ({top_count} losses). "
             "Compare to last week via /api/admin/model-anomalies?days=14 grouped by week. "
-            "If '{top_tag}' is consistently dominant for 2+ weeks, propose the specific "
+            f"If '{top_tag}' is consistently dominant for 2+ weeks, propose the specific "
             "engine.py / form.py change. If it's a one-week spike, hold and re-check."
         ),
         code_pointer="horse_engine/prediction/engine.py",
@@ -512,6 +512,22 @@ async def generate_weekly_review(
                 rationale=f"Exception: {e}",
                 paste_prompt=f"Fix the crashed detector {detector.__name__} in horse_engine/analysis/weekly_review.py",
             ))
+
+    # Stamp every paste_prompt with a "Generated on X for window Y-Z"
+    # header. Operators pasting these back into chat days later hit
+    # exactly this trap without it — the Sharp-drop paste-prompt from
+    # 2026-07-05 got executed 5 days later against a completely
+    # different sample and produced a variance-driven false lead.
+    # The banner makes the freshness obvious.
+    generated_on = end_date.isoformat()
+    for s in suggestions:
+        if s.paste_prompt and not s.paste_prompt.startswith("[Generated"):
+            s.paste_prompt = (
+                f"[Generated {generated_on} — reviewing week {week_start} → {generated_on}. "
+                f"If you're pasting this more than 3 days later, the underlying data has "
+                f"drifted; consider whether it's still the right question.]\n\n"
+                + s.paste_prompt
+            )
 
     rank = {"high": 0, "medium": 1, "low": 2}
     suggestions.sort(key=lambda s: rank.get(s.severity, 3))
