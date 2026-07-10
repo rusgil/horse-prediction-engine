@@ -354,11 +354,91 @@ def _detect_weekly_going_pattern(
     )
 
 
+# Baseline captured 2026-07-10 after shipping the thin-record + midfield
+# + going-multiplier changes. See detector below.
+_THIN_RECORD_BASELINE_2026_07_10 = {
+    "captured_at": "2026-07-10",
+    "settled_rank1_picks_7d": 297,
+    "overall_win_pct": 23.6,
+    "midfield_win_pct": 26.4,       # n=144
+    "on_pace_win_pct": 21.7,        # n=83
+    "leader_win_pct": 20.0,         # n=70
+    "days_off_winner_mean": 148.7,
+    "days_off_loser_mean": 145.3,
+    "days_off_loser_minus_winner": -3.4,
+}
+
+
+def _detect_thin_record_validation_2026_07_10(
+    end_date: date, picks: list, results: dict, applied: set, top3_by_race: dict
+) -> Optional[Suggestion]:
+    """One-off validation check for the 2026-07-10 thin-record ship.
+
+    Fires exactly once on the first weekly review from 2026-07-14 (the
+    first Monday after the ship) onwards. Emits a paste-prompt that walks
+    the operator through re-running the winner-vs-loser-features endpoint
+    and diffing the midfield + days-off numbers against the baseline
+    captured on ship day.
+
+    Uses the applied-history mechanism to avoid re-firing across weeks —
+    once the operator marks the suggestion applied (or dismissed), the
+    detector goes quiet.
+    """
+    target_date = date(2026, 7, 14)
+    if end_date < target_date:
+        return None
+    pattern_id = "validation_thin_record_ship_2026_07_10"
+    if pattern_id in applied:
+        return None
+    b = _THIN_RECORD_BASELINE_2026_07_10
+    return Suggestion(
+        id=_suggestion_id(end_date, pattern_id),
+        pattern_id=pattern_id,
+        title="Validate thin-record + midfield + going ship (2026-07-10)",
+        severity="medium",
+        rationale=(
+            f"On 2026-07-10 we shipped three model refinements: form.py's "
+            "thin-record discount extended to 3-start horses, engine.py's "
+            "post-ranking multiplier for starts_last_10 ≤ 3, and split "
+            "soft/heavy going multipliers (0.40 / 0.55). The plan was to "
+            "re-run /api/admin/bets/winner-vs-loser-features?days=7 a week "
+            "later and check that midfield bias and days_off lift have "
+            "shrunk toward the baseline. Now's the time."
+        ),
+        evidence=[b],
+        paste_prompt=(
+            "Run the thin-record ship validation. Pull "
+            "/api/admin/bets/winner-vs-loser-features?days=7 and compare "
+            "against the 2026-07-10 baseline:\n"
+            f"  overall win% baseline={b['overall_win_pct']}% "
+            f"midfield={b['midfield_win_pct']}% (n=144) "
+            f"days_off gap={b['days_off_loser_minus_winner']}d\n"
+            "\n"
+            "Pass criteria:\n"
+            "  1. midfield win% should have converged toward 22-24% "
+            "(closer to on_pace/leader). If still ≥26% ship a "
+            "further-tightened midfield multiplier.\n"
+            "  2. days_off (loser − winner) absolute lift ≤ 4 days. If "
+            "drifting toward +10 or -10, revisit the discount curve.\n"
+            "  3. Going multiplier is on a longer clock (rare off-going "
+            "days). Note the sample size and re-check monthly with "
+            "?days=60 instead.\n"
+            "\n"
+            "Post a short pass/fail table. If a metric failed, propose "
+            "the specific next change. If everything passed, mark this "
+            "suggestion applied so it doesn't fire again."
+        ),
+        code_pointer="horse_engine/prediction/engine.py + horse_engine/enrichers/form.py",
+        metric_delta={"baseline_2026_07_10": b},
+    )
+
+
 WEEKLY_DETECTORS = [
     _detect_weekly_top1_drift,
     _detect_weekly_sharp_drift,
     _detect_weekly_dominant_failure,
     _detect_weekly_going_pattern,
+    _detect_thin_record_validation_2026_07_10,
 ]
 
 
