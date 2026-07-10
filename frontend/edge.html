@@ -3669,8 +3669,11 @@
       return;
     }
 
-    // Recalculate P&L from SP + current stake
-    const activePicks = data.picks.filter(p => !p.scratched);
+    // Recalculate P&L from SP + current stake.
+    // Exclude no_result rows too — race hasn't been seeded, so we can't
+    // treat it as a $10 loss. Otherwise Unplaced/ROI inflate on days
+    // where RA scraping fell behind (Fri 2026-07-10 incident).
+    const activePicks = data.picks.filter(p => !p.scratched && !p.no_result);
     const totalStaked = +(activePicks.length * stake).toFixed(2);
     const totalReturns = +activePicks.filter(p => p.winner && p.sp).reduce((s, p) => s + p.sp * stake, 0).toFixed(2);
     const pnl = +(totalReturns - totalStaked).toFixed(2);
