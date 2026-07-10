@@ -7824,6 +7824,52 @@ async def applied_suggestions_history(
 # ─── /Nightly review endpoints ────────────────────────────────────────────
 
 
+@app.get("/api/admin/probe-tab-race")
+async def probe_tab_race(race_id: str, x_cron_secret: Optional[str] = Header(None)):
+    """Dump raw TAB response for a race — checks whether TAB's
+    finishingPosition (or a similar field) is populated after the race
+    settles. Prep work for a potential TAB-based results seeder as a
+    backup / replacement for the RA HTML scrape."""
+    _check_admin(x_cron_secret)
+    parts = race_id.split("_")
+    if len(parts) < 3:
+        raise HTTPException(400, "bad race_id")
+    race_date, venue_code = parts[0], parts[1]
+    try:
+        race_num = int(parts[2].replace("R", ""))
+    except ValueError:
+        raise HTTPException(400, "bad race number")
+    client = get_tab_client()
+    slug = _meeting_slug(venue_code, race_date)
+    raw = await client.get_race(slug, race_num)
+    if not raw:
+        return {"race_id": race_id, "raw": None, "note": "TAB returned no event"}
+    top_level = {k: v for k, v in raw.items() if k != "runners" and not isinstance(v, list)}
+    runners = raw.get("runners") or []
+    trimmed_runners = []
+    for r in runners:
+        if not isinstance(r, dict):
+            continue
+        # Keep every field on the runner — helps spot position under a
+        # non-obvious name (e.g. inside "results", "meta", "outcome").
+        trimmed = {}
+        for k, v in r.items():
+            if isinstance(v, dict) or k == "prices":
+                trimmed[k] = v
+            elif not isinstance(v, list):
+                trimmed[k] = v
+        trimmed_runners.append(trimmed)
+    return {
+        "race_id": race_id,
+        "slug": slug,
+        "top_level_keys": sorted(top_level.keys()),
+        "top_level_values": top_level,
+        "runner_keys_sample": sorted(runners[0].keys()) if runners else [],
+        "runner_count": len(runners),
+        "first_3_runners": trimmed_runners[:3],
+    }
+
+
 @app.post("/api/admin/backfill-is-sharp")
 async def admin_backfill_is_sharp(x_cron_secret: Optional[str] = Header(None)):
     """Manual trigger for the is_sharp backfill on rank-1 rows where the
