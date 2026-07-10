@@ -14380,6 +14380,12 @@ async def seed_ra_results(
                         winner=pos == 1,
                         placed=pos <= 3,
                         starting_price=sp,
+                        # Without tab_number, _settle_bets_for_race can't
+                        # map finishing positions to bet-box tab numbers
+                        # and leaves the race in 'pending' forever.
+                        # Match cron path (_seed_results_for_date) — pull
+                        # from the matched prediction row when we have it.
+                        tab_number=getattr(matched_pred, "tab_number", None) if matched_pred else None,
                         feature_vector_json=fv_json,
                     ))
                     race_seeded += 1
