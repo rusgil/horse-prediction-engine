@@ -13289,6 +13289,21 @@ async def test_ra_fetch(ra_key: str = "2026Jun08,NSW,Canterbury Park",
     for rn, rd in list(parsed.items())[:3]:
         w = [(k, v["position"]) for k, v in rd["runners"].items() if v.get("position") == 1]
         sample[rn] = {"runners": len(rd["runners"]), "winner": w}
+    # Find anchors/tags that look like race containers so we can figure
+    # out the new HTML structure. Grep out race headers, tables, and any
+    # id/class that mentions "race", "results", "position", "runner".
+    import re as _re
+    signals = {
+        "race_h_tags": _re.findall(r'<h\d[^>]*>[^<]*[Rr]ace[^<]*</h\d>', html)[:8],
+        "class_race_*": sorted(set(_re.findall(r'class="[^"]*race[^"]*"', html)))[:15],
+        "id_race_*": sorted(set(_re.findall(r'id="[^"]*[Rr]ace[^"]*"', html)))[:15],
+        "class_results_*": sorted(set(_re.findall(r'class="[^"]*[Rr]esult[^"]*"', html)))[:15],
+        "class_finish_*": sorted(set(_re.findall(r'class="[^"]*[Ff]inish[^"]*"', html)))[:15],
+        "table_classes": sorted(set(_re.findall(r'<table[^>]*class="([^"]+)"', html)))[:15],
+    }
+    # Search for "Race 3" text (Gatton R3) to see how the page marks it
+    r3_pos = html.find("Race 3")
+    r3_context = html[max(0, r3_pos-100):r3_pos+800] if r3_pos > 0 else ""
     return {
         "url": url,
         "ra_key": ra_key,
@@ -13296,6 +13311,8 @@ async def test_ra_fetch(ra_key: str = "2026Jun08,NSW,Canterbury Park",
         "html_snippet": snippet,
         "races_found": races_found,
         "sample": sample,
+        "structure_signals": signals,
+        "race3_context": r3_context,
     }
 
 
