@@ -10484,6 +10484,74 @@ async def admin_scratch_sweep_now(x_cron_secret: Optional[str] = Header(None)):
     return {"ok": True, "newly_cancelled": cancelled}
 
 
+@app.post("/api/admin/scratch-runner")
+async def admin_scratch_runner(
+    race_id: str = Query(...),
+    horse_name: str = Query(...),
+    x_cron_secret: Optional[str] = Header(None),
+):
+    """
+    Manually mark a single runner as scratched. Used when a bookmaker
+    (Sportsbet/TAB) has scratched the horse but RA Acceptances.aspx
+    hasn't updated yet, so the automatic sweep can't detect it.
+
+    Sets cancelled=True on both the mutable and history rows for
+    (race_id, horse_name), busts the edge cache, and invalidates the
+    per-venue meeting cache so the change surfaces immediately.
+
+    Idempotent — a re-run against an already-cancelled runner is a
+    no-op.
+    """
+    _check_admin(x_cron_secret)
+    from sqlalchemy import update as sa_update
+    global _edge_response_cache
+
+    target = _normalize_horse(horse_name)
+    async with get_session() as session:
+        mut_rows = (await session.execute(
+            select(RunnerPredictionRow.horse_name)
+            .where(RunnerPredictionRow.race_id == race_id)
+        )).scalars().all()
+        matched_mut = [n for n in mut_rows if _normalize_horse(n) == target]
+        hist_rows = (await session.execute(
+            select(RunnerPredictionHistoryRow.horse_name)
+            .where(RunnerPredictionHistoryRow.race_id == race_id)
+        )).scalars().all()
+        matched_hist = [n for n in hist_rows if _normalize_horse(n) == target]
+
+        if not matched_mut and not matched_hist:
+            raise HTTPException(404, f"no runner matching '{horse_name}' in {race_id}")
+
+        mut_result = await session.execute(
+            sa_update(RunnerPredictionRow)
+            .where(RunnerPredictionRow.race_id == race_id)
+            .where(RunnerPredictionRow.horse_name.in_(matched_mut or [""]))
+            .values(cancelled=True)
+        ) if matched_mut else None
+        hist_result = await session.execute(
+            sa_update(RunnerPredictionHistoryRow)
+            .where(RunnerPredictionHistoryRow.race_id == race_id)
+            .where(RunnerPredictionHistoryRow.horse_name.in_(matched_hist or [""]))
+            .values(cancelled=True)
+        ) if matched_hist else None
+        await session.commit()
+
+    _edge_response_cache = None
+    try:
+        _, vc, _ = _parse_race_id(race_id)
+        _invalidate_meeting_caches(race_id[:10], vc)
+    except Exception:
+        pass
+
+    return {
+        "ok": True,
+        "race_id": race_id,
+        "matched_horse": matched_mut[0] if matched_mut else (matched_hist[0] if matched_hist else None),
+        "mutable_updated": mut_result.rowcount if mut_result else 0,
+        "history_updated": hist_result.rowcount if hist_result else 0,
+    }
+
+
 @app.post("/api/admin/bets/generate-all")
 async def admin_generate_all(x_cron_secret: Optional[str] = Header(None)):
     """Fire the hourly bet-generation sweep immediately. Additive — only
