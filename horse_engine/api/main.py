@@ -14235,7 +14235,18 @@ async def seed_ra_results(
     detail: list[dict] = []
 
     for (venue_name, state), race_ids in venue_state_map.items():
-        ra_key, results = await ra.find_results(race_date, state, venue_name)
+        # Per-venue try/except — one venue's parse failure (e.g. Geelong's
+        # 31KB abandoned-meeting page on 2026-07-10) MUST NOT crash the
+        # whole seed sweep. Was 500-ing the endpoint for every date that
+        # had any pathological RA page.
+        try:
+            ra_key, results = await ra.find_results(race_date, state, venue_name)
+        except Exception as e:
+            log.warning("[seed-ra-results] %s/%s find_results raised: %s",
+                        venue_name, state, e)
+            detail.append({"venue": venue_name, "state": state,
+                           "races_found": 0, "error": str(e)[:200]})
+            continue
         if not results:
             detail.append({"venue": venue_name, "state": state, "races_found": 0})
             continue
