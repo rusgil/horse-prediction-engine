@@ -1307,8 +1307,11 @@
         // Realistic rank-1 win-rate thresholds. Market favourites win ~30-33% of
         // all races (the natural ceiling for retail predictions). Anything ≥25%
         // is genuinely strong; 18-24% is competitive; <18% trails the market
-        // favourite baseline by a meaningful margin.
-        const cls = smallSample ? 'ok' : (pct >= 25 ? 'good' : pct >= 18 ? 'ok' : 'bad');
+        // favourite baseline by a meaningful margin. Zero wins → red regardless
+        // of sample size (small-sample guard only prevents artificial green).
+        const cls = pillWins === 0
+          ? 'bad'
+          : (smallSample ? 'ok' : (pct >= 25 ? 'good' : pct >= 18 ? 'ok' : 'bad'));
         const winLabel = smallSample ? `${pillWins}/${pillRaces}` : `${pct}%`;
         const placeLabel = smallSample
           ? `${Math.round(pillPlaceRate * pillRaces)}/${pillRaces}`
@@ -1553,7 +1556,13 @@
     const smallSample = displayRaces < 5;
     const pct = Math.round(displayWinRate * 100);
     const placePct = Math.round(displayPlaceRate * 100);
-    const rateClass = smallSample ? 'ok' : (pct >= 25 ? 'good' : pct >= 18 ? 'ok' : 'bad');
+    // Small-sample guard prevents artificial GREEN on tiny denominators
+    // (e.g. 1/2 = 50% shouldn't paint the pill emerald), but 0 wins is
+    // unambiguously bad regardless of sample size. So: zero wins → red,
+    // small sample with any win → amber, otherwise threshold-based.
+    const rateClass = displayWins === 0
+      ? 'bad'
+      : (smallSample ? 'ok' : (pct >= 25 ? 'good' : pct >= 18 ? 'ok' : 'bad'));
     const primaryLabel = inSharpMode ? 'Sharp picks' : 'All rank-1';
     const winDisplay = smallSample ? `${displayWins}/${displayRaces}` : `${pct}%`;
     const placeDisplay = smallSample
