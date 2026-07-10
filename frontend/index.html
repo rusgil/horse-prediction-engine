@@ -1598,8 +1598,12 @@
         </div>`;
     }
 
+    const prefixLabel = inSharpMode
+      ? '<span class="day-acc-prefix" style="color:var(--text-dim);font-size:0.78rem;font-weight:600;letter-spacing:0.02em;padding-right:6px">Sharp stats:</span>'
+      : '';
     el.innerHTML = `
       <div class="day-accuracy-bar">
+        ${prefixLabel}
         <div class="day-acc-stat">
           <span class="day-acc-val ${rateClass}" title="${primaryLabel} win rate${smallSampleTip}">${winDisplay} <span style="font-size:0.7em;opacity:0.6">${inSharpMode ? 'sharp win' : 'win'}</span></span>
         </div>
