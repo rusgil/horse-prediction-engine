@@ -7824,6 +7824,59 @@ async def applied_suggestions_history(
 # ─── /Nightly review endpoints ────────────────────────────────────────────
 
 
+@app.post("/api/admin/backfill-is-sharp")
+async def admin_backfill_is_sharp(x_cron_secret: Optional[str] = Header(None)):
+    """Manual trigger for the is_sharp backfill on rank-1 rows where the
+    flag is NULL. Uses the ORIGINAL Sharp gate (rank1_pct ≥30 OR top3_sum
+    ≥60), NOT the days_off variant — so past dates lock in with their
+    contemporary Sharp definition and can't be retroactively shifted by
+    future gate refinements.
+
+    Returns the row count updated for each stage. Idempotent — a re-run
+    is a no-op once every rank-1 row has is_sharp set to True or False."""
+    _check_admin(x_cron_secret)
+    from sqlalchemy import text as _sa_text
+    stages = [
+        ("stage_1_win_prob_ge_30", """
+            UPDATE runner_prediction_history
+            SET is_sharp = TRUE
+            WHERE model_rank = 1
+              AND is_sharp IS NULL
+              AND win_probability >= 0.30
+        """),
+        ("stage_2_top3_sum_ge_60", """
+            UPDATE runner_prediction_history AS h
+            SET is_sharp = TRUE
+            WHERE h.model_rank = 1
+              AND h.is_sharp IS NULL
+              AND (
+                SELECT COALESCE(SUM(win_probability), 0)
+                FROM runner_prediction_history
+                WHERE race_id = h.race_id
+                  AND model_rank IN (1, 2, 3)
+                  AND (cancelled IS FALSE OR cancelled IS NULL)
+              ) >= 0.60
+        """),
+        ("stage_3_remaining_false", """
+            UPDATE runner_prediction_history
+            SET is_sharp = FALSE
+            WHERE model_rank = 1 AND is_sharp IS NULL
+        """),
+    ]
+    results = {}
+    for label, stmt in stages:
+        try:
+            async with get_session() as session:
+                res = await session.execute(_sa_text(stmt))
+                await session.commit()
+                results[label] = res.rowcount
+        except Exception as e:
+            results[label] = f"error: {e}"
+    # Bust perf cache so the numbers show up immediately
+    _PERF_CACHE.clear()
+    return {"ok": True, "rows_updated": results, "perf_cache": "cleared"}
+
+
 @app.get("/api/admin/debug-bet-generator")
 async def debug_bet_generator(
     race_id: str,

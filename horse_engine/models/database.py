@@ -722,6 +722,28 @@ async def save_race_predictions(session: AsyncSession, race_id: str, predictions
         if is_pre_race:
             batch_id = str(uuid.uuid4())
             now = datetime.utcnow()
+            # Compute is_sharp for the rank-1 row — same gate as
+            # _snapshot_prerace_predictions in main.py so history rows
+            # written by this path get the flag set, not left NULL.
+            # Gates: (rank-1 win_prob ≥0.30 OR top-3 sum ≥0.60)
+            #        AND rank-1 days_since_last_run ≤180.
+            active = [pp for pp in predictions if not pp.get("cancelled")]
+            active_sorted = sorted(active, key=lambda pp: pp.get("model_rank") or 99)
+            rank1 = active_sorted[0] if active_sorted else None
+            top3_sum = sum((pp.get("win_probability") or 0) for pp in active_sorted[:3])
+            race_is_sharp = None
+            if rank1 is not None:
+                _high_conf = ((rank1.get("win_probability") or 0) >= 0.30) or (top3_sum >= 0.60)
+                _days_off = None
+                _enriched_json = rank1.get("enriched_json")
+                if _enriched_json:
+                    try:
+                        _e = json.loads(_enriched_json) if isinstance(_enriched_json, str) else _enriched_json
+                        _days_off = _e.get("days_since_last_run") if isinstance(_e, dict) else None
+                    except Exception:
+                        _days_off = None
+                _layoff_ok = not (isinstance(_days_off, (int, float)) and _days_off > 180)
+                race_is_sharp = bool(_high_conf and _layoff_ok)
             for p in predictions:
                 try:
                     session.add(RunnerPredictionHistoryRow(
@@ -748,6 +770,8 @@ async def save_race_predictions(session: AsyncSession, race_id: str, predictions
                         source="live",
                         batch_id=batch_id,
                         recorded_at=now,
+                        # Only the rank-1 row carries the Sharp flag.
+                        is_sharp=race_is_sharp if p.get("model_rank") == 1 else None,
                     ))
                 except Exception:
                     pass  # unique constraint: row already exists for this race+horse, skip
