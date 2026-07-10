@@ -1598,9 +1598,9 @@
         </div>`;
     }
 
-    const prefixLabel = inSharpMode
-      ? '<span class="day-acc-prefix" style="color:#a855f7;font-size:0.78rem;font-weight:600;letter-spacing:0.02em;padding-right:6px">Sharp stats:</span>'
-      : '';
+    const prefixText = inSharpMode ? 'Sharp stats:' : 'All stats:';
+    const prefixColor = inSharpMode ? '#a855f7' : '#60a5fa';
+    const prefixLabel = `<span class="day-acc-prefix" style="color:${prefixColor};font-size:0.78rem;font-weight:600;letter-spacing:0.02em;padding-right:6px">${prefixText}</span>`;
     el.innerHTML = `
       <div class="day-accuracy-bar">
         ${prefixLabel}
