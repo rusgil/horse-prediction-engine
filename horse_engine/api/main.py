@@ -13387,7 +13387,7 @@ async def probe_ra_results(
         found_key = None
         for prefix in prefixes:
             ra_key = f"{ra_date_str},{state},{prefix}{venue_name}"
-            url = f"{_BASE_RA}/Results.aspx?Key={quote(ra_key, safe='')}"
+            url = f"{_BASE_RA}/FreeFields/Results.aspx?Key={quote(ra_key, safe='')}"
             try:
                 html = await ra._get(url)
                 from horse_engine.clients.racing_australia import _parse_results_page

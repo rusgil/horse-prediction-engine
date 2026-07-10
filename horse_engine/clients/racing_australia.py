@@ -1240,7 +1240,10 @@ class RacingAustraliaClient:
             if cached and (datetime.utcnow() - cached[0]).total_seconds() < 21600:
                 return cached[1]
             from urllib.parse import quote
-            url = f"{_BASE}/Results.aspx?Key={quote(ra_key, safe='')}"
+            # Racing Australia moved Results.aspx under /FreeFields/ some
+            # time on 2026-07-10. Old /Results.aspx returns 404 for all
+            # keys. Every scraper hitting the old path broke simultaneously.
+            url = f"{_BASE}/FreeFields/Results.aspx?Key={quote(ra_key, safe='')}"
             try:
                 html = await self._get(url)
             except Exception as e:
