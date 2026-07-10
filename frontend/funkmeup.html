@@ -697,13 +697,14 @@
   const API = 'https://web-production-dec62.up.railway.app';
 
   const KIND_META = {
-    lock:    { emoji: '💪' },
-    bonus:   { emoji: '⭐' },
-    double:  { emoji: '🪜' },
-    banker:  { emoji: '🏦' },
-    quaddie: { emoji: '🎰' },
-    twofunk: { emoji: '🪩' },
-    lab:     { emoji: '🧪' },
+    lock:          { emoji: '💪' },
+    bonus:         { emoji: '⭐' },
+    double:        { emoji: '🪜' },
+    banker:        { emoji: '🏦' },
+    quaddie:       { emoji: '🎰' },
+    combo_doubles: { emoji: '🧩' },
+    twofunk:       { emoji: '🪩' },
+    lab:           { emoji: '🧪' },
     // Legacy kinds kept so historical (yesterday) data still renders
     spine:   { emoji: '🎯' },
     wave:    { emoji: '🌊' },
@@ -792,6 +793,12 @@
         parts.push(`  ${i+1}. ${venueLabel(l.venue)} R${l.race_number} · ${l.horse_name} · Place`);
       });
       parts.push(`  Place Multi ~$${p.raw_multi_odds} · stake $${p.stake_dollars}`);
+    } else if (p.kind === 'combo_doubles' && p.legs) {
+      p.legs.forEach((l, i) => {
+        parts.push(`  ${i+1}. ${venueLabel(l.venue)} R${l.race_number} · ${l.horse_name} · $${l.best_available_odds ? l.best_available_odds.toFixed(2) : 'TBA'}`);
+      });
+      parts.push(`  Combo Doubles · 6 pairs × $${p.unit_stake_dollars} = $${p.stake_dollars} total`);
+      parts.push(`  ≥1 pair hits ${((p.prob_at_least_1_win || 0)*100).toFixed(1)}% · ≥2 legs ${((p.prob_at_least_2_wins || 0)*100).toFixed(1)}%`);
     } else if (p.kind === 'quaddie' && p.legs) {
       parts.push(`  Venue: ${venueLabel(p.venue)}`);
       p.legs.forEach((l, i) => {
@@ -820,7 +827,7 @@
   function _earliestMs(p) {
     let best = Infinity;
     const ts = [];
-    if ((p.kind === 'spine' || p.kind === 'wave' || p.kind === 'double' || p.kind === 'quaddie') && p.legs) {
+    if ((p.kind === 'spine' || p.kind === 'wave' || p.kind === 'double' || p.kind === 'quaddie' || p.kind === 'combo_doubles') && p.legs) {
       p.legs.forEach(l => l.scheduled_time && ts.push(l.scheduled_time));
     } else if (p.scheduled_time) {
       ts.push(p.scheduled_time);
@@ -881,6 +888,14 @@
         product: `$${p.stake_dollars.toFixed(0)} 2-leg Place Multi`,
         path: `Sportsbet → Multi Builder → tap Place for each horse below → confirm 2 legs in betslip`,
         returnIf: `Returns ${fmtMoneyPlain(p.potential_return_dollars)} if both horses place (top 3)`,
+      };
+    }
+    if (p.kind === 'combo_doubles') {
+      return {
+        verb: 'PLACE THIS COMBO DOUBLES',
+        product: `$${p.stake_dollars} total · $${p.unit_stake_dollars}/pair × 6 doubles`,
+        path: `Sportsbet → Multi Builder → add all 4 horses below (one per race) → set to "Combo Multi Doubles" → confirm 6 doubles at $${p.unit_stake_dollars} each`,
+        returnIf: `${((p.prob_at_least_2_wins || 0)*100).toFixed(1)}% chance of a paying double (any 2 of 4 legs win)`,
       };
     }
     if (p.kind === 'quaddie') {
@@ -984,6 +999,30 @@
         </div>
         <div class="leg-odds">$${p.place_odds_est}</div>
       </div></div>`;
+    } else if (p.kind === 'combo_doubles' && p.legs) {
+      const legsBody = p.legs.map((l, i) => `
+        <div class="leg">
+          <div style="flex:1">
+            <div class="leg-horse">${i+1}. ${escHtml(l.horse_name)} <span class="leg-meta">(${l.model_pct}%)</span></div>
+            <div class="leg-meta">${escHtml(venueLabel(l.venue))} R${l.race_number}${l.scheduled_time ? ' · ' + fmtJump(l.scheduled_time) : ''}</div>
+          </div>
+          <div class="leg-odds">${l.best_available_odds ? '$' + l.best_available_odds.toFixed(2) : '—'}</div>
+        </div>`).join('');
+      const p2 = ((p.prob_at_least_2_wins || 0) * 100).toFixed(1);
+      const p3 = ((p.prob_at_least_3_wins || 0) * 100).toFixed(1);
+      const p4 = ((p.prob_all_4_win || 0) * 100).toFixed(2);
+      legsHtml = `<div class="legs">${legsBody}
+        <div class="leg" style="background: rgba(168,85,247,0.10); border-color: rgba(168,85,247,0.3);">
+          <div style="flex:1">
+            <div style="font-size:13px; font-weight:600; color: var(--text-primary)">
+              🧩 6 doubles · $${p.unit_stake_dollars}/pair · $${p.stake_dollars} total
+            </div>
+            <div style="font-size:11px; color: var(--text-muted); margin-top:3px">
+              ≥1 pair hits ${((p.prob_at_least_1_win || 0)*100).toFixed(1)}% · ≥2 legs ${p2}% · ≥3 legs ${p3}% · 4/4 ${p4}%
+            </div>
+          </div>
+        </div>
+      </div>`;
     } else if (p.kind === 'quaddie' && p.legs) {
       const legsBody = p.legs.map(l => {
         const second = l.second_horse_name

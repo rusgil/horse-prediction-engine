@@ -2908,6 +2908,7 @@ FEATURE_TIERS: dict[str, str] = {
     "play_double": "pro",
     "play_banker": "pro",
     "play_quaddie": "pro",
+    "play_combo_doubles": "pro",
     # Labs tier — premium analytics
     "lab": "labs",
     "two_funk": "labs",
@@ -5183,6 +5184,128 @@ async def _build_early_quaddie(target_date: str) -> Optional[dict]:
     }
 
 
+def _build_combo_doubles(edge_picks: list[dict]) -> Optional[dict]:
+    """The Combo Doubles: 4 selections across different races → 6 doubles.
+
+    Sportsbet-style "Combo Multi Doubles" bet — pick 4 horses across
+    4 different races, get every 2-leg pair as a separate double.
+    Requires only 2 of 4 to win for at least one double to pay; hits
+    scale with how many legs land.
+
+    Selection: top-4 rank-1 picks from /api/edge (already filtered to
+    ≥29.5% confidence), one per race, sorted by model_pct descending
+    then split-by-race. Requires all 4 to have live odds so we can
+    compute fair pair odds and EV honestly. Sharp filter passthrough:
+    if any leg has is_sharp=false, the play still forms — Sharp is a
+    single-race notion, doesn't apply directly to a 4-race parlay.
+
+    Cost/benefit: total stake = 6 × unit stake ($60 at $10 unit).
+    Break-even on 2 wins requires combined winner odds > 6.0. On 3+
+    wins the format is very forgiving (multiple pairs pay).
+    """
+    UNIT_STAKE = _FUNK_BASE_STAKE  # per-double stake
+    # One rank-1 pick per race (edge_picks may be ordered arbitrarily).
+    by_race: dict[str, dict] = {}
+    for p in edge_picks:
+        rid = p.get("race_id")
+        if not rid or rid in by_race:
+            continue
+        if (p.get("model_pct") or 0) < 29.5:
+            continue
+        # Need live odds to price a double honestly.
+        odds = p.get("best_available_odds") or 0
+        if not odds or odds < 1.5:
+            continue
+        by_race[rid] = p
+
+    # Rank picks by model confidence; take top 4.
+    candidates = sorted(by_race.values(), key=lambda p: -(p.get("model_pct") or 0))
+    if len(candidates) < 4:
+        return None
+    top4 = candidates[:4]
+    # Sort selected legs by jump time so display order matches placing order.
+    top4.sort(key=lambda p: p.get("scheduled_time") or "")
+
+    # Per-leg probability (from model_pct) + fair odds.
+    probs = [(p.get("model_pct") or 0) / 100.0 for p in top4]
+    odds = [p.get("best_available_odds") or 0.0 for p in top4]
+
+    # 6 doubles = every pair.
+    from itertools import combinations
+    pairs = []
+    for i, j in combinations(range(4), 2):
+        pair_p = probs[i] * probs[j]        # both legs win
+        pair_return = odds[i] * odds[j] * UNIT_STAKE  # gross return if the pair hits
+        pair_ev = pair_p * pair_return - UNIT_STAKE
+        pairs.append({
+            "leg_indices": [i, j],
+            "leg1_horse": top4[i]["horse_name"],
+            "leg2_horse": top4[j]["horse_name"],
+            "pair_odds": round(odds[i] * odds[j], 2),
+            "pair_prob": round(pair_p, 4),
+            "gross_return": round(pair_return, 2),
+            "ev_dollars": round(pair_ev, 2),
+        })
+
+    # Portfolio-level expected value: sum of per-pair EVs.
+    total_stake = round(UNIT_STAKE * len(pairs), 2)
+    portfolio_ev = round(sum(pr["ev_dollars"] for pr in pairs), 2)
+
+    # Scenario probabilities via inclusion-exclusion on the 4 leg outcomes.
+    # P(exactly k wins) — enumerate the 2^4 outcome space.
+    scenario_counts = {0: 0.0, 1: 0.0, 2: 0.0, 3: 0.0, 4: 0.0}
+    for mask in range(16):
+        wins = bin(mask).count("1")
+        p_out = 1.0
+        for k in range(4):
+            hit = bool(mask & (1 << k))
+            p_out *= probs[k] if hit else (1.0 - probs[k])
+        scenario_counts[wins] += p_out
+    # Cumulative "at least N wins" probabilities.
+    p_at_least_1 = 1.0 - scenario_counts[0]
+    p_at_least_2 = p_at_least_1 - scenario_counts[1]
+    p_at_least_3 = p_at_least_2 - scenario_counts[2]
+    p_all_4 = scenario_counts[4]
+
+    legs = [{
+        "race_id": p["race_id"],
+        "venue": p.get("venue"),
+        "race_number": p.get("race_number"),
+        "horse_name": p["horse_name"],
+        "tab_number": p.get("tab_number"),
+        "scheduled_time": p.get("scheduled_time"),
+        "model_pct": p.get("model_pct"),
+        "best_available_odds": p.get("best_available_odds"),
+    } for p in top4]
+
+    return {
+        "kind": "combo_doubles",
+        "title": "Combo Doubles",
+        "subtitle": f"4 picks × 6 doubles · {int(p_at_least_2 * 100)}% chance of a paying double",
+        "confidence": "B",  # more forgiving than a 4-leg straight quaddie
+        "unit_stake_dollars": UNIT_STAKE,
+        "num_pairs": len(pairs),
+        "legs": legs,
+        "pairs": pairs,
+        # Straight-across totals (all 6 doubles placed)
+        "stake_dollars": total_stake,
+        "expected_value_dollars": portfolio_ev,
+        # Scenario probabilities
+        "prob_at_least_1_win": round(p_at_least_1, 4),
+        "prob_at_least_2_wins": round(p_at_least_2, 4),
+        "prob_at_least_3_wins": round(p_at_least_3, 4),
+        "prob_all_4_win": round(p_all_4, 4),
+        # "model_hit_probability" for the hero-of-day ranker — use P(≥2 wins)
+        # since that's when Combo Doubles actually cashes.
+        "model_hit_probability": round(p_at_least_2, 4),
+        # Sum of "if this pair hits" gross returns weighted by probability
+        # — approximates expected gross return before subtracting stake
+        "potential_return_dollars": round(
+            sum(pr["pair_prob"] * pr["gross_return"] for pr in pairs), 2
+        ),
+    }
+
+
 def _build_banker(edge_picks: list[dict]) -> Optional[dict]:
     """The Banker: single place bet on the day's strongest place pick.
     Place_prob ≥ 70% AND ≥5pt rank-gap. Expected hit ~65%, modest payout."""
@@ -5844,7 +5967,7 @@ async def funk_me_up_today(date: Optional[str] = None):
     # _build_bonus removed 2026-06-26 — user feedback: focus on real-money
     # plays only, don't condition cards on holding a Sportsbet bonus bet.
     # Function kept in code in case of a future opt-in toggle.
-    for build_fn in (_build_lock, _build_double, _build_banker, _build_two_funk):
+    for build_fn in (_build_lock, _build_double, _build_banker, _build_combo_doubles, _build_two_funk):
         try:
             play = build_fn(picks_for_date)
         except Exception as e:
