@@ -1312,11 +1312,10 @@
         const cls = pillWins === 0
           ? 'bad'
           : (smallSample ? 'ok' : (pct >= 25 ? 'good' : pct >= 18 ? 'ok' : 'bad'));
-        const winLabel = smallSample ? `${pillWins}/${pillRaces}` : `${pct}%`;
-        const placeLabel = smallSample
-          ? `${Math.round(pillPlaceRate * pillRaces)}/${pillRaces}`
-          : `${placePct}%`;
-        const tipSuffix = smallSample ? ' — small sample' : (inSharp ? ' (Sharp meetings)' : '');
+        // Unified "x/y (z%)" format across both banner and pills.
+        const winLabel = `${pillWins}/${pillRaces} (${pct}%)`;
+        const placeLabel = `${Math.round(pillPlaceRate * pillRaces)}/${pillRaces} (${placePct}%)`;
+        const tipSuffix = smallSample ? ' — small sample' : (inSharp ? ' (Sharp picks)' : '');
         accHtml = `<span class="date-pill-acc ${cls}" title="${complete ? 'Win rate' : 'Win rate (partial)'}${tipSuffix}">${winLabel}</span><span class="date-pill-acc" style="color:#60a5fa;background:rgba(59,130,246,0.12);border-color:rgba(59,130,246,0.25);opacity:${complete ? 1 : 0.75}" title="${complete ? 'Place rate' : 'Place rate (partial)'}${tipSuffix}">${placeLabel}</span>`;
       }
       el.innerHTML = `<span class="date-pill-day">${formatDayLabel(iso)}</span><span class="date-pill-date">${formatShortDate(iso)}</span>${accHtml}`;
@@ -1556,6 +1555,7 @@
     const smallSample = displayRaces < 5;
     const pct = Math.round(displayWinRate * 100);
     const placePct = Math.round(displayPlaceRate * 100);
+    const placedCount = Math.round(displayPlaceRate * displayRaces);
     // Small-sample guard prevents artificial GREEN on tiny denominators
     // (e.g. 1/2 = 50% shouldn't paint the pill emerald), but 0 wins is
     // unambiguously bad regardless of sample size. So: zero wins → red,
@@ -1564,10 +1564,11 @@
       ? 'bad'
       : (smallSample ? 'ok' : (pct >= 25 ? 'good' : pct >= 18 ? 'ok' : 'bad'));
     const primaryLabel = inSharpMode ? 'Sharp picks' : 'All rank-1';
-    const winDisplay = smallSample ? `${displayWins}/${displayRaces}` : `${pct}%`;
-    const placeDisplay = smallSample
-      ? `${Math.round(displayPlaceRate * displayRaces)}/${displayRaces}`
-      : `${placePct}%`;
+    // Unified format "x/y (z%)" — shows both the ratio and the pct so
+    // small samples are self-explanatory (1/2 (50%)) and large samples
+    // keep their headline pct (23/95 (24%)) without hiding the count.
+    const winDisplay = `${displayWins}/${displayRaces} (${pct}%)`;
+    const placeDisplay = `${placedCount}/${displayRaces} (${placePct}%)`;
     const smallSampleTip = smallSample ? ` — small sample (n=${displayRaces})` : '';
 
     // Secondary chip in Sharp mode: Sharp meetings context (all rank-1
