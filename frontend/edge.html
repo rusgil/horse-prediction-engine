@@ -2711,10 +2711,22 @@
     dates.forEach((d, i) => {
       const picks = [...picksByDate[d]].sort((a, b) => {
         if (sortMode === 'next') {
-          if (!a.scheduled_time && !b.scheduled_time) return 0;
-          if (!a.scheduled_time) return 1;
-          if (!b.scheduled_time) return -1;
-          return new Date(a.scheduled_time) - new Date(b.scheduled_time);
+          // "Next race" = literally the next race to jump. Upcoming
+          // races (jump time in the future) come first, sorted soonest
+          // first. Past races drop below, sorted most-recent first —
+          // NOT ascending time, which was putting a 12pm race above a
+          // 3:30pm race when the current time is already 3pm.
+          const now = Date.now();
+          const at = a.scheduled_time ? new Date(a.scheduled_time).getTime() : null;
+          const bt = b.scheduled_time ? new Date(b.scheduled_time).getTime() : null;
+          if (at == null && bt == null) return 0;
+          if (at == null) return 1;
+          if (bt == null) return -1;
+          const aUpcoming = at > now;
+          const bUpcoming = bt > now;
+          if (aUpcoming !== bUpcoming) return aUpcoming ? -1 : 1;
+          if (aUpcoming) return at - bt;      // future: sooner first
+          return bt - at;                     // past: most recent first
         }
         // best: premium first, then model confidence descending
         const ap = isPremiumPick(a) ? 1 : 0;
