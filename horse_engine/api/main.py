@@ -2725,18 +2725,18 @@ def _should_skip_venue(venue_code: str) -> bool:
 
 def _is_sportsbet_available(venue_code: str, best_odds: Optional[float]) -> bool:
     """
-    Best-effort flag: True when a Sportsbet market almost certainly
-    exists for this pick. False when we know Sportsbet doesn't cover
-    the venue OR when no bookmaker odds are available (which is a
-    strong proxy for "no corporate book has priced this race").
+    True when a Sportsbet market almost certainly exists for this
+    pick, False when the venue is on the known-blocklist.
+
+    Note: missing best_odds is NOT a signal here. Corporate books
+    price races progressively (metros first, early-morning WA last)
+    so a null-odds moment on a covered venue was producing false
+    "Not on Sportsbet" chips (Morphettville, etc.). Rely on the
+    blocklist only; missing odds are handled by other UX signals.
     """
     if not venue_code:
         return True
-    if venue_code.lower() in _NOT_ON_SPORTSBET_VENUES:
-        return False
-    if best_odds is None or best_odds <= 0:
-        return False
-    return True
+    return venue_code.lower() not in _NOT_ON_SPORTSBET_VENUES
 
 
 def _meeting_slug(venue: str, race_date: str) -> str:
