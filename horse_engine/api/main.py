@@ -10578,9 +10578,23 @@ async def admin_reenrich_race(race_id: str, x_cron_secret: Optional[str] = Heade
     venue_name = (m or {}).get("venue", venue_code)
     state = (m or {}).get("state", "")
 
+    # Pull via get_meeting_races first — the composite client's get_race
+    # needs _slug_to_key populated, which get_meetings alone doesn't
+    # always do (especially on a warm-cache path). get_meeting_races
+    # calls _fetch_meeting → populates _slug_to_key + returns races.
+    # force_fresh=True bypasses the 30-min meeting cache so we always
+    # act on the latest RA runner list.
+    raw_races = await client.get_meeting_races(slug, force_fresh=True)
+    if not raw_races:
+        raise HTTPException(404, f"No races returned for meeting {slug}")
+    # get_meeting_races returns a summary payload per race — for the
+    # full event we still need get_race, but now the cache is primed.
     full_event = await client.get_race(slug, race_num)
     if not full_event:
-        raise HTTPException(404, f"TAB returned no event for {race_id}")
+        raise HTTPException(
+            404,
+            f"Race {race_num} not found in meeting {slug} — meeting has {len(raw_races)} race(s)",
+        )
 
     race = await client.parse_race(full_event, race_date, venue_name, state)
     async with get_session() as session:
