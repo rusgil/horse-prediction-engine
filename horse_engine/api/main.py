@@ -54,6 +54,7 @@ from horse_engine.models.database import (
     HistoricalResultRow,
     NightlyReviewRow,
     OddsSnapshotRow,
+    QualityCheckRow,
     ResponseCacheRow,
     RunnerPredictionRow,
     RunnerPredictionHistoryRow,
@@ -2383,6 +2384,11 @@ async def lifespan(app: FastAPI):
     # the freshest model outputs available.
     scheduler.add_job(_scheduled_output_calibration,
                       CronTrigger(hour=3, minute=30, timezone="Australia/Sydney"))
+    # Nightly data-integrity check — runs at 04:00 AEST after every
+    # 2am–3am modeling job has settled. Persists to quality_checks
+    # table; critical findings log at ERROR level for monitoring.
+    scheduler.add_job(_scheduled_quality_check,
+                      CronTrigger(hour=4, minute=0, timezone="Australia/Sydney"))
     # Nightly review intentionally DISABLED (2026-06-30) — single-day
     # denominators were too small to surface actionable signals; weekly
     # carried all the value. _scheduled_nightly_review (and its analyser
@@ -10664,29 +10670,11 @@ async def admin_scratch_sweep_now(x_cron_secret: Optional[str] = Header(None)):
     return {"ok": True, "newly_cancelled": cancelled}
 
 
-@app.get("/api/admin/quality-check")
-async def admin_quality_check(
-    date: Optional[str] = None,
-    x_cron_secret: Optional[str] = Header(None),
-):
+async def _run_quality_check(target: str) -> dict:
     """
-    Data-integrity report for a given day. Cross-references race counts,
-    prediction rows, historical results, and derived fields to catch
-    the class of "meetings card sums to 40 but day card says 33" bugs.
-
-    Returns categorized findings:
-      critical  — data is wrong or missing
-      warning   — data is inconsistent but not user-blocking
-      info      — observations worth noting
-
-    Report date defaults to yesterday (AEST).
+    Core quality-check logic — shared between the admin endpoint and
+    the nightly cron. Returns the report dict.
     """
-    _check_admin(x_cron_secret)
-    if date:
-        _validate_date(date)
-        target = date
-    else:
-        target = (_today_aest() - timedelta(days=1)).isoformat()
 
     critical: list[dict] = []
     warning: list[dict] = []
@@ -10863,6 +10851,100 @@ async def admin_quality_check(
             "info_count": len(info),
         },
     }
+
+
+@app.get("/api/admin/quality-check")
+async def admin_quality_check(
+    date: Optional[str] = None,
+    x_cron_secret: Optional[str] = Header(None),
+):
+    """On-demand data-integrity report for a given day. See
+    _run_quality_check for the underlying checks."""
+    _check_admin(x_cron_secret)
+    if date:
+        _validate_date(date)
+        target = date
+    else:
+        target = (_today_aest() - timedelta(days=1)).isoformat()
+    return await _run_quality_check(target)
+
+
+@app.get("/api/admin/quality-check/history")
+async def admin_quality_check_history(
+    limit: int = 30,
+    x_cron_secret: Optional[str] = Header(None),
+):
+    """Recent quality-check results from the nightly cron. Newest first."""
+    _check_admin(x_cron_secret)
+    limit = max(1, min(int(limit), 90))
+    async with get_session() as session:
+        rows = (await session.execute(
+            select(QualityCheckRow)
+            .order_by(QualityCheckRow.ran_at.desc())
+            .limit(limit)
+        )).scalars().all()
+    return {
+        "rows": [
+            {
+                "check_date": r.check_date,
+                "ran_at": r.ran_at.isoformat() if r.ran_at else None,
+                "critical_count": r.critical_count,
+                "warning_count": r.warning_count,
+                "info_count": r.info_count,
+            }
+            for r in rows
+        ],
+    }
+
+
+@app.get("/api/admin/quality-check/history/{check_date}")
+async def admin_quality_check_history_detail(
+    check_date: str,
+    x_cron_secret: Optional[str] = Header(None),
+):
+    """Full report for a specific date from the nightly cron history."""
+    _check_admin(x_cron_secret)
+    _validate_date(check_date)
+    async with get_session() as session:
+        row = (await session.execute(
+            select(QualityCheckRow)
+            .where(QualityCheckRow.check_date == check_date)
+            .order_by(QualityCheckRow.ran_at.desc())
+        )).scalars().first()
+    if not row:
+        raise HTTPException(404, f"No quality-check row for {check_date}")
+    return json.loads(row.report_json or "{}")
+
+
+async def _scheduled_quality_check():
+    """Nightly cron entry — runs the quality check against yesterday and
+    persists the report. Logs critical findings at ERROR level so any
+    log-monitoring / alerting picks them up automatically."""
+    target = (_today_aest() - timedelta(days=1)).isoformat()
+    try:
+        report = await _run_quality_check(target)
+    except Exception as e:
+        log.exception("[cron] quality-check failed for %s: %s", target, e)
+        return
+
+    async with get_session() as session:
+        session.add(QualityCheckRow(
+            check_date=target,
+            critical_count=len(report.get("critical") or []),
+            warning_count=len(report.get("warning") or []),
+            info_count=len(report.get("info") or []),
+            report_json=json.dumps(report),
+        ))
+        await session.commit()
+
+    if report.get("critical"):
+        for f in report["critical"]:
+            log.error("[quality-check %s] CRITICAL %s: %s", target, f.get("check"), f)
+    elif report.get("warning"):
+        for f in report["warning"]:
+            log.warning("[quality-check %s] WARNING %s: %s", target, f.get("check"), f)
+    else:
+        log.info("[quality-check %s] no findings — clean run", target)
 
 
 @app.post("/api/admin/purge-blocklisted-venues")

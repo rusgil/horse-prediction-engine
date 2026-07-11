@@ -328,6 +328,22 @@ class RaCalendarCacheRow(Base):
     fetched_at = Column(DateTime, default=datetime.utcnow, index=True)
 
 
+class QualityCheckRow(Base):
+    """Nightly data-integrity report — one row per date. Populated by
+    _scheduled_quality_check (04:00 AEST). Payload is the full report
+    (critical/warning/info categorized findings). Queryable history so
+    we can see when a specific integrity issue first appeared."""
+    __tablename__ = "quality_checks"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    check_date = Column(String, index=True)                # 'YYYY-MM-DD' the report is about
+    ran_at = Column(DateTime, default=datetime.utcnow, index=True)
+    critical_count = Column(Integer, default=0)
+    warning_count = Column(Integer, default=0)
+    info_count = Column(Integer, default=0)
+    report_json = Column(Text)                             # full response body
+
+
 class ResponseCacheRow(Base):
     """Persistent response-cache snapshot. Keyed by name (e.g. 'edge').
     Used to survive Railway redeploys: the new container hydrates the
