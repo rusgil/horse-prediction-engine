@@ -10889,6 +10889,16 @@ async def _run_quality_check(target: str) -> dict:
     warning: list[dict] = []
     info: list[dict] = []
 
+    # Compute how old the target date is up-front so downstream checks
+    # can use stale_hours without a forward reference.
+    from datetime import datetime as _dt_early
+    _now_early = _dt_early.utcnow().replace(tzinfo=timezone.utc)
+    try:
+        _target_dt_early = _dt_early.strptime(target, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+        stale_hours = (_now_early - _target_dt_early).total_seconds() / 3600
+    except Exception:
+        stale_hours = 0
+
     async with get_session() as session:
         # 1. Meetings/venues covered by predictions (mutable + history)
         mut_race_ids = set((await session.execute(
@@ -11198,13 +11208,6 @@ async def _run_quality_check(target: str) -> dict:
         })
 
     # ── Pending picks older than 24h — RA never published or we lost the race ──
-    from datetime import datetime as _dt
-    now_utc = _dt.utcnow().replace(tzinfo=timezone.utc)
-    try:
-        target_dt = _dt.strptime(target, "%Y-%m-%d").replace(tzinfo=timezone.utc)
-        stale_hours = (now_utc - target_dt).total_seconds() / 3600
-    except Exception:
-        stale_hours = 0
     if stale_hours > 24 and n_pending > 0:
         critical.append({
             "check": "stale_pending_seeds",
