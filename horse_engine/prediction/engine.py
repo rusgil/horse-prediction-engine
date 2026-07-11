@@ -421,6 +421,31 @@ def predict_race(race: Race, model: HorseModel, venue_calibration: dict[str, flo
             elif n == 3:
                 p.win_prob = round(p.win_prob * 0.85, 4)
 
+    # Feature-completeness gate — when critical race-level features are
+    # missing (distance=0, going unparseable) or the runner has no market
+    # signal, the model is scoring on an incomplete picture and its
+    # confidence is not trustworthy. Shrink win_prob so a data-quality
+    # miss can't produce a 72% pick.
+    # Shipped 2026-07-11 after COEUR VOLANTE/caulfield R8 hit 72.1% with
+    # race.distance=0 — every distance-dependent feature (pedigree match,
+    # win_rate_distance, distance_aptitude, jockey_distance_rate,
+    # trainer_distance_rate) was silently miscomputed on a zero.
+    dist_missing = not race.distance or race.distance == 0
+    going_missing = not race.track_condition or not race.track_condition.strip()
+    for p in predictions:
+        missing = 0
+        if dist_missing:
+            missing += 1
+        if going_missing:
+            missing += 1
+        market_prob = getattr(p.enriched, "market_implied_prob", 0) or 0
+        if market_prob <= 0:
+            missing += 1
+        if missing >= 2:
+            p.win_prob = round(p.win_prob * 0.60, 4)
+        elif missing == 1:
+            p.win_prob = round(p.win_prob * 0.80, 4)
+
     # Rank by win probability
     predictions.sort(key=lambda p: p.win_prob, reverse=True)
     for rank, p in enumerate(predictions, 1):
