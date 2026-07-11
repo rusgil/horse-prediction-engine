@@ -11298,7 +11298,12 @@ async def admin_quality_check(
         target = date
     else:
         target = (_today_aest() - timedelta(days=1)).isoformat()
-    return await _run_quality_check(target)
+    try:
+        return await _run_quality_check(target)
+    except Exception as e:
+        import traceback
+        tb = traceback.format_exc().splitlines()[-8:]
+        raise HTTPException(500, f"{type(e).__name__}: {e} | tb: {' | '.join(tb)}")
 
 
 @app.get("/api/admin/quality-check/history")
