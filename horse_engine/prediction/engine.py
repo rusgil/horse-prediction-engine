@@ -302,7 +302,7 @@ def enrich_runner(
     )
 
 
-def predict_race(race: Race, model: HorseModel, venue_calibration: dict[str, float] | None = None, place_model: PlaceModel | None = None, exotic_model: ExoticModel | None = None) -> list[RunnerPrediction]:
+def predict_race(race: Race, model: HorseModel, venue_calibration: dict[str, float] | None = None, place_model: PlaceModel | None = None, exotic_model: ExoticModel | None = None, output_calibration_curve: list[tuple[float, float]] | None = None) -> list[RunnerPrediction]:
     """Full prediction pipeline for one race. Returns ranked RunnerPredictions."""
     if not race.runners:
         return []
@@ -445,6 +445,19 @@ def predict_race(race: Race, model: HorseModel, venue_calibration: dict[str, flo
             p.win_prob = round(p.win_prob * 0.60, 4)
         elif missing == 1:
             p.win_prob = round(p.win_prob * 0.80, 4)
+
+    # Output-space isotonic calibration — nightly-refit curve mapping
+    # model_pct → empirical win rate, applied AFTER all reactive
+    # multipliers so it corrects whatever miscalibration remains in the
+    # end-to-end pipeline. Monotone-non-decreasing, so within-race rank
+    # order is preserved. Identity fallback when no curve is loaded.
+    # See horse_engine.prediction.output_calibration.
+    if output_calibration_curve:
+        from horse_engine.prediction.output_calibration import apply_calibration_curve
+        pcts = [p.win_prob * 100.0 for p in predictions]
+        calibrated = apply_calibration_curve(pcts, output_calibration_curve)
+        for p, c in zip(predictions, calibrated):
+            p.win_prob = round(c / 100.0, 4)
 
     # Rank by win probability
     predictions.sort(key=lambda p: p.win_prob, reverse=True)

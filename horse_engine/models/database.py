@@ -199,6 +199,27 @@ class CalibrationRow(Base):
     all_results_json = Column(Text)         # JSON list of per-window stats
 
 
+class WinCalibrationCurveRow(Base):
+    """Persisted isotonic calibration curve for the win model output.
+
+    Recomputed nightly from the last N days of predictions vs actuals.
+    curve_json holds a list of (input_pct, calibrated_pct) breakpoints
+    in monotone-non-decreasing order — see
+    horse_engine.prediction.output_calibration for the format.
+
+    Single-row table (id=1) updated in place; keeps history in
+    updated_at rather than as multiple rows so the loader can always
+    do a scalar-one read.
+    """
+    __tablename__ = "win_calibration_curve"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, index=True)
+    sample_days = Column(Integer)          # holdout window used
+    sample_size = Column(Integer)          # total (pct, won) pairs fit
+    curve_json = Column(Text)              # JSON list of [input_pct, calibrated_pct]
+
+
 class OddsSnapshotRow(Base):
     __tablename__ = "odds_snapshots"
 

@@ -58,6 +58,7 @@ from horse_engine.models.database import (
     RunnerPredictionRow,
     RunnerPredictionHistoryRow,
     RacePredictionRow,
+    WinCalibrationCurveRow,
     init_db,
     backfill_prediction_history,
     load_model_weights,
@@ -2367,6 +2368,12 @@ async def lifespan(app: FastAPI):
     # timescale anyway. Sundays at 2am only.
     scheduler.add_job(_scheduled_calibrate,      CronTrigger(day_of_week="sun", hour=2,  minute=0, timezone="Australia/Sydney"))
     scheduler.add_job(_scheduled_exotic_retrain, CronTrigger(hour=3,  minute=0, timezone="Australia/Sydney"))
+    # Isotonic output-space calibration — nightly rebuild from the last
+    # 45 days of predictions vs actuals. Cheap (~1s + 1 DB write).
+    # 03:30 keeps it after the exotic retrain (03:00) so the fit uses
+    # the freshest model outputs available.
+    scheduler.add_job(_scheduled_output_calibration,
+                      CronTrigger(hour=3, minute=30, timezone="Australia/Sydney"))
     # Nightly review intentionally DISABLED (2026-06-30) — single-day
     # denominators were too small to surface actionable signals; weekly
     # carried all the value. _scheduled_nightly_review (and its analyser
@@ -12403,7 +12410,12 @@ async def enrich_race(race_id: str, force: bool = Query(False)):
         async with get_session() as session:
             await _inject_accumulated_stats(race, session)
         venue_cal = await _load_venue_calibration()
-        predictions, _ = await enrich_and_predict_race(race, model, venue_calibration=venue_cal)
+        output_cal = await _load_output_calibration_curve()
+        predictions, _ = await enrich_and_predict_race(
+            race, model,
+            venue_calibration=venue_cal,
+            output_calibration_curve=output_cal,
+        )
 
         async with get_session() as session:
             await save_race_predictions(
@@ -18606,9 +18618,145 @@ async def _load_venue_calibration() -> dict[str, float]:
     return multipliers
 
 
+# ── Output calibration (isotonic curve on model_pct → win rate) ────────────
+async def _load_output_calibration_curve() -> Optional[list[tuple[float, float]]]:
+    """Load the persisted isotonic calibration curve. None = identity."""
+    try:
+        async with get_session() as session:
+            row = (await session.execute(
+                select(WinCalibrationCurveRow).order_by(WinCalibrationCurveRow.id.desc())
+            )).scalars().first()
+        if not row or not row.curve_json:
+            return None
+        raw = json.loads(row.curve_json)
+        return [(float(x), float(y)) for x, y in raw]
+    except Exception as e:
+        log.debug("[output_calibration] load skipped: %s", e)
+        return None
+
+
+async def _compute_output_calibration_curve(days: int = 45) -> dict:
+    """
+    Rebuild the isotonic calibration curve from the last `days` of
+    predictions vs actuals and persist it. Called nightly + on demand
+    via the admin endpoint. Uses history snapshots (Ground Rule 1) so
+    post-race re-enrichment can't contaminate the fit.
+
+    Returns diagnostic dict with sample counts + curve.
+    """
+    from horse_engine.prediction.output_calibration import compute_calibration_curve
+
+    cutoff = (date.today() - timedelta(days=days)).isoformat()
+    async with get_session() as session:
+        hr_rows = (await session.execute(
+            select(HistoricalResultRow).where(HistoricalResultRow.race_id >= cutoff)
+        )).scalars().all()
+        if not hr_rows:
+            return {"ok": False, "reason": "no historical results in window"}
+        race_ids = list({r.race_id for r in hr_rows})
+        result_by_key = {(r.race_id, _normalize_horse(r.horse_name)): r for r in hr_rows}
+
+        # Every-runner slice — calibrate across the whole distribution,
+        # not just rank-1. Top-pick-only would over-fit the tail and
+        # under-serve the mid-band where most value bets sit.
+        pred_rows = (await session.execute(
+            select(RunnerPredictionHistoryRow)
+            .where(RunnerPredictionHistoryRow.race_id.in_(race_ids))
+            .where(RunnerPredictionHistoryRow.cancelled.is_(False) | RunnerPredictionHistoryRow.cancelled.is_(None))
+            .where(RunnerPredictionHistoryRow.source == "live")
+            .where(RunnerPredictionHistoryRow.win_probability.isnot(None))
+        )).scalars().all()
+
+    samples: list[tuple[float, int]] = []
+    for p in pred_rows:
+        r = result_by_key.get((p.race_id, _normalize_horse(p.horse_name)))
+        # Skip runners whose race has no winner recorded yet (unsettled)
+        # or where the horse was scratched (position 0 / null).
+        if not r or r.position is None or r.position <= 0:
+            continue
+        model_pct = (p.win_probability or 0.0) * 100.0
+        won = 1 if r.winner else 0
+        samples.append((model_pct, won))
+
+    curve = compute_calibration_curve(samples)
+    if curve is None:
+        return {
+            "ok": False,
+            "sample_size": len(samples),
+            "reason": f"insufficient samples (need ~500, got {len(samples)})",
+        }
+
+    async with get_session() as session:
+        existing = (await session.execute(
+            select(WinCalibrationCurveRow).order_by(WinCalibrationCurveRow.id.desc())
+        )).scalars().first()
+        payload = json.dumps([[round(x, 2), round(y, 4)] for x, y in curve])
+        if existing:
+            existing.curve_json = payload
+            existing.sample_days = days
+            existing.sample_size = len(samples)
+            existing.updated_at = datetime.utcnow()
+        else:
+            session.add(WinCalibrationCurveRow(
+                curve_json=payload,
+                sample_days=days,
+                sample_size=len(samples),
+            ))
+        await session.commit()
+
+    log.info("[output_calibration] rebuilt from %d samples over %d days: %d breakpoints",
+             len(samples), days, len(curve))
+    return {
+        "ok": True,
+        "sample_size": len(samples),
+        "sample_days": days,
+        "breakpoints": len(curve),
+        "curve": curve,
+    }
+
+
+async def _scheduled_output_calibration():
+    """Nightly job: rebuild the isotonic calibration curve."""
+    try:
+        result = await _compute_output_calibration_curve(days=45)
+        log.info("[cron] output_calibration: %s", result.get("reason") or f"ok n={result.get('sample_size')}")
+    except Exception as e:
+        log.exception("[cron] output_calibration failed: %s", e)
+
+
+@app.post("/api/admin/calibrate-output")
+async def admin_calibrate_output(
+    days: int = Query(45, ge=7, le=120),
+    x_cron_secret: Optional[str] = Header(None),
+):
+    """Manually rebuild the output-calibration curve. Reports the fit."""
+    _check_admin(x_cron_secret)
+    return await _compute_output_calibration_curve(days=days)
+
+
+@app.get("/api/admin/calibrate-output/status")
+async def admin_calibrate_output_status(x_cron_secret: Optional[str] = Header(None)):
+    """Inspect the persisted curve + how old it is."""
+    _check_admin(x_cron_secret)
+    async with get_session() as session:
+        row = (await session.execute(
+            select(WinCalibrationCurveRow).order_by(WinCalibrationCurveRow.id.desc())
+        )).scalars().first()
+    if not row:
+        return {"exists": False}
+    return {
+        "exists": True,
+        "updated_at": row.updated_at.isoformat() if row.updated_at else None,
+        "sample_days": row.sample_days,
+        "sample_size": row.sample_size,
+        "curve": json.loads(row.curve_json or "[]"),
+    }
+
+
 async def _enrich_date(race_date: str, client, model, force: bool = False, place_model: PlaceModel | None = None, exotic_model: ExoticModel | None = None) -> list[dict]:
     """Enrich all meetings for a single date. Returns summary list."""
     venue_cal = await _load_venue_calibration()
+    output_cal = await _load_output_calibration_curve()
     if place_model is None:
         async with get_session() as session:
             place_model = await _load_place_model(session)
@@ -18644,7 +18792,13 @@ async def _enrich_date(race_date: str, client, model, force: bool = False, place
                 race = await client.parse_race(full_event, race_date, venue_name, state)
                 async with get_session() as session:
                     await _inject_accumulated_stats(race, session)
-                predictions, _ = await enrich_and_predict_race(race, model, venue_calibration=venue_cal, place_model=place_model, exotic_model=exotic_model)
+                predictions, _ = await enrich_and_predict_race(
+                    race, model,
+                    venue_calibration=venue_cal,
+                    place_model=place_model,
+                    exotic_model=exotic_model,
+                    output_calibration_curve=output_cal,
+                )
                 async with get_session() as session:
                     await save_race_predictions(
                         session,

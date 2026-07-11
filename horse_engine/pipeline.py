@@ -19,6 +19,7 @@ async def enrich_and_predict_race(
     venue_calibration: dict[str, float] | None = None,
     place_model: PlaceModel | None = None,
     exotic_model: ExoticModel | None = None,
+    output_calibration_curve: list[tuple[float, float]] | None = None,
 ) -> tuple[list[RunnerPrediction], dict]:
     """Run the full pipeline: enrichment + logistic regression. Returns (predictions, metadata)."""
     if not race.runners:
@@ -31,7 +32,13 @@ async def enrich_and_predict_race(
         race.track_condition, len(race.runners),
     )
 
-    predictions = predict_race(race, model, venue_calibration=venue_calibration, place_model=place_model, exotic_model=exotic_model)
+    predictions = predict_race(
+        race, model,
+        venue_calibration=venue_calibration,
+        place_model=place_model,
+        exotic_model=exotic_model,
+        output_calibration_curve=output_calibration_curve,
+    )
 
     meta = {
         "race_id": race.race_id,
