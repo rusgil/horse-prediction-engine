@@ -2167,6 +2167,17 @@
       && pick.edge_pct != null && pick.edge_pct > 5;
   }
 
+  // Click handler for the ⓘ on each streak badge — reveals the top
+  // streak-info popover and scrolls it into view. Works on mobile
+  // (title tooltips only fire on desktop hover).
+  window.openStreakInfo = function(evt) {
+    if (evt) { evt.preventDefault(); evt.stopPropagation(); }
+    const pop = document.getElementById('streakInfoPop');
+    if (!pop) return;
+    pop.style.display = 'block';
+    pop.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  };
+
   function renderCard(pick, stake, result) {
     const now = Date.now();
     const jumpMs = pick.scheduled_time ? new Date(pick.scheduled_time).getTime() : null;
@@ -2363,10 +2374,10 @@
                 : `${s.last_race_position}th`;
               const dateStr = s.last_race_date || '';
               if (s.badge === 'hot') {
-                return `<span title="Won their most recent race (${dateStr}, ${s.last_race_pct}% model pick) — +18pp win-rate lift" style="margin-left:8px;font-size:0.75rem;padding:2px 8px;border-radius:999px;background:rgba(239,68,68,0.15);color:#fca5a5;border:1px solid rgba(239,68,68,0.35);font-weight:600">🔥 Won last <span style="opacity:0.7;margin-left:2px">ⓘ</span></span>`;
+                return `<span onclick="openStreakInfo(event)" title="Click for details" style="cursor:pointer;margin-left:8px;font-size:0.75rem;padding:2px 8px;border-radius:999px;background:rgba(239,68,68,0.15);color:#fca5a5;border:1px solid rgba(239,68,68,0.35);font-weight:600">🔥 Won last <span style="opacity:0.7;margin-left:2px">ⓘ</span></span>`;
               }
               if (s.badge === 'warm') {
-                return `<span title="Placed ${posLbl} in their most recent race (${dateStr}, ${s.last_race_pct}% model pick) — top-3 finish, +11pp win-rate lift" style="margin-left:8px;font-size:0.75rem;padding:2px 8px;border-radius:999px;background:rgba(245,158,11,0.12);color:#fbbf24;border:1px solid rgba(245,158,11,0.30);font-weight:600">🌤️ Placed previously <span style="opacity:0.7;margin-left:2px">ⓘ</span></span>`;
+                return `<span onclick="openStreakInfo(event)" title="Click for details" style="cursor:pointer;margin-left:8px;font-size:0.75rem;padding:2px 8px;border-radius:999px;background:rgba(245,158,11,0.12);color:#fbbf24;border:1px solid rgba(245,158,11,0.30);font-weight:600">🌤️ Placed previously <span style="opacity:0.7;margin-left:2px">ⓘ</span></span>`;
               }
               return '';
             })()}</div>
