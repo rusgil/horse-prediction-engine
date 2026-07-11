@@ -8102,6 +8102,7 @@ async def debug_bet_generator(
         "bet_basket_count": len(bets),
         "bet_basket_labels": [b["strategy_label"] for b in bets],
         "first_3_runners": runners[:3],
+        "all_runners": runners,
     }
 
 
