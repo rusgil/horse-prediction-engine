@@ -10670,6 +10670,215 @@ async def admin_scratch_sweep_now(x_cron_secret: Optional[str] = Header(None)):
     return {"ok": True, "newly_cancelled": cancelled}
 
 
+async def _auto_heal_findings(target: str, findings: list[dict]) -> list[dict]:
+    """
+    Apply safe, idempotent fixes for a subset of quality-check findings.
+    Returns a list of heal actions with outcome:
+      { check, action, affected, outcome: "healed" | "skipped" | "failed", detail }
+    Only heals items we can derive from existing data — never
+    fabricates. Skips anything requiring re-enrichment from RA.
+    """
+    from sqlalchemy import update as sa_update, delete as sa_delete, func as _func
+
+    actions: list[dict] = []
+    global _edge_response_cache
+
+    for f in findings:
+        check = f.get("check")
+
+        if check == "top3_missing_tab_number":
+            # Backfill via horse_name → tab_number lookup from prediction rows.
+            # Same logic as /api/admin/patch-tab-numbers. Idempotent.
+            examples = f.get("example") or []
+            patched = 0
+            async with get_session() as session:
+                for rid in examples:
+                    # Build lookup table from predictions with tab
+                    tab_lookup: dict[str, int] = {}
+                    for src in (RunnerPredictionRow, RunnerPredictionHistoryRow):
+                        rows = (await session.execute(
+                            select(src.horse_name, src.tab_number)
+                            .where(src.race_id == rid)
+                            .where(src.tab_number.isnot(None))
+                        )).fetchall()
+                        for name, tab in rows:
+                            tab_lookup[_normalize_horse(name)] = tab
+                    # Update HistoricalResultRow rows lacking a tab
+                    result_rows = (await session.execute(
+                        select(HistoricalResultRow)
+                        .where(HistoricalResultRow.race_id == rid)
+                        .where(HistoricalResultRow.tab_number.is_(None))
+                    )).scalars().all()
+                    for r in result_rows:
+                        t = tab_lookup.get(_normalize_horse(r.horse_name))
+                        if t is not None:
+                            await session.execute(
+                                sa_update(HistoricalResultRow)
+                                .where(HistoricalResultRow.id == r.id)
+                                .values(tab_number=t)
+                            )
+                            patched += 1
+                await session.commit()
+            actions.append({"check": check, "action": "patch_tab_numbers",
+                            "affected": patched, "outcome": "healed" if patched else "skipped"})
+
+        elif check == "duplicate_runner_rows":
+            # Delete duplicate RunnerPredictionRow rows with null tab_number
+            # when another row for the same race+horse has a tab.
+            examples = f.get("example") or []
+            deleted = 0
+            async with get_session() as session:
+                for entry in examples:
+                    rid = entry.get("race_id")
+                    hname = entry.get("horse_name")
+                    if not rid or not hname:
+                        continue
+                    # Any row with tab_number?
+                    has_tab = (await session.execute(
+                        select(RunnerPredictionRow.id)
+                        .where(RunnerPredictionRow.race_id == rid)
+                        .where(RunnerPredictionRow.horse_name == hname)
+                        .where(RunnerPredictionRow.tab_number.isnot(None))
+                        .limit(1)
+                    )).scalar_one_or_none()
+                    if has_tab is None:
+                        continue  # can't safely dedupe
+                    res = await session.execute(
+                        sa_delete(RunnerPredictionRow)
+                        .where(RunnerPredictionRow.race_id == rid)
+                        .where(RunnerPredictionRow.horse_name == hname)
+                        .where(RunnerPredictionRow.tab_number.is_(None))
+                    )
+                    deleted += res.rowcount or 0
+                await session.commit()
+            actions.append({"check": check, "action": "delete_null_tab_duplicates",
+                            "affected": deleted, "outcome": "healed" if deleted else "skipped"})
+
+        elif check == "stale_pending_bets":
+            # Fire _settle_bets_for_race on each — it either settles or
+            # voids-stale (the 24h+ path already exists).
+            race_ids = f.get("example_race_ids") or []
+            settled = 0
+            for rid in race_ids:
+                try:
+                    n = await _settle_bets_for_race(rid)
+                    settled += n or 0
+                except Exception as e:
+                    log.debug("[auto-heal] settle failed %s: %s", rid, e)
+            actions.append({"check": check, "action": "settle_or_void",
+                            "affected": settled, "outcome": "healed" if settled else "skipped"})
+
+        elif check == "is_sharp_missing":
+            # Recompute is_sharp on rank-1 history rows that have it null.
+            # Uses the original gate: rank1_pct>=30 OR top3_sum>=60.
+            # /api/admin/backfill-is-sharp does this globally; here scope
+            # to the target date only.
+            updated = 0
+            async with get_session() as session:
+                # Fetch rank-1 rows with null is_sharp for the date
+                to_update = (await session.execute(
+                    select(RunnerPredictionHistoryRow)
+                    .where(RunnerPredictionHistoryRow.race_id.like(f"{target}_%"))
+                    .where(RunnerPredictionHistoryRow.model_rank == 1)
+                    .where(RunnerPredictionHistoryRow.is_sharp.is_(None))
+                    .where(RunnerPredictionHistoryRow.source == "live")
+                )).scalars().all()
+                for r in to_update:
+                    # Get top-3 sum for the race
+                    top3_rows = (await session.execute(
+                        select(RunnerPredictionHistoryRow.win_probability)
+                        .where(RunnerPredictionHistoryRow.race_id == r.race_id)
+                        .where(RunnerPredictionHistoryRow.model_rank.in_([1, 2, 3]))
+                        .where(RunnerPredictionHistoryRow.source == "live")
+                    )).scalars().all()
+                    top3_sum_pct = sum(p or 0 for p in top3_rows) * 100
+                    rank1_pct = (r.win_probability or 0) * 100
+                    is_sharp = rank1_pct >= 30 or top3_sum_pct >= 60
+                    await session.execute(
+                        sa_update(RunnerPredictionHistoryRow)
+                        .where(RunnerPredictionHistoryRow.id == r.id)
+                        .values(is_sharp=is_sharp)
+                    )
+                    updated += 1
+                await session.commit()
+            actions.append({"check": check, "action": "recompute_is_sharp",
+                            "affected": updated, "outcome": "healed" if updated else "skipped"})
+
+        elif check == "duplicate_positions_in_result":
+            # Delete duplicate HistoricalResultRow rows for the same race+position,
+            # keeping the one with tab_number populated (or earliest id if tied).
+            race_ids = f.get("example_race_ids") or []
+            deleted = 0
+            async with get_session() as session:
+                for rid in race_ids:
+                    rows = (await session.execute(
+                        select(HistoricalResultRow)
+                        .where(HistoricalResultRow.race_id == rid)
+                        .order_by(HistoricalResultRow.position, HistoricalResultRow.id)
+                    )).scalars().all()
+                    seen_pos: dict[int, int] = {}  # position -> kept row id
+                    for r in rows:
+                        if r.position is None or r.position <= 0:
+                            continue
+                        if r.position in seen_pos:
+                            # Duplicate — prefer the one with tab_number
+                            kept_id = seen_pos[r.position]
+                            kept = next((x for x in rows if x.id == kept_id), None)
+                            if kept and kept.tab_number is None and r.tab_number is not None:
+                                # Swap: delete kept, keep this one
+                                await session.execute(
+                                    sa_delete(HistoricalResultRow)
+                                    .where(HistoricalResultRow.id == kept_id)
+                                )
+                                seen_pos[r.position] = r.id
+                            else:
+                                await session.execute(
+                                    sa_delete(HistoricalResultRow)
+                                    .where(HistoricalResultRow.id == r.id)
+                                )
+                            deleted += 1
+                        else:
+                            seen_pos[r.position] = r.id
+                await session.commit()
+            actions.append({"check": check, "action": "dedupe_positions",
+                            "affected": deleted, "outcome": "healed" if deleted else "skipped"})
+
+        elif check == "scratched_mutable_history_mismatch":
+            # Sync cancelled flag between mutable and history for the mismatched runners.
+            entries = f.get("mismatches") or []
+            synced = 0
+            async with get_session() as session:
+                for e in entries:
+                    rid = e.get("race_id")
+                    hname = e.get("horse_name")
+                    if not rid or not hname:
+                        continue
+                    # Union: if EITHER has cancelled=true, both should
+                    await session.execute(
+                        sa_update(RunnerPredictionRow)
+                        .where(RunnerPredictionRow.race_id == rid)
+                        .where(RunnerPredictionRow.horse_name == hname)
+                        .values(cancelled=True)
+                    )
+                    await session.execute(
+                        sa_update(RunnerPredictionHistoryRow)
+                        .where(RunnerPredictionHistoryRow.race_id == rid)
+                        .where(RunnerPredictionHistoryRow.horse_name == hname)
+                        .values(cancelled=True)
+                    )
+                    synced += 1
+                await session.commit()
+            actions.append({"check": check, "action": "sync_cancelled_flag",
+                            "affected": synced, "outcome": "healed" if synced else "skipped"})
+
+        elif check == "stale_response_cache":
+            _edge_response_cache = None
+            actions.append({"check": check, "action": "bust_edge_cache",
+                            "affected": 1, "outcome": "healed"})
+
+    return actions
+
+
 async def _run_quality_check(target: str) -> dict:
     """
     Core quality-check logic — shared between the admin endpoint and
@@ -10764,8 +10973,212 @@ async def _run_quality_check(target: str) -> dict:
         critical.append({
             "check": "top3_missing_tab_number",
             "n_races": len(seeded_races_missing_tab),
-            "example": seeded_races_missing_tab[:3],
+            "example": seeded_races_missing_tab[:20],  # all-in for heal
             "reason": "Bet settlement can't map positions to bet boxes; stays 'pending' forever",
+        })
+
+    # ── Duplicate RunnerPredictionRow rows (same race + horse) ────
+    async with get_session() as session:
+        dup_rows = (await session.execute(
+            select(
+                RunnerPredictionRow.race_id,
+                RunnerPredictionRow.horse_name,
+                _func.count(RunnerPredictionRow.id).label("n"),
+            )
+            .where(RunnerPredictionRow.race_id.like(f"{target}_%"))
+            .group_by(RunnerPredictionRow.race_id, RunnerPredictionRow.horse_name)
+            .having(_func.count(RunnerPredictionRow.id) > 1)
+        )).all()
+    if dup_rows:
+        warning.append({
+            "check": "duplicate_runner_rows",
+            "n_pairs": len(dup_rows),
+            "example": [{"race_id": r[0], "horse_name": r[1], "count": r[2]}
+                        for r in dup_rows[:20]],
+            "reason": "Same horse appears multiple times for the same race; matched_pred lookup can grab the wrong row (null tab_number bug on OCCULT class)",
+        })
+
+    # ── Duplicate positions in HistoricalResultRow ────────────────
+    dup_pos_races: list[str] = []
+    for rid in hr_race_ids:
+        seen = set()
+        for r in hr_result_rows:
+            if r.race_id != rid or not r.position or r.position <= 0:
+                continue
+            if r.position in seen:
+                dup_pos_races.append(rid)
+                break
+            seen.add(r.position)
+    if dup_pos_races:
+        critical.append({
+            "check": "duplicate_positions_in_result",
+            "n_races": len(dup_pos_races),
+            "example_race_ids": dup_pos_races[:20],
+            "reason": "Same finishing position twice per race; actual_top3 becomes wrong → false bet hits",
+        })
+
+    # ── Bet ledger: unsettled but race jumped > 24h ago ───────────
+    from datetime import datetime as _dt
+    _now = _dt.utcnow().replace(tzinfo=timezone.utc)
+    stale_bet_races: list[str] = []
+    async with get_session() as session:
+        unsettled = (await session.execute(
+            select(BetRecommendationRow.race_id).distinct()
+            .where(BetRecommendationRow.race_id.like(f"{target}_%"))
+            .where(BetRecommendationRow.settled.is_(False))
+        )).scalars().all()
+        for rid in unsettled:
+            sched = (await session.execute(
+                select(_func.max(RunnerPredictionRow.scheduled_time))
+                .where(RunnerPredictionRow.race_id == rid)
+            )).scalar()
+            try:
+                if sched:
+                    jump = _dt.fromisoformat(str(sched).replace("Z", "+00:00"))
+                    if (_now - jump).total_seconds() > 24 * 3600:
+                        stale_bet_races.append(rid)
+                elif stale_hours >= 24:
+                    stale_bet_races.append(rid)  # no sched_time but date is old
+            except Exception:
+                pass
+    if stale_bet_races:
+        critical.append({
+            "check": "stale_pending_bets",
+            "n_races": len(stale_bet_races),
+            "example_race_ids": stale_bet_races[:20],
+            "reason": "Bets still marked unsettled >24h after jump — settle sweep failed or race never seeded",
+        })
+
+    # ── Scratched flag mismatch: mutable vs history ───────────────
+    async with get_session() as session:
+        mut_cancelled = (await session.execute(
+            select(RunnerPredictionRow.race_id, RunnerPredictionRow.horse_name)
+            .where(RunnerPredictionRow.race_id.like(f"{target}_%"))
+            .where(RunnerPredictionRow.cancelled.is_(True))
+        )).all()
+        hist_cancelled = (await session.execute(
+            select(RunnerPredictionHistoryRow.race_id, RunnerPredictionHistoryRow.horse_name)
+            .where(RunnerPredictionHistoryRow.race_id.like(f"{target}_%"))
+            .where(RunnerPredictionHistoryRow.cancelled.is_(True))
+        )).all()
+    mut_set = {(rid, hn) for rid, hn in mut_cancelled}
+    hist_set = {(rid, hn) for rid, hn in hist_cancelled}
+    mismatches = list(mut_set ^ hist_set)  # symmetric difference
+    if mismatches:
+        warning.append({
+            "check": "scratched_mutable_history_mismatch",
+            "n_runners": len(mismatches),
+            "mismatches": [{"race_id": r, "horse_name": h} for r, h in mismatches[:20]],
+            "reason": "cancelled=true set on one table but not the other — downstream can double-count or miss the scratch",
+        })
+
+    # ── Place-prob sanity (per horse: P(top-3) >= P(top-1)) ──────
+    place_violations = 0
+    place_broken_races = set()
+    sum_place_off_races: list[str] = []
+    async with get_session() as session:
+        active_pred = (await session.execute(
+            select(
+                RunnerPredictionRow.race_id,
+                RunnerPredictionRow.horse_name,
+                RunnerPredictionRow.win_probability,
+                RunnerPredictionRow.place_probability,
+            )
+            .where(RunnerPredictionRow.race_id.like(f"{target}_%"))
+            .where(RunnerPredictionRow.cancelled.is_(False) | RunnerPredictionRow.cancelled.is_(None))
+        )).all()
+    by_race: dict[str, list] = {}
+    for rid, hn, wp, pp in active_pred:
+        by_race.setdefault(rid, []).append((hn, wp or 0, pp or 0))
+    for rid, rows in by_race.items():
+        for hn, wp, pp in rows:
+            if wp > 0.05 and pp < wp:  # meaningful only when both non-trivial
+                place_violations += 1
+                place_broken_races.add(rid)
+        sum_p = sum(r[2] for r in rows)
+        n = len(rows)
+        expected = 3.0 if n >= 8 else 2.0 if n >= 5 else 1.0
+        if abs(sum_p - expected) > expected * 0.5 and n >= 5:  # off by >50%
+            sum_place_off_races.append(rid)
+    if place_violations > 0:
+        critical.append({
+            "check": "place_prob_less_than_win_prob",
+            "n_violations": place_violations,
+            "n_races": len(place_broken_races),
+            "example_race_ids": list(place_broken_races)[:20],
+            "reason": "Structurally impossible: P(top-3) < P(top-1); place model broken (2a587db class)",
+        })
+    if sum_place_off_races:
+        warning.append({
+            "check": "place_prob_sum_off_from_places_count",
+            "n_races": len(sum_place_off_races),
+            "example_race_ids": sum_place_off_races[:20],
+            "reason": "Field-wide place-prob sum should ≈ places count (3 for 8+ runners); off by >50% means place model output is unnormalized",
+        })
+
+    # ── URL health: internal (our site) + external (data sources) ─
+    # Runs a small HEAD/GET pass against each URL, flags non-200.
+    # Kept short: 5s per probe, done in parallel.
+    import aiohttp
+    async def _probe(session, url: str, *, method: str = "GET", timeout: int = 5) -> dict:
+        try:
+            async with session.request(method, url, timeout=timeout, allow_redirects=True) as r:
+                return {"url": url, "status": r.status, "ok": 200 <= r.status < 400}
+        except Exception as e:
+            return {"url": url, "status": 0, "ok": False, "error": str(e)[:120]}
+
+    internal_urls = [
+        "https://funkyiq.com/",
+        "https://funkyiq.com/edge.html",
+        "https://funkyiq.com/index.html",
+        "https://funkyiq.com/hotseat.html",
+        "https://funkyiq.com/funkmeup.html",
+        "https://funkyiq.com/bets.html",
+        "https://funkyiq.com/dashboard.html",
+        "https://web-production-dec62.up.railway.app/api/health",
+        "https://web-production-dec62.up.railway.app/api/edge",
+    ]
+    from horse_engine.clients.racing_australia import _ra_date as _ra_date_fn
+    external_urls = [
+        "https://www.racingaustralia.horse/FreeFields/Calendar.aspx?State=NSW",
+        "https://www.racingaustralia.horse/FreeFields/Calendar.aspx?State=VIC",
+        # Sample recent Results.aspx — any settled meeting works
+        f"https://www.racingaustralia.horse/FreeFields/Results.aspx?"
+        f"Key={_ra_date_fn(target)},NSW,Royal%20Randwick",
+    ]
+    try:
+        async with aiohttp.ClientSession() as sess:
+            probes = await asyncio.gather(
+                *[_probe(sess, u) for u in internal_urls + external_urls],
+                return_exceptions=False,
+            )
+        broken_internal = [p for p in probes[:len(internal_urls)] if not p["ok"]]
+        broken_external = [p for p in probes[len(internal_urls):] if not p["ok"]]
+        if broken_internal:
+            critical.append({
+                "check": "internal_urls_down",
+                "n_urls": len(broken_internal),
+                "urls": broken_internal,
+                "reason": "One or more of our own pages/endpoints returned non-200 — users may be seeing errors",
+            })
+        if broken_external:
+            critical.append({
+                "check": "external_urls_down",
+                "n_urls": len(broken_external),
+                "urls": broken_external,
+                "reason": "Upstream data source returning non-200 — seed/enrich pipeline will silently starve",
+            })
+        info.append({
+            "check": "url_health",
+            "internal_ok": len(internal_urls) - len(broken_internal),
+            "internal_total": len(internal_urls),
+            "external_ok": len(external_urls) - len(broken_external),
+            "external_total": len(external_urls),
+        })
+    except Exception as e:
+        warning.append({
+            "check": "url_health_probe_failed",
+            "reason": f"Couldn't run URL health checks: {type(e).__name__}: {e}",
         })
 
     # ── Pending picks older than 24h — RA never published or we lost the race ──
@@ -10917,34 +11330,135 @@ async def admin_quality_check_history_detail(
 
 
 async def _scheduled_quality_check():
-    """Nightly cron entry — runs the quality check against yesterday and
-    persists the report. Logs critical findings at ERROR level so any
-    log-monitoring / alerting picks them up automatically."""
+    """
+    Nightly cron entry — runs the quality check against yesterday,
+    applies safe auto-heals, re-runs to verify, and persists the
+    combined report. Logs at severity-matching levels for monitoring.
+    """
     target = (_today_aest() - timedelta(days=1)).isoformat()
     try:
-        report = await _run_quality_check(target)
+        initial = await _run_quality_check(target)
     except Exception as e:
-        log.exception("[cron] quality-check failed for %s: %s", target, e)
+        log.exception("[cron] quality-check initial pass failed for %s: %s", target, e)
         return
+
+    # Apply auto-heal for both critical and warning findings — anything
+    # in the heal engine's whitelist gets fixed idempotently.
+    healable = (initial.get("critical") or []) + (initial.get("warning") or [])
+    try:
+        heal_actions = await _auto_heal_findings(target, healable)
+    except Exception as e:
+        log.exception("[cron] auto-heal failed for %s: %s", target, e)
+        heal_actions = [{"check": "_engine", "action": "abort",
+                         "outcome": "failed", "detail": str(e)[:200]}]
+
+    # Re-run to see what remains after heals.
+    try:
+        final = await _run_quality_check(target)
+    except Exception as e:
+        log.exception("[cron] quality-check verify pass failed for %s: %s", target, e)
+        final = initial  # fall back — better to persist something
+
+    combined = {
+        "date": target,
+        "initial": initial,
+        "heal_actions": heal_actions,
+        "final": final,
+        "summary": {
+            "initial_critical": len(initial.get("critical") or []),
+            "initial_warning": len(initial.get("warning") or []),
+            "final_critical": len(final.get("critical") or []),
+            "final_warning": len(final.get("warning") or []),
+            "heals_applied": sum(1 for a in heal_actions if a.get("outcome") == "healed"),
+            "heals_skipped": sum(1 for a in heal_actions if a.get("outcome") == "skipped"),
+        },
+    }
 
     async with get_session() as session:
         session.add(QualityCheckRow(
             check_date=target,
-            critical_count=len(report.get("critical") or []),
-            warning_count=len(report.get("warning") or []),
-            info_count=len(report.get("info") or []),
-            report_json=json.dumps(report),
+            critical_count=len(final.get("critical") or []),
+            warning_count=len(final.get("warning") or []),
+            info_count=len(final.get("info") or []),
+            report_json=json.dumps(combined),
         ))
         await session.commit()
 
-    if report.get("critical"):
-        for f in report["critical"]:
-            log.error("[quality-check %s] CRITICAL %s: %s", target, f.get("check"), f)
-    elif report.get("warning"):
-        for f in report["warning"]:
-            log.warning("[quality-check %s] WARNING %s: %s", target, f.get("check"), f)
+    if final.get("critical"):
+        for f in final["critical"]:
+            log.error("[quality-check %s] CRITICAL still present after heal: %s: %s",
+                      target, f.get("check"), f)
+    elif final.get("warning"):
+        for f in final["warning"]:
+            log.warning("[quality-check %s] WARNING remaining: %s: %s",
+                        target, f.get("check"), f)
     else:
-        log.info("[quality-check %s] no findings — clean run", target)
+        log.info("[quality-check %s] clean after heals (%d applied)",
+                 target, combined["summary"]["heals_applied"])
+
+
+@app.get("/api/admin/morning-report")
+async def admin_morning_report(x_cron_secret: Optional[str] = Header(None)):
+    """
+    Morning summary — latest nightly quality-check run, formatted for
+    a quick skim. Read this each morning:
+      - date + when the check ran
+      - what was auto-healed (fix action + count)
+      - what critical/warning findings REMAIN after heal (need manual)
+      - health snapshot (URL probes, coverage %, rank-1 win rate)
+    """
+    _check_admin(x_cron_secret)
+    async with get_session() as session:
+        row = (await session.execute(
+            select(QualityCheckRow)
+            .order_by(QualityCheckRow.ran_at.desc())
+            .limit(1)
+        )).scalars().first()
+    if not row:
+        return {"status": "no_data", "note": "Nightly quality-check hasn't run yet. Try /api/admin/quality-check?date=yesterday to see it live."}
+
+    payload = json.loads(row.report_json or "{}")
+    initial = payload.get("initial") or {}
+    final = payload.get("final") or {}
+    heals = payload.get("heal_actions") or []
+
+    healed = [h for h in heals if h.get("outcome") == "healed"]
+    skipped = [h for h in heals if h.get("outcome") == "skipped"]
+
+    # Extract key metrics from info findings
+    def _pull(bucket_list: list[dict], check_name: str) -> Optional[dict]:
+        return next((f for f in bucket_list if f.get("check") == check_name), None)
+
+    info = final.get("info") or []
+    coverage = _pull(info, "prediction_coverage")
+    win_rate = _pull(info, "rank1_win_rate")
+    url_health = _pull(info, "url_health")
+
+    return {
+        "date": payload.get("date"),
+        "ran_at": row.ran_at.isoformat() if row.ran_at else None,
+        "verdict": (
+            "all_clear" if not final.get("critical") and not final.get("warning")
+            else "warnings_only" if not final.get("critical")
+            else "critical"
+        ),
+        "auto_healed": [
+            {"issue": h.get("check"), "action": h.get("action"),
+             "affected": h.get("affected")}
+            for h in healed
+        ],
+        "still_needs_attention": {
+            "critical": final.get("critical") or [],
+            "warning": final.get("warning") or [],
+        },
+        "health_snapshot": {
+            "prediction_coverage_pct": (coverage or {}).get("coverage_pct"),
+            "rank1_win_rate_pct": (win_rate or {}).get("win_rate_pct"),
+            "url_health_internal": f"{(url_health or {}).get('internal_ok', '?')}/{(url_health or {}).get('internal_total', '?')}",
+            "url_health_external": f"{(url_health or {}).get('external_ok', '?')}/{(url_health or {}).get('external_total', '?')}",
+        },
+        "summary_counts": payload.get("summary") or {},
+    }
 
 
 @app.post("/api/admin/purge-blocklisted-venues")
