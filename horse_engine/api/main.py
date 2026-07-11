@@ -11007,11 +11007,11 @@ async def _run_quality_check(target: str) -> dict:
             select(
                 RunnerPredictionRow.race_id,
                 RunnerPredictionRow.horse_name,
-                _func.count(RunnerPredictionRow.id).label("n"),
+                func.count(RunnerPredictionRow.id).label("n"),
             )
             .where(RunnerPredictionRow.race_id.like(f"{target}_%"))
             .group_by(RunnerPredictionRow.race_id, RunnerPredictionRow.horse_name)
-            .having(_func.count(RunnerPredictionRow.id) > 1)
+            .having(func.count(RunnerPredictionRow.id) > 1)
         )).all()
     if dup_rows:
         warning.append({
@@ -11053,7 +11053,7 @@ async def _run_quality_check(target: str) -> dict:
         )).scalars().all()
         for rid in unsettled:
             sched = (await session.execute(
-                select(_func.max(RunnerPredictionRow.scheduled_time))
+                select(func.max(RunnerPredictionRow.scheduled_time))
                 .where(RunnerPredictionRow.race_id == rid)
             )).scalar()
             try:
