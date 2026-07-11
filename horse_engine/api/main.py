@@ -2686,6 +2686,36 @@ def _today() -> str:
     return _today_aest().isoformat()
 
 
+# ── Sportsbet-availability flag ──────────────────────────────────────────
+# Venues that Sportsbet doesn't market — mostly tiny picnic / bush meetings
+# where turnover is too thin for a corporate book. RA lists them anyway
+# because they're stewards-approved, so our picks include them; this flag
+# lets the frontend badge them so the user knows they can't back the pick
+# on their usual book.
+#
+# List grows organically as venues are reported missing. Add lowercase
+# hyphenated venue codes (matches how race_ids are constructed).
+_NOT_ON_SPORTSBET_VENUES: frozenset = frozenset({
+    "ilfracombe",       # QLD, Central West — picnic race club
+})
+
+
+def _is_sportsbet_available(venue_code: str, best_odds: Optional[float]) -> bool:
+    """
+    Best-effort flag: True when a Sportsbet market almost certainly
+    exists for this pick. False when we know Sportsbet doesn't cover
+    the venue OR when no bookmaker odds are available (which is a
+    strong proxy for "no corporate book has priced this race").
+    """
+    if not venue_code:
+        return True
+    if venue_code.lower() in _NOT_ON_SPORTSBET_VENUES:
+        return False
+    if best_odds is None or best_odds <= 0:
+        return False
+    return True
+
+
 def _meeting_slug(venue: str, race_date: str) -> str:
     """Build the Racing Australia meeting slug from venue slug and date."""
     return f"{venue}-{race_date.replace('-', '')}"
@@ -3475,6 +3505,7 @@ async def get_edge_picks():
                 "hedge": hedge,
                 "two_funk": two_funk,
                 "field": field_map.get(runner_row.race_id, []),
+                "sportsbet_available": _is_sportsbet_available(venue_code, odds),
             })
 
     # Annotate finished picks with actual race results

@@ -2398,6 +2398,7 @@
         </div>
         <div class="pick-footer">
           ${trackChip}${distChip}${stateChip}${weatherChip}${valueChip}
+          ${pick.sportsbet_available === false ? `<span class="pick-footer-chip" style="background:rgba(74,90,122,0.20);color:var(--text-secondary);border-color:var(--border)" title="Sportsbet doesn't cover this meeting — try TAB fixed odds or a smaller book">🚫 Not on Sportsbet</span>` : ''}
           ${isPast && result && !result.scratched && !result.no_result ? (() => {
             const pos = result.position;
             const posLbl = pos === 2 ? '2nd' : pos === 3 ? '3rd' : pos ? `${pos}th` : '';
