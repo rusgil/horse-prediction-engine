@@ -861,9 +861,13 @@ async def _scheduled_pre_race_enrich_and_scratch():
     try:
         client = get_tab_client()
 
-        # Clear RA meeting cache so scratch detection sees fresh runner lists
-        if hasattr(client, "_ra") and hasattr(client._ra, "_meeting_cache"):
-            client._ra._meeting_cache.clear()
+        # (Previously cleared client._ra._meeting_cache here. That was
+        # wiping the 30-min TTL every 15 min and forcing the first user
+        # click on any venue after each sweep tick to pay a 25s RA
+        # round-trip. The sweep's own per-meeting calls below now pass
+        # force_fresh=True — bypass the cache read but STILL write the
+        # fresh result back, so user endpoints hit warm cache while the
+        # sweep still detects scratchings against fresh RA data.)
 
         async with get_session() as session:
             model = await _load_model(session)
@@ -914,7 +918,10 @@ async def _scheduled_pre_race_enrich_and_scratch():
             vc = slug[:-len(date_sfx)] if slug.endswith(date_sfx) else slug.split("-")[0]
             meeting_meta[vc] = (slug, m.get("venue", vc), m.get("state", ""))
             try:
-                venue_raw_events[vc] = await client.get_meeting_races(slug)
+                # force_fresh=True: sweep needs current runner list to
+                # catch scratchings, but the fresh result IS cached so
+                # subsequent user-facing calls hit warm cache.
+                venue_raw_events[vc] = await client.get_meeting_races(slug, force_fresh=True)
             except Exception as e:
                 log.debug("[pre-race] get_meeting_races failed for %s: %s", slug, e)
 

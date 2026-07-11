@@ -1088,7 +1088,7 @@ class RacingAustraliaClient:
 
     # ── Acceptances ───────────────────────────────────────────────────────────
 
-    async def _fetch_meeting(self, ra_key: str, race_date: str, state: str) -> dict | None:
+    async def _fetch_meeting(self, ra_key: str, race_date: str, state: str, force_fresh: bool = False) -> dict | None:
         cached = self._meeting_cache.get(ra_key)
         # 30-min TTL. Was 15min, which on a heavy-deploy day burned the
         # droplet's 5000/24h cap by 21:30 UTC. Acceptances change rarely
@@ -1096,7 +1096,13 @@ class RacingAustraliaClient:
         # our Acceptances volume without meaningful freshness loss; the
         # scratch-detection cron still catches scratchings within one
         # 15-min cron tick + at most one stale window.
-        if cached and (datetime.utcnow() - cached[0]).total_seconds() < 1800:
+        # force_fresh=True bypasses the cache read but STILL writes the
+        # fresh result back, so downstream user endpoints hit the warm
+        # cache immediately after. Used by the scratch sweep — needs
+        # fresh RA data to detect scratchings but shouldn't cold-strip
+        # the cache for the /api/meetings/{date}/{venue} path (which
+        # was paying 25s per venue click after every 15-min sweep tick).
+        if not force_fresh and cached and (datetime.utcnow() - cached[0]).total_seconds() < 1800:
             return cached[1]
         from urllib.parse import quote
         url = f"{_BASE}/Acceptances.aspx?Key={quote(ra_key, safe='')}"
@@ -1173,7 +1179,7 @@ class RacingAustraliaClient:
             }
         return None
 
-    async def get_meeting_races(self, slug: str) -> list[dict]:
+    async def get_meeting_races(self, slug: str, force_fresh: bool = False) -> list[dict]:
         ra_key = self._slug_to_key.get(slug)
         if not ra_key:
             await self.get_meeting_by_slug(slug)
@@ -1183,7 +1189,7 @@ class RacingAustraliaClient:
         parts = ra_key.split(",", 2)
         state = parts[1] if len(parts) > 1 else "NSW"
         race_date = self._ra_key_to_date(ra_key)
-        meeting = await self._fetch_meeting(ra_key, race_date, state)
+        meeting = await self._fetch_meeting(ra_key, race_date, state, force_fresh=force_fresh)
         if not meeting:
             return []
         return [
