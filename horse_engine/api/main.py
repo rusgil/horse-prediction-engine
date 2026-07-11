@@ -14377,11 +14377,27 @@ async def seed_ra_results(
                     sp = rd.get("sp")
                     margin = float(rd.get("margin") or 0)
 
+                    # Match by race + normalized horse name. When duplicates
+                    # exist (post-race re-enrichment can leave two rows
+                    # for the same horse — one with tab_number, one
+                    # without), prefer the one WITH tab_number so
+                    # HistoricalResultRow.tab_number populates for the
+                    # settle path. Falling back on mutable-then-history-
+                    # then-nothing.
+                    norm_name = _normalize_horse(name_lower)
+                    _matches = [p for p in pred_rows if p.race_id == race_id
+                                and _normalize_horse(p.horse_name) == norm_name]
                     matched_pred = next(
-                        (p for p in pred_rows if p.race_id == race_id
-                         and _normalize_horse(p.horse_name) == _normalize_horse(name_lower)),
-                        None,
+                        (p for p in _matches if p.tab_number is not None),
+                        _matches[0] if _matches else None,
                     )
+                    # Fallback tab_number: if the matched mutable row has
+                    # no tab, look up in history (source="live" only).
+                    tab_from_hist = None
+                    if matched_pred is None or matched_pred.tab_number is None:
+                        matched_hist_tab = hist_by_key.get((race_id, norm_name))
+                        if matched_hist_tab and matched_hist_tab.tab_number is not None:
+                            tab_from_hist = matched_hist_tab.tab_number
 
                     if not force:
                         existing_at_pos = (await session.execute(
@@ -14410,9 +14426,13 @@ async def seed_ra_results(
                         # Without tab_number, _settle_bets_for_race can't
                         # map finishing positions to bet-box tab numbers
                         # and leaves the race in 'pending' forever.
-                        # Match cron path (_seed_results_for_date) — pull
-                        # from the matched prediction row when we have it.
-                        tab_number=getattr(matched_pred, "tab_number", None) if matched_pred else None,
+                        # Priority: matched_pred.tab_number → history-row
+                        # fallback → None.
+                        tab_number=(
+                            getattr(matched_pred, "tab_number", None)
+                            if matched_pred and matched_pred.tab_number is not None
+                            else tab_from_hist
+                        ),
                         feature_vector_json=fv_json,
                     ))
                     race_seeded += 1
