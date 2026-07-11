@@ -10552,6 +10552,73 @@ async def admin_enrich_now(x_cron_secret: Optional[str] = Header(None)):
     return {"ok": True, "queued": True, "note": "Enrich running in background — takes 5-10 min for a full day"}
 
 
+@app.post("/api/admin/reenrich-race/{race_id}")
+async def admin_reenrich_race(race_id: str, x_cron_secret: Optional[str] = Header(None)):
+    """
+    Re-run the enrich + predict pipeline for a single race and overwrite
+    its RunnerPredictionRow / RunnerPredictionHistoryRow rows. Bypasses
+    the already-enriched skip and the jump-time-window guard, so it works
+    on races that have already run (useful for verifying model/pipeline
+    fixes against a specific case without triggering a full-day sweep).
+
+    Loads all calibrations (venue, output-isotonic) so the resulting rows
+    reflect the latest pipeline exactly as production would emit them.
+    """
+    _check_admin(x_cron_secret)
+    race_date, venue_code, race_num = _parse_race_id(race_id)
+    if not race_date or not venue_code or not race_num:
+        raise HTTPException(400, f"malformed race_id: {race_id}")
+
+    client = get_tab_client()
+    slug = _meeting_slug(venue_code, race_date)
+
+    # Meeting details (venue name, state) so parse_race can populate them.
+    meetings = await client.get_meetings(race_date)
+    m = next((mm for mm in meetings if mm.get("slug") == slug), None)
+    venue_name = (m or {}).get("venue", venue_code)
+    state = (m or {}).get("state", "")
+
+    full_event = await client.get_race(slug, race_num)
+    if not full_event:
+        raise HTTPException(404, f"TAB returned no event for {race_id}")
+
+    race = await client.parse_race(full_event, race_date, venue_name, state)
+    async with get_session() as session:
+        model = await _load_model(session)
+        place_model = await _load_place_model(session)
+        exotic_model = await _load_exotic_model(session)
+        await _inject_accumulated_stats(race, session)
+    venue_cal = await _load_venue_calibration()
+    output_cal = await _load_output_calibration_curve()
+
+    predictions, _ = await enrich_and_predict_race(
+        race, model,
+        venue_calibration=venue_cal,
+        place_model=place_model,
+        exotic_model=exotic_model,
+        output_calibration_curve=output_cal,
+    )
+    async with get_session() as session:
+        await save_race_predictions(
+            session,
+            race_id,
+            [_prediction_to_db_dict(p, race_id, race.scheduled_time, race=race)
+             for p in predictions],
+        )
+
+    global _edge_response_cache
+    _edge_response_cache = None
+
+    return {
+        "ok": True,
+        "race_id": race_id,
+        "runners_written": len(predictions),
+        "top_pick": predictions[0].runner.horse_name if predictions else None,
+        "top_pick_win_prob": round(predictions[0].win_prob, 4) if predictions else None,
+        "top_pick_place_prob": round(predictions[0].place_prob, 4) if predictions else None,
+    }
+
+
 @app.post("/api/admin/scratch-sweep-now")
 async def admin_scratch_sweep_now(x_cron_secret: Optional[str] = Header(None)):
     """Run the today-scratch detection immediately and bust the edge cache so
