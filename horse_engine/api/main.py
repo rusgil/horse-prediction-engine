@@ -10543,12 +10543,38 @@ async def admin_scratch_runner(
     except Exception:
         pass
 
+    # Regenerate Lab bets for the race so the shrunk field re-picks
+    # a new basket (e.g. rank-1 scratch → new rank-1 leads the box).
+    # Only regenerate for races that haven't jumped — post-jump reruns
+    # would create bet rows for a race that's already run, which the
+    # settlement path would then have to handle as edge cases.
+    regenerated = 0
+    now_utc = datetime.utcnow().replace(tzinfo=timezone.utc)
+    async with get_session() as session:
+        sched = (await session.execute(
+            select(func.max(RunnerPredictionRow.scheduled_time))
+            .where(RunnerPredictionRow.race_id == race_id)
+        )).scalar()
+    race_in_future = True
+    if sched:
+        try:
+            race_in_future = datetime.fromisoformat(str(sched).replace("Z", "+00:00")) > now_utc
+        except (ValueError, TypeError):
+            race_in_future = True
+    if race_in_future:
+        try:
+            regenerated = await _generate_bets_for_race(race_id, regenerate=True)
+        except Exception as e:
+            log.warning("[scratch-runner] bet regen failed for %s: %s", race_id, e)
+
     return {
         "ok": True,
         "race_id": race_id,
         "matched_horse": matched_mut[0] if matched_mut else (matched_hist[0] if matched_hist else None),
         "mutable_updated": mut_result.rowcount if mut_result else 0,
         "history_updated": hist_result.rowcount if hist_result else 0,
+        "bets_regenerated": regenerated,
+        "regen_skipped_reason": None if race_in_future else "race already jumped",
     }
 
 
