@@ -631,7 +631,7 @@
       <div class="model-tabs">
         <button class="model-tab active" id="tabWin" onclick="switchTab('win')">Win &amp; Placement</button>
         <button class="model-tab exotic" id="tabExotic" onclick="switchTab('exotic')">Exotics (beta)</button>
-        <button class="model-tab reviews" id="tabReviews" onclick="switchTab('reviews')">Nightly Reviews</button>
+        <button class="model-tab reviews" id="tabReviews" onclick="switchTab('reviews')">Weekly Reviews</button>
       </div>
       <div id="panelWin">${winContent}</div>
       <div id="panelExotic" style="display:none">${exoContent}</div>
@@ -1209,9 +1209,9 @@
   function buildReviewsPlaceholder() {
     return `
       <div class="nr-generate">
-        <button class="btn" id="nrRunBtn" onclick="generateReviewNow()">Generate Review — Yesterday</button>
-        <input type="date" id="nrGenDate" class="nr-notes" style="width:auto;margin:0;min-height:0;padding:6px 10px"/>
-        <button class="btn" onclick="generateReviewNow(true)">Run for date above</button>
+        <button class="btn" id="nrRunBtn" onclick="generateReviewNow()">Generate Weekly Review</button>
+        <input type="date" id="nrGenDate" class="nr-notes" style="width:auto;margin:0;min-height:0;padding:6px 10px" title="Week-ending date (defaults to yesterday)"/>
+        <button class="btn" onclick="generateReviewNow(true)">Run for week ending above</button>
         <span class="btn-status" id="nrStatus"></span>
       </div>
       <div class="nr-filters" id="nrFilters">
@@ -1239,7 +1239,8 @@
         return;
       }
       const data = await res.json();
-      reviewsCache = data.reviews || [];
+      // Weekly-only: filter out legacy nightly/claude reviews.
+      reviewsCache = (data.reviews || []).filter(r => r.source === 'weekly');
       renderReviewsList();
     } catch (e) {
       document.getElementById('nrReviewsList').innerHTML =
@@ -1251,7 +1252,7 @@
     const wrap = document.getElementById('nrReviewsList');
     if (!reviewsCache.length) {
       wrap.className = 'nr-empty';
-      wrap.innerHTML = `No reviews yet. Click <strong>Generate Review — Yesterday</strong> above.`;
+      wrap.innerHTML = `No weekly reviews yet. Click <strong>Generate Weekly Review</strong> above.`;
       return;
     }
     wrap.className = '';
@@ -1447,11 +1448,11 @@
     btn.disabled = true; btn.textContent = 'Running…';
     status.textContent = '';
     try {
-      let url = `${API}/api/admin/nightly-reviews/generate`;
+      let url = `${API}/api/admin/weekly-reviews/generate`;
       if (useGenDate) {
         const d = document.getElementById('nrGenDate').value;
         if (!d) { status.textContent = 'Pick a date'; btn.disabled = false; btn.textContent = prevLabel; return; }
-        url += `?date=${d}`;
+        url += `?end_date=${d}`;
       }
       const res = await fetch(url, { method: 'POST', headers: { 'x-cron-secret': adminSecret } });
       if (!res.ok) throw new Error(`${res.status}`);
