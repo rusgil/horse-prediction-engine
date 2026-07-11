@@ -335,13 +335,20 @@ def predict_race(race: Race, model: HorseModel, venue_calibration: dict[str, flo
     win_probs, heuristic_place_probs = model.predict_field(feature_vectors)
     win_probs = apply_venue_calibration(list(win_probs), race.venue, venue_calibration or {})
 
-    # When a trained place_model is available, use ITS output as place_prob
-    # (ARCH-1). The win model's predict_field returns a heuristic
-    # `softmax(raw × 0.5) × n_places` for place_prob — not a trained P(top-3).
-    # PlaceModel.predict_field's first tuple element is the trained
-    # place-probability output and is the correct number to show users.
+    # Place-prob assembly.
+    # PlaceModel.predict_field returns (softmax(raw), softmax(raw × 0.5) × N).
+    # The FIRST element is P(this horse has the highest place-score in
+    # the field) — a softmax which sums to 1. That's structurally wrong
+    # for P(top-3): sum should be ~3 for an 8-runner field with 3 places,
+    # and individual values can be lower than the same horse's win_prob
+    # (violates P(top-3) ≥ P(top-1)).
+    # Confirmed 2026-07-11 on NOTES (NZ)/Aquis Park R3: win 30.2% but
+    # place 27.3%, and sum_place=1.00 vs sum_win=0.88 across the field.
+    # The SECOND element applies a temperature-flattened softmax × n_places
+    # heuristic — not calibrated, but at least sums to ~places and puts
+    # place > win for the top ranks. Use that.
     if place_model is not None:
-        place_probs_list, _ = place_model.predict_field(feature_vectors)
+        _, place_probs_list = place_model.predict_field(feature_vectors)
     else:
         place_probs_list = list(heuristic_place_probs)
 
