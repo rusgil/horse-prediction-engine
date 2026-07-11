@@ -3529,6 +3529,17 @@ async def get_edge_picks():
                     ff_positions = {l["position"] for l in tri["first_four"] if l["position"]}
                     tri["first_four_hit"] = ff_positions == {1, 2, 3, 4}
 
+    # Attach hot-streak badges — the horse's most recent prior race
+    # was a rank-1 or ≥25% pick that WON (hot) or PLACED (warm).
+    # Backtest showed hot picks lift +18pp win rate, warm +11pp
+    # (n=20+21 in the 90-day validation window). Small volume — about
+    # 4-8 badges per week — but a genuine signal worth surfacing.
+    streak_map = await _load_hot_streak_map(picks)
+    for p in picks:
+        streak = streak_map.get(p["race_id"])
+        if streak:
+            p["streak"] = streak
+
     body = {
         "generated_at": datetime.utcnow().isoformat(),
         "threshold_pct": int(threshold * 100),
@@ -19039,6 +19050,114 @@ async def _load_venue_calibration() -> dict[str, float]:
     multipliers = compute_venue_multipliers(venue_stats)
     log.info("[venue_calibration] %d venues calibrated", len(multipliers))
     return multipliers
+
+
+# ── Hot-streak badges ──────────────────────────────────────────────────────
+async def _load_hot_streak_map(picks: list[dict]) -> dict[str, dict]:
+    """
+    For each pick, find the horse's most recent prior race (within 90d)
+    and classify:
+      hot:  model_pct ≥ 25% AND won
+      warm: model_pct ≥ 25% AND placed (didn't win)
+    No badge otherwise.
+
+    Batched: 2 DB queries total across the whole picks list.
+
+    Returns {current_race_id → streak_info} — only entries that qualify.
+    Backtest (2026-07-11): hot picks lift +18pp win vs baseline, warm
+    +11pp. See /api/admin/backtest-last-start-alignment.
+    """
+    if not picks:
+        return {}
+
+    horse_keys = {_normalize_horse(p["horse_name"]) for p in picks if p.get("horse_name")}
+    if not horse_keys:
+        return {}
+
+    cutoff = (date.today() - timedelta(days=90)).isoformat()
+    async with get_session() as session:
+        # Pull every prior prediction row for these horses in the window.
+        prior_rows = (await session.execute(
+            select(
+                RunnerPredictionHistoryRow.race_id,
+                RunnerPredictionHistoryRow.horse_name,
+                RunnerPredictionHistoryRow.win_probability,
+            )
+            .where(RunnerPredictionHistoryRow.race_id >= cutoff)
+            .where(RunnerPredictionHistoryRow.cancelled.is_(False) | RunnerPredictionHistoryRow.cancelled.is_(None))
+            .where(RunnerPredictionHistoryRow.source == "live")
+        )).all()
+
+    # Bucket by normalized horse. We keep only horses we actually care
+    # about (in the current picks list) to bound memory on cold-cache.
+    horse_history: dict[str, list] = {}
+    for rid, hname, pct in prior_rows:
+        key = _normalize_horse(hname)
+        if key in horse_keys:
+            horse_history.setdefault(key, []).append((rid, pct))
+
+    all_prior_race_ids: set[str] = set()
+    for rows in horse_history.values():
+        for rid, _ in rows:
+            all_prior_race_ids.add(rid)
+    if not all_prior_race_ids:
+        return {}
+
+    async with get_session() as session:
+        result_rows = (await session.execute(
+            select(
+                HistoricalResultRow.race_id,
+                HistoricalResultRow.horse_name,
+                HistoricalResultRow.position,
+                HistoricalResultRow.winner,
+                HistoricalResultRow.placed,
+            )
+            .where(HistoricalResultRow.race_id.in_(all_prior_race_ids))
+        )).all()
+    result_by_key: dict[tuple[str, str], tuple] = {
+        (rid, _normalize_horse(hname)): (pos, won, plc)
+        for rid, hname, pos, won, plc in result_rows
+    }
+
+    streak_map: dict[str, dict] = {}
+    for p in picks:
+        cur_rid = p["race_id"]
+        cur_key = _normalize_horse(p.get("horse_name") or "")
+        if not cur_key:
+            continue
+        history = horse_history.get(cur_key, [])
+        # Most recent prior race (strictly before cur_rid by lexicographic
+        # compare — race_ids start with YYYY-MM-DD so it's chronological).
+        sorted_hist = sorted(history, key=lambda h: h[0], reverse=True)
+        for prior_rid, prior_pct in sorted_hist:
+            if prior_rid >= cur_rid:
+                continue
+            r = result_by_key.get((prior_rid, cur_key))
+            if not r:
+                continue  # unseeded prior — skip to next-most-recent
+            pos, won, placed = r
+            if not pos or pos <= 0:
+                continue  # scratched — skip
+            prior_pct_num = (prior_pct or 0) * 100
+            if prior_pct_num < 25.0:
+                # Off-radar last out — no badge, but stop here (this WAS
+                # their most recent race).
+                break
+            if won:
+                badge = "hot"
+            elif placed:
+                badge = "warm"
+            else:
+                break  # cold/neutral — no badge
+            streak_map[cur_rid] = {
+                "badge": badge,
+                "last_race_id": prior_rid,
+                "last_race_date": prior_rid[:10],
+                "last_race_position": int(pos),
+                "last_race_pct": round(prior_pct_num, 1),
+            }
+            break
+    return streak_map
 
 
 # ── Output calibration (isotonic curve on model_pct → win rate) ────────────

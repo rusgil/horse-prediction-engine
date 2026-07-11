@@ -2334,7 +2334,26 @@
         </div>
         <div class="pick-body">
           <div class="pick-left">
-            <div class="pick-horse-name">${escHtml(pick.horse_name)}</div>
+            <div class="pick-horse-name">${escHtml(pick.horse_name)}${(() => {
+              // Hot-streak badge — horse's last race delivered when
+              // the model backed them. Backtested +18pp (hot) / +11pp
+              // (warm) win-rate lift. See /api/admin/backtest-last-
+              // start-alignment.
+              const s = pick.streak;
+              if (!s) return '';
+              const posLbl = s.last_race_position === 1 ? '1st'
+                : s.last_race_position === 2 ? '2nd'
+                : s.last_race_position === 3 ? '3rd'
+                : `${s.last_race_position}th`;
+              const dateStr = s.last_race_date || '';
+              if (s.badge === 'hot') {
+                return `<span title="Won last out (${dateStr}, ${s.last_race_pct}% model pick) — +18pp win-rate lift" style="margin-left:8px;font-size:0.75rem;padding:2px 8px;border-radius:999px;background:rgba(239,68,68,0.15);color:#fca5a5;border:1px solid rgba(239,68,68,0.35);font-weight:600">🔥 Won last</span>`;
+              }
+              if (s.badge === 'warm') {
+                return `<span title="Placed ${posLbl} last out (${dateStr}, ${s.last_race_pct}% model pick) — +11pp win-rate lift" style="margin-left:8px;font-size:0.75rem;padding:2px 8px;border-radius:999px;background:rgba(245,158,11,0.12);color:#fbbf24;border:1px solid rgba(245,158,11,0.30);font-weight:600">🌤️ Placed last</span>`;
+              }
+              return '';
+            })()}</div>
             <div class="pick-details">${barrierChip}${jockeyChip}${trainerChip}${weightChip}${last10Chip}</div>
             <div class="dual-stat-row">
               <div class="dual-stat">
