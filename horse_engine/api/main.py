@@ -10664,6 +10664,207 @@ async def admin_scratch_sweep_now(x_cron_secret: Optional[str] = Header(None)):
     return {"ok": True, "newly_cancelled": cancelled}
 
 
+@app.get("/api/admin/quality-check")
+async def admin_quality_check(
+    date: Optional[str] = None,
+    x_cron_secret: Optional[str] = Header(None),
+):
+    """
+    Data-integrity report for a given day. Cross-references race counts,
+    prediction rows, historical results, and derived fields to catch
+    the class of "meetings card sums to 40 but day card says 33" bugs.
+
+    Returns categorized findings:
+      critical  — data is wrong or missing
+      warning   — data is inconsistent but not user-blocking
+      info      — observations worth noting
+
+    Report date defaults to yesterday (AEST).
+    """
+    _check_admin(x_cron_secret)
+    if date:
+        _validate_date(date)
+        target = date
+    else:
+        target = (_today_aest() - timedelta(days=1)).isoformat()
+
+    critical: list[dict] = []
+    warning: list[dict] = []
+    info: list[dict] = []
+
+    async with get_session() as session:
+        # 1. Meetings/venues covered by predictions (mutable + history)
+        mut_race_ids = set((await session.execute(
+            select(RunnerPredictionRow.race_id).distinct()
+            .where(RunnerPredictionRow.race_id.like(f"{target}_%"))
+        )).scalars().all())
+        hist_race_ids = set((await session.execute(
+            select(RunnerPredictionHistoryRow.race_id).distinct()
+            .where(RunnerPredictionHistoryRow.race_id.like(f"{target}_%"))
+        )).scalars().all())
+
+        # 2. HistoricalResultRow rows
+        hr_result_rows = (await session.execute(
+            select(HistoricalResultRow)
+            .where(HistoricalResultRow.race_id.like(f"{target}_%"))
+        )).scalars().all()
+        hr_race_ids = {r.race_id for r in hr_result_rows}
+        hr_races_with_position = {r.race_id for r in hr_result_rows if r.position and r.position > 0}
+        hr_races_with_tab = {r.race_id for r in hr_result_rows if r.tab_number is not None}
+
+        # 3. Predictions with no matching historical result
+        settled_pred = mut_race_ids & hr_race_ids
+        pending_pred = mut_race_ids - hr_race_ids
+
+        # 4. Rank-1 pick rows for calibration + is_sharp coverage
+        rank1_hist = (await session.execute(
+            select(RunnerPredictionHistoryRow)
+            .where(RunnerPredictionHistoryRow.race_id.like(f"{target}_%"))
+            .where(RunnerPredictionHistoryRow.model_rank == 1)
+            .where(RunnerPredictionHistoryRow.cancelled.is_(False) | RunnerPredictionHistoryRow.cancelled.is_(None))
+            .where(RunnerPredictionHistoryRow.source == "live")
+        )).scalars().all()
+
+    # ── Race count integrity ──────────────────────────────────────
+    n_mut = len(mut_race_ids)
+    n_hist = len(hist_race_ids)
+    n_settled = len(settled_pred)
+    n_pending = len(pending_pred)
+    n_history_only = len(hist_race_ids - mut_race_ids)
+
+    info.append({
+        "check": "race_counts",
+        "predictions_mutable": n_mut,
+        "predictions_history": n_hist,
+        "results_seeded": len(hr_race_ids),
+        "predicted_and_settled": n_settled,
+        "predicted_but_pending_result": n_pending,
+        "history_only_no_mutable": n_history_only,
+    })
+
+    if n_history_only > 0:
+        warning.append({
+            "check": "history_without_mutable",
+            "n_races": n_history_only,
+            "reason": "Race snapshotted at 9am but mutable row wiped after; user may see stale data",
+        })
+
+    # ── Coverage vs "races that actually ran" (best proxy: results seeded) ──
+    if len(hr_race_ids) > n_settled and n_settled > 0:
+        gap = len(hr_race_ids) - n_settled
+        warning.append({
+            "check": "results_without_predictions",
+            "n_races": gap,
+            "reason": "HistoricalResultRow has races we never enriched (missed by cron)",
+        })
+
+    coverage_pct = round(n_settled / len(hr_race_ids) * 100, 1) if hr_race_ids else 0
+    info.append({
+        "check": "prediction_coverage",
+        "coverage_pct": coverage_pct,
+        "expected_min": 85.0,
+        "notes": f"day card marks complete=True when >=85%",
+    })
+
+    # ── Missing tab_number on top-3 finishers ─────────────────────
+    seeded_races_missing_tab: list[str] = []
+    for rid in hr_race_ids:
+        top3 = [r for r in hr_result_rows if r.race_id == rid and r.position in (1, 2, 3)]
+        if len(top3) == 3 and any(r.tab_number is None for r in top3):
+            seeded_races_missing_tab.append(rid)
+    if seeded_races_missing_tab:
+        critical.append({
+            "check": "top3_missing_tab_number",
+            "n_races": len(seeded_races_missing_tab),
+            "example": seeded_races_missing_tab[:3],
+            "reason": "Bet settlement can't map positions to bet boxes; stays 'pending' forever",
+        })
+
+    # ── Pending picks older than 24h — RA never published or we lost the race ──
+    from datetime import datetime as _dt
+    now_utc = _dt.utcnow().replace(tzinfo=timezone.utc)
+    try:
+        target_dt = _dt.strptime(target, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+        stale_hours = (now_utc - target_dt).total_seconds() / 3600
+    except Exception:
+        stale_hours = 0
+    if stale_hours > 24 and n_pending > 0:
+        critical.append({
+            "check": "stale_pending_seeds",
+            "n_races": n_pending,
+            "hours_stale": round(stale_hours, 1),
+            "example_race_ids": sorted(pending_pred)[:5],
+            "reason": "Races predicted but never seeded — RA didn't publish OR seed pipeline broken",
+        })
+
+    # ── is_sharp coverage on rank-1 rows ──────────────────────────
+    n_rank1 = len(rank1_hist)
+    n_is_sharp_set = sum(1 for r in rank1_hist if r.is_sharp is not None)
+    if n_rank1 > 0 and n_is_sharp_set < n_rank1:
+        warning.append({
+            "check": "is_sharp_missing",
+            "n_missing": n_rank1 - n_is_sharp_set,
+            "n_total_rank1": n_rank1,
+            "reason": "Sharp flag not populated; sharp-mode metrics will under-count",
+        })
+
+    # ── Sportsbet-availability consistency per venue ──────────────
+    # Historical rows don't carry sportsbet_available (computed at
+    # response time), so just check the blocklist is applied
+    # consistently — any predicted venue in the blocklist implies
+    # enrichment leaked through the skip guard.
+    predicted_venues = {rid.split("_")[1] for rid in mut_race_ids | hist_race_ids
+                        if len(rid.split("_")) >= 3}
+    leaked_venues = predicted_venues & _SKIP_ENRICHMENT_VENUES
+    if leaked_venues:
+        warning.append({
+            "check": "blocklisted_venue_leaked_through_enrich",
+            "venues": sorted(leaked_venues),
+            "reason": "Predictions exist for venues we're supposed to skip — enrichment gate missed",
+        })
+
+    # ── Win-rate sanity: baseline should be 20-35% for rank-1 ──
+    if n_rank1 > 20:
+        rank1_with_result = [r for r in rank1_hist
+                             if any(hr.race_id == r.race_id and hr.position and hr.position > 0
+                                    for hr in hr_result_rows)]
+        rank1_wins = 0
+        for r in rank1_with_result:
+            winner_row = next((hr for hr in hr_result_rows
+                              if hr.race_id == r.race_id and hr.position == 1), None)
+            if winner_row and _normalize_horse(winner_row.horse_name) == _normalize_horse(r.horse_name):
+                rank1_wins += 1
+        if rank1_with_result:
+            win_rate = rank1_wins / len(rank1_with_result)
+            info.append({
+                "check": "rank1_win_rate",
+                "wins": rank1_wins,
+                "settled_races": len(rank1_with_result),
+                "win_rate_pct": round(win_rate * 100, 1),
+                "expected_band": "20-35%",
+            })
+            if win_rate < 0.10 and len(rank1_with_result) >= 20:
+                critical.append({
+                    "check": "win_rate_collapse",
+                    "win_rate_pct": round(win_rate * 100, 1),
+                    "n": len(rank1_with_result),
+                    "reason": "Sub-10% win rate suggests systemic pipeline breakage or bad data",
+                })
+
+    return {
+        "date": target,
+        "hours_since_start_of_day_utc": round(stale_hours, 1),
+        "critical": critical,
+        "warning": warning,
+        "info": info,
+        "summary": {
+            "critical_count": len(critical),
+            "warning_count": len(warning),
+            "info_count": len(info),
+        },
+    }
+
+
 @app.post("/api/admin/purge-blocklisted-venues")
 async def purge_blocklisted_venues(
     x_cron_secret: Optional[str] = Header(None),
