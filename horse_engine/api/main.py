@@ -19189,9 +19189,16 @@ async def _load_hot_streak_map(picks: list[dict]) -> dict[str, dict]:
     if not horse_keys:
         return {}
 
+    # Exact-name-set for the SQL filter. Horses in RunnerPredictionHistoryRow
+    # are stored under a stable canonical spelling per race — same as the
+    # value we display on /api/edge — so an exact IN(...) match catches
+    # every prior prediction for the horses we care about. Without this
+    # filter we scanned every history row from the last 90d, timing out
+    # /api/edge at ~90s.
+    pick_names = {p["horse_name"] for p in picks if p.get("horse_name")}
+
     cutoff = (date.today() - timedelta(days=90)).isoformat()
     async with get_session() as session:
-        # Pull every prior prediction row for these horses in the window.
         prior_rows = (await session.execute(
             select(
                 RunnerPredictionHistoryRow.race_id,
@@ -19199,6 +19206,7 @@ async def _load_hot_streak_map(picks: list[dict]) -> dict[str, dict]:
                 RunnerPredictionHistoryRow.win_probability,
             )
             .where(RunnerPredictionHistoryRow.race_id >= cutoff)
+            .where(RunnerPredictionHistoryRow.horse_name.in_(pick_names))
             .where(RunnerPredictionHistoryRow.cancelled.is_(False) | RunnerPredictionHistoryRow.cancelled.is_(None))
             .where(RunnerPredictionHistoryRow.source == "live")
         )).all()
