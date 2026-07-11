@@ -916,6 +916,8 @@ async def _scheduled_pre_race_enrich_and_scratch():
             if not slug:
                 continue
             vc = slug[:-len(date_sfx)] if slug.endswith(date_sfx) else slug.split("-")[0]
+            if _should_skip_venue(vc):
+                continue  # blocklisted bush venue — no enrich, no scratch check
             meeting_meta[vc] = (slug, m.get("venue", vc), m.get("state", ""))
             try:
                 # force_fresh=True: sweep needs current runner list to
@@ -2697,7 +2699,28 @@ def _today() -> str:
 # hyphenated venue codes (matches how race_ids are constructed).
 _NOT_ON_SPORTSBET_VENUES: frozenset = frozenset({
     "ilfracombe",       # QLD, Central West — picnic race club
+    "esk",              # QLD, Somerset region
+    "ingham",           # QLD, North Queensland
+    "roma",             # QLD, Maranoa
+    "wean-picnic",      # NSW/QLD picnic — Sportsbet doesn't cover
 })
+
+
+# Ingest-skip list — venues we don't want in our pipeline at all.
+# Any venue whose enrichment/prediction data would just clutter The
+# Lounge / Lab / Edge without being actionable (user can't back these
+# picks on their book). Slugs match RA's meeting slug (before the
+# date suffix). Currently mirrors _NOT_ON_SPORTSBET_VENUES; kept as
+# a separate constant so we can differ later (e.g. flag on Sportsbet
+# but not skip on TAB).
+_SKIP_ENRICHMENT_VENUES: frozenset = frozenset(_NOT_ON_SPORTSBET_VENUES)
+
+
+def _should_skip_venue(venue_code: str) -> bool:
+    """Return True if a venue should be skipped by the enrich pipeline."""
+    if not venue_code:
+        return False
+    return venue_code.lower() in _SKIP_ENRICHMENT_VENUES
 
 
 def _is_sportsbet_available(venue_code: str, best_odds: Optional[float]) -> bool:
@@ -10539,6 +10562,60 @@ async def admin_scratch_sweep_now(x_cron_secret: Optional[str] = Header(None)):
     cancelled = await _check_scratches_today()
     _edge_response_cache = None
     return {"ok": True, "newly_cancelled": cancelled}
+
+
+@app.post("/api/admin/purge-blocklisted-venues")
+async def purge_blocklisted_venues(
+    x_cron_secret: Optional[str] = Header(None),
+):
+    """
+    Delete existing rows for venues in _SKIP_ENRICHMENT_VENUES so
+    they stop appearing on Edge / Lounge / Lab immediately, rather
+    than lingering until they naturally age out. Idempotent — deletes
+    only rows whose race_id contains a blocklisted venue slug.
+
+    Wipes: RunnerPredictionRow, RunnerPredictionHistoryRow,
+    BetRecommendationRow. Leaves HistoricalResultRow alone (settled
+    results are model-training data — no harm keeping them).
+    """
+    _check_admin(x_cron_secret)
+    from sqlalchemy import delete as sa_delete
+    from sqlalchemy import or_
+
+    if not _SKIP_ENRICHMENT_VENUES:
+        return {"ok": True, "purged": 0, "venues": []}
+
+    conditions_mut = or_(*(
+        RunnerPredictionRow.race_id.like(f"%_{v}_%")
+        for v in _SKIP_ENRICHMENT_VENUES
+    ))
+    conditions_hist = or_(*(
+        RunnerPredictionHistoryRow.race_id.like(f"%_{v}_%")
+        for v in _SKIP_ENRICHMENT_VENUES
+    ))
+    conditions_bet = or_(*(
+        BetRecommendationRow.race_id.like(f"%_{v}_%")
+        for v in _SKIP_ENRICHMENT_VENUES
+    ))
+
+    async with get_session() as session:
+        mut = await session.execute(sa_delete(RunnerPredictionRow).where(conditions_mut))
+        hist = await session.execute(sa_delete(RunnerPredictionHistoryRow).where(conditions_hist))
+        bets = await session.execute(sa_delete(BetRecommendationRow).where(conditions_bet))
+        await session.commit()
+
+    global _edge_response_cache
+    _edge_response_cache = None
+
+    return {
+        "ok": True,
+        "venues": sorted(_SKIP_ENRICHMENT_VENUES),
+        "deleted": {
+            "runner_predictions": mut.rowcount or 0,
+            "runner_prediction_history": hist.rowcount or 0,
+            "bet_recommendations": bets.rowcount or 0,
+        },
+    }
 
 
 @app.post("/api/admin/scratch-runner")
@@ -19351,6 +19428,12 @@ async def _enrich_date(race_date: str, client, model, force: bool = False, place
         venue_code = slug[:-len(date_sfx)] if slug.endswith(date_sfx) else slug.split("-")[0] if slug else m.get("name", "").lower().replace(" ", "-")
         venue_name = m.get("venue", venue_code)
         state = m.get("state", "")
+        # Blocklisted venues (bush / picnic tracks corporate books don't
+        # cover) — skip enrichment entirely so they never generate picks,
+        # bets, or hot-streak history. See _SKIP_ENRICHMENT_VENUES.
+        if _should_skip_venue(venue_code):
+            log.info("[enrich] skipping blocked venue: %s/%s", venue_code, race_date)
+            continue
         try:
             raw_events = await client.get_meeting_races(slug)
             for raw_event in raw_events:
