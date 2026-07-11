@@ -2240,8 +2240,18 @@
 
     let payoutHtml;
     if (isPast && result) {
+      // Definitive loss requires POSITIVE evidence: we know the horse's
+      // finishing position AND it's out of the placings. Anything else
+      // — no_result flag, scratched, missing position — is "pending",
+      // not a loss. Rule: any pending result must NOT show as -$10.
+      // Fixes FALANGHINA (Morphettville R3 2026-07-11): scratched at
+      // the wire, our system didn't catch the scratch in time, so the
+      // pick shows up without a position and the fall-through was
+      // drawing a red $10 loss panel.
       if (result.scratched) {
         payoutHtml = `<div class="no-odds">Scratched — no bet</div>`;
+      } else if (result.no_result === true) {
+        payoutHtml = `<div class="no-odds">Result pending</div>`;
       } else if (result.winner) {
         if (pay) {
           payoutHtml = `
@@ -2254,13 +2264,19 @@
         } else {
           payoutHtml = `<div class="payout-box"><div class="payout-profit-label">Won</div><div class="payout-profit" style="color:var(--green)">SP not captured</div></div>`;
         }
-      } else {
+      } else if (result.position && result.position > 3) {
+        // Confirmed miss — we have an actual finishing position out of
+        // the placings. Only path to the red $10 loss panel.
         payoutHtml = `
           <div class="payout-box" style="background:rgba(239,68,68,0.08);border-color:rgba(239,68,68,0.2);">
             <div class="payout-profit-label" style="color:var(--text-dim)">$${stake} loss</div>
             <div class="payout-profit" style="color:#f87171;">-$${(+stake).toFixed(2)}</div>
             <div class="payout-stake">Stake: $${stake}</div>
           </div>`;
+      } else {
+        // No position, not a winner, not marked scratched or no_result —
+        // treat as pending. Silent regression to loss was the bug.
+        payoutHtml = `<div class="no-odds">Result pending</div>`;
       }
     } else if (isPast) {
       payoutHtml = `<div class="no-odds">Result pending</div>`;
