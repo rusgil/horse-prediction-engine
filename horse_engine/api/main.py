@@ -15930,6 +15930,278 @@ async def backtest_reliability(
     }
 
 
+@app.get("/api/admin/backtest-trainer-reliability")
+async def backtest_trainer_reliability(
+    days: int = Query(90, ge=14, le=180),
+    lookback: int = Query(180, ge=30, le=365),
+    min_prior_picks: int = Query(5, ge=2, le=30),
+    x_cron_secret: Optional[str] = Header(None),
+):
+    """
+    Backtest a per-TRAINER reliability signal.
+
+    For every rank-1 pick in the eval window, look at that TRAINER's
+    prior rank-1 hit rate over the lookback window and bucket:
+      elite:   ≥40% win rate over min_prior_picks
+      solid:   ≥30% win rate over min_prior_picks
+      average: 20-30% win rate
+      weak:    <20% win rate over min_prior_picks
+      unrated: fewer than min_prior_picks prior picks
+
+    If elite/solid trainers lift meaningfully above baseline (say +3pp),
+    the badge is real and worth building at the trainer level rather
+    than the horse level (which just failed the backtest at 0 badged
+    picks out of 424).
+    """
+    _check_admin(x_cron_secret)
+    horizon_end = date.today()
+    horizon_start = horizon_end - timedelta(days=days)
+    prior_cutoff = horizon_start - timedelta(days=lookback)
+
+    async with get_session() as session:
+        pred_rows = (await session.execute(
+            select(RunnerPredictionHistoryRow)
+            .where(RunnerPredictionHistoryRow.race_id >= prior_cutoff.isoformat())
+            .where(RunnerPredictionHistoryRow.model_rank == 1)
+            .where(RunnerPredictionHistoryRow.cancelled.is_(False) | RunnerPredictionHistoryRow.cancelled.is_(None))
+            .where(RunnerPredictionHistoryRow.source == "live")
+            .where(RunnerPredictionHistoryRow.trainer.isnot(None))
+        )).scalars().all()
+
+        race_ids = list({p.race_id for p in pred_rows})
+        hr_rows = (await session.execute(
+            select(HistoricalResultRow).where(HistoricalResultRow.race_id.in_(race_ids))
+        )).scalars().all()
+
+    result_by_key = {(r.race_id, _normalize_horse(r.horse_name)): r for r in hr_rows}
+
+    # Group picks by normalized trainer name so common spelling
+    # variants ("Ciaron Maher & D Eustace" vs "Ciaron Maher") don't
+    # split a trainer's track record.
+    def _norm_trainer(t: str) -> str:
+        return (t or "").strip().lower()
+
+    picks_by_trainer: dict[str, list] = {}
+    for p in pred_rows:
+        picks_by_trainer.setdefault(_norm_trainer(p.trainer), []).append(p)
+    for k in picks_by_trainer:
+        picks_by_trainer[k].sort(key=lambda p: p.race_id)
+
+    horizon_start_iso = horizon_start.isoformat()
+
+    def _classify(n: int, wins: int) -> str:
+        if n < min_prior_picks:
+            return "unrated"
+        wr = wins / n
+        if wr >= 0.40:
+            return "elite"
+        if wr >= 0.30:
+            return "solid"
+        if wr >= 0.20:
+            return "average"
+        return "weak"
+
+    buckets = {b: {"n": 0, "wins": 0, "placed": 0} for b in
+               ("elite", "solid", "average", "weak", "unrated")}
+    total = {"n": 0, "wins": 0, "placed": 0}
+
+    for trainer_key, picks in picks_by_trainer.items():
+        if not trainer_key:
+            continue
+        prior_n = prior_wins = 0
+        recent_hits: list[tuple[str, int]] = []
+        for p in picks:
+            race_date = p.race_id[:10]
+            cutoff_iso = (date.fromisoformat(race_date) - timedelta(days=lookback)).isoformat()
+            while recent_hits and recent_hits[0][0] < cutoff_iso:
+                _, w = recent_hits.pop(0)
+                prior_wins -= w
+                prior_n -= 1
+
+            if race_date >= horizon_start_iso:
+                r = result_by_key.get((p.race_id, _normalize_horse(p.horse_name)))
+                if r and r.position and r.position > 0:
+                    badge = _classify(prior_n, prior_wins)
+                    buckets[badge]["n"] += 1
+                    total["n"] += 1
+                    if r.winner:
+                        buckets[badge]["wins"] += 1
+                        total["wins"] += 1
+                    if r.placed:
+                        buckets[badge]["placed"] += 1
+                        total["placed"] += 1
+
+            r = result_by_key.get((p.race_id, _normalize_horse(p.horse_name)))
+            if r and r.position and r.position > 0:
+                w = 1 if r.winner else 0
+                recent_hits.append((race_date, w))
+                prior_wins += w
+                prior_n += 1
+
+    def _stats(b, baseline_win, baseline_place):
+        n = b["n"]
+        wr = b["wins"] / n if n else None
+        pr = b["placed"] / n if n else None
+        return {
+            "n": n,
+            "wins": b["wins"],
+            "placed": b["placed"],
+            "win_rate": round(wr, 4) if wr is not None else None,
+            "place_rate": round(pr, 4) if pr is not None else None,
+            "win_lift_vs_baseline": round(wr - baseline_win, 4) if wr is not None else None,
+            "place_lift_vs_baseline": round(pr - baseline_place, 4) if pr is not None else None,
+        }
+
+    baseline_win = total["wins"] / total["n"] if total["n"] else 0.0
+    baseline_place = total["placed"] / total["n"] if total["n"] else 0.0
+    per_bucket = {b: _stats(agg, baseline_win, baseline_place) for b, agg in buckets.items()}
+
+    return {
+        "params": {"days": days, "lookback": lookback, "min_prior_picks": min_prior_picks,
+                   "evaluation_window": [horizon_start.isoformat(), horizon_end.isoformat()]},
+        "baseline": {"n": total["n"], "win_rate": round(baseline_win, 4),
+                     "place_rate": round(baseline_place, 4)},
+        "per_bucket": per_bucket,
+    }
+
+
+@app.get("/api/admin/backtest-last-start-alignment")
+async def backtest_last_start_alignment(
+    days: int = Query(90, ge=14, le=180),
+    lookback: int = Query(90, ge=14, le=180),
+    x_cron_secret: Optional[str] = Header(None),
+):
+    """
+    Backtest a per-horse LAST-START-ALIGNMENT signal.
+
+    For every rank-1 pick in the eval window, find that horse's most
+    recent PRIOR race (any race with a settled result) within lookback
+    and classify:
+      hot:      prior race, model_pct ≥ 25%, WON
+      warm:     prior race, model_pct ≥ 25%, PLACED (but didn't win)
+      cold:     prior race, model_pct ≥ 25%, position ≥ 5 (badly beaten)
+      neutral:  prior race, model_pct ≥ 25%, position 4 (close miss)
+      off_radar: prior race, model_pct < 25% (we didn't pick them then)
+      no_prior:  horse's first race in our history within lookback
+
+    Every rank-1 pick has SOME classification (data drought unlikely).
+    Then measure current-pick outcome per bucket.
+    """
+    _check_admin(x_cron_secret)
+    horizon_end = date.today()
+    horizon_start = horizon_end - timedelta(days=days)
+    prior_cutoff = horizon_start - timedelta(days=lookback)
+
+    async with get_session() as session:
+        pred_rows = (await session.execute(
+            select(RunnerPredictionHistoryRow)
+            .where(RunnerPredictionHistoryRow.race_id >= prior_cutoff.isoformat())
+            .where(RunnerPredictionHistoryRow.cancelled.is_(False) | RunnerPredictionHistoryRow.cancelled.is_(None))
+            .where(RunnerPredictionHistoryRow.source == "live")
+        )).scalars().all()
+
+        race_ids = list({p.race_id for p in pred_rows})
+        hr_rows = (await session.execute(
+            select(HistoricalResultRow).where(HistoricalResultRow.race_id.in_(race_ids))
+        )).scalars().all()
+
+    result_by_key = {(r.race_id, _normalize_horse(r.horse_name)): r for r in hr_rows}
+
+    # Group EVERY pick per horse (all ranks, not just 1), so we can
+    # find the horse's most recent prior race regardless of what we
+    # thought of them last time.
+    all_picks_by_horse: dict[str, list] = {}
+    for p in pred_rows:
+        key = _normalize_horse(p.horse_name)
+        all_picks_by_horse.setdefault(key, []).append(p)
+    for key in all_picks_by_horse:
+        all_picks_by_horse[key].sort(key=lambda p: p.race_id)
+
+    horizon_start_iso = horizon_start.isoformat()
+
+    def _classify(prior_pick, prior_result) -> str:
+        if not prior_pick or not prior_result or not prior_result.position or prior_result.position <= 0:
+            return "no_prior"
+        prior_pct = (prior_pick.win_probability or 0) * 100
+        if prior_pct < 25.0:
+            return "off_radar"
+        pos = prior_result.position
+        if prior_result.winner:
+            return "hot"
+        if prior_result.placed:
+            return "warm"
+        if pos == 4:
+            return "neutral"
+        if pos >= 5:
+            return "cold"
+        return "neutral"
+
+    buckets = {b: {"n": 0, "wins": 0, "placed": 0} for b in
+               ("hot", "warm", "neutral", "cold", "off_radar", "no_prior")}
+    total = {"n": 0, "wins": 0, "placed": 0}
+
+    for key, picks in all_picks_by_horse.items():
+        for i, p in enumerate(picks):
+            race_date = p.race_id[:10]
+            if race_date < horizon_start_iso:
+                continue
+            if p.model_rank != 1:
+                continue  # only score rank-1 picks
+            cur_result = result_by_key.get((p.race_id, key))
+            if not cur_result or not cur_result.position or cur_result.position <= 0:
+                continue
+
+            # Find most recent prior pick within lookback window
+            prior_pick = None
+            prior_result = None
+            cutoff_iso = (date.fromisoformat(race_date) - timedelta(days=lookback)).isoformat()
+            for j in range(i - 1, -1, -1):
+                cand = picks[j]
+                cand_date = cand.race_id[:10]
+                if cand_date < cutoff_iso:
+                    break
+                r = result_by_key.get((cand.race_id, key))
+                if r and r.position and r.position > 0:
+                    prior_pick = cand
+                    prior_result = r
+                    break
+
+            badge = _classify(prior_pick, prior_result)
+            buckets[badge]["n"] += 1
+            total["n"] += 1
+            if cur_result.winner:
+                buckets[badge]["wins"] += 1
+                total["wins"] += 1
+            if cur_result.placed:
+                buckets[badge]["placed"] += 1
+                total["placed"] += 1
+
+    baseline_win = total["wins"] / total["n"] if total["n"] else 0.0
+    baseline_place = total["placed"] / total["n"] if total["n"] else 0.0
+
+    def _stats(b):
+        n = b["n"]
+        wr = b["wins"] / n if n else None
+        pr = b["placed"] / n if n else None
+        return {
+            "n": n,
+            "wins": b["wins"],
+            "placed": b["placed"],
+            "win_rate": round(wr, 4) if wr is not None else None,
+            "place_rate": round(pr, 4) if pr is not None else None,
+            "win_lift_vs_baseline": round(wr - baseline_win, 4) if wr is not None else None,
+            "place_lift_vs_baseline": round(pr - baseline_place, 4) if pr is not None else None,
+        }
+
+    return {
+        "params": {"days": days, "lookback": lookback,
+                   "evaluation_window": [horizon_start.isoformat(), horizon_end.isoformat()]},
+        "baseline": {"n": total["n"], "win_rate": round(baseline_win, 4),
+                     "place_rate": round(baseline_place, 4)},
+        "per_bucket": {b: _stats(agg) for b, agg in buckets.items()},
+    }
+
+
 @app.get("/api/admin/backtest")
 async def backtest_report(
     days: int = Query(14, ge=1, le=90),
