@@ -10596,29 +10596,42 @@ async def admin_reenrich_race(race_id: str, x_cron_secret: Optional[str] = Heade
             f"Race {race_num} not found in meeting {slug} — meeting has {len(raw_races)} race(s)",
         )
 
-    race = await client.parse_race(full_event, race_date, venue_name, state)
-    async with get_session() as session:
-        model = await _load_model(session)
-        place_model = await _load_place_model(session)
-        exotic_model = await _load_exotic_model(session)
-        await _inject_accumulated_stats(race, session)
-    venue_cal = await _load_venue_calibration()
-    output_cal = await _load_output_calibration_curve()
-
-    predictions, _ = await enrich_and_predict_race(
-        race, model,
-        venue_calibration=venue_cal,
-        place_model=place_model,
-        exotic_model=exotic_model,
-        output_calibration_curve=output_cal,
-    )
-    async with get_session() as session:
-        await save_race_predictions(
-            session,
-            race_id,
-            [_prediction_to_db_dict(p, race_id, race.scheduled_time, race=race)
-             for p in predictions],
+    # Wrap the pipeline stages in try/except and surface the failing
+    # stage in the 500 message. Otherwise a raw "Internal Server Error"
+    # tells us nothing about which step (parse / enrich / save) broke.
+    stage = "parse_race"
+    try:
+        race = await client.parse_race(full_event, race_date, venue_name, state)
+        stage = "load_models"
+        async with get_session() as session:
+            model = await _load_model(session)
+            place_model = await _load_place_model(session)
+            exotic_model = await _load_exotic_model(session)
+            stage = "inject_accumulated_stats"
+            await _inject_accumulated_stats(race, session)
+        stage = "load_venue_calibration"
+        venue_cal = await _load_venue_calibration()
+        stage = "load_output_calibration"
+        output_cal = await _load_output_calibration_curve()
+        stage = "enrich_and_predict"
+        predictions, _ = await enrich_and_predict_race(
+            race, model,
+            venue_calibration=venue_cal,
+            place_model=place_model,
+            exotic_model=exotic_model,
+            output_calibration_curve=output_cal,
         )
+        stage = "save_race_predictions"
+        async with get_session() as session:
+            await save_race_predictions(
+                session,
+                race_id,
+                [_prediction_to_db_dict(p, race_id, race.scheduled_time, race=race)
+                 for p in predictions],
+            )
+    except Exception as e:
+        log.exception("[reenrich-race] %s failed at stage=%s: %s", race_id, stage, e)
+        raise HTTPException(500, f"reenrich failed at stage '{stage}': {type(e).__name__}: {e}")
 
     global _edge_response_cache
     _edge_response_cache = None
