@@ -10949,10 +10949,24 @@ async def _run_quality_check(target: str) -> dict:
     # ── Coverage vs "races that actually ran" (best proxy: results seeded) ──
     if len(hr_race_ids) > n_settled and n_settled > 0:
         gap = len(hr_race_ids) - n_settled
+        # Break down by venue so morning report shows which meetings
+        # dropped coverage — the "Gold Coast 0/2 wins but there were 8
+        # races" class of user report.
+        missing_by_venue: dict[str, int] = {}
+        for rid in hr_race_ids - mut_race_ids:
+            try:
+                venue = rid.split("_")[1]
+                missing_by_venue[venue] = missing_by_venue.get(venue, 0) + 1
+            except IndexError:
+                continue
         warning.append({
             "check": "results_without_predictions",
             "n_races": gap,
-            "reason": "HistoricalResultRow has races we never enriched (missed by cron)",
+            "venues_affected": sorted(
+                [{"venue": v, "unpredicted_races": n} for v, n in missing_by_venue.items()],
+                key=lambda x: -x["unpredicted_races"],
+            )[:10],
+            "reason": "HistoricalResultRow has races we never enriched — venue tile will under-count wins/place figures because those races don't exist in our prediction data",
         })
 
     coverage_pct = round(n_settled / len(hr_race_ids) * 100, 1) if hr_race_ids else 0
