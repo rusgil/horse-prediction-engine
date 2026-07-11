@@ -14455,6 +14455,81 @@ async def seed_ra_results(
     return {"status": "ok", "seeded": seeded_total, "detail": detail}
 
 
+@app.post("/api/admin/patch-tab-numbers/{race_date}")
+async def patch_tab_numbers(
+    race_date: str,
+    x_cron_secret: Optional[str] = Header(None),
+):
+    """
+    Backfill NULL HistoricalResultRow.tab_number for every race on
+    race_date by matching horse_name against RunnerPredictionRow /
+    RunnerPredictionHistoryRow. Fixes rows seeded by the admin path
+    before the tab_number-population patch (2026-07-11) — settlement
+    can't map finishing positions without tab numbers, so those bets
+    stay pending forever.
+
+    Reports per-race how many rows got patched and which horses
+    couldn't be resolved.
+    """
+    _check_admin(x_cron_secret)
+    from sqlalchemy import update as sa_update
+
+    detail: list[dict] = []
+    total_patched = 0
+    async with get_session() as session:
+        result_rows = (await session.execute(
+            select(HistoricalResultRow)
+            .where(HistoricalResultRow.race_id.like(f"{race_date}_%"))
+            .where(HistoricalResultRow.tab_number.is_(None))
+        )).scalars().all()
+
+        by_race: dict[str, list] = {}
+        for r in result_rows:
+            by_race.setdefault(r.race_id, []).append(r)
+
+        for race_id, rows in by_race.items():
+            tab_lookup: dict[str, int] = {}
+            for src in (RunnerPredictionRow, RunnerPredictionHistoryRow):
+                pred = (await session.execute(
+                    select(src.horse_name, src.tab_number)
+                    .where(src.race_id == race_id)
+                    .where(src.tab_number.isnot(None))
+                )).fetchall()
+                for name, tab in pred:
+                    tab_lookup[_normalize_horse(name)] = tab
+
+            patched = 0
+            unresolved: list[str] = []
+            for r in rows:
+                t = tab_lookup.get(_normalize_horse(r.horse_name))
+                if t is not None:
+                    await session.execute(
+                        sa_update(HistoricalResultRow)
+                        .where(HistoricalResultRow.id == r.id)
+                        .values(tab_number=t)
+                    )
+                    patched += 1
+                else:
+                    unresolved.append(r.horse_name)
+            if patched:
+                await session.commit()
+                total_patched += patched
+            detail.append({
+                "race_id": race_id,
+                "patched": patched,
+                "unresolved": unresolved,
+                "lookup_size": len(tab_lookup),
+            })
+
+    return {
+        "ok": True,
+        "race_date": race_date,
+        "total_patched": total_patched,
+        "races_processed": len(detail),
+        "detail": [d for d in detail if d["patched"] or d["unresolved"]],
+    }
+
+
 @app.post("/api/admin/patch-sp/{race_date}")
 async def patch_sp(race_date: str, x_cron_secret: Optional[str] = Header(None)):
     """Patch null starting_price on existing HistoricalResultRow entries using RA Results.aspx."""
