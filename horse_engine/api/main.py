@@ -11131,15 +11131,9 @@ async def _run_quality_check(target: str) -> dict:
         })
 
     # ── URL health: internal (our site) + external (data sources) ─
-    # Runs a small HEAD/GET pass against each URL, flags non-200.
-    # Kept short: 5s per probe, done in parallel.
-    import aiohttp
-    async def _probe(session, url: str, *, method: str = "GET", timeout: int = 5) -> dict:
-        try:
-            async with session.request(method, url, timeout=timeout, allow_redirects=True) as r:
-                return {"url": url, "status": r.status, "ok": 200 <= r.status < 400}
-        except Exception as e:
-            return {"url": url, "status": 0, "ok": False, "error": str(e)[:120]}
+    # Runs a small GET pass against each URL, flags non-200.
+    # 5s per probe, done in parallel.
+    import httpx as _httpx_probe
 
     internal_urls = [
         "https://funkyiq.com/",
@@ -11156,15 +11150,23 @@ async def _run_quality_check(target: str) -> dict:
     external_urls = [
         "https://www.racingaustralia.horse/FreeFields/Calendar.aspx?State=NSW",
         "https://www.racingaustralia.horse/FreeFields/Calendar.aspx?State=VIC",
-        # Sample recent Results.aspx — any settled meeting works
         f"https://www.racingaustralia.horse/FreeFields/Results.aspx?"
         f"Key={_ra_date_fn(target)},NSW,Royal%20Randwick",
     ]
+
+    async def _probe(client: "_httpx_probe.AsyncClient", url: str) -> dict:
+        try:
+            r = await client.get(url, timeout=5.0, follow_redirects=True)
+            return {"url": url, "status": r.status_code,
+                    "ok": 200 <= r.status_code < 400}
+        except Exception as e:
+            return {"url": url, "status": 0, "ok": False,
+                    "error": f"{type(e).__name__}: {str(e)[:100]}"}
+
     try:
-        async with aiohttp.ClientSession() as sess:
+        async with _httpx_probe.AsyncClient() as client:
             probes = await asyncio.gather(
-                *[_probe(sess, u) for u in internal_urls + external_urls],
-                return_exceptions=False,
+                *[_probe(client, u) for u in internal_urls + external_urls]
             )
         broken_internal = [p for p in probes[:len(internal_urls)] if not p["ok"]]
         broken_external = [p for p in probes[len(internal_urls):] if not p["ok"]]
@@ -11192,7 +11194,7 @@ async def _run_quality_check(target: str) -> dict:
     except Exception as e:
         warning.append({
             "check": "url_health_probe_failed",
-            "reason": f"Couldn't run URL health checks: {type(e).__name__}: {e}",
+            "reason": f"Couldn't run URL health checks: {type(e).__name__}: {str(e)[:120]}",
         })
 
     # ── Pending picks older than 24h — RA never published or we lost the race ──
