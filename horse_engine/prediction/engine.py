@@ -459,6 +459,33 @@ def predict_race(race: Race, model: HorseModel, venue_calibration: dict[str, flo
         for p, c in zip(predictions, calibrated):
             p.win_prob = round(c / 100.0, 4)
 
+    # Market-anchored shrinkage — a large model-vs-market gap is evidence
+    # the model is missing information the market has (barrier trials,
+    # stable whispers, weight-of-money). Below 25pp overlay we trust the
+    # model (that's where value lives). Between 25pp and 55pp we ramp
+    # linearly to a 60% market weight. Above 55pp we cap at 60% — the
+    # market isn't infallible either.
+    # Fixes the sparse-tail gap in the isotonic curve: 70%+ predictions
+    # are too rare to calibrate empirically, but the market ALWAYS has a
+    # prior on them, so market-anchored shrinkage covers what isotonic
+    # can't yet see.
+    # Shipped 2026-07-11 after COEUR VOLANTE hit 72.1% against a bookie
+    # price of ~17.4% (55pp overlay) — isotonic curve was identity at
+    # that band, feature-completeness gate alone only dropped it to ~58%.
+    _SHRINK_START = 0.25   # 25pp overlay — no shrinkage below
+    _SHRINK_FULL = 0.55    # 55pp overlay — full shrinkage weight
+    _SHRINK_MAX = 0.60     # max weight on market (never fully overrule the model)
+    for p in predictions:
+        market = getattr(p.enriched, "market_implied_prob", 0.0) or 0.0
+        if market <= 0:
+            continue  # no market anchor — feature-completeness already handled
+        overlay = p.win_prob - market
+        if overlay <= _SHRINK_START:
+            continue
+        excess = min(overlay, _SHRINK_FULL) - _SHRINK_START
+        weight = _SHRINK_MAX * excess / (_SHRINK_FULL - _SHRINK_START)
+        p.win_prob = round((1.0 - weight) * p.win_prob + weight * market, 4)
+
     # Rank by win probability
     predictions.sort(key=lambda p: p.win_prob, reverse=True)
     for rank, p in enumerate(predictions, 1):
