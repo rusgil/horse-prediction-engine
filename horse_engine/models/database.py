@@ -453,6 +453,16 @@ async def init_db() -> None:
         "CREATE INDEX IF NOT EXISTS ix_hist_source_race_cancelled ON runner_prediction_history (source, race_id, cancelled)",
         "CREATE INDEX IF NOT EXISTS ix_hist_results_race_winner ON historical_results (race_id, winner)",
         "CREATE INDEX IF NOT EXISTS ix_hist_results_race_placed ON historical_results (race_id, placed)",
+        # Composite for common top-3/top-4 fetches: SELECT ... WHERE race_id = X AND position IN (1,2,3)
+        "CREATE INDEX IF NOT EXISTS ix_hist_results_race_position ON historical_results (race_id, position)",
+        # text_pattern_ops so `race_id LIKE 'YYYY-MM-DD_%'` prefix queries
+        # (used every daily aggregation) can use index scans. Default
+        # locale-aware btree can't do LIKE prefix on non-C locale.
+        "CREATE INDEX IF NOT EXISTS ix_hist_results_race_id_pattern ON historical_results (race_id text_pattern_ops)",
+        # Partial index: settle path filters "races with at least one
+        # top-3 finisher whose tab_number is populated" — small subset
+        # of total rows, but the exact hot filter for bet settlement.
+        "CREATE INDEX IF NOT EXISTS ix_hist_results_race_with_tab ON historical_results (race_id) WHERE tab_number IS NOT NULL",
         # Note: dedupe + CREATE UNIQUE INDEX is deliberately NOT run here.
         # The dedup is destructive and needs a preview + sign-off first.
         # Use /api/admin/dedupe-historical-results?apply=false to preview
