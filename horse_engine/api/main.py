@@ -1702,7 +1702,15 @@ async def _seed_results_for_date(race_date: str) -> int:
                     ))
                     ra_seeded_total += 1
                 already_seeded_ra.add(race_id)
-            await session.commit()
+            try:
+                await session.commit()
+            except Exception as e:
+                # DB-level unique index on (race_id, LOWER(horse_name))
+                # will raise IntegrityError on concurrent-seed races.
+                # Rollback the batch and continue — pre-check catches
+                # sequential dupes, the constraint catches racy ones.
+                await session.rollback()
+                log.debug("[seed-results] batch commit failed (likely duplicate): %s", e)
     if ra_seeded_total:
         log.info("[seed-results] RA direct-key seeded %d entries for %s", ra_seeded_total, race_date)
 
@@ -1867,9 +1875,15 @@ async def _seed_results_for_date(race_date: str) -> int:
                         field_size=race_field_size or None,
                         race_number=race_num,
                     ))
-                    await session.commit()
-                    seeded += 1
-                    races_with_results.add(race_id)
+                    try:
+                        await session.commit()
+                        seeded += 1
+                        races_with_results.add(race_id)
+                    except Exception as e:
+                        # (race_id, LOWER(horse_name)) unique index —
+                        # concurrent seed produced the row already.
+                        await session.rollback()
+                        log.debug("[seed-results] row commit failed (dup): %s", e)
 
         # Clear stale cancelled flags only for mass-cancelled races (all runners cancelled).
         # Never clear individual dedup cancellations — only restore when the whole race
@@ -11616,6 +11630,146 @@ async def admin_morning_report(x_cron_secret: Optional[str] = Header(None)):
         },
         "summary_counts": payload.get("summary") or {},
     }
+
+
+@app.post("/api/admin/dedupe-historical-results")
+async def admin_dedupe_historical_results(
+    apply: bool = Query(False, description="False = preview counts only; True = actually delete"),
+    x_cron_secret: Optional[str] = Header(None),
+):
+    """
+    Dedupe HistoricalResultRow rows on (race_id, LOWER(horse_name)).
+
+    Preview mode (apply=false): report count of dupe rows that WOULD be
+    deleted, plus 20 example duplicate groups so you can eyeball the data.
+
+    Apply mode (apply=true): actually delete, preserving the MOST-populated
+    row per group. Rank preservation criteria:
+      1. Most non-null high-value fields (tab_number, starting_price,
+         feature_vector_json, jockey, trainer, barrier, weight)
+      2. Tie broken by newest id
+
+    Idempotent: subsequent runs report zero.
+    """
+    _check_admin(x_cron_secret)
+    from sqlalchemy import text as _sa_text
+
+    async with get_session() as session:
+        # Count how many rows would be deleted.
+        count_stmt = _sa_text("""
+            WITH ranked AS (
+              SELECT id,
+                     ROW_NUMBER() OVER (
+                       PARTITION BY race_id, LOWER(horse_name)
+                       ORDER BY
+                         ((CASE WHEN tab_number IS NOT NULL THEN 1 ELSE 0 END) +
+                          (CASE WHEN starting_price IS NOT NULL THEN 1 ELSE 0 END) +
+                          (CASE WHEN feature_vector_json IS NOT NULL THEN 1 ELSE 0 END) +
+                          (CASE WHEN jockey IS NOT NULL THEN 1 ELSE 0 END) +
+                          (CASE WHEN trainer IS NOT NULL THEN 1 ELSE 0 END) +
+                          (CASE WHEN barrier IS NOT NULL THEN 1 ELSE 0 END) +
+                          (CASE WHEN weight IS NOT NULL THEN 1 ELSE 0 END)) DESC,
+                         id DESC
+                     ) AS rn
+              FROM historical_results
+            )
+            SELECT COUNT(*) FROM ranked WHERE rn > 1
+        """)
+        dupe_count = (await session.execute(count_stmt)).scalar() or 0
+
+        # Total row count for context
+        total_rows = (await session.execute(
+            _sa_text("SELECT COUNT(*) FROM historical_results")
+        )).scalar() or 0
+
+        # Sample groups: 20 (race_id, horse_name) pairs that have dupes
+        sample_stmt = _sa_text("""
+            SELECT race_id,
+                   LOWER(horse_name) AS horse_lc,
+                   COUNT(*) AS n,
+                   ARRAY_AGG(
+                     JSON_BUILD_OBJECT(
+                       'id', id,
+                       'horse_name', horse_name,
+                       'position', position,
+                       'tab_number', tab_number,
+                       'sp', starting_price,
+                       'has_feature_json', feature_vector_json IS NOT NULL
+                     )
+                     ORDER BY id
+                   ) AS rows
+            FROM historical_results
+            GROUP BY race_id, LOWER(horse_name)
+            HAVING COUNT(*) > 1
+            ORDER BY race_id DESC
+            LIMIT 20
+        """)
+        sample_rows = (await session.execute(sample_stmt)).fetchall()
+        sample = [
+            {
+                "race_id": r.race_id,
+                "horse_lc": r.horse_lc,
+                "duplicate_count": r.n,
+                "rows": [dict(x) if not isinstance(x, dict) else x for x in (r.rows or [])],
+            }
+            for r in sample_rows
+        ]
+
+        if not apply:
+            return {
+                "mode": "preview",
+                "total_rows_in_table": total_rows,
+                "rows_that_would_be_deleted": dupe_count,
+                "distinct_dupe_groups": len(sample_rows),  # partial (LIMIT 20)
+                "sample_duplicate_groups": sample,
+                "note": "Re-run with apply=true to actually delete.",
+            }
+
+        # Apply mode: run the delete.
+        delete_stmt = _sa_text("""
+            WITH ranked AS (
+              SELECT id,
+                     ROW_NUMBER() OVER (
+                       PARTITION BY race_id, LOWER(horse_name)
+                       ORDER BY
+                         ((CASE WHEN tab_number IS NOT NULL THEN 1 ELSE 0 END) +
+                          (CASE WHEN starting_price IS NOT NULL THEN 1 ELSE 0 END) +
+                          (CASE WHEN feature_vector_json IS NOT NULL THEN 1 ELSE 0 END) +
+                          (CASE WHEN jockey IS NOT NULL THEN 1 ELSE 0 END) +
+                          (CASE WHEN trainer IS NOT NULL THEN 1 ELSE 0 END) +
+                          (CASE WHEN barrier IS NOT NULL THEN 1 ELSE 0 END) +
+                          (CASE WHEN weight IS NOT NULL THEN 1 ELSE 0 END)) DESC,
+                         id DESC
+                     ) AS rn
+              FROM historical_results
+            )
+            DELETE FROM historical_results
+            WHERE id IN (SELECT id FROM ranked WHERE rn > 1)
+        """)
+        result = await session.execute(delete_stmt)
+        await session.commit()
+        deleted = result.rowcount or 0
+
+        # Now safe to create the unique index.
+        try:
+            await session.execute(_sa_text(
+                "CREATE UNIQUE INDEX IF NOT EXISTS ux_historical_results_race_horse "
+                "ON historical_results (race_id, LOWER(horse_name))"
+            ))
+            await session.commit()
+            index_created = True
+        except Exception as e:
+            index_created = False
+            log.warning("[dedupe-historical] index creation failed: %s", e)
+
+        return {
+            "mode": "apply",
+            "expected_delete_count": dupe_count,
+            "actual_deleted": deleted,
+            "unique_index_created": index_created,
+            "total_rows_before": total_rows,
+            "total_rows_after": total_rows - deleted,
+        }
 
 
 @app.post("/api/admin/purge-blocklisted-venues")

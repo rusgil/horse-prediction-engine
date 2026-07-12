@@ -5,7 +5,7 @@ import json
 import uuid
 from datetime import datetime
 
-from sqlalchemy import Column, Float, Integer, String, Text, Boolean, DateTime, select, text
+from sqlalchemy import Column, Float, Integer, String, Text, Boolean, DateTime, Index, select, text
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
 from sqlalchemy.orm import DeclarativeBase
 
@@ -123,6 +123,10 @@ class ExoticModelWeightRow(Base):
 
 class HistoricalResultRow(Base):
     __tablename__ = "historical_results"
+    # Uniqueness on (race_id, LOWER(horse_name)) enforced at init_db
+    # migration time — see the CREATE UNIQUE INDEX statement there.
+    # LOWER() collapses "Subarashii Express" and "SUBARASHII EXPRESS"
+    # (RA is inconsistent about case between Acceptances and Results).
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     race_id = Column(String, index=True)
@@ -449,6 +453,13 @@ async def init_db() -> None:
         "CREATE INDEX IF NOT EXISTS ix_hist_source_race_cancelled ON runner_prediction_history (source, race_id, cancelled)",
         "CREATE INDEX IF NOT EXISTS ix_hist_results_race_winner ON historical_results (race_id, winner)",
         "CREATE INDEX IF NOT EXISTS ix_hist_results_race_placed ON historical_results (race_id, placed)",
+        # Note: dedupe + CREATE UNIQUE INDEX is deliberately NOT run here.
+        # The dedup is destructive and needs a preview + sign-off first.
+        # Use /api/admin/dedupe-historical-results?apply=false to preview
+        # counts, then apply=true to run. Once the historic table is clean
+        # add back a "CREATE UNIQUE INDEX IF NOT EXISTS
+        # ux_historical_results_race_horse ON historical_results
+        # (race_id, LOWER(horse_name))" here so future deploys stay safe.
         "CREATE UNIQUE INDEX IF NOT EXISTS uq_bet_reco_race_strategy ON bet_recommendations (race_id, strategy_label)",
         "CREATE INDEX IF NOT EXISTS ix_bet_reco_settled ON bet_recommendations (settled)",
         "ALTER TABLE bet_recommendations ADD COLUMN IF NOT EXISTS voided BOOLEAN DEFAULT FALSE",
