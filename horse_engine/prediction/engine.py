@@ -337,16 +337,16 @@ def predict_race(race: Race, model: HorseModel, venue_calibration: dict[str, flo
 
     # Place-prob assembly.
     # PlaceModel.predict_field returns (softmax(raw), softmax(raw × 0.5) × N).
-    # The FIRST element is P(this horse has the highest place-score in
-    # the field) — a softmax which sums to 1. That's structurally wrong
-    # for P(top-3): sum should be ~3 for an 8-runner field with 3 places,
-    # and individual values can be lower than the same horse's win_prob
-    # (violates P(top-3) ≥ P(top-1)).
-    # Confirmed 2026-07-11 on NOTES (NZ)/Aquis Park R3: win 30.2% but
-    # place 27.3%, and sum_place=1.00 vs sum_win=0.88 across the field.
-    # The SECOND element applies a temperature-flattened softmax × n_places
-    # heuristic — not calibrated, but at least sums to ~places and puts
-    # place > win for the top ranks. Use that.
+    # Neither element cleanly represents per-horse P(top-3):
+    #  - [0] is softmax → sums to 1, individual values can be < win
+    #  - [1] is heuristic scaled by N_places — fine for 8+ runner fields
+    #    but for fields <5 runners N_places=1 so [1] can be < [0] and
+    #    < the same horse's win_prob (violates P(top-3) ≥ P(top-1))
+    # Take [1] first (better on medium/large fields), then enforce
+    # place ≥ win per horse post-hoc. That's a mathematical axiom for
+    # the same horse in the same race — no calibration cost.
+    # Shipped 2026-07-12 after pioneer-park (small QLD field) still
+    # showed place < win under the fix that used [1] alone.
     if place_model is not None:
         _, place_probs_list = place_model.predict_field(feature_vectors)
     else:
@@ -482,16 +482,34 @@ def predict_race(race: Race, model: HorseModel, venue_calibration: dict[str, flo
     _SHRINK_START = 0.25   # 25pp overlay — no shrinkage below
     _SHRINK_FULL = 0.55    # 55pp overlay — full shrinkage weight
     _SHRINK_MAX = 0.60     # max weight on market (never fully overrule the model)
+    _NULL_MARKET_CAP = 0.40  # ceiling for win_prob when market signal is missing
     for p in predictions:
         market = getattr(p.enriched, "market_implied_prob", 0.0) or 0.0
         if market <= 0:
-            continue  # no market anchor — feature-completeness already handled
+            # No market signal — we can't verify high confidence against
+            # anything. When win_prob is > cap, blend 50/50 toward the
+            # cap to prevent an un-checked over-confident prediction from
+            # surviving the pipeline. Fixes the pioneer-park R7 case
+            # today: 73.5% survived market anchor because market_implied
+            # was null → this branch now shrinks it to ~57%.
+            if p.win_prob > _NULL_MARKET_CAP:
+                p.win_prob = round(0.5 * p.win_prob + 0.5 * _NULL_MARKET_CAP, 4)
+            continue
         overlay = p.win_prob - market
         if overlay <= _SHRINK_START:
             continue
         excess = min(overlay, _SHRINK_FULL) - _SHRINK_START
         weight = _SHRINK_MAX * excess / (_SHRINK_FULL - _SHRINK_START)
         p.win_prob = round((1.0 - weight) * p.win_prob + weight * market, 4)
+
+    # Enforce P(top-3) ≥ P(top-1) per horse — a mathematical axiom for
+    # the same horse in the same race. If any calibration step made
+    # win_prob higher than place_prob (small-field heuristic edge case
+    # or null-market cap boosting the ratio), lift place to match.
+    for p, plc in zip(predictions, place_probs_list):
+        if plc < p.win_prob:
+            plc = p.win_prob
+        p.place_prob = round(min(plc, 0.99), 4)
 
     # Rank by win probability
     predictions.sort(key=lambda p: p.win_prob, reverse=True)
