@@ -556,11 +556,180 @@
     document.getElementById('tabWin').classList.toggle('active', tab === 'win');
     document.getElementById('tabExotic').classList.toggle('active', tab === 'exotic');
     document.getElementById('tabReviews').classList.toggle('active', tab === 'reviews');
+    document.getElementById('tabQuality').classList.toggle('active', tab === 'quality');
     document.getElementById('panelWin').style.display = tab === 'win' ? '' : 'none';
     document.getElementById('panelExotic').style.display = tab === 'exotic' ? '' : 'none';
     document.getElementById('panelReviews').style.display = tab === 'reviews' ? '' : 'none';
+    document.getElementById('panelQuality').style.display = tab === 'quality' ? '' : 'none';
     if (tab === 'exotic' && !exoticBacktestLoaded) loadExoticBacktest();
     if (tab === 'reviews' && !reviewsLoaded) loadReviews();
+    if (tab === 'quality' && !qualityLoaded) loadQuality();
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  //   MORNING REPORT / QUALITY CHECK TAB
+  // ═══════════════════════════════════════════════════════════
+  let qualityLoaded = false;
+
+  function buildQualityPlaceholder() {
+    return `
+      <div style="display:flex;gap:10px;align-items:center;margin-bottom:16px">
+        <button class="btn" onclick="loadQuality(true)">🔄 Refresh</button>
+        <button class="btn" onclick="fireQualityHealNow()">⚡ Run & Heal Now</button>
+        <span class="btn-status" id="qualityStatus"></span>
+      </div>
+      <div id="qualityReport">Loading morning report…</div>
+      <div id="qualityHistory" style="margin-top:24px"></div>
+    `;
+  }
+
+  async function loadQuality(forceRefresh) {
+    if (!forceRefresh) qualityLoaded = true;
+    try {
+      const [reportRes, historyRes] = await Promise.all([
+        fetch(`${API}/api/admin/morning-report`, { headers: { 'x-cron-secret': adminSecret } }),
+        fetch(`${API}/api/admin/quality-check/history?limit=14`, { headers: { 'x-cron-secret': adminSecret } }),
+      ]);
+      const report = await reportRes.json();
+      const history = await historyRes.json();
+      renderQualityReport(report);
+      renderQualityHistory(history);
+    } catch (e) {
+      document.getElementById('qualityReport').innerHTML =
+        `<div class="nr-empty">Failed to load: ${e.message}</div>`;
+    }
+  }
+
+  function renderQualityReport(report) {
+    const wrap = document.getElementById('qualityReport');
+    if (report.status === 'no_data') {
+      wrap.innerHTML = `<div class="nr-empty">${escHtml(report.note || 'No data yet.')}</div>`;
+      return;
+    }
+    const verdictColor = report.verdict === 'all_clear' ? '#22c55e'
+      : report.verdict === 'warnings_only' ? '#f59e0b'
+      : '#ef4444';
+    const verdictLabel = report.verdict === 'all_clear' ? '✓ All clear'
+      : report.verdict === 'warnings_only' ? '⚠ Warnings only'
+      : '✗ Critical';
+    const snap = report.health_snapshot || {};
+    const healed = report.auto_healed || [];
+    const needs = report.still_needs_attention || {};
+    const critical = needs.critical || [];
+    const warning = needs.warning || [];
+
+    wrap.innerHTML = `
+      <div style="background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius);padding:16px;margin-bottom:16px">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:10px">
+          <div>
+            <span style="font-size:1.15rem;font-weight:700;color:${verdictColor}">${verdictLabel}</span>
+            <span style="color:var(--text-dim);font-size:0.85rem;margin-left:12px">for ${escHtml(report.date || '?')}</span>
+          </div>
+          <div style="font-size:0.75rem;color:var(--text-dim)">Ran ${escHtml(report.ran_at || 'never')}</div>
+        </div>
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:12px;margin-bottom:12px">
+          <div style="background:var(--bg-elevated);padding:10px;border-radius:8px">
+            <div style="font-size:0.7rem;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.05em">Coverage</div>
+            <div style="font-size:1.15rem;font-weight:700">${snap.prediction_coverage_pct ?? '—'}%</div>
+          </div>
+          <div style="background:var(--bg-elevated);padding:10px;border-radius:8px">
+            <div style="font-size:0.7rem;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.05em">Rank-1 win rate</div>
+            <div style="font-size:1.15rem;font-weight:700">${snap.rank1_win_rate_pct ?? '—'}%</div>
+          </div>
+          <div style="background:var(--bg-elevated);padding:10px;border-radius:8px">
+            <div style="font-size:0.7rem;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.05em">Internal URLs</div>
+            <div style="font-size:1.15rem;font-weight:700">${escHtml(String(snap.url_health_internal || '—'))}</div>
+          </div>
+          <div style="background:var(--bg-elevated);padding:10px;border-radius:8px">
+            <div style="font-size:0.7rem;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.05em">External URLs</div>
+            <div style="font-size:1.15rem;font-weight:700">${escHtml(String(snap.url_health_external || '—'))}</div>
+          </div>
+        </div>
+      </div>
+
+      ${healed.length ? `
+      <div style="background:var(--bg-card);border:1px solid rgba(34,197,94,0.30);border-radius:var(--radius);padding:16px;margin-bottom:16px">
+        <div style="font-weight:700;color:#22c55e;margin-bottom:10px">✓ Auto-healed (${healed.length})</div>
+        ${healed.map(h => `
+          <div style="padding:6px 0;border-bottom:1px solid var(--border);font-size:0.85rem">
+            <strong>${escHtml(h.issue)}</strong> — ${escHtml(h.action)} (${h.affected} row${h.affected === 1 ? '' : 's'})
+          </div>`).join('')}
+      </div>` : ''}
+
+      ${critical.length ? `
+      <div style="background:var(--bg-card);border:1px solid rgba(239,68,68,0.30);border-radius:var(--radius);padding:16px;margin-bottom:16px">
+        <div style="font-weight:700;color:#ef4444;margin-bottom:10px">✗ Still needs attention — CRITICAL (${critical.length})</div>
+        ${critical.map(f => `
+          <div style="padding:8px 0;border-bottom:1px solid var(--border);font-size:0.85rem">
+            <div><strong>${escHtml(f.check)}</strong> ${f.n_races ? `— ${f.n_races} races` : ''}${f.n_urls ? `— ${f.n_urls} URLs` : ''}${f.n_pairs ? `— ${f.n_pairs} pairs` : ''}</div>
+            <div style="color:var(--text-secondary);font-size:0.8rem;margin-top:3px">${escHtml(f.reason || '')}</div>
+            ${f.remediation ? `<div style="color:var(--text-dim);font-size:0.75rem;margin-top:3px;font-family:monospace">${escHtml(f.remediation)}</div>` : ''}
+          </div>`).join('')}
+      </div>` : ''}
+
+      ${warning.length ? `
+      <div style="background:var(--bg-card);border:1px solid rgba(245,158,11,0.30);border-radius:var(--radius);padding:16px;margin-bottom:16px">
+        <div style="font-weight:700;color:#f59e0b;margin-bottom:10px">⚠ Warnings (${warning.length})</div>
+        ${warning.map(f => `
+          <div style="padding:6px 0;border-bottom:1px solid var(--border);font-size:0.85rem">
+            <div><strong>${escHtml(f.check)}</strong> ${f.n_races ? `— ${f.n_races} races` : ''}</div>
+            <div style="color:var(--text-secondary);font-size:0.78rem;margin-top:2px">${escHtml(f.reason || '')}</div>
+          </div>`).join('')}
+      </div>` : ''}
+    `;
+  }
+
+  function renderQualityHistory(data) {
+    const wrap = document.getElementById('qualityHistory');
+    const rows = data.rows || [];
+    if (!rows.length) { wrap.innerHTML = ''; return; }
+    wrap.innerHTML = `
+      <div style="background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius);padding:16px">
+        <div style="font-weight:700;margin-bottom:10px">History (last 14 days)</div>
+        <table style="width:100%;font-size:0.85rem;border-collapse:collapse">
+          <thead>
+            <tr style="color:var(--text-dim);text-align:left">
+              <th style="padding:6px 8px">Date</th>
+              <th style="padding:6px 8px;text-align:right">Critical</th>
+              <th style="padding:6px 8px;text-align:right">Warning</th>
+              <th style="padding:6px 8px;text-align:right">Info</th>
+              <th style="padding:6px 8px">Ran</th>
+            </tr>
+          </thead>
+          <tbody>
+          ${rows.map(r => `
+            <tr style="border-top:1px solid var(--border)">
+              <td style="padding:6px 8px"><strong>${escHtml(r.check_date)}</strong></td>
+              <td style="padding:6px 8px;text-align:right;color:${r.critical_count ? '#ef4444' : 'var(--text-dim)'}">${r.critical_count}</td>
+              <td style="padding:6px 8px;text-align:right;color:${r.warning_count ? '#f59e0b' : 'var(--text-dim)'}">${r.warning_count}</td>
+              <td style="padding:6px 8px;text-align:right;color:var(--text-dim)">${r.info_count}</td>
+              <td style="padding:6px 8px;color:var(--text-dim);font-size:0.75rem">${escHtml((r.ran_at || '').slice(0,16).replace('T',' '))}</td>
+            </tr>`).join('')}
+          </tbody>
+        </table>
+      </div>
+    `;
+  }
+
+  async function fireQualityHealNow() {
+    const status = document.getElementById('qualityStatus');
+    status.textContent = 'Running…';
+    try {
+      // Yesterday date for a heal pass
+      const d = new Date();
+      d.setDate(d.getDate() - 1);
+      const iso = d.toLocaleDateString('en-CA', { timeZone: 'Australia/Sydney' });
+      const res = await fetch(`${API}/api/admin/quality-check?date=${iso}&heal=true`, {
+        headers: { 'x-cron-secret': adminSecret },
+      });
+      const data = await res.json();
+      const applied = data.summary?.heals_applied ?? 0;
+      status.textContent = `Done — ${applied} heals applied. Refreshing…`;
+      await loadQuality(true);
+      status.textContent = '';
+    } catch (e) {
+      status.textContent = 'Failed: ' + e.message;
+    }
   }
 
   let exoticBacktestLoaded = false;
@@ -626,16 +795,19 @@
     const winContent     = buildWinContent(calData, perfData, analysisData, prodData, premData);
     const exoContent     = buildExoticPlaceholder();
     const reviewsContent = buildReviewsPlaceholder();
+    const qualityContent = buildQualityPlaceholder();
 
     document.getElementById('dashContent').innerHTML = `
       <div class="model-tabs">
         <button class="model-tab active" id="tabWin" onclick="switchTab('win')">Win &amp; Placement</button>
         <button class="model-tab exotic" id="tabExotic" onclick="switchTab('exotic')">Exotics (beta)</button>
         <button class="model-tab reviews" id="tabReviews" onclick="switchTab('reviews')">Weekly Reviews</button>
+        <button class="model-tab reviews" id="tabQuality" onclick="switchTab('quality')">Morning Report</button>
       </div>
       <div id="panelWin">${winContent}</div>
       <div id="panelExotic" style="display:none">${exoContent}</div>
       <div id="panelReviews" style="display:none">${reviewsContent}</div>
+      <div id="panelQuality" style="display:none">${qualityContent}</div>
     `;
 
     mountWinCharts(calData, perfData);
