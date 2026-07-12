@@ -11632,6 +11632,88 @@ async def admin_morning_report(x_cron_secret: Optional[str] = Header(None)):
     }
 
 
+@app.get("/api/admin/benchmark-historical-results-queries")
+async def admin_benchmark_historical_results(
+    x_cron_secret: Optional[str] = Header(None),
+):
+    """
+    Time the three most common query patterns against historical_results.
+    Reports elapsed ms + which index each query used (via EXPLAIN).
+
+    Run this both before and after a schema change to see if the change
+    actually helped in production.
+    """
+    _check_admin(x_cron_secret)
+    from sqlalchemy import text as _sa_text
+    import time
+
+    queries = [
+        {
+            "name": "race_id_exact",
+            "sql": "SELECT COUNT(*) FROM historical_results WHERE race_id = '2026-07-11_royal-randwick_R3'",
+        },
+        {
+            "name": "race_id_LIKE_date_prefix",
+            "sql": "SELECT COUNT(*) FROM historical_results WHERE race_id LIKE '2026-07-11_%'",
+        },
+        {
+            "name": "race_id_plus_position_top3",
+            "sql": "SELECT COUNT(*) FROM historical_results WHERE race_id LIKE '2026-07-11_%' AND position IN (1,2,3)",
+        },
+        {
+            "name": "race_id_with_tab_number",
+            "sql": "SELECT COUNT(*) FROM historical_results WHERE race_id LIKE '2026-07-11_%' AND tab_number IS NOT NULL",
+        },
+        {
+            "name": "batch_race_id_in",
+            "sql": (
+                "SELECT COUNT(*) FROM historical_results WHERE race_id IN "
+                "('2026-07-11_royal-randwick_R3','2026-07-11_caulfield_R4',"
+                "'2026-07-11_doomben_R2','2026-07-11_belmont_R1',"
+                "'2026-07-11_morphettville-parks_R5')"
+            ),
+        },
+    ]
+
+    results = []
+    async with get_session() as session:
+        for q in queries:
+            # Warm up so we're not measuring cold-cache
+            await session.execute(_sa_text(q["sql"]))
+            # Now time three runs
+            runs = []
+            for _ in range(3):
+                t0 = time.perf_counter()
+                await session.execute(_sa_text(q["sql"]))
+                runs.append((time.perf_counter() - t0) * 1000)
+            explain = (await session.execute(_sa_text(f"EXPLAIN {q['sql']}"))).fetchall()
+            plan_lines = [r[0] for r in explain][:8]
+            results.append({
+                "name": q["name"],
+                "sql": q["sql"],
+                "runs_ms": [round(r, 2) for r in runs],
+                "median_ms": round(sorted(runs)[1], 2),
+                "plan": plan_lines,
+            })
+
+    # Also report which indexes currently exist on the table.
+    idx_stmt = _sa_text("""
+        SELECT indexname, indexdef
+          FROM pg_indexes
+         WHERE tablename = 'historical_results'
+         ORDER BY indexname
+    """)
+    async with get_session() as session:
+        idx_rows = (await session.execute(idx_stmt)).fetchall()
+    indexes = [{"name": r[0], "definition": r[1]} for r in idx_rows]
+
+    return {
+        "table": "historical_results",
+        "indexes_present": indexes,
+        "queries": results,
+    }
+
+
 @app.post("/api/admin/dedupe-historical-results")
 async def admin_dedupe_historical_results(
     apply: bool = Query(False, description="False = preview counts only; True = actually delete"),
