@@ -4621,6 +4621,50 @@ async def _settle_bets_for_race(race_id: str) -> int:
                     if t is not None:
                         top_by_pos[pos] = t
         if any(top_by_pos.get(p) is None for p in (1, 2, 3)):
+            # Results are present but we can't map top-3 finishers to
+            # tab_numbers (RA's Results.aspx name doesn't normalize-match
+            # anything in our RunnerPredictionRow — happens on ~10% of
+            # races per day due to name spelling drift). If the race
+            # jumped >24h ago, void the open bets rather than carrying
+            # them as pending forever. Real TAB would refund an
+            # unresolvable bet — same treatment.
+            from sqlalchemy import update as sa_update
+            sched_row = (await session.execute(
+                select(func.max(RunnerPredictionRow.scheduled_time))
+                .where(RunnerPredictionRow.race_id == race_id)
+            )).scalar()
+            from datetime import timezone as _tz
+            stale = False
+            try:
+                if sched_row:
+                    sched_dt = datetime.fromisoformat(str(sched_row).replace("Z", "+00:00"))
+                    stale = (datetime.utcnow().replace(tzinfo=_tz.utc) - sched_dt).total_seconds() > 24 * 3600
+            except (ValueError, TypeError):
+                pass
+            if not stale:
+                try:
+                    date_prefix = race_id.split("_", 1)[0]
+                    race_date = datetime.strptime(date_prefix, "%Y-%m-%d").date()
+                    stale = (_today_aest() - race_date).days >= 2
+                except (ValueError, IndexError):
+                    pass
+            if stale:
+                upd = (await session.execute(
+                    sa_update(BetRecommendationRow)
+                    .where(BetRecommendationRow.race_id == race_id)
+                    .where(BetRecommendationRow.settled.is_(False))
+                    .values(
+                        settled=True,
+                        voided=True,
+                        is_hit=False,
+                        settled_at=datetime.utcnow(),
+                    )
+                ))
+                await session.commit()
+                voided = upd.rowcount or 0
+                if voided:
+                    log.info("[bets] voided %d stale-name-drift rows for %s (top-3 tabs unresolvable)", voided, race_id)
+                return voided
             return 0
         actual_top3 = [top_by_pos[1], top_by_pos[2], top_by_pos[3]]
 
