@@ -11161,10 +11161,13 @@ async def _run_quality_check(target: str) -> dict:
     ]
     from horse_engine.clients.racing_australia import _ra_date as _ra_date_fn
     external_urls = [
+        # RA direct (residential IP should always work — verifies RA isn't down)
         "https://www.racingaustralia.horse/FreeFields/Calendar.aspx?State=NSW",
         "https://www.racingaustralia.horse/FreeFields/Calendar.aspx?State=VIC",
         f"https://www.racingaustralia.horse/FreeFields/Results.aspx?"
         f"Key={_ra_date_fn(target)},NSW,Royal%20Randwick",
+        # Our RA proxy droplet — health check for the actual path production uses
+        "https://170-64-130-33.sslip.io/proxy/FreeFields/Calendar.aspx?State=NSW",
     ]
 
     async def _probe(client: "_httpx_probe.AsyncClient", url: str) -> dict:
@@ -11191,12 +11194,24 @@ async def _run_quality_check(target: str) -> dict:
                 "reason": "One or more of our own pages/endpoints returned non-200 — users may be seeing errors",
             })
         if broken_external:
-            critical.append({
-                "check": "external_urls_down",
-                "n_urls": len(broken_external),
-                "urls": broken_external,
-                "reason": "Upstream data source returning non-200 — seed/enrich pipeline will silently starve",
-            })
+            # Distinguish "RA is down" (rare) from "our proxy droplet is down" (recurring).
+            # sslip.io hostname is our droplet; anything else is real RA.
+            proxy_broken = any("sslip.io" in (u.get("url") or "") for u in broken_external)
+            ra_broken = any("racingaustralia.horse" in (u.get("url") or "") for u in broken_external)
+            if proxy_broken and not ra_broken:
+                critical.append({
+                    "check": "ra_proxy_droplet_down",
+                    "urls": [u for u in broken_external if "sslip.io" in (u.get("url") or "")],
+                    "reason": "The DigitalOcean RA proxy is unreachable but RA itself is up. Self-heal (ra-proxy-healthcheck.timer) should have restarted it; if you see this in the morning report, the droplet is either powered off, out of memory globally, or the self-heal cron failed to install.",
+                    "remediation": "SSH to 170.64.130.33, run: systemctl status ra-proxy-healthcheck.timer; tail -50 /var/log/ra-proxy-healthcheck.log",
+                })
+            else:
+                critical.append({
+                    "check": "external_urls_down",
+                    "n_urls": len(broken_external),
+                    "urls": broken_external,
+                    "reason": "Upstream data source returning non-200 — seed/enrich pipeline will silently starve",
+                })
         info.append({
             "check": "url_health",
             "internal_ok": len(internal_urls) - len(broken_internal),
