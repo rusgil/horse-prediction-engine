@@ -2389,6 +2389,12 @@ async def lifespan(app: FastAPI):
     # table; critical findings log at ERROR level for monitoring.
     scheduler.add_job(_scheduled_quality_check,
                       CronTrigger(hour=4, minute=0, timezone="Australia/Sydney"))
+    # Racing-hours heal — clears duplicate-position rows + tab-number
+    # gaps within a few hours of results landing, so frontend pages
+    # render correctly during the day rather than waiting until the
+    # 04:00 nightly. Runs at 10:00, 13:00, 16:00, 19:00 AEST.
+    scheduler.add_job(_scheduled_racing_hours_heal,
+                      CronTrigger(hour="10,13,16,19", minute=0, timezone="Australia/Sydney"))
     # Nightly review intentionally DISABLED (2026-06-30) — single-day
     # denominators were too small to surface actionable signals; weekly
     # carried all the value. _scheduled_nightly_review (and its analyser
@@ -11447,6 +11453,37 @@ async def admin_quality_check_history_detail(
     if not row:
         raise HTTPException(404, f"No quality-check row for {check_date}")
     return json.loads(row.report_json or "{}")
+
+
+async def _scheduled_racing_hours_heal():
+    """
+    Racing-hours cron — runs the quality check + auto-heal against
+    TODAY every 3h during racing hours (10:00, 13:00, 16:00, 19:00
+    AEST). Catches duplicate-position seeds and null-tab issues
+    within a couple of hours of the offending race jumping, so
+    results render on frontend pages without waiting for the next
+    04:00 quality-check cron.
+
+    Only heals — doesn't persist a full quality_checks row like the
+    nightly cron does (that runs against yesterday to give a stable
+    day-boundary metric).
+    """
+    target = _today_aest().isoformat()
+    try:
+        initial = await _run_quality_check(target)
+        healable = (initial.get("critical") or []) + (initial.get("warning") or [])
+        actions = await _auto_heal_findings(target, healable)
+        applied = sum(1 for a in actions if a.get("outcome") == "healed")
+        if applied:
+            log.info("[racing-hours-heal %s] applied %d heals: %s",
+                     target, applied,
+                     ", ".join(f"{a['check']}:{a['affected']}" for a in actions
+                               if a.get("outcome") == "healed"))
+        # Bust the edge cache so cleaned-up results surface immediately.
+        global _edge_response_cache
+        _edge_response_cache = None
+    except Exception as e:
+        log.exception("[racing-hours-heal] %s failed: %s", target, e)
 
 
 async def _scheduled_quality_check():
