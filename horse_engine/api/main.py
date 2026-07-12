@@ -11291,10 +11291,15 @@ async def _run_quality_check(target: str) -> dict:
 @app.get("/api/admin/quality-check")
 async def admin_quality_check(
     date: Optional[str] = None,
+    heal: bool = Query(False, description="If true, apply auto-heal after the initial check and re-verify"),
     x_cron_secret: Optional[str] = Header(None),
 ):
-    """On-demand data-integrity report for a given day. See
-    _run_quality_check for the underlying checks."""
+    """On-demand data-integrity report for a given day.
+
+    heal=true triggers the same auto-heal engine the nightly cron uses:
+    initial check → apply safe/idempotent fixes → re-run to verify.
+    Returns {initial, heal_actions, final, summary}.
+    """
     _check_admin(x_cron_secret)
     if date:
         _validate_date(date)
@@ -11302,11 +11307,40 @@ async def admin_quality_check(
     else:
         target = (_today_aest() - timedelta(days=1)).isoformat()
     try:
-        return await _run_quality_check(target)
+        initial = await _run_quality_check(target)
     except Exception as e:
         import traceback
         tb = traceback.format_exc().splitlines()[-8:]
         raise HTTPException(500, f"{type(e).__name__}: {e} | tb: {' | '.join(tb)}")
+
+    if not heal:
+        return initial
+
+    healable = (initial.get("critical") or []) + (initial.get("warning") or [])
+    try:
+        heal_actions = await _auto_heal_findings(target, healable)
+    except Exception as e:
+        heal_actions = [{"check": "_engine", "action": "abort",
+                         "outcome": "failed", "detail": str(e)[:200]}]
+    try:
+        final = await _run_quality_check(target)
+    except Exception:
+        final = initial
+
+    return {
+        "date": target,
+        "initial": initial,
+        "heal_actions": heal_actions,
+        "final": final,
+        "summary": {
+            "initial_critical": len(initial.get("critical") or []),
+            "initial_warning": len(initial.get("warning") or []),
+            "final_critical": len(final.get("critical") or []),
+            "final_warning": len(final.get("warning") or []),
+            "heals_applied": sum(1 for a in heal_actions if a.get("outcome") == "healed"),
+            "heals_skipped": sum(1 for a in heal_actions if a.get("outcome") == "skipped"),
+        },
+    }
 
 
 @app.get("/api/admin/quality-check/history")
