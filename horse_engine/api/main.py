@@ -10957,26 +10957,28 @@ async def _run_quality_check(target: str) -> dict:
         })
 
     # ── Coverage vs "races that actually ran" (best proxy: results seeded) ──
-    if len(hr_race_ids) > n_settled and n_settled > 0:
-        gap = len(hr_race_ids) - n_settled
-        # Break down by venue so morning report shows which meetings
-        # dropped coverage — the "Gold Coast 0/2 wins but there were 8
-        # races" class of user report.
-        missing_by_venue: dict[str, int] = {}
-        for rid in hr_race_ids - mut_race_ids:
-            try:
-                venue = rid.split("_")[1]
-                missing_by_venue[venue] = missing_by_venue.get(venue, 0) + 1
-            except IndexError:
-                continue
+    # Break down by venue and filter out blocklisted venues (they're
+    # intentionally not enriched — flagging them as "missed" is a false
+    # positive we noticed on the first run.).
+    missing_by_venue: dict[str, int] = {}
+    for rid in hr_race_ids - mut_race_ids:
+        try:
+            venue = rid.split("_")[1]
+            if venue.lower() in _SKIP_ENRICHMENT_VENUES:
+                continue  # intentional skip, not a coverage miss
+            missing_by_venue[venue] = missing_by_venue.get(venue, 0) + 1
+        except IndexError:
+            continue
+    non_blocklisted_gap = sum(missing_by_venue.values())
+    if non_blocklisted_gap > 0:
         warning.append({
             "check": "results_without_predictions",
-            "n_races": gap,
+            "n_races": non_blocklisted_gap,
             "venues_affected": sorted(
                 [{"venue": v, "unpredicted_races": n} for v, n in missing_by_venue.items()],
                 key=lambda x: -x["unpredicted_races"],
             )[:10],
-            "reason": "HistoricalResultRow has races we never enriched — venue tile will under-count wins/place figures because those races don't exist in our prediction data",
+            "reason": "HistoricalResultRow has races we never enriched — venue tile will under-count wins/place figures because those races don't exist in our prediction data (blocklisted venues excluded)",
         })
 
     coverage_pct = round(n_settled / len(hr_race_ids) * 100, 1) if hr_race_ids else 0
@@ -11145,14 +11147,15 @@ async def _run_quality_check(target: str) -> dict:
     # 5s per probe, done in parallel.
     import httpx as _httpx_probe
 
+    _FRONTEND_HOST = "https://horse-racing-predictions.funkyiq.com"
     internal_urls = [
-        "https://funkyiq.com/",
-        "https://funkyiq.com/edge.html",
-        "https://funkyiq.com/index.html",
-        "https://funkyiq.com/hotseat.html",
-        "https://funkyiq.com/funkmeup.html",
-        "https://funkyiq.com/bets.html",
-        "https://funkyiq.com/dashboard.html",
+        f"{_FRONTEND_HOST}/",
+        f"{_FRONTEND_HOST}/edge.html",
+        f"{_FRONTEND_HOST}/index.html",
+        f"{_FRONTEND_HOST}/hotseat.html",
+        f"{_FRONTEND_HOST}/funkmeup.html",
+        f"{_FRONTEND_HOST}/bets.html",
+        f"{_FRONTEND_HOST}/dashboard.html",
         "https://web-production-dec62.up.railway.app/api/health",
         "https://web-production-dec62.up.railway.app/api/edge",
     ]
