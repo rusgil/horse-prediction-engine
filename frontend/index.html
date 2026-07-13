@@ -1248,7 +1248,13 @@
     // re-renders pills as stats arrive, so non-Sharp meetings drop out
     // a moment later. Without this, the initial page load shows the
     // empty-state because no meetings have stats yet.
-    if (!stats || stats.maxConf == null) return true;
+    if (!stats) return true;
+    // Prefer the authoritative sharpTotal (count of races where the
+    // server flagged is_sharp=true AND our pick actually finished on
+    // past dates). Fall back to maxConf ≥30 approximation when the
+    // background fetch hasn't populated sharpTotal yet.
+    if (typeof stats.sharpTotal === 'number') return stats.sharpTotal > 0;
+    if (stats.maxConf == null) return true;
     return stats.maxConf >= 30;
   }
 
@@ -1915,6 +1921,12 @@
       } else {
         S.selectedRaceId = null;
         document.getElementById('raceContent').innerHTML = '';
+        // Also suppress the meeting-results panel (list of finishers
+        // per race). Otherwise Wellington-in-Sharp-mode with no Sharp
+        // races still shows a "list of horses" from the completed
+        // races' results.
+        const resultsEl = document.getElementById('resultsSection');
+        if (resultsEl) { resultsEl.style.display = 'none'; resultsEl.innerHTML = ''; }
       }
 
     } catch (e) {
@@ -1959,6 +1971,16 @@
   function renderResultsSection(completed, m) {
     const el = document.getElementById('resultsSection');
     if (!el || !completed.length) return;
+    // Never populate if no race is actively selected. Prevents the
+    // "list of horses" appearing when clicking a meeting in Sharp
+    // mode with no Sharp-qualifying races (Wellington 07-06 case) —
+    // even though selectMeeting hid the section upfront, the async
+    // loadMeetingResults would then re-populate + show it.
+    if (!S.selectedRaceId) {
+      el.style.display = 'none';
+      el.innerHTML = '';
+      return;
+    }
 
     const rows = completed.map(race => {
       const topPick = (race.top_pick || '').toLowerCase();
