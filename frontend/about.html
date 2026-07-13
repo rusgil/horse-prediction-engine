@@ -186,55 +186,87 @@
     .tier-high    { background: rgba(59,130,246,0.12); color: #60a5fa;          border: 1px solid rgba(59,130,246,0.28); }
     .tier-strong  { background: var(--green-dim);  color: var(--green);         border: 1px solid rgba(34,197,94,0.25); }
 
-    /* Model-grade badge (5-tier Elite → Poor scale) */
-    .grade-badge {
+    /* Sharp tier-scale visual */
+    .tier-scale {
+      margin: 18px 0 6px;
+    }
+    .tier-scale-label {
       font-family: 'Barlow Condensed', sans-serif;
-      font-size: 0.78rem; font-weight: 800;
+      font-size: 0.72rem; font-weight: 800;
+      letter-spacing: 0.12em; text-transform: uppercase;
+      color: var(--text-dim); margin-bottom: 6px;
+      display: flex; justify-content: space-between; align-items: baseline;
+    }
+    .tier-scale-value { color: var(--text); font-size: 1rem; letter-spacing: 0.02em; }
+    .tier-scale-bar {
+      position: relative;
+      display: flex;
+      height: 22px;
+      border-radius: 6px;
+      overflow: hidden;
+      border: 1px solid var(--border);
+    }
+    .tier-band {
+      flex: 1;
+      display: flex; align-items: center; justify-content: center;
+      font-family: 'Barlow Condensed', sans-serif;
+      font-size: 0.6rem; font-weight: 800;
+      letter-spacing: 0.1em; text-transform: uppercase;
+      color: rgba(255,255,255,0.72);
+    }
+    .tier-band.b-poor    { background: rgba(239,68,68,0.28); }
+    .tier-band.b-average { background: rgba(245,200,66,0.22); }
+    .tier-band.b-good    { background: rgba(34,197,94,0.22); }
+    .tier-band.b-great   { background: rgba(59,130,246,0.26); }
+    .tier-band.b-elite   { background: rgba(168,85,247,0.32); }
+    .tier-marker {
+      position: absolute; top: -6px;
+      width: 0; height: 0;
+      border-left: 8px solid transparent;
+      border-right: 8px solid transparent;
+      border-bottom: 10px solid #fff;
+      transform: translateX(-50%);
+    }
+    .tier-marker-you {
+      position: absolute; top: -26px;
+      transform: translateX(-50%);
+      font-family: 'Barlow Condensed', sans-serif;
+      font-size: 0.7rem; font-weight: 900;
       letter-spacing: 0.08em; text-transform: uppercase;
-      border-radius: 999px; padding: 4px 12px;
+      color: var(--text);
+      background: var(--panel);
+      padding: 2px 8px;
+      border: 1px solid var(--border);
+      border-radius: 4px;
       white-space: nowrap;
     }
-    .grade-elite   { background: rgba(168,85,247,0.14); color: #c084fc; border: 1px solid rgba(168,85,247,0.4); }
-    .grade-great   { background: rgba(59,130,246,0.14); color: #60a5fa; border: 1px solid rgba(59,130,246,0.4); }
-    .grade-good    { background: rgba(34,197,94,0.14);  color: #4ade80; border: 1px solid rgba(34,197,94,0.4); }
-    .grade-average { background: rgba(245,200,66,0.12); color: #f5c842; border: 1px solid rgba(245,200,66,0.35); }
-    .grade-poor    { background: rgba(239,68,68,0.12);  color: #f87171; border: 1px solid rgba(239,68,68,0.35); }
-    .grade-none    { background: rgba(255,255,255,0.04); color: var(--text-dim); border: 1px solid var(--border); }
+    .tier-scale-ticks {
+      display: flex;
+      margin-top: 6px;
+      font-size: 0.6rem;
+      color: var(--text-dim);
+      letter-spacing: 0.05em;
+    }
+    .tier-scale-ticks span { flex: 1; text-align: center; }
 
-    .grade-grid {
-      display: grid;
-      grid-template-columns: 1fr 1fr 1fr;
-      gap: 12px;
-      margin-top: 12px;
+    .sharp-hero-stats {
+      display: flex; gap: 24px;
+      margin-top: 20px;
+      padding-top: 16px;
+      border-top: 1px solid var(--border);
+      flex-wrap: wrap;
     }
-    .grade-card {
-      background: var(--panel);
-      border: 1px solid var(--border);
-      border-radius: 12px;
-      padding: 14px 16px;
-    }
-    .grade-card-title {
+    .sharp-hero-item {
       font-family: 'Barlow Condensed', sans-serif;
-      font-size: 0.7rem; font-weight: 800;
+    }
+    .sharp-hero-num {
+      font-size: 1.7rem; font-weight: 900; color: var(--text);
+      display: block; line-height: 1;
+    }
+    .sharp-hero-lbl {
+      font-size: 0.65rem; font-weight: 700;
       letter-spacing: 0.12em; text-transform: uppercase;
-      color: var(--text-dim); margin-bottom: 8px;
-    }
-    .grade-metrics { display: flex; gap: 14px; align-items: baseline; margin: 6px 0 10px; }
-    .grade-metric-num {
-      font-family: 'Barlow Condensed', sans-serif;
-      font-size: 1.55rem; font-weight: 900; color: var(--text);
-    }
-    .grade-metric-lbl {
-      font-size: 0.62rem; font-weight: 700;
-      letter-spacing: 0.1em; text-transform: uppercase;
-      color: var(--text-dim); margin-left: 4px;
-    }
-    .grade-sp {
-      font-size: 0.72rem; color: var(--text-dim);
-      margin-top: 4px;
-    }
-    @media (max-width: 640px) {
-      .grade-grid { grid-template-columns: 1fr; }
+      color: var(--text-dim);
     }
 
     .win-rate { font-family: 'Barlow Condensed', sans-serif; font-size: 1.3rem; font-weight: 900; }
@@ -589,60 +621,73 @@
     </div>
   </div>
 
-  <!-- Live Model Grade — 5-tier Elite → Poor scale -->
+  <!-- Sharp-only tier scale — visual placement on the industry 5-tier scale -->
   <div class="section">
-    <div class="section-title">Best Sample To Date</div>
+    <div class="section-title">Sharp Picks · Where We Sit</div>
     <p class="note" style="margin-top:-4px">
-      Graded on the industry 5-tier scale — Elite / Great / Good / Average / Poor. Each bucket shows
-      the best-performing rolling window (from 14, 30, 60, 90, 180, and 365 days), with the window
-      length and race count stated so nothing is cherry-picked in secret. Current 30-day snapshot is
-      shown alongside for context. Odds matter as much as strike rate — a 20% hit at $8 average is
-      commercially strong even though the hit-rate alone reads Tier 2.
+      Sharp picks graded against the industry 5-tier scale, from Poor to Elite (world-class).
+      The arrow marks where FunkyIQ's Sharp picks sit today over our best-performing rolling window.
     </p>
-    <div class="grade-grid" id="grade-grid">
-      <div class="grade-card" data-bucket="all">
-        <div class="grade-card-title">All picks</div>
-        <div class="grade-metrics">
-          <div><span class="grade-metric-num" data-slot="win">—</span><span class="grade-metric-lbl">win</span></div>
-          <div><span class="grade-metric-num" data-slot="place">—</span><span class="grade-metric-lbl">place</span></div>
-        </div>
-        <span class="grade-badge grade-none" data-slot="badge">—</span>
-        <div class="grade-sp">
-          Winners avg <span data-slot="win_sp">—</span> · Flat ROI <span data-slot="roi">—</span><br>
-          Best window: <span data-slot="best_days">—</span>d · <span data-slot="races">—</span> races · Field avg SP <span data-slot="sp">—</span><br>
-          <span data-slot="current" style="opacity:0.75">30d now: <span data-slot="current_win">—</span> win · <span data-slot="current_place">—</span> place</span>
-        </div>
+
+    <div class="tier-scale">
+      <div class="tier-scale-label">
+        <span>Win Rate</span>
+        <span class="tier-scale-value" id="sharp-win-value">—</span>
       </div>
-      <div class="grade-card" data-bucket="sharp">
-        <div class="grade-card-title">Sharp only</div>
-        <div class="grade-metrics">
-          <div><span class="grade-metric-num" data-slot="win">—</span><span class="grade-metric-lbl">win</span></div>
-          <div><span class="grade-metric-num" data-slot="place">—</span><span class="grade-metric-lbl">place</span></div>
-        </div>
-        <span class="grade-badge grade-none" data-slot="badge">—</span>
-        <div class="grade-sp">
-          Winners avg <span data-slot="win_sp">—</span> · Flat ROI <span data-slot="roi">—</span><br>
-          Best window: <span data-slot="best_days">—</span>d · <span data-slot="races">—</span> races · Field avg SP <span data-slot="sp">—</span><br>
-          <span data-slot="current" style="opacity:0.75">30d now: <span data-slot="current_win">—</span> win · <span data-slot="current_place">—</span> place</span>
-        </div>
+      <div class="tier-scale-bar">
+        <div class="tier-band b-poor">Poor</div>
+        <div class="tier-band b-average">Avg</div>
+        <div class="tier-band b-good">Good</div>
+        <div class="tier-band b-great">Great</div>
+        <div class="tier-band b-elite">Elite</div>
+        <div class="tier-marker-you" id="sharp-win-marker-label">FunkyIQ</div>
+        <div class="tier-marker" id="sharp-win-marker"></div>
       </div>
-      <div class="grade-card" data-bucket="non_sharp">
-        <div class="grade-card-title">Non-Sharp</div>
-        <div class="grade-metrics">
-          <div><span class="grade-metric-num" data-slot="win">—</span><span class="grade-metric-lbl">win</span></div>
-          <div><span class="grade-metric-num" data-slot="place">—</span><span class="grade-metric-lbl">place</span></div>
-        </div>
-        <span class="grade-badge grade-none" data-slot="badge">—</span>
-        <div class="grade-sp">
-          Winners avg <span data-slot="win_sp">—</span> · Flat ROI <span data-slot="roi">—</span><br>
-          Best window: <span data-slot="best_days">—</span>d · <span data-slot="races">—</span> races · Field avg SP <span data-slot="sp">—</span><br>
-          <span data-slot="current" style="opacity:0.75">30d now: <span data-slot="current_win">—</span> win · <span data-slot="current_place">—</span> place</span>
-        </div>
+      <div class="tier-scale-ticks">
+        <span>0%</span><span>15%</span><span>22%</span><span>30%</span><span>38%</span><span>50%+</span>
+      </div>
+    </div>
+
+    <div class="tier-scale">
+      <div class="tier-scale-label">
+        <span>Place Rate</span>
+        <span class="tier-scale-value" id="sharp-place-value">—</span>
+      </div>
+      <div class="tier-scale-bar">
+        <div class="tier-band b-poor">Poor</div>
+        <div class="tier-band b-average">Avg</div>
+        <div class="tier-band b-good">Good</div>
+        <div class="tier-band b-great">Great</div>
+        <div class="tier-band b-elite">Elite</div>
+        <div class="tier-marker-you" id="sharp-place-marker-label">FunkyIQ</div>
+        <div class="tier-marker" id="sharp-place-marker"></div>
+      </div>
+      <div class="tier-scale-ticks">
+        <span>0%</span><span>35%</span><span>45%</span><span>55%</span><span>65%</span><span>80%+</span>
+      </div>
+    </div>
+
+    <div class="sharp-hero-stats">
+      <div class="sharp-hero-item">
+        <span class="sharp-hero-num" id="sharp-hero-races">—</span>
+        <span class="sharp-hero-lbl">races in sample</span>
+      </div>
+      <div class="sharp-hero-item">
+        <span class="sharp-hero-num" id="sharp-hero-winsp">—</span>
+        <span class="sharp-hero-lbl">avg winning SP</span>
+      </div>
+      <div class="sharp-hero-item">
+        <span class="sharp-hero-num" id="sharp-hero-roi">—</span>
+        <span class="sharp-hero-lbl">flat unit ROI</span>
+      </div>
+      <div class="sharp-hero-item">
+        <span class="sharp-hero-num" id="sharp-hero-window">—</span>
+        <span class="sharp-hero-lbl">day window</span>
       </div>
     </div>
     <p class="note" style="margin-top:12px;font-style:italic">
-      All statistics are calculated on a flat, single-unit stake on a single horse (rank-1 model pick)
-      per race, over a comprehensive sample size.
+      All statistics on a flat, single-unit stake on a single horse (rank-1 Sharp pick) per race.
+      Sample: our best-performing rolling window over the last 365 days.
     </p>
   </div>
 
@@ -840,62 +885,72 @@
 
   loadStats();
 
-  // ── Model Grade (5-tier Elite → Poor) ─────────────────────────────────
-  // The hit-rate bands come from the industry legend; the odds qualifier
-  // (avg SP) is published alongside because a low-win rate at long odds
-  // can be commercially stronger than a high-win rate at short odds.
-  function gradeFor(win_pct, place_pct) {
-    if (win_pct == null) return { label: 'No Data', cls: 'grade-none' };
-    if (win_pct >= 38 || place_pct >= 65) return { label: '🏆 Elite',    cls: 'grade-elite' };
-    if (win_pct >= 30 || place_pct >= 55) return { label: '📈 Great',    cls: 'grade-great' };
-    if (win_pct >= 22 || place_pct >= 45) return { label: '🔍 Good',     cls: 'grade-good' };
-    if (win_pct >= 15 || place_pct >= 35) return { label: '⚖️ Average', cls: 'grade-average' };
-    return { label: '📉 Poor', cls: 'grade-poor' };
+  // ── Sharp tier scale ────────────────────────────────────────────────
+  // Piecewise scale: 5 equal-width tier bands. Marker interpolates within
+  // the band that contains the value so a mid-Tier-4 sits half-way through
+  // the Great band, not squashed against its edge.
+  //   Win %:   [0, 15, 22, 30, 38, 50]  → band widths 20% each
+  //   Place %: [0, 35, 45, 55, 65, 80]
+  function positionOnScale(value, breakpoints) {
+    // breakpoints: array of 6 numbers, one per band edge (poor→elite→cap).
+    if (value == null) return null;
+    if (value >= breakpoints[5]) return 100;
+    if (value <= breakpoints[0]) return 0;
+    for (let i = 0; i < 5; i++) {
+      const lo = breakpoints[i], hi = breakpoints[i+1];
+      if (value >= lo && value < hi) {
+        const bandStart = i * 20;
+        const frac = (value - lo) / (hi - lo);
+        return bandStart + frac * 20;
+      }
+    }
+    return 100;
   }
 
-  async function loadTierGrade() {
+  async function loadSharpTierScale() {
     try {
       const res = await fetch(API + '/api/performance/tier-grade?scan=true');
       if (!res.ok) return;
       const data = await res.json();
-      const buckets = data.buckets || {};
-      for (const key of ['all', 'sharp', 'non_sharp']) {
-        const card = document.querySelector(`.grade-card[data-bucket="${key}"]`);
-        if (!card) continue;
-        const wrapper = buckets[key] || {};
-        const best = wrapper.best;
-        const cur  = wrapper.current_30d;
-        if (!best) continue;
-        card.querySelector('[data-slot="win"]').textContent    = best.win_pct.toFixed(1) + '%';
-        card.querySelector('[data-slot="place"]').textContent  = best.place_pct.toFixed(1) + '%';
-        card.querySelector('[data-slot="sp"]').textContent     = best.mean_sp != null ? '$' + best.mean_sp.toFixed(2) : '—';
-        card.querySelector('[data-slot="win_sp"]').textContent = best.mean_winning_sp != null ? '$' + best.mean_winning_sp.toFixed(2) : '—';
-        card.querySelector('[data-slot="races"]').textContent  = best.races.toLocaleString();
-        card.querySelector('[data-slot="best_days"]').textContent = best.days;
-        const roiEl = card.querySelector('[data-slot="roi"]');
-        if (best.flat_roi_pct != null) {
-          const sign = best.flat_roi_pct >= 0 ? '+' : '';
-          roiEl.textContent = sign + best.flat_roi_pct.toFixed(1) + '%';
-          roiEl.style.color = best.flat_roi_pct >= 0 ? 'var(--green-bright, #4ade80)' : '#f87171';
-        } else {
-          roiEl.textContent = '—';
-        }
-        const g = gradeFor(best.win_pct, best.place_pct);
-        const badge = card.querySelector('[data-slot="badge"]');
-        badge.textContent = g.label;
-        badge.className = 'grade-badge ' + g.cls;
-        if (cur) {
-          card.querySelector('[data-slot="current_win"]').textContent   = cur.win_pct.toFixed(1) + '%';
-          card.querySelector('[data-slot="current_place"]').textContent = cur.place_pct.toFixed(1) + '%';
-        } else {
-          card.querySelector('[data-slot="current"]').style.display = 'none';
-        }
+      const sharp = (data.buckets || {}).sharp;
+      const best = sharp && sharp.best;
+      if (!best) return;
+
+      const winPct   = best.win_pct;
+      const placePct = best.place_pct;
+      const winPos   = positionOnScale(winPct,   [0, 15, 22, 30, 38, 50]);
+      const placePos = positionOnScale(placePct, [0, 35, 45, 55, 65, 80]);
+
+      document.getElementById('sharp-win-value').textContent   = winPct.toFixed(1) + '%';
+      document.getElementById('sharp-place-value').textContent = placePct.toFixed(1) + '%';
+
+      const winMarker = document.getElementById('sharp-win-marker');
+      const winLabel  = document.getElementById('sharp-win-marker-label');
+      winMarker.style.left = winPos + '%';
+      winLabel.style.left  = winPos + '%';
+
+      const placeMarker = document.getElementById('sharp-place-marker');
+      const placeLabel  = document.getElementById('sharp-place-marker-label');
+      placeMarker.style.left = placePos + '%';
+      placeLabel.style.left  = placePos + '%';
+
+      document.getElementById('sharp-hero-races').textContent = best.races.toLocaleString();
+      document.getElementById('sharp-hero-winsp').textContent = best.mean_winning_sp != null ? '$' + best.mean_winning_sp.toFixed(2) : '—';
+      document.getElementById('sharp-hero-window').textContent = best.days;
+
+      const roiEl = document.getElementById('sharp-hero-roi');
+      if (best.flat_roi_pct != null) {
+        const sign = best.flat_roi_pct >= 0 ? '+' : '';
+        roiEl.textContent = sign + best.flat_roi_pct.toFixed(1) + '%';
+        roiEl.style.color = best.flat_roi_pct >= 0 ? 'var(--green-bright, #4ade80)' : '#f87171';
+      } else {
+        roiEl.textContent = '—';
       }
     } catch (e) {
-      console.warn('Failed to load tier grade:', e);
+      console.warn('Failed to load Sharp tier scale:', e);
     }
   }
-  loadTierGrade();
+  loadSharpTierScale();
 </script>
 </body>
 </html>
