@@ -13679,7 +13679,18 @@ async def get_meeting(race_date: str, venue_code: str):
                     except Exception:
                         pass
                 high_conf = rank1_pct >= 30 or top3_sum_pct >= 60
-                is_sharp_map[rid] = bool(high_conf and layoff_ok)
+                is_sharp = bool(high_conf and layoff_ok)
+                # If this race is on a PAST date, treat "no seeded
+                # results" as "didn't run" and strip Sharp status.
+                # Prevents Wellington R4/R5 (2026-07-06, never seeded)
+                # from padding the meeting-tile Sharp count.
+                is_past = race_date < _today_aest().isoformat()
+                if is_past and is_sharp:
+                    top_pick_name = top_picks.get(rid) or ""
+                    if _normalize_horse(top_pick_name) not in \
+                            finished_horses.get(rid, set()):
+                        is_sharp = False
+                is_sharp_map[rid] = is_sharp
 
     enriched = bool(enriched_rows)
 
