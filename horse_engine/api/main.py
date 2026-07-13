@@ -13589,6 +13589,10 @@ async def get_meeting(race_date: str, venue_code: str):
         # Rank-2 win prob — used to compute the decisiveness indicator
         # (>5pt gap = model has a clear favourite, not a toss-up).
         rank2_win_probs: dict[str, Optional[float]] = {race_id: None for race_id in race_ids}
+        # Frozen server-side is_sharp flag from the rank-1 snapshot.
+        # Used by the Lounge to filter meeting-tile counts + race pills
+        # consistently with the date-pill Sharp metric.
+        is_sharp_map: dict[str, Optional[bool]] = {race_id: None for race_id in race_ids}
 
         if completed_ids:
             hist_tp_result = await session.execute(
@@ -13608,17 +13612,22 @@ async def get_meeting(race_date: str, venue_code: str):
                     top_picks[p.race_id] = p.horse_name
                     top_win_probs[p.race_id] = p.win_probability
                     top_place_probs[p.race_id] = p.place_probability
+                    is_sharp_map[p.race_id] = p.is_sharp
                 elif p.model_rank == 2:
                     rank2_win_probs[p.race_id] = p.win_probability
 
         upcoming_ids = [rid for rid in race_ids if rid not in completed_ids]
         if upcoming_ids:
+            # Include rank-3 so we can compute top-3 sum for the Sharp
+            # gate on upcoming races (mutable table doesn't have a
+            # frozen is_sharp flag yet — computed on the fly).
             tp_result = await session.execute(
                 select(RunnerPredictionRow)
                 .where(RunnerPredictionRow.race_id.in_(upcoming_ids))
-                .where(RunnerPredictionRow.model_rank.in_([1, 2]))
+                .where(RunnerPredictionRow.model_rank.in_([1, 2, 3]))
                 .where(RunnerPredictionRow.cancelled.is_(False) | RunnerPredictionRow.cancelled.is_(None))
             )
+            top3_by_race: dict[str, dict[int, tuple]] = {}
             for p in tp_result.scalars().all():
                 if p.model_rank == 1:
                     top_picks[p.race_id] = p.horse_name
@@ -13626,6 +13635,32 @@ async def get_meeting(race_date: str, venue_code: str):
                     top_place_probs[p.race_id] = p.place_probability
                 elif p.model_rank == 2:
                     rank2_win_probs[p.race_id] = p.win_probability
+                top3_by_race.setdefault(p.race_id, {})[p.model_rank] = (
+                    p.win_probability or 0,
+                    getattr(p, "enriched_json", None),
+                )
+            # Compute is_sharp: (rank1_pct ≥ 30 OR top3_sum ≥ 60) AND
+            # days_off ≤ 180. Matches _snapshot_prerace_predictions gate.
+            for rid, ranks in top3_by_race.items():
+                r1 = ranks.get(1)
+                if not r1:
+                    continue
+                r1_prob, r1_enriched = r1
+                rank1_pct = (r1_prob or 0) * 100
+                top3_sum_pct = sum((ranks.get(k, (0, None))[0] or 0) * 100
+                                    for k in (1, 2, 3))
+                # Layoff check from enriched_json.days_since_last_run
+                layoff_ok = True
+                if r1_enriched:
+                    try:
+                        er = json.loads(r1_enriched)
+                        days_off = er.get("days_since_last_run")
+                        if isinstance(days_off, (int, float)) and days_off > 180:
+                            layoff_ok = False
+                    except Exception:
+                        pass
+                high_conf = rank1_pct >= 30 or top3_sum_pct >= 60
+                is_sharp_map[rid] = bool(high_conf and layoff_ok)
 
     enriched = bool(enriched_rows)
 
@@ -13654,6 +13689,7 @@ async def get_meeting(race_date: str, venue_code: str):
             "top_win_probability": top_win_probs.get(rid),
             "top_place_probability": top_place_probs.get(rid),
             "rank2_win_probability": rank2_win_probs.get(rid),
+            "is_sharp": is_sharp_map.get(rid),
         })
 
     result = {

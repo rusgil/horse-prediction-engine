@@ -1638,11 +1638,6 @@
           <span class="day-acc-val" style="color:${complete ? '#60a5fa' : 'var(--text-dim)'};opacity:${complete ? 1 : 0.75}" title="Place rate (top 3)${smallSampleTip}">${placeDisplay} <span style="font-size:0.7em;opacity:0.6">plc</span></span>
         </div>
         ${secondaryHtml}
-        ${perf.value_bets ? `
-        <div class="day-acc-stat">
-          <span class="day-acc-val ${pnlClass}" title="${perf.value_bets} value bets P&L">${pnlStr} <span style="font-size:0.7em;opacity:0.6">val</span></span>
-        </div>` : ''}
-        ${!complete ? `<div class="day-acc-stat"><span style="color:var(--text-dim);font-size:0.72rem" title="Not all results seeded yet">partial</span></div>` : ''}
       </div>`;
   }
 
@@ -1771,11 +1766,12 @@
     S.meetings.filter(m => !m.cancelled).forEach(m => _loadMeetingWinRate(m));
   }
 
-  // Sharp gate approximation from race payload — matches the primary
-  // criterion (rank-1 win_prob ≥ 30). Server-side is_sharp uses this
-  // OR top-3-sum ≥ 60, but /api/meetings/{date}/{venue} doesn't return
-  // top-3 sum today; ≥30% covers the majority of Sharp picks.
+  // Sharp gate — trust the server's frozen is_sharp flag when present
+  // (authoritative — uses the full gate: (top ≥30 OR top3_sum ≥60)
+  // AND days_off ≤180). Fall back to the top ≥30% approximation only
+  // if the field is missing on the payload (older cached responses).
   function _isSharpRace(r) {
+    if (typeof r.is_sharp === 'boolean') return r.is_sharp;
     return (r.top_win_probability || 0) >= 0.30;
   }
 
