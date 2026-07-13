@@ -1405,10 +1405,13 @@
       // user see the full picture: Sharp is the high-conviction slice,
       // All is the rank-1 baseline.
       const sharp = S.mainMode === 'sharp' ? '&sharp=true' : '';
+      // Fetch 10 days so the -9 date pill range (extended to show
+      // the previous weekend) has perf data. Was 7 which left the
+      // last-Sat / last-Sun pills blank.
       const [primaryRes, allRes] = await Promise.all([
-        fetch(`${API}/api/performance?days=7${sharp}`),
+        fetch(`${API}/api/performance?days=10${sharp}`),
         sharp
-          ? fetch(`${API}/api/performance?days=7`)
+          ? fetch(`${API}/api/performance?days=10`)
           : Promise.resolve(null),
       ]);
       if (!primaryRes.ok) return;
