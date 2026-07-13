@@ -363,6 +363,31 @@
       color: #60a5fa;
       border: 1px solid rgba(59,130,246,0.3);
     }
+    .acc-key-tiers {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 4px 12px;
+      align-items: center;
+      width: 100%;
+    }
+    .acc-key-tier-row {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      white-space: nowrap;
+      font-size: 11px;
+      line-height: 1.4;
+    }
+    .acc-key-tier-row strong { font-weight: 700; }
+    .acc-key-tier-row .acc-key-range {
+      color: var(--text-dim);
+      font-size: 10.5px;
+    }
+    /* Stack vertically on narrow screens. */
+    @media (max-width: 640px) {
+      .acc-key-tiers { flex-direction: column; align-items: flex-start; gap: 3px; }
+      .acc-key-tier-row { width: 100%; }
+    }
     .acc-key-tier {
       font-size: 13px;
       line-height: 1;
@@ -1112,13 +1137,13 @@
   <!-- Key for the win/place pills shown on each past date -->
   <div class="acc-key" id="accKey">
     <span class="acc-key-label">KEY</span>
-    <span class="acc-key-item"><span class="acc-key-swatch win">Win</span>Model's top pick won the race</span>
-    <span class="acc-key-item"><span class="acc-key-swatch place">Plc</span>Model's top pick finished top 3</span>
-    <span class="acc-key-item" title="Performance tiers for rank-1 win/place rate. Elite is the exceptional-model band; Professional is the healthy operating range; Value is below-market performance.">
-      <span class="acc-key-tier elite">●</span><strong style="color:#c084fc">🏆 Elite</strong> Win 35%+ · Place 65%+ /
-      <span class="acc-key-tier good">●</span><strong style="color:#10b981">📈 Professional</strong> Win 25–34% · Place 50–64% /
-      <span class="acc-key-tier ok">●</span><strong style="color:var(--gold)">🔍 Value</strong> Win 15–24% · Place 35–49%
-    </span>
+    <span class="acc-key-item"><span class="acc-key-swatch win">Win</span>Top pick won</span>
+    <span class="acc-key-item"><span class="acc-key-swatch place">Plc</span>Top pick top-3</span>
+    <div class="acc-key-tiers" title="Performance tiers for rank-1 win/place rate.">
+      <span class="acc-key-tier-row"><span class="acc-key-tier elite">●</span><strong style="color:#c084fc">🏆 Elite</strong><span class="acc-key-range">Win 35%+ · Plc 65%+</span></span>
+      <span class="acc-key-tier-row"><span class="acc-key-tier good">●</span><strong style="color:#10b981">📈 Pro</strong><span class="acc-key-range">Win 25–34% · Plc 50–64%</span></span>
+      <span class="acc-key-tier-row"><span class="acc-key-tier ok">●</span><strong style="color:var(--gold)">🔍 Value</strong><span class="acc-key-range">Win 15–24% · Plc 35–49%</span></span>
+    </div>
   </div>
 
   <!-- 5-day performance strip -->
