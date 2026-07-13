@@ -308,9 +308,10 @@
     .date-pill-acc {
       font-size: 0.68rem; font-weight: 700; display: block; margin-top: 2px;
     }
-    .date-pill-acc.good { color: #10b981; }
-    .date-pill-acc.ok   { color: var(--gold); }
-    .date-pill-acc.bad  { color: #f87171; }
+    .date-pill-acc.elite { color: #fde047; text-shadow: 0 0 6px rgba(253,224,71,0.35); }
+    .date-pill-acc.good  { color: #10b981; }
+    .date-pill-acc.ok    { color: var(--gold); }
+    .date-pill-acc.bad   { color: #f87171; }
     .date-pill.past { opacity: 0.8; }
 
     /* Key/legend for the date-pill win/place pills */
@@ -366,9 +367,10 @@
       font-size: 13px;
       line-height: 1;
     }
-    .acc-key-tier.good { color: #10b981; }
-    .acc-key-tier.ok   { color: var(--gold); }
-    .acc-key-tier.bad  { color: #f87171; }
+    .acc-key-tier.elite { color: #fde047; }  /* gold — top tier */
+    .acc-key-tier.good  { color: #10b981; }
+    .acc-key-tier.ok    { color: var(--gold); }
+    .acc-key-tier.bad   { color: #f87171; }
 
     /* Day accuracy banner (shown on past dates) */
     .day-accuracy-bar {
@@ -381,9 +383,10 @@
       font-family: 'Barlow Condensed', sans-serif;
       font-size: 1.3rem; font-weight: 700; line-height: 1;
     }
-    .day-acc-val.good { color: #10b981; }
-    .day-acc-val.ok   { color: var(--gold); }
-    .day-acc-val.bad  { color: #f87171; }
+    .day-acc-val.elite { color: #fde047; text-shadow: 0 0 6px rgba(253,224,71,0.35); }
+    .day-acc-val.good  { color: #10b981; }
+    .day-acc-val.ok    { color: var(--gold); }
+    .day-acc-val.bad   { color: #f87171; }
     .day-acc-label { font-size: 0.68rem; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.06em; }
 
     /* Race pills (simpler) */
@@ -1111,10 +1114,10 @@
     <span class="acc-key-label">KEY</span>
     <span class="acc-key-item"><span class="acc-key-swatch win">Win</span>Model's top pick won the race</span>
     <span class="acc-key-item"><span class="acc-key-swatch place">Plc</span>Model's top pick finished top 3</span>
-    <span class="acc-key-item" title="Realistic rank-1 win-rate bands. Market favourites win ~30-33%, so ≥25% is a strong model and <18% trails the favourite baseline.">
-      Win %: <span class="acc-key-tier good">●</span>≥25% strong /
-      <span class="acc-key-tier ok">●</span>18–24% ok /
-      <span class="acc-key-tier bad">●</span>&lt;18% weak
+    <span class="acc-key-item" title="Performance tiers for rank-1 win/place rate. Elite is the exceptional-model band; Professional is the healthy operating range; Value is below-market performance.">
+      <span class="acc-key-tier elite">●</span><strong style="color:#fde047">🏆 Elite</strong> Win 35%+ · Place 65%+ /
+      <span class="acc-key-tier good">●</span><strong style="color:#10b981">📈 Professional</strong> Win 25–34% · Place 50–64% /
+      <span class="acc-key-tier ok">●</span><strong style="color:var(--gold)">🔍 Value</strong> Win 15–24% · Place 35–49%
     </span>
   </div>
 
@@ -1318,14 +1321,16 @@
         const smallSample = pillRaces < 5;
         const pct = Math.round(pillWinRate * 100);
         const placePct = Math.round(pillPlaceRate * 100);
-        // Realistic rank-1 win-rate thresholds. Market favourites win ~30-33% of
-        // all races (the natural ceiling for retail predictions). Anything ≥25%
-        // is genuinely strong; 18-24% is competitive; <18% trails the market
-        // favourite baseline by a meaningful margin. Zero wins → red regardless
-        // of sample size (small-sample guard only prevents artificial green).
+        // Performance tiers (matches the legend at the top):
+        //   Elite         35%+   → gold
+        //   Professional  25-34% → green
+        //   Value         15-24% → gold-amber (ok)
+        //   Below         <15%   → red
+        // Zero wins → red regardless of sample size (small-sample
+        // guard prevents artificial green on 1/2 = 50%).
         const cls = pillWins === 0
           ? 'bad'
-          : (smallSample ? 'ok' : (pct >= 25 ? 'good' : pct >= 18 ? 'ok' : 'bad'));
+          : (smallSample ? 'ok' : (pct >= 35 ? 'elite' : pct >= 25 ? 'good' : pct >= 15 ? 'ok' : 'bad'));
         // Unified "x/y (z%)" format across both banner and pills.
         const winLabel = `${pillWins}/${pillRaces} (${pct}%)`;
         const placeLabel = `${Math.round(pillPlaceRate * pillRaces)}/${pillRaces} (${placePct}%)`;
@@ -1588,9 +1593,12 @@
     // (e.g. 1/2 = 50% shouldn't paint the pill emerald), but 0 wins is
     // unambiguously bad regardless of sample size. So: zero wins → red,
     // small sample with any win → amber, otherwise threshold-based.
+    // Tiers match the KEY legend at top of page:
+    //   35%+ = Elite (gold), 25-34% = Professional (green),
+    //   15-24% = Value (amber), <15% = below baseline (red)
     const rateClass = displayWins === 0
       ? 'bad'
-      : (smallSample ? 'ok' : (pct >= 25 ? 'good' : pct >= 18 ? 'ok' : 'bad'));
+      : (smallSample ? 'ok' : (pct >= 35 ? 'elite' : pct >= 25 ? 'good' : pct >= 15 ? 'ok' : 'bad'));
     const primaryLabel = inSharpMode ? 'Sharp picks' : 'All rank-1';
     // Unified format "x/y (z%)" — shows both the ratio and the pct so
     // small samples are self-explanatory (1/2 (50%)) and large samples
