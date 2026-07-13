@@ -1202,7 +1202,16 @@
       const diff = new Date(timeStr) - Date.now();
       if (diff <= 0) {
         el.className = 'info-chip countdown';
-        el.textContent = '🏇 In Running';
+        // "In Running" only meaningful in the ~5-minute window right
+        // after the scheduled jump. Beyond that, the race is finished
+        // (or long-finished for past-date races). Show a status that
+        // makes sense at the current time delta.
+        const secsAgo = -Math.floor(diff / 1000);
+        if (secsAgo <= 300) {
+          el.textContent = '🏇 In Running';
+        } else {
+          el.textContent = '🏁 Finished';
+        }
         clearInterval(_countdownInterval);
         return;
       }
