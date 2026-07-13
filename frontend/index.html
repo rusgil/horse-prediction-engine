@@ -1280,11 +1280,13 @@
     container.innerHTML = '';
     const today = todayISO();
     let todayEl = null;
-    // 7 past days → today. Removed future days (tomorrow / +2) — they
-    // showed empty pills all morning and only had meaningful data once
-    // the 8:30am cron had enriched them, which was after the user was
-    // usually looking. Today-and-back is the actionable window.
-    for (let i = -7; i <= 0; i++) {
+    // 9 past days → today. Extended back from -7 to -9 so the previous
+    // weekend (last Sat + Sun) is visible for comparison against the
+    // current weekend when either has odd numbers.
+    // Removed future days (tomorrow / +2) — they showed empty pills
+    // all morning and only had meaningful data once the 8:30am cron
+    // had enriched them.
+    for (let i = -9; i <= 0; i++) {
       const iso = addDays(today, i);
       const isPast = i < 0;
       const el = document.createElement('div');
@@ -1312,27 +1314,29 @@
         //   so picks were a mix of pre-fix and post-fix; RA proxy hung
         //   for a portion of the day
         const PIPELINE_CHAOS_DAYS_SHARP = new Set(['2026-07-11', '2026-07-12']);
-        const suppressSharp = inSharp && PIPELINE_CHAOS_DAYS_SHARP.has(iso);
-        if (suppressSharp) {
-          accHtml = `<span class="date-pill-acc" style="color:var(--text-dim);background:var(--bg-elevated);border-color:var(--border)" title="Pipeline issues on this day — Sharp metric suppressed. See dashboard Follow-Ups tab for fix verification.">N/A</span>`;
-        } else {
-          const smallSample = pillRaces < 5;
-          const pct = Math.round(pillWinRate * 100);
-          const placePct = Math.round(pillPlaceRate * 100);
-          // Realistic rank-1 win-rate thresholds. Market favourites win ~30-33% of
-          // all races (the natural ceiling for retail predictions). Anything ≥25%
-          // is genuinely strong; 18-24% is competitive; <18% trails the market
-          // favourite baseline by a meaningful margin. Zero wins → red regardless
-          // of sample size (small-sample guard only prevents artificial green).
-          const cls = pillWins === 0
-            ? 'bad'
-            : (smallSample ? 'ok' : (pct >= 25 ? 'good' : pct >= 18 ? 'ok' : 'bad'));
-          // Unified "x/y (z%)" format across both banner and pills.
-          const winLabel = `${pillWins}/${pillRaces} (${pct}%)`;
-          const placeLabel = `${Math.round(pillPlaceRate * pillRaces)}/${pillRaces} (${placePct}%)`;
-          const tipSuffix = smallSample ? ' — small sample' : (inSharp ? ' (Sharp picks)' : '');
-          accHtml = `<span class="date-pill-acc ${cls}" title="${complete ? 'Win rate' : 'Win rate (partial)'}${tipSuffix}">${winLabel}</span><span class="date-pill-acc" style="color:#60a5fa;background:rgba(59,130,246,0.12);border-color:rgba(59,130,246,0.25);opacity:${complete ? 1 : 0.75}" title="${complete ? 'Place rate' : 'Place rate (partial)'}${tipSuffix}">${placeLabel}</span>`;
-        }
+        const suppressSharpWin = inSharp && PIPELINE_CHAOS_DAYS_SHARP.has(iso);
+        const smallSample = pillRaces < 5;
+        const pct = Math.round(pillWinRate * 100);
+        const placePct = Math.round(pillPlaceRate * 100);
+        // Realistic rank-1 win-rate thresholds. Market favourites win ~30-33% of
+        // all races (the natural ceiling for retail predictions). Anything ≥25%
+        // is genuinely strong; 18-24% is competitive; <18% trails the market
+        // favourite baseline by a meaningful margin. Zero wins → red regardless
+        // of sample size (small-sample guard only prevents artificial green).
+        const cls = pillWins === 0
+          ? 'bad'
+          : (smallSample ? 'ok' : (pct >= 25 ? 'good' : pct >= 18 ? 'ok' : 'bad'));
+        // Unified "x/y (z%)" format across both banner and pills.
+        const winLabel = `${pillWins}/${pillRaces} (${pct}%)`;
+        const placeLabel = `${Math.round(pillPlaceRate * pillRaces)}/${pillRaces} (${placePct}%)`;
+        const tipSuffix = smallSample ? ' — small sample' : (inSharp ? ' (Sharp picks)' : '');
+        // Pipeline-chaos days: suppress the WIN chip only (Sharp mode);
+        // place still shown because it's the more stable, less
+        // over-confidence-sensitive metric.
+        const winHtml = suppressSharpWin
+          ? `<span class="date-pill-acc" style="color:var(--text-dim);background:var(--bg-elevated);border-color:var(--border)" title="Pipeline issues on this day — Sharp win metric suppressed. Place rate still valid. See Follow-Ups tab.">N/A</span>`
+          : `<span class="date-pill-acc ${cls}" title="${complete ? 'Win rate' : 'Win rate (partial)'}${tipSuffix}">${winLabel}</span>`;
+        accHtml = `${winHtml}<span class="date-pill-acc" style="color:#60a5fa;background:rgba(59,130,246,0.12);border-color:rgba(59,130,246,0.25);opacity:${complete ? 1 : 0.75}" title="${complete ? 'Place rate' : 'Place rate (partial)'}${tipSuffix}">${placeLabel}</span>`;
       }
       el.innerHTML = `<span class="date-pill-day">${formatDayLabel(iso)}</span><span class="date-pill-date">${formatShortDate(iso)}</span>${accHtml}`;
       el.addEventListener('click', () => selectDate(iso));
@@ -1554,22 +1558,11 @@
     if (!perf || iso >= todayISO()) { el.innerHTML = ''; return; }
     const complete = perf.data_complete !== false;
     const inSharpMode = S.mainMode === 'sharp';
-    // Pipeline-chaos days: don't show a Sharp number for these because
-    // the picks were on pre-fix / partially-fixed code so the metric
-    // isn't a clean read on model quality. Suppress the whole banner
-    // in Sharp mode; still show it in All mode (baseline was unaffected
-    // by the Sharp-specific issues).
+    // Pipeline-chaos days: suppress the Sharp WIN metric only, keep
+    // place (place is more stable and less over-confidence-sensitive).
+    // Removable once the follow-up cron confirms the fixes worked.
     const PIPELINE_CHAOS_DAYS_SHARP = new Set(['2026-07-11', '2026-07-12']);
-    if (inSharpMode && PIPELINE_CHAOS_DAYS_SHARP.has(iso)) {
-      el.innerHTML = `
-        <div class="day-accuracy-bar">
-          <span class="day-acc-prefix" style="color:#a855f7;font-size:0.78rem;font-weight:600;letter-spacing:0.02em;padding-right:6px">Sharp stats:</span>
-          <div class="day-acc-stat">
-            <span class="day-acc-val" style="color:var(--text-dim);background:var(--bg-elevated);border-color:var(--border)" title="Pipeline issues on this day (see Follow-Ups tab on the admin dashboard). Sharp metric suppressed to avoid over-interpreting the low numbers.">N/A</span>
-          </div>
-        </div>`;
-      return;
-    }
+    const suppressSharpWin = inSharpMode && PIPELINE_CHAOS_DAYS_SHARP.has(iso);
     // In Sharp mode, primary = individually Sharp picks (the actual
     // model-discipline metric that backtests validated as +5-10pp above
     // baseline). Small-sample handling shows the ratio (e.g. "1/2")
@@ -1633,12 +1626,15 @@
     const prefixText = inSharpMode ? 'Sharp stats:' : 'All stats:';
     const prefixColor = inSharpMode ? '#a855f7' : '#60a5fa';
     const prefixLabel = `<span class="day-acc-prefix" style="color:${prefixColor};font-size:0.78rem;font-weight:600;letter-spacing:0.02em;padding-right:6px">${prefixText}</span>`;
+    // Suppress the WIN chip on pipeline-chaos days (Sharp mode only);
+    // place stays because it's the less over-confidence-sensitive metric.
+    const winChipHtml = suppressSharpWin
+      ? `<div class="day-acc-stat"><span class="day-acc-val" style="color:var(--text-dim);background:var(--bg-elevated);border-color:var(--border)" title="Pipeline issues on this day — Sharp win metric suppressed. Place still valid.">N/A <span style="font-size:0.7em;opacity:0.6">sharp win</span></span></div>`
+      : `<div class="day-acc-stat"><span class="day-acc-val ${rateClass}" title="${primaryLabel} win rate${smallSampleTip}">${winDisplay} <span style="font-size:0.7em;opacity:0.6">${inSharpMode ? 'sharp win' : 'win'}</span></span></div>`;
     el.innerHTML = `
       <div class="day-accuracy-bar">
         ${prefixLabel}
-        <div class="day-acc-stat">
-          <span class="day-acc-val ${rateClass}" title="${primaryLabel} win rate${smallSampleTip}">${winDisplay} <span style="font-size:0.7em;opacity:0.6">${inSharpMode ? 'sharp win' : 'win'}</span></span>
-        </div>
+        ${winChipHtml}
         <div class="day-acc-stat">
           <span class="day-acc-val" style="color:${complete ? '#60a5fa' : 'var(--text-dim)'};opacity:${complete ? 1 : 0.75}" title="Place rate (top 3)${smallSampleTip}">${placeDisplay} <span style="font-size:0.7em;opacity:0.6">plc</span></span>
         </div>
