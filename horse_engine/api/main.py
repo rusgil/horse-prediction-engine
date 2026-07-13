@@ -19106,7 +19106,7 @@ async def performance_summary(
 
 _TIER_GRADE_CACHE: dict[int, tuple[datetime, dict]] = {}
 _TIER_GRADE_TTL = 900  # 15 min — scanning multiple windows is expensive, About page is low-traffic
-_TIER_GRADE_VERSION = 2  # bump to invalidate cache after contamination fix
+_TIER_GRADE_VERSION = 3  # bump to invalidate cache after adding scheduled_time timing check
 
 
 @app.get("/api/admin/tier-grade-audit")
@@ -19198,10 +19198,14 @@ async def performance_tier_grade(scan: bool = Query(True)):
             return {"buckets": {"all": None, "sharp": None, "non_sharp": None}}
 
         race_ids = list({r.race_id for r in hr_rows})
-        # Contamination guard: only source="live" (real pre-race predictions),
-        # never source="backfill" (post-hoc, may leak). Order by enriched_at ASC
-        # and take EARLIEST per race so we get the genuine pre-race snapshot,
-        # not a later re-enrichment.
+        # Contamination guard, three layers:
+        #   1. source="live" — never backfill (post-hoc, retrained on future data)
+        #   2. earliest enrichment per race — the true pre-race snapshot, not a
+        #      later re-enrichment
+        #   3. when scheduled_time is populated, require enriched_at < scheduled_time
+        #      (belt-and-braces proof the row was written before jump). Rows with
+        #      NULL scheduled_time predate that column and are trusted on source
+        #      alone since source=live is written at prediction time.
         hist_pred_result = await session.execute(
             select(RunnerPredictionHistoryRow)
             .where(RunnerPredictionHistoryRow.race_id.in_(race_ids))
@@ -19212,8 +19216,17 @@ async def performance_tier_grade(scan: bool = Query(True)):
         )
         top_picks: dict[str, RunnerPredictionHistoryRow] = {}
         for p in hist_pred_result.scalars().all():
-            if p.race_id not in top_picks:
-                top_picks[p.race_id] = p
+            if p.race_id in top_picks:
+                continue
+            # Timing check where possible
+            if p.scheduled_time:
+                try:
+                    sched_dt = datetime.fromisoformat(p.scheduled_time.replace("Z", ""))
+                    if p.enriched_at and p.enriched_at >= sched_dt:
+                        continue  # enriched after jump — skip
+                except Exception:
+                    pass
+            top_picks[p.race_id] = p
 
     winners = {r.race_id: r.horse_name for r in hr_rows if r.position == 1}
     result_by_key = {(r.race_id, _normalize_horse(r.horse_name)): r for r in hr_rows}
