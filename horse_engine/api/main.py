@@ -19109,6 +19109,69 @@ _TIER_GRADE_TTL = 900  # 15 min — scanning multiple windows is expensive, Abou
 _TIER_GRADE_VERSION = 2  # bump to invalidate cache after contamination fix
 
 
+@app.get("/api/admin/tier-grade-audit")
+async def tier_grade_audit(x_cron_secret: Optional[str] = Header(None)):
+    """Diagnostic: source distribution + enriched-vs-scheduled-time integrity
+    on the same slice tier-grade queries. Confirms whether source=='live'
+    is the right contamination filter or if we're cutting legit data."""
+    _check_admin(x_cron_secret)
+    cutoff = (_today_aest() - timedelta(days=365)).isoformat()
+    async with get_session() as session:
+        rows = (await session.execute(
+            select(
+                RunnerPredictionHistoryRow.source,
+                RunnerPredictionHistoryRow.race_id,
+                RunnerPredictionHistoryRow.enriched_at,
+                RunnerPredictionHistoryRow.scheduled_time,
+                RunnerPredictionHistoryRow.is_sharp,
+            )
+            .where(RunnerPredictionHistoryRow.race_id >= cutoff)
+            .where(RunnerPredictionHistoryRow.model_rank == 1)
+            .where(RunnerPredictionHistoryRow.cancelled.is_(False) | RunnerPredictionHistoryRow.cancelled.is_(None))
+        )).fetchall()
+
+    by_source: dict[str, int] = {}
+    sharp_by_source: dict[str, int] = {}
+    date_range_by_source: dict[str, tuple[str, str]] = {}
+    pre_race_by_source: dict[str, int] = {}
+    post_race_by_source: dict[str, int] = {}
+    missing_sched_by_source: dict[str, int] = {}
+    for r in rows:
+        s = r.source if r.source else "(NULL)"
+        by_source[s] = by_source.get(s, 0) + 1
+        if r.is_sharp:
+            sharp_by_source[s] = sharp_by_source.get(s, 0) + 1
+        d = r.race_id[:10]
+        lo, hi = date_range_by_source.get(s, (d, d))
+        date_range_by_source[s] = (min(lo, d), max(hi, d))
+        # enriched_at vs scheduled_time — if enriched_at > scheduled_time, the row
+        # was written AFTER the race jumped. That's the strongest signal for
+        # contamination beyond source alone.
+        if not r.scheduled_time:
+            missing_sched_by_source[s] = missing_sched_by_source.get(s, 0) + 1
+            continue
+        try:
+            sched_dt = datetime.fromisoformat(r.scheduled_time.replace("Z", ""))
+            if r.enriched_at and r.enriched_at < sched_dt:
+                pre_race_by_source[s] = pre_race_by_source.get(s, 0) + 1
+            else:
+                post_race_by_source[s] = post_race_by_source.get(s, 0) + 1
+        except Exception:
+            missing_sched_by_source[s] = missing_sched_by_source.get(s, 0) + 1
+
+    return {
+        "window_days": 365,
+        "total_rank1_rows": len(rows),
+        "by_source": by_source,
+        "sharp_rank1_by_source": sharp_by_source,
+        "date_range_by_source": {s: {"earliest": lo, "latest": hi}
+                                  for s, (lo, hi) in date_range_by_source.items()},
+        "pre_race_enrichment_by_source": pre_race_by_source,
+        "post_race_enrichment_by_source": post_race_by_source,
+        "missing_scheduled_time_by_source": missing_sched_by_source,
+    }
+
+
 @app.get("/api/performance/tier-grade")
 async def performance_tier_grade(scan: bool = Query(True)):
     """
