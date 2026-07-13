@@ -13557,11 +13557,21 @@ async def get_meeting(race_date: str, venue_code: str):
         )
         winners: dict[str, str] = {}
         placers: dict[str, set] = {}
+        # Per-race set of normalized horse names that ACTUALLY finished
+        # (position > 0). Used to strip is_sharp=True from races where
+        # our pick was scratched race-day and never crossed the line —
+        # so the meeting-tile Sharp count matches /api/performance
+        # (which requires the pick's horse to have finished).
+        finished_horses: dict[str, set] = {}
         for r in hr_all.scalars().all():
             if r.position == 1:
                 winners[r.race_id] = r.horse_name
             if r.position <= 3:
                 placers.setdefault(r.race_id, set()).add(r.horse_name)
+            if r.position and r.position > 0:
+                finished_horses.setdefault(r.race_id, set()).add(
+                    _normalize_horse(r.horse_name)
+                )
         log.info("[get_meeting] position-based winners for %s/%s: %s", venue_code, race_date, winners)
 
         # Completed = HistoricalResultRow exists for the race (Ground Rule 5).
@@ -13612,7 +13622,16 @@ async def get_meeting(race_date: str, venue_code: str):
                     top_picks[p.race_id] = p.horse_name
                     top_win_probs[p.race_id] = p.win_probability
                     top_place_probs[p.race_id] = p.place_probability
-                    is_sharp_map[p.race_id] = p.is_sharp
+                    # is_sharp only True if the pick's horse actually
+                    # finished. A scratched Sharp pick shouldn't count
+                    # toward the meeting-tile Sharp total (aligns with
+                    # /api/performance). Moruya R4 case: WON FOR VICKI
+                    # was Sharp-flagged but never crossed the line.
+                    pick_finished = _normalize_horse(p.horse_name) in \
+                        finished_horses.get(p.race_id, set())
+                    is_sharp_map[p.race_id] = (
+                        bool(p.is_sharp) if pick_finished else False
+                    )
                 elif p.model_rank == 2:
                     rank2_win_probs[p.race_id] = p.win_probability
 
