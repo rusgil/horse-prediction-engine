@@ -1791,13 +1791,16 @@
     S.meetings.filter(m => !m.cancelled).forEach(m => _loadMeetingWinRate(m));
   }
 
-  // Sharp gate — trust the server's frozen is_sharp flag when present
-  // (authoritative — uses the full gate: (top ≥30 OR top3_sum ≥60)
-  // AND days_off ≤180). Fall back to the top ≥30% approximation only
-  // if the field is missing on the payload (older cached responses).
+  // Sharp gate — trust the server's frozen is_sharp flag when present.
+  // Authoritative gate: (top ≥30 OR top3_sum ≥60) AND days_off ≤180.
+  // - true  → Sharp
+  // - false → not Sharp
+  // - null  → NOT Sharp too (matches /api/performance which filters on
+  //   "is_sharp IS TRUE"). Previously the fallback to top≥30% was
+  //   over-counting one race on Thu 07-10 that had is_sharp=null in
+  //   the DB, producing 6 races via venue tiles but 5 via date pill.
   function _isSharpRace(r) {
-    if (typeof r.is_sharp === 'boolean') return r.is_sharp;
-    return (r.top_win_probability || 0) >= 0.30;
+    return r.is_sharp === true;
   }
 
   async function _loadMeetingWinRate(m) {
