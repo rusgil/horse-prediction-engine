@@ -55,6 +55,7 @@ from horse_engine.models.database import (
     NightlyReviewRow,
     OddsSnapshotRow,
     QualityCheckRow,
+    WeeklyReviewFollowUpRow,
     ResponseCacheRow,
     RunnerPredictionRow,
     RunnerPredictionHistoryRow,
@@ -2409,6 +2410,13 @@ async def lifespan(app: FastAPI):
     # 04:00 nightly. Runs at 10:00, 13:00, 16:00, 19:00 AEST.
     scheduler.add_job(_scheduled_racing_hours_heal,
                       CronTrigger(hour="10,13,16,19", minute=0, timezone="Australia/Sydney"))
+    # Weekly-review follow-up resolver — Sunday 07:00 AEST. Walks
+    # weekly_review_followups where scheduled_for <= today and
+    # measured_at IS NULL, runs the measurement, records verdict +
+    # next action. Dashboard's "Follow-Ups" tab renders the results.
+    scheduler.add_job(_scheduled_weekly_review_followup_check,
+                      CronTrigger(day_of_week="sun", hour=7, minute=0,
+                                  timezone="Australia/Sydney"))
     # Nightly review intentionally DISABLED (2026-06-30) — single-day
     # denominators were too small to surface actionable signals; weekly
     # carried all the value. _scheduled_nightly_review (and its analyser
@@ -11630,6 +11638,215 @@ async def admin_morning_report(x_cron_secret: Optional[str] = Header(None)):
         },
         "summary_counts": payload.get("summary") or {},
     }
+
+
+# ── Weekly review follow-ups ─────────────────────────────────────────────
+
+async def _measure_market_disagreed_losses_7d() -> float:
+    """Count 'market disagreed and horse lost' picks in the last 7d."""
+    async with get_session() as session:
+        cutoff = (_today_aest() - timedelta(days=7)).isoformat()
+        pred_rows = (await session.execute(
+            select(
+                RunnerPredictionHistoryRow.race_id,
+                RunnerPredictionHistoryRow.horse_name,
+            )
+            .where(RunnerPredictionHistoryRow.race_id >= f"{cutoff}_")
+            .where(RunnerPredictionHistoryRow.model_rank == 1)
+            .where(RunnerPredictionHistoryRow.win_probability >= 0.25)
+            .where(RunnerPredictionHistoryRow.cancelled.is_(False)
+                   | RunnerPredictionHistoryRow.cancelled.is_(None))
+            .where(RunnerPredictionHistoryRow.source == "live")
+        )).fetchall()
+        rids = list({p.race_id for p in pred_rows})
+        if not rids:
+            return 0.0
+        result_rows = (await session.execute(
+            select(HistoricalResultRow.race_id, HistoricalResultRow.horse_name,
+                   HistoricalResultRow.position, HistoricalResultRow.starting_price)
+            .where(HistoricalResultRow.race_id.in_(rids))
+        )).fetchall()
+    results_by_horse = {
+        (r.race_id, _normalize_horse(r.horse_name or "")):
+            (r.position, float(r.starting_price or 0))
+        for r in result_rows
+    }
+    count = 0
+    for p in pred_rows:
+        r = results_by_horse.get((p.race_id, _normalize_horse(p.horse_name)))
+        if not r:
+            continue
+        pos, sp = r
+        if pos is not None and pos > 5 and sp >= 8.0:
+            count += 1
+    return float(count)
+
+
+_FOLLOWUP_MEASURERS: dict = {
+    "market_disagreed_losses_7d": _measure_market_disagreed_losses_7d,
+}
+
+
+async def _resolve_followup(row: WeeklyReviewFollowUpRow) -> dict:
+    """Run the measurement + derive verdict + next action."""
+    measurer = _FOLLOWUP_MEASURERS.get(row.measurement_type or "")
+    if measurer is None:
+        return {"skipped": True, "reason": f"unknown measurement_type {row.measurement_type!r}"}
+    measured = await measurer()
+    baseline = row.baseline_value or 0
+    verdict = "unchanged"
+    if row.target_below is not None:
+        if measured <= row.target_below:
+            verdict = "fixed"
+        elif measured <= baseline * 0.75:
+            verdict = "partial"
+        elif measured > baseline:
+            verdict = "worse"
+    elif row.target_above is not None:
+        if measured >= row.target_above:
+            verdict = "fixed"
+        elif measured >= baseline * 1.25:
+            verdict = "partial"
+        elif measured < baseline:
+            verdict = "worse"
+
+    # Suggested next action
+    if verdict == "fixed":
+        next_md = "Continue monitoring. The applied fix moved the metric to target. Close-out."
+    elif verdict == "partial":
+        next_md = (
+            "Fix helped but didn't fully solve. Consider a tighter calibration "
+            "(stronger isotonic aggressiveness on the affected band, or lower "
+            "the market-anchor threshold from 25pp to 20pp)."
+        )
+    elif verdict == "worse":
+        next_md = (
+            "Metric got worse after the fix. Roll back the specific change and "
+            "investigate — the fix may be miscalibrated for the actual failure "
+            "mode."
+        )
+    else:  # unchanged
+        next_md = (
+            "Fix appears to have had no effect. The failure mode is either "
+            "not driven by what we thought, or the fix isn't reaching the "
+            "affected picks. Deeper investigation warranted before another "
+            "attempt."
+        )
+
+    row.measured_at = datetime.utcnow()
+    row.measured_value = measured
+    row.verdict = verdict
+    row.next_action_md = next_md
+    return {
+        "measured": measured,
+        "baseline": baseline,
+        "verdict": verdict,
+        "next_action_md": next_md,
+    }
+
+
+async def _scheduled_weekly_review_followup_check():
+    """Sunday morning cron — resolve any follow-ups whose scheduled_for
+    has arrived and haven't been measured yet."""
+    today = _today_aest().isoformat()
+    async with get_session() as session:
+        due = (await session.execute(
+            select(WeeklyReviewFollowUpRow)
+            .where(WeeklyReviewFollowUpRow.scheduled_for <= today)
+            .where(WeeklyReviewFollowUpRow.measured_at.is_(None))
+        )).scalars().all()
+        for row in due:
+            try:
+                await _resolve_followup(row)
+            except Exception as e:
+                log.exception("[weekly-followup] %d resolve failed: %s", row.id, e)
+        if due:
+            await session.commit()
+        log.info("[weekly-followup] resolved %d row(s)", len(due))
+
+
+@app.post("/api/admin/weekly-review-followup/create")
+async def admin_weekly_followup_create(
+    title: str = Query(...),
+    scheduled_for: str = Query(...),
+    measurement_type: str = Query(...),
+    baseline_value: float = Query(...),
+    target_below: Optional[float] = Query(None),
+    target_above: Optional[float] = Query(None),
+    context_md: str = Query(""),
+    action_md: str = Query(""),
+    x_cron_secret: Optional[str] = Header(None),
+):
+    """Create a pending follow-up. Cron picks it up on scheduled_for."""
+    _check_admin(x_cron_secret)
+    _validate_date(scheduled_for)
+    async with get_session() as session:
+        row = WeeklyReviewFollowUpRow(
+            title=title,
+            scheduled_for=scheduled_for,
+            measurement_type=measurement_type,
+            baseline_value=baseline_value,
+            target_below=target_below,
+            target_above=target_above,
+            context_md=context_md,
+            action_md=action_md,
+        )
+        session.add(row)
+        await session.commit()
+        await session.refresh(row)
+    return {"ok": True, "id": row.id}
+
+
+@app.get("/api/admin/weekly-review-followups")
+async def admin_weekly_followups_list(x_cron_secret: Optional[str] = Header(None)):
+    """List all follow-ups newest-first."""
+    _check_admin(x_cron_secret)
+    async with get_session() as session:
+        rows = (await session.execute(
+            select(WeeklyReviewFollowUpRow)
+            .order_by(WeeklyReviewFollowUpRow.scheduled_for.desc(),
+                      WeeklyReviewFollowUpRow.id.desc())
+        )).scalars().all()
+    return {
+        "rows": [
+            {
+                "id": r.id,
+                "created_at": r.created_at.isoformat() if r.created_at else None,
+                "scheduled_for": r.scheduled_for,
+                "title": r.title,
+                "context_md": r.context_md,
+                "action_md": r.action_md,
+                "measurement_type": r.measurement_type,
+                "baseline_value": r.baseline_value,
+                "target_below": r.target_below,
+                "target_above": r.target_above,
+                "measured_at": r.measured_at.isoformat() if r.measured_at else None,
+                "measured_value": r.measured_value,
+                "verdict": r.verdict,
+                "next_action_md": r.next_action_md,
+            }
+            for r in rows
+        ]
+    }
+
+
+@app.post("/api/admin/weekly-review-followup/{followup_id}/measure-now")
+async def admin_weekly_followup_measure_now(
+    followup_id: int,
+    x_cron_secret: Optional[str] = Header(None),
+):
+    """Force a measurement on a specific follow-up regardless of scheduled_for."""
+    _check_admin(x_cron_secret)
+    async with get_session() as session:
+        row = (await session.execute(
+            select(WeeklyReviewFollowUpRow)
+            .where(WeeklyReviewFollowUpRow.id == followup_id)
+        )).scalars().first()
+        if not row:
+            raise HTTPException(404, "follow-up not found")
+        result = await _resolve_followup(row)
+        await session.commit()
+    return {"ok": True, "result": result}
 
 
 @app.get("/api/admin/benchmark-historical-results-queries")

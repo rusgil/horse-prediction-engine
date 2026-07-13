@@ -332,6 +332,40 @@ class RaCalendarCacheRow(Base):
     fetched_at = Column(DateTime, default=datetime.utcnow, index=True)
 
 
+class WeeklyReviewFollowUpRow(Base):
+    """Deferred follow-up on a weekly-review suggestion — records what was
+    applied, what to measure, when to re-check, and (once measured) the
+    outcome + suggested next action.
+
+    Populated by /api/admin/weekly-review-followup/create and read by
+    the Follow-Ups dashboard tab. The Sunday cron
+    _scheduled_weekly_review_followup_check walks rows where
+    scheduled_for <= today AND measured_at IS NULL, runs the specific
+    measurement, and fills in the result columns."""
+    __tablename__ = "weekly_review_followups"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    created_at = Column(DateTime, default=datetime.utcnow, index=True)
+    scheduled_for = Column(String, index=True)         # 'YYYY-MM-DD' — when to measure
+
+    # What
+    title = Column(String)
+    context_md = Column(Text)                          # what the review said
+    action_md = Column(Text)                           # what we shipped
+
+    # How to measure
+    measurement_type = Column(String)                  # e.g. 'market_disagreed_losses_7d'
+    baseline_value = Column(Float)                     # the number at time of applying
+    target_below = Column(Float, nullable=True)       # want measured < target_below
+    target_above = Column(Float, nullable=True)       # or measured > target_above
+
+    # Filled by the cron
+    measured_at = Column(DateTime, nullable=True, index=True)
+    measured_value = Column(Float, nullable=True)
+    verdict = Column(String, nullable=True)            # 'fixed' | 'partial' | 'unchanged' | 'worse'
+    next_action_md = Column(Text, nullable=True)
+
+
 class QualityCheckRow(Base):
     """Nightly data-integrity report — one row per date. Populated by
     _scheduled_quality_check (04:00 AEST). Payload is the full report

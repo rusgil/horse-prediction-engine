@@ -557,13 +557,102 @@
     document.getElementById('tabExotic').classList.toggle('active', tab === 'exotic');
     document.getElementById('tabReviews').classList.toggle('active', tab === 'reviews');
     document.getElementById('tabQuality').classList.toggle('active', tab === 'quality');
+    document.getElementById('tabFollowUps').classList.toggle('active', tab === 'followups');
     document.getElementById('panelWin').style.display = tab === 'win' ? '' : 'none';
     document.getElementById('panelExotic').style.display = tab === 'exotic' ? '' : 'none';
     document.getElementById('panelReviews').style.display = tab === 'reviews' ? '' : 'none';
     document.getElementById('panelQuality').style.display = tab === 'quality' ? '' : 'none';
+    document.getElementById('panelFollowUps').style.display = tab === 'followups' ? '' : 'none';
     if (tab === 'exotic' && !exoticBacktestLoaded) loadExoticBacktest();
     if (tab === 'reviews' && !reviewsLoaded) loadReviews();
     if (tab === 'quality' && !qualityLoaded) loadQuality();
+    if (tab === 'followups' && !followUpsLoaded) loadFollowUps();
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  //   WEEKLY REVIEW FOLLOW-UPS TAB
+  // ═══════════════════════════════════════════════════════════
+  let followUpsLoaded = false;
+
+  function buildFollowUpsPlaceholder() {
+    return `
+      <div style="display:flex;gap:10px;align-items:center;margin-bottom:16px">
+        <button class="btn" onclick="loadFollowUps(true)">🔄 Refresh</button>
+        <span class="btn-status" id="followUpsStatus"></span>
+      </div>
+      <div id="followUpsList">Loading…</div>
+    `;
+  }
+
+  async function loadFollowUps(forceRefresh) {
+    if (!forceRefresh) followUpsLoaded = true;
+    try {
+      const res = await fetch(`${API}/api/admin/weekly-review-followups`,
+        { headers: { 'x-cron-secret': adminSecret } });
+      const data = await res.json();
+      renderFollowUps(data.rows || []);
+    } catch (e) {
+      document.getElementById('followUpsList').innerHTML =
+        `<div class="nr-empty">Failed to load: ${e.message}</div>`;
+    }
+  }
+
+  function daysUntil(dateStr) {
+    if (!dateStr) return null;
+    const target = new Date(dateStr + 'T00:00:00');
+    const now = new Date();
+    const diffMs = target.getTime() - now.getTime();
+    return Math.round(diffMs / (1000 * 60 * 60 * 24));
+  }
+
+  function renderFollowUps(rows) {
+    const wrap = document.getElementById('followUpsList');
+    if (!rows.length) {
+      wrap.innerHTML = `<div class="nr-empty">No follow-ups yet. Create one via POST /api/admin/weekly-review-followup/create.</div>`;
+      return;
+    }
+    wrap.innerHTML = rows.map(r => {
+      const measured = r.measured_at != null;
+      const days = daysUntil(r.scheduled_for);
+      let statusChip;
+      if (measured) {
+        const vColor = r.verdict === 'fixed' ? '#22c55e'
+          : r.verdict === 'partial' ? '#f59e0b'
+          : r.verdict === 'worse' ? '#ef4444' : 'var(--text-dim)';
+        const vLabel = r.verdict === 'fixed' ? '✓ FIXED'
+          : r.verdict === 'partial' ? '~ PARTIAL'
+          : r.verdict === 'worse' ? '✗ WORSE'
+          : '— UNCHANGED';
+        statusChip = `<span style="background:${vColor}20;color:${vColor};border:1px solid ${vColor};padding:3px 10px;border-radius:999px;font-size:0.75rem;font-weight:700">${vLabel}</span>`;
+      } else if (days > 0) {
+        statusChip = `<span style="background:rgba(245,200,66,0.14);color:#f5c842;border:1px solid rgba(245,200,66,0.35);padding:3px 10px;border-radius:999px;font-size:0.75rem;font-weight:600">⏳ Waiting · fires in ${days} day${days === 1 ? '' : 's'}</span>`;
+      } else if (days === 0) {
+        statusChip = `<span style="background:rgba(59,130,246,0.14);color:#60a5fa;border:1px solid rgba(59,130,246,0.35);padding:3px 10px;border-radius:999px;font-size:0.75rem;font-weight:600">Due today · Sunday 07:00 cron</span>`;
+      } else {
+        statusChip = `<span style="background:rgba(239,68,68,0.14);color:#ef4444;border:1px solid rgba(239,68,68,0.35);padding:3px 10px;border-radius:999px;font-size:0.75rem;font-weight:600">Overdue by ${-days}d — will fire on next cron</span>`;
+      }
+      const outcomeBlock = measured ? `
+        <div style="margin-top:12px;padding:12px;background:rgba(59,130,246,0.06);border-left:3px solid #60a5fa;border-radius:4px">
+          <div style="font-size:0.75rem;color:#60a5fa;text-transform:uppercase;letter-spacing:0.03em;font-weight:700;margin-bottom:4px">Measurement</div>
+          <div style="font-size:0.9rem"><strong>${r.measured_value}</strong> vs baseline ${r.baseline_value} ${r.target_below ? `(target: <${r.target_below})` : (r.target_above ? `(target: >${r.target_above})` : '')}</div>
+          <div style="font-size:0.75rem;color:var(--text-dim);margin-top:4px">Measured ${(r.measured_at || '').slice(0,16).replace('T',' ')}</div>
+          ${r.next_action_md ? `<div style="margin-top:8px;font-size:0.85rem"><strong>Next action:</strong> ${escHtml(r.next_action_md)}</div>` : ''}
+        </div>` : `
+        <div style="margin-top:12px;padding:12px;background:var(--bg-elevated);border-radius:4px">
+          <div style="font-size:0.75rem;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.03em;font-weight:600;margin-bottom:4px">Will measure on ${escHtml(r.scheduled_for)}</div>
+          <div style="font-size:0.8rem;color:var(--text-secondary)">Metric: ${escHtml(r.measurement_type || '')} · baseline ${r.baseline_value} ${r.target_below ? `· target <${r.target_below}` : (r.target_above ? `· target >${r.target_above}` : '')}</div>
+        </div>`;
+      return `
+        <div style="background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius);padding:16px;margin-bottom:14px">
+          <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;margin-bottom:8px;flex-wrap:wrap">
+            <div style="font-weight:700;font-size:1rem">${escHtml(r.title || '(untitled)')}</div>
+            ${statusChip}
+          </div>
+          <div style="font-size:0.83rem;color:var(--text-secondary);margin-bottom:6px"><strong>Context:</strong> ${escHtml(r.context_md || '')}</div>
+          <div style="font-size:0.83rem;color:var(--text-secondary)"><strong>Applied:</strong> ${escHtml(r.action_md || '')}</div>
+          ${outcomeBlock}
+        </div>`;
+    }).join('');
   }
 
   // ═══════════════════════════════════════════════════════════
@@ -796,6 +885,7 @@
     const exoContent     = buildExoticPlaceholder();
     const reviewsContent = buildReviewsPlaceholder();
     const qualityContent = buildQualityPlaceholder();
+    const followUpsContent = buildFollowUpsPlaceholder();
 
     document.getElementById('dashContent').innerHTML = `
       <div class="model-tabs">
@@ -803,11 +893,13 @@
         <button class="model-tab exotic" id="tabExotic" onclick="switchTab('exotic')">Exotics (beta)</button>
         <button class="model-tab reviews" id="tabReviews" onclick="switchTab('reviews')">Weekly Reviews</button>
         <button class="model-tab reviews" id="tabQuality" onclick="switchTab('quality')">Morning Report</button>
+        <button class="model-tab reviews" id="tabFollowUps" onclick="switchTab('followups')">Follow-Ups</button>
       </div>
       <div id="panelWin">${winContent}</div>
       <div id="panelExotic" style="display:none">${exoContent}</div>
       <div id="panelReviews" style="display:none">${reviewsContent}</div>
       <div id="panelQuality" style="display:none">${qualityContent}</div>
+      <div id="panelFollowUps" style="display:none">${followUpsContent}</div>
     `;
 
     mountWinCharts(calData, perfData);
