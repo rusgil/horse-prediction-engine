@@ -186,6 +186,57 @@
     .tier-high    { background: rgba(59,130,246,0.12); color: #60a5fa;          border: 1px solid rgba(59,130,246,0.28); }
     .tier-strong  { background: var(--green-dim);  color: var(--green);         border: 1px solid rgba(34,197,94,0.25); }
 
+    /* Model-grade badge (5-tier Elite → Poor scale) */
+    .grade-badge {
+      font-family: 'Barlow Condensed', sans-serif;
+      font-size: 0.78rem; font-weight: 800;
+      letter-spacing: 0.08em; text-transform: uppercase;
+      border-radius: 999px; padding: 4px 12px;
+      white-space: nowrap;
+    }
+    .grade-elite   { background: rgba(168,85,247,0.14); color: #c084fc; border: 1px solid rgba(168,85,247,0.4); }
+    .grade-great   { background: rgba(59,130,246,0.14); color: #60a5fa; border: 1px solid rgba(59,130,246,0.4); }
+    .grade-good    { background: rgba(34,197,94,0.14);  color: #4ade80; border: 1px solid rgba(34,197,94,0.4); }
+    .grade-average { background: rgba(245,200,66,0.12); color: #f5c842; border: 1px solid rgba(245,200,66,0.35); }
+    .grade-poor    { background: rgba(239,68,68,0.12);  color: #f87171; border: 1px solid rgba(239,68,68,0.35); }
+    .grade-none    { background: rgba(255,255,255,0.04); color: var(--text-dim); border: 1px solid var(--border); }
+
+    .grade-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr;
+      gap: 12px;
+      margin-top: 12px;
+    }
+    .grade-card {
+      background: var(--panel);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 14px 16px;
+    }
+    .grade-card-title {
+      font-family: 'Barlow Condensed', sans-serif;
+      font-size: 0.7rem; font-weight: 800;
+      letter-spacing: 0.12em; text-transform: uppercase;
+      color: var(--text-dim); margin-bottom: 8px;
+    }
+    .grade-metrics { display: flex; gap: 14px; align-items: baseline; margin: 6px 0 10px; }
+    .grade-metric-num {
+      font-family: 'Barlow Condensed', sans-serif;
+      font-size: 1.55rem; font-weight: 900; color: var(--text);
+    }
+    .grade-metric-lbl {
+      font-size: 0.62rem; font-weight: 700;
+      letter-spacing: 0.1em; text-transform: uppercase;
+      color: var(--text-dim); margin-left: 4px;
+    }
+    .grade-sp {
+      font-size: 0.72rem; color: var(--text-dim);
+      margin-top: 4px;
+    }
+    @media (max-width: 640px) {
+      .grade-grid { grid-template-columns: 1fr; }
+    }
+
     .win-rate { font-family: 'Barlow Condensed', sans-serif; font-size: 1.3rem; font-weight: 900; }
     .win-rate.premium { color: var(--purple-bright); }
     .win-rate.hot     { color: var(--gold-light); }
@@ -538,6 +589,59 @@
     </div>
   </div>
 
+  <!-- Live Model Grade — 5-tier Elite → Poor scale -->
+  <div class="section">
+    <div class="section-title">Current Model Grade</div>
+    <p class="note" style="margin-top:-4px">
+      Graded on the industry 5-tier scale — Elite / Great / Good / Average / Poor —
+      using the last <span id="grade-window">30</span> days of live pre-race top-1 picks.
+      Odds context matters: a 20% strike at $8 average is commercially elite even though it grades
+      Tier 2 on hit-rate alone. That's why we publish average winning odds beside every tier.
+    </p>
+    <div class="grade-grid" id="grade-grid">
+      <div class="grade-card" data-bucket="all">
+        <div class="grade-card-title">All picks</div>
+        <div class="grade-metrics">
+          <div><span class="grade-metric-num" data-slot="win">—</span><span class="grade-metric-lbl">win</span></div>
+          <div><span class="grade-metric-num" data-slot="place">—</span><span class="grade-metric-lbl">place</span></div>
+        </div>
+        <span class="grade-badge grade-none" data-slot="badge">—</span>
+        <div class="grade-sp">
+          Winners avg <span data-slot="win_sp">—</span> · Flat ROI <span data-slot="roi">—</span><br>
+          <span data-slot="races">—</span> races · Field avg SP <span data-slot="sp">—</span>
+        </div>
+      </div>
+      <div class="grade-card" data-bucket="sharp">
+        <div class="grade-card-title">Sharp only</div>
+        <div class="grade-metrics">
+          <div><span class="grade-metric-num" data-slot="win">—</span><span class="grade-metric-lbl">win</span></div>
+          <div><span class="grade-metric-num" data-slot="place">—</span><span class="grade-metric-lbl">place</span></div>
+        </div>
+        <span class="grade-badge grade-none" data-slot="badge">—</span>
+        <div class="grade-sp">
+          Winners avg <span data-slot="win_sp">—</span> · Flat ROI <span data-slot="roi">—</span><br>
+          <span data-slot="races">—</span> races · Field avg SP <span data-slot="sp">—</span>
+        </div>
+      </div>
+      <div class="grade-card" data-bucket="non_sharp">
+        <div class="grade-card-title">Non-Sharp</div>
+        <div class="grade-metrics">
+          <div><span class="grade-metric-num" data-slot="win">—</span><span class="grade-metric-lbl">win</span></div>
+          <div><span class="grade-metric-num" data-slot="place">—</span><span class="grade-metric-lbl">place</span></div>
+        </div>
+        <span class="grade-badge grade-none" data-slot="badge">—</span>
+        <div class="grade-sp">
+          Winners avg <span data-slot="win_sp">—</span> · Flat ROI <span data-slot="roi">—</span><br>
+          <span data-slot="races">—</span> races · Field avg SP <span data-slot="sp">—</span>
+        </div>
+      </div>
+    </div>
+    <p class="note" style="margin-top:12px;font-style:italic">
+      All statistics are calculated on a flat, single-unit stake on a single horse (rank-1 model pick)
+      per race, over a comprehensive sample size.
+    </p>
+  </div>
+
   <!-- Tiers explained -->
   <div class="section">
     <div class="section-title">The Tiers Explained</div>
@@ -731,6 +835,55 @@
   }
 
   loadStats();
+
+  // ── Model Grade (5-tier Elite → Poor) ─────────────────────────────────
+  // The hit-rate bands come from the industry legend; the odds qualifier
+  // (avg SP) is published alongside because a low-win rate at long odds
+  // can be commercially stronger than a high-win rate at short odds.
+  function gradeFor(win_pct, place_pct) {
+    if (win_pct == null) return { label: 'No Data', cls: 'grade-none' };
+    if (win_pct >= 38 || place_pct >= 65) return { label: '🏆 Elite',    cls: 'grade-elite' };
+    if (win_pct >= 30 || place_pct >= 55) return { label: '📈 Great',    cls: 'grade-great' };
+    if (win_pct >= 22 || place_pct >= 45) return { label: '🔍 Good',     cls: 'grade-good' };
+    if (win_pct >= 15 || place_pct >= 35) return { label: '⚖️ Average', cls: 'grade-average' };
+    return { label: '📉 Poor', cls: 'grade-poor' };
+  }
+
+  async function loadTierGrade() {
+    try {
+      const res = await fetch(API + '/api/performance/tier-grade?days=30');
+      if (!res.ok) return;
+      const data = await res.json();
+      document.getElementById('grade-window').textContent = String(data.days || 30);
+      const buckets = data.buckets || {};
+      for (const key of ['all', 'sharp', 'non_sharp']) {
+        const card = document.querySelector(`.grade-card[data-bucket="${key}"]`);
+        if (!card) continue;
+        const b = buckets[key];
+        if (!b) continue;
+        card.querySelector('[data-slot="win"]').textContent    = b.win_pct.toFixed(1) + '%';
+        card.querySelector('[data-slot="place"]').textContent  = b.place_pct.toFixed(1) + '%';
+        card.querySelector('[data-slot="sp"]').textContent     = b.mean_sp != null ? '$' + b.mean_sp.toFixed(2) : '—';
+        card.querySelector('[data-slot="win_sp"]').textContent = b.mean_winning_sp != null ? '$' + b.mean_winning_sp.toFixed(2) : '—';
+        const roiEl = card.querySelector('[data-slot="roi"]');
+        if (b.flat_roi_pct != null) {
+          const sign = b.flat_roi_pct >= 0 ? '+' : '';
+          roiEl.textContent = sign + b.flat_roi_pct.toFixed(1) + '%';
+          roiEl.style.color = b.flat_roi_pct >= 0 ? 'var(--green-bright, #4ade80)' : '#f87171';
+        } else {
+          roiEl.textContent = '—';
+        }
+        card.querySelector('[data-slot="races"]').textContent  = b.races.toLocaleString();
+        const g = gradeFor(b.win_pct, b.place_pct);
+        const badge = card.querySelector('[data-slot="badge"]');
+        badge.textContent = g.label;
+        badge.className = 'grade-badge ' + g.cls;
+      }
+    } catch (e) {
+      console.warn('Failed to load tier grade:', e);
+    }
+  }
+  loadTierGrade();
 </script>
 </body>
 </html>

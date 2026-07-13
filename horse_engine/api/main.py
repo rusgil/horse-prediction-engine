@@ -19045,6 +19045,103 @@ async def performance_summary(
     return body
 
 
+@app.get("/api/performance/tier-grade")
+async def performance_tier_grade(days: int = Query(30, ge=7, le=365)):
+    """
+    Public rollup for the About page's 5-tier grade badge.
+    Aggregates the last N days into three buckets — all / sharp / non-sharp —
+    and returns wins, places, and mean starting price for each so the UI can
+    grade against the Elite/Great/Good/Average/Poor scale (which specifies
+    both a hit-rate band AND an odds profile per tier).
+    """
+    cutoff = (_today_aest() - timedelta(days=days)).isoformat()
+
+    async with get_session() as session:
+        hr_rows = (await session.execute(
+            select(HistoricalResultRow).where(HistoricalResultRow.race_id >= cutoff)
+        )).scalars().all()
+        if not hr_rows:
+            return {"days": days, "buckets": {"all": None, "sharp": None, "non_sharp": None}}
+
+        race_ids = list({r.race_id for r in hr_rows})
+        hist_pred_result = await session.execute(
+            select(RunnerPredictionHistoryRow)
+            .where(RunnerPredictionHistoryRow.race_id.in_(race_ids))
+            .where(RunnerPredictionHistoryRow.model_rank == 1)
+            .where(RunnerPredictionHistoryRow.cancelled.is_(False) | RunnerPredictionHistoryRow.cancelled.is_(None))
+            .order_by(RunnerPredictionHistoryRow.enriched_at.desc())
+        )
+        top_picks: dict[str, RunnerPredictionHistoryRow] = {}
+        for p in hist_pred_result.scalars().all():
+            if p.race_id not in top_picks:
+                top_picks[p.race_id] = p
+
+    winners = {r.race_id: r.horse_name for r in hr_rows if r.position == 1}
+    result_by_key = {(r.race_id, _normalize_horse(r.horse_name)): r for r in hr_rows}
+
+    def _mk_bucket():
+        return {"races": 0, "wins": 0, "places": 0,
+                "sp_sum_all": 0.0, "sp_n_all": 0,
+                "sp_sum_wins": 0.0, "sp_n_wins": 0}
+
+    all_b, sharp_b, nonsharp_b = _mk_bucket(), _mk_bucket(), _mk_bucket()
+    for race_id, pick in top_picks.items():
+        winner = winners.get(race_id)
+        if not winner:
+            continue
+        actual = result_by_key.get((race_id, _normalize_horse(pick.horse_name)))
+        if not actual or not actual.position or actual.position <= 0:
+            continue
+        won = _normalize_horse(pick.horse_name) == _normalize_horse(winner)
+        placed = bool(actual.position <= 3) or won
+        sp = float(actual.starting_price) if actual.starting_price else None
+        is_sharp = pick.is_sharp is True
+        for b in (all_b, sharp_b if is_sharp else nonsharp_b):
+            b["races"] += 1
+            if won:
+                b["wins"] += 1
+            if placed:
+                b["places"] += 1
+            if sp and sp > 1.0:
+                b["sp_sum_all"] += sp
+                b["sp_n_all"] += 1
+                if won:
+                    b["sp_sum_wins"] += sp
+                    b["sp_n_wins"] += 1
+
+    def _finish(b):
+        n = b["races"]
+        if not n:
+            return None
+        mean_sp_all = (b["sp_sum_all"] / b["sp_n_all"]) if b["sp_n_all"] else None
+        mean_sp_wins = (b["sp_sum_wins"] / b["sp_n_wins"]) if b["sp_n_wins"] else None
+        # Flat unit-stake ROI: bet 1 unit on top pick every race. Winners return
+        # sp units, losers return 0. Denominator is races. Matches source's
+        # "flat, single-unit stake on a single horse per race" footnote.
+        flat_roi_pct = None
+        if b["sp_n_wins"]:
+            flat_roi_pct = round((b["sp_sum_wins"] - n) / n * 100, 2)
+        return {
+            "races": n,
+            "wins": b["wins"],
+            "places": b["places"],
+            "win_pct": round(b["wins"] / n * 100, 2),
+            "place_pct": round(b["places"] / n * 100, 2),
+            "mean_sp": round(mean_sp_all, 2) if mean_sp_all is not None else None,
+            "mean_winning_sp": round(mean_sp_wins, 2) if mean_sp_wins is not None else None,
+            "flat_roi_pct": flat_roi_pct,
+        }
+
+    return {
+        "days": days,
+        "buckets": {
+            "all": _finish(all_b),
+            "sharp": _finish(sharp_b),
+            "non_sharp": _finish(nonsharp_b),
+        },
+    }
+
+
 @app.get("/api/admin/backtest-win")
 async def backtest_win(
     split_pct: float = Query(0.7, ge=0.5, le=0.9),
