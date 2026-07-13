@@ -956,12 +956,11 @@
       document.getElementById('sharp-copy-win').textContent   = winPct.toFixed(0) + '%';
       document.getElementById('sharp-copy-races').textContent = best.races.toLocaleString();
       document.getElementById('sharp-copy-sp').textContent    = best.mean_winning_sp != null ? '$' + best.mean_winning_sp.toFixed(2) : '$—';
-      const bao = best.flat_bao_roi_pct;
-      if (bao != null) {
-        const sign = bao >= 0 ? '+' : '';
-        document.getElementById('sharp-copy-bao').textContent =
-          ' — our measured flat-BAO ROI on this sample is ' + sign + bao.toFixed(1) + '%';
-      }
+      // BAO auto-append intentionally omitted — captured `best_available_odds`
+      // shows ~SP on our current data (mean winning BAO $2.48 vs SP $2.47), so
+      // printing our measured BAO ROI would undersell the industry-standard
+      // 8-15% BAO uplift the copy references. Fixing BAO capture is a separate
+      // task; the callout stays honest by not claiming a measured number.
 
       const roiEl = document.getElementById('sharp-hero-roi');
       if (best.flat_roi_pct != null) {
