@@ -19106,7 +19106,7 @@ async def performance_summary(
 
 _TIER_GRADE_CACHE: dict[int, tuple[datetime, dict]] = {}
 _TIER_GRADE_TTL = 900  # 15 min — scanning multiple windows is expensive, About page is low-traffic
-_TIER_GRADE_VERSION = 3  # bump to invalidate cache after adding scheduled_time timing check
+_TIER_GRADE_VERSION = 4  # bump to invalidate cache after switching to N-race sample anchor
 
 
 @app.get("/api/admin/tier-grade-audit")
@@ -19173,20 +19173,19 @@ async def tier_grade_audit(x_cron_secret: Optional[str] = Header(None)):
 
 
 @app.get("/api/performance/tier-grade")
-async def performance_tier_grade(scan: bool = Query(True)):
+async def performance_tier_grade(sample_size: int = Query(500, ge=100, le=2000)):
     """
-    Public rollup for the About page's 5-tier model grade.
-    When scan=true (default), evaluates several standard windows (14/30/60/90/180/365d)
-    against each bucket (all / sharp / non_sharp) and returns whichever scores highest
-    per bucket — published as "best sample to date" alongside the current 30d snapshot.
-    Every returned window states its own days + races so nothing is hidden.
+    Public rollup for the About page's 5-tier model grade. Sample = the last
+    N pre-race live rank-1 picks per bucket (all / sharp / non_sharp),
+    regardless of window length. All contamination guards applied
+    (source='live', earliest enrichment, enriched_at<scheduled_time when known).
     """
-    cache_key = (_TIER_GRADE_VERSION, 1 if scan else 0)
+    cache_key = (_TIER_GRADE_VERSION, sample_size)
     cached = _TIER_GRADE_CACHE.get(cache_key)
     if cached and (datetime.utcnow() - cached[0]).total_seconds() < _TIER_GRADE_TTL:
         return cached[1]
 
-    # Load the widest window once and re-aggregate per candidate window in Python.
+    # Load the widest possible window; we'll trim per-bucket by race count.
     max_days = 365
     cutoff = (_today_aest() - timedelta(days=max_days)).isoformat()
 
@@ -19280,49 +19279,32 @@ async def performance_tier_grade(scan: bool = Query(True)):
             "flat_bao_roi_pct": flat_bao_roi_pct,
         }
 
-    def _tier_rank(win_pct: float, place_pct: float) -> int:
-        """5=Elite, 4=Great, 3=Good, 2=Average, 1=Poor. Higher = better tier."""
-        if win_pct >= 38 or place_pct >= 65: return 5
-        if win_pct >= 30 or place_pct >= 55: return 4
-        if win_pct >= 22 or place_pct >= 45: return 3
-        if win_pct >= 15 or place_pct >= 35: return 2
-        return 1
+    # Sort entries newest-first by race_date for the N-race trimming.
+    entries.sort(key=lambda e: e[0], reverse=True)
 
-    windows = [14, 30, 60, 90, 180, 365] if scan else [30]
-    today = _today_aest()
-
-    def _pick_best(is_sharp_filter):  # None=all, True=sharp, False=non_sharp
-        best = None
-        best_score = (-1, -1.0)  # (tier_rank, win_pct)
-        current_30d = None
-        per_window = []
-        for w in windows:
-            cutoff_date = (today - timedelta(days=w)).isoformat()
-            filtered = [e for e in entries
-                        if e[0] >= cutoff_date
-                        and (is_sharp_filter is None or e[1] == is_sharp_filter)]
-            agg = _aggregate(filtered)
-            if not agg:
-                continue
-            # Require a real sample — a 2-race 100% win rate isn't "best".
-            # Match the smallest bucket floor so Sharp gets a fair look.
-            if agg["races"] < 50:
-                continue
-            agg["days"] = w
-            per_window.append(agg)
-            if w == 30:
-                current_30d = agg
-            score = (_tier_rank(agg["win_pct"], agg["place_pct"]), agg["win_pct"])
-            if score > best_score:
-                best_score = score
-                best = agg
-        return {"best": best, "current_30d": current_30d, "windows": per_window}
+    def _bucket(is_sharp_filter):  # None=all, True=sharp, False=non_sharp
+        filtered = [e for e in entries
+                    if is_sharp_filter is None or e[1] == is_sharp_filter]
+        # Take the most-recent N. If fewer than N clean rows exist we return
+        # what we have and state the count honestly.
+        sample = filtered[:sample_size]
+        if not sample:
+            return None
+        agg = _aggregate(sample)
+        if agg is None:
+            return None
+        if sample:
+            agg["earliest_race_date"] = sample[-1][0]
+            agg["latest_race_date"] = sample[0][0]
+        agg["requested_sample_size"] = sample_size
+        return agg
 
     body = {
+        "sample_size": sample_size,
         "buckets": {
-            "all":       _pick_best(None),
-            "sharp":     _pick_best(True),
-            "non_sharp": _pick_best(False),
+            "all":       _bucket(None),
+            "sharp":     _bucket(True),
+            "non_sharp": _bucket(False),
         },
     }
     _TIER_GRADE_CACHE[cache_key] = (datetime.utcnow(), body)

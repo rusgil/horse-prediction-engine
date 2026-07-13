@@ -626,9 +626,8 @@
     <div class="section-title">Sharp Picks · Where We Sit</div>
     <p class="note" style="margin-top:-4px">
       Sharp picks graded against the industry 5-tier scale, from Poor to Elite (world-class).
-      The arrow marks where FunkyIQ sits over the last 30 days of pre-race live predictions.
-      Older data is excluded because it was regenerated post-race (backfill) and can't be scored
-      as a real-time pick.
+      The arrow marks where FunkyIQ sits over the last 500 pre-race Sharp predictions.
+      Backfill and post-race reconstructions are excluded so nothing benefits from hindsight.
     </p>
 
     <div class="tier-scale">
@@ -684,7 +683,7 @@
       </div>
       <div class="sharp-hero-item">
         <span class="sharp-hero-num" id="sharp-hero-window">—</span>
-        <span class="sharp-hero-lbl">day window</span>
+        <span class="sharp-hero-lbl">sample window</span>
       </div>
     </div>
     <div style="margin-top:20px;padding:16px 18px;background:rgba(168,85,247,0.06);border:1px solid rgba(168,85,247,0.22);border-radius:12px">
@@ -692,8 +691,8 @@
         🏆 Sharp Tier · Elite Consistency
       </div>
       <div style="font-size:0.88rem;color:var(--text-secondary);line-height:1.65">
-        <span id="sharp-copy-win">—</span> strike rate over
-        <span id="sharp-copy-races">—</span> pre-race live Sharp picks in the last 30 days, with
+        <span id="sharp-copy-win">—</span> strike rate over the last
+        <span id="sharp-copy-races">—</span> pre-race Sharp picks, with
         <span id="sharp-copy-sp">—</span> average winning odds. At market Starting Price the model
         prices close to the tote's efficient closing market. Where profitable edge lives is at
         Best-Available fixed odds, which historically pay 8–15% above SP<span id="sharp-copy-bao"></span>.
@@ -925,11 +924,11 @@
 
   async function loadSharpTierScale() {
     try {
-      const res = await fetch(API + '/api/performance/tier-grade?scan=true');
+      const res = await fetch(API + '/api/performance/tier-grade?sample_size=500');
       if (!res.ok) return;
       const data = await res.json();
       const sharp = (data.buckets || {}).sharp;
-      const best = sharp && sharp.best;
+      const best = sharp;  // new endpoint returns the bucket directly
       if (!best) return;
 
       const winPct   = best.win_pct;
@@ -952,7 +951,12 @@
 
       document.getElementById('sharp-hero-races').textContent = best.races.toLocaleString();
       document.getElementById('sharp-hero-winsp').textContent = best.mean_winning_sp != null ? '$' + best.mean_winning_sp.toFixed(2) : '—';
-      document.getElementById('sharp-hero-window').textContent = best.days;
+      // Show the date range covered rather than a static "days" number
+      if (best.earliest_race_date && best.latest_race_date) {
+        document.getElementById('sharp-hero-window').textContent = best.earliest_race_date.slice(5) + '→' + best.latest_race_date.slice(5);
+      } else {
+        document.getElementById('sharp-hero-window').textContent = '—';
+      }
 
       // Fill the elite-consistency copy with real numbers
       document.getElementById('sharp-copy-win').textContent   = winPct.toFixed(0) + '%';
