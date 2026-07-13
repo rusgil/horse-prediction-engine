@@ -1894,7 +1894,20 @@
       if (S.date === todayISO()) loadMeetingResults(m);
 
       // Auto-select first race
-      if (S.races.length) await selectRace(S.races[0]);
+      // Auto-select first race — in Sharp mode prefer the first
+      // Sharp-qualifying race, otherwise first available. If none
+      // qualify (all-non-sharp meeting in Sharp mode) clear the race
+      // panel so we don't render a race the pill strip is hiding.
+      const inSharpAuto = S.mainMode === 'sharp';
+      const firstRace = inSharpAuto
+        ? (S.races.find(r => _isSharpRace(r)) || null)
+        : (S.races[0] || null);
+      if (firstRace) {
+        await selectRace(firstRace);
+      } else {
+        S.selectedRaceId = null;
+        document.getElementById('raceContent').innerHTML = '';
+      }
 
     } catch (e) {
       document.getElementById('raceContent').innerHTML = renderErrorHTML('Failed to load races.', e.message);
@@ -1998,7 +2011,19 @@
   function renderRacePills() {
     const container = document.getElementById('racePills');
     container.innerHTML = '';
-    S.races.forEach(r => {
+    // Sharp mode: hide race pills for non-Sharp races so the drill-down
+    // is consistent with the meeting-tile filter. All mode shows every
+    // race as before.
+    const inSharp = S.mainMode === 'sharp';
+    const visible = inSharp ? S.races.filter(r => _isSharpRace(r)) : S.races;
+    if (inSharp && !visible.length && S.races.length) {
+      container.innerHTML = `
+        <div style="padding:14px 16px;color:var(--text-dim);font-size:0.85rem;font-style:italic;border:1px dashed var(--border);border-radius:10px;width:100%;text-align:center;">
+          This meeting has no Sharp-qualifying races. Switch to <strong style="color:#c084fc;cursor:pointer" onclick="setMainMode('all')">All picks</strong> to view every race here.
+        </div>`;
+      return;
+    }
+    visible.forEach(r => {
       const raceId = r.race_id;
       const enriched = S.enrichedRaceIds.has(raceId);
       const el = document.createElement('div');
