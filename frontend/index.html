@@ -1677,11 +1677,25 @@
       renderDayAccuracyBanner(iso);
       document.getElementById('meetingsSection').style.display = '';
 
-      const firstActive = S.meetings.find(m => !m.cancelled);
+      // Auto-select first eligible meeting for the current mode. In
+      // Sharp mode only pick a Sharp-qualifying meeting; otherwise
+      // any non-cancelled. Prevents mobile-UI bug where Sharp-mode
+      // empty pills coexisted with a race prediction for a non-Sharp
+      // meeting silently rendered below.
+      const inSharp = S.mainMode === 'sharp';
+      const firstActive = inSharp
+        ? S.meetings.find(m => !m.cancelled && isSharpMeeting(m))
+        : S.meetings.find(m => !m.cancelled);
       if (firstActive) {
         await selectMeeting(firstActive);
       } else {
-        document.getElementById('raceContent').innerHTML = '<div style="padding:32px;text-align:center;color:var(--text-dim)">All meetings abandoned for this date.</div>';
+        // Nothing to auto-select → clear any leftover race UI
+        S.selectedMeeting = null;
+        S.races = [];
+        S.selectedRaceId = null;
+        const racesSection = document.getElementById('racesSection');
+        if (racesSection) racesSection.style.display = 'none';
+        document.getElementById('raceContent').innerHTML = '';
       }
 
     } catch (e) {
