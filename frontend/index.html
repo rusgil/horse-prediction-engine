@@ -1787,6 +1787,14 @@
     S.meetings.filter(m => !m.cancelled).forEach(m => _loadMeetingWinRate(m));
   }
 
+  // Sharp gate approximation from race payload — matches the primary
+  // criterion (rank-1 win_prob ≥ 30). Server-side is_sharp uses this
+  // OR top-3-sum ≥ 60, but /api/meetings/{date}/{venue} doesn't return
+  // top-3 sum today; ≥30% covers the majority of Sharp picks.
+  function _isSharpRace(r) {
+    return (r.top_win_probability || 0) >= 0.30;
+  }
+
   async function _loadMeetingWinRate(m) {
     const key = m.venue_code;
     if (S.meetingStats[key]) return; // already cached
@@ -1802,19 +1810,30 @@
         return Math.max(max, pct);
       }, 0);
       const settledWithPlace = races.filter(r => r.model_placed !== null && r.model_placed !== undefined);
+      // Compute BOTH all-mode and Sharp-only stats so the tile can render
+      // whichever the current filter selects.
+      const sharpSettled = settled.filter(_isSharpRace);
+      const sharpSettledWithPlace = settledWithPlace.filter(_isSharpRace);
       S.meetingStats[key] = {
         wins: settled.filter(r => r.model_correct).length,
         placed: settledWithPlace.filter(r => r.model_placed).length,
         total: settled.length,
+        sharpWins: sharpSettled.filter(r => r.model_correct).length,
+        sharpPlaced: sharpSettledWithPlace.filter(r => r.model_placed).length,
+        sharpTotal: sharpSettled.length,
         enriched: enriched.length, maxConf
       };
 
       const statEl = document.getElementById(`pill-stat-${key}`);
       if (statEl) {
-        if (settled.length) {
-          const wins = settled.filter(r => r.model_correct === true).length;
-          const placed = settledWithPlace.filter(r => r.model_placed === true).length;
-          statEl.innerHTML = `<span style="color:#10b981">${wins}/${settled.length} wins</span>${placed > wins ? ` <span style="color:#60a5fa;font-size:0.72rem">· ${placed} placed</span>` : ''}`;
+        const inSharp = S.mainMode === 'sharp';
+        const useTotal   = inSharp ? sharpSettled.length : settled.length;
+        const useWins    = inSharp ? sharpSettled.filter(r => r.model_correct).length
+                                   : settled.filter(r => r.model_correct === true).length;
+        const usePlaced  = inSharp ? sharpSettledWithPlace.filter(r => r.model_placed).length
+                                   : settledWithPlace.filter(r => r.model_placed === true).length;
+        if (useTotal) {
+          statEl.innerHTML = `<span style="color:#10b981">${useWins}/${useTotal} wins</span>${usePlaced > useWins ? ` <span style="color:#60a5fa;font-size:0.72rem">· ${usePlaced} placed</span>` : ''}`;
         } else if (enriched.length) {
           statEl.textContent = `${enriched.length} races`;
           statEl.style.opacity = '0.45';
