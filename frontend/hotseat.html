@@ -956,19 +956,23 @@
   </header>
   <header>
     <div class="refresh-status" style="text-align:center;margin-bottom:8px"><span class="dot"></span><span id="refreshLabel">Loading…</span></div>
+    <!-- Mode filter lives OUTSIDE the collapsible body so it's always
+         accessible without opening filters. It's the primary Sharp/All
+         switch — most users want to toggle it without expanding the
+         other filters. -->
+    <div class="filter-row mode-row" style="margin-bottom:8px">
+      <span class="filter-axis-label">Mode</span>
+      <button class="filter-pill active" data-axis="mode" data-filter="sharp">🎯 Sharp only</button>
+      <button class="filter-pill" data-axis="mode" data-filter="all">All picks</button>
+    </div>
     <button id="filtersToggle" class="filters-toggle" type="button" aria-expanded="false">
-      Filters <span class="toggle-caret" id="filtersCaret">▾</span>
+      More filters <span class="toggle-caret" id="filtersCaret">▾</span>
     </button>
     <div id="filtersBody" class="filters-body">
     <div class="filter-help">
       <strong>Win %</strong> = model's chance the horse wins ·
       <strong>Place %</strong> = chance of finishing top 3 ·
       <strong>Sharp</strong> = our highest-confidence niche (32-35% win rate historically)
-    </div>
-    <div class="filter-row mode-row">
-      <span class="filter-axis-label">Mode</span>
-      <button class="filter-pill active" data-axis="mode" data-filter="sharp">🎯 Sharp only</button>
-      <button class="filter-pill" data-axis="mode" data-filter="all">All picks</button>
     </div>
     <div class="filter-row">
       <span class="filter-axis-label">Win %</span>
