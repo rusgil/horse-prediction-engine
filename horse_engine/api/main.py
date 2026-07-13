@@ -137,99 +137,95 @@ def _like_safe(value: str) -> str:
 
 
 async def _scheduled_odds_snapshot():
-    """Snapshot current odds for all upcoming races within the next 3 hours."""
+    """Snapshot current fixed-win odds for all rank-1 picks scheduled today or
+    tomorrow. Fetches from OddsPro (bookmaker fixed markets), not the RA HTML
+    scrape.
+
+    History note (2026-07-14): the previous implementation called
+    CompositeClient.get_meeting_races which delegates to Racing Australia's HTML
+    scrape. On 2026-06-01 we switched the data pipeline to RA+OddsPro+Betfair;
+    RA's parser never populated topToteWin/flucs (the fields are hard-coded
+    None/{} in RA's parse_selections), so every runner hit the `continue`
+    branch and zero snapshots were inserted for 44 days. Silent death — no
+    exception. Rebuild uses OddsPro directly, same source the working
+    live-odds refresh already uses.
+    """
+    from horse_engine.clients.oddspro import OddsProClient
+
     delay = random.uniform(0, 600)
-    log.info("[odds-snapshot] Waiting %.0fs before RA requests", delay)
+    log.info("[odds-snapshot] Waiting %.0fs before OddsPro requests", delay)
     await asyncio.sleep(delay)
     log.info("[odds-snapshot] Running odds snapshot")
     try:
-        client = get_tab_client()
+        op = OddsProClient()
         now_aest = datetime.now(_AEST)
         today = now_aest.date().isoformat()
         tomorrow = (now_aest.date() + timedelta(days=1)).isoformat()
 
-        for target_date in [today, tomorrow]:
+        for target_date in (today, tomorrow):
             prefix = f"{target_date}_"
             async with get_session() as session:
-                result = await session.execute(
+                picks = (await session.execute(
                     select(RunnerPredictionRow)
                     .where(RunnerPredictionRow.model_rank == 1)
                     .where(RunnerPredictionRow.race_id.like(f"{prefix}%"))
-                )
-                picks = result.scalars().all()
+                )).scalars().all()
 
             if not picks:
                 continue
 
-            slugs: dict[str, list[RunnerPredictionRow]] = {}
-            for p in picks:
-                _, venue_code, _ = _parse_race_id(p.race_id)
-                slug = _meeting_slug(venue_code, target_date)
-                slugs.setdefault(slug, []).append(p)
+            try:
+                meeting_odds = await op.get_meeting_odds(target_date)
+            except Exception as e:
+                log.warning("[odds-snapshot] OddsPro get_meeting_odds failed for %s: %s", target_date, e)
+                continue
+            if not meeting_odds:
+                log.info("[odds-snapshot] OddsPro returned no meetings for %s", target_date)
+                continue
 
-            for slug, slug_picks in slugs.items():
-                try:
-                    events = await asyncio.wait_for(client.get_meeting_races(slug), timeout=30)
-                    snapped_at = datetime.utcnow()
-
-                    # Build lookup: horse_name → (win_odds, place_odds, source, jump_time)
-                    horse_data: dict[str, dict] = {}
-                    for event in events:
-                        start_time = event.get("startTime")
-                        for sel in event.get("selections") or []:
-                            name = (sel.get("competitor") or {}).get("name")
-                            if not name:
-                                continue
-                            tote = sel.get("topToteWin")
-                            place = sel.get("topTotePlace")
-                            flucs = sel.get("flucs") or {}
-                            if tote:
-                                win = float(tote)
-                                source = "tote"
-                            elif flucs.get("low"):
-                                win = float(flucs["low"])
-                                source = "flucs"
-                            elif flucs.get("open"):
-                                win = float(flucs["open"])
-                                source = "flucs"
-                            else:
-                                continue
-                            horse_data[name] = {
-                                "win": win,
-                                "place": float(place) if place else None,
-                                "source": source,
-                                "start_time": start_time,
-                            }
-
-                    snapped_race_ids: set[str] = set()
-                    async with get_session() as session:
-                        for pick in slug_picks:
-                            hd = horse_data.get(pick.horse_name)
-                            if not hd:
-                                continue
-                            mins_to_jump = None
-                            if hd["start_time"]:
-                                try:
-                                    jump = datetime.fromisoformat(hd["start_time"].replace("Z", "+00:00"))
-                                    mins_to_jump = round((jump.timestamp() - snapped_at.replace(tzinfo=None).timestamp()) / 60)
-                                except Exception:
-                                    pass
-                            session.add(OddsSnapshotRow(
-                                race_id=pick.race_id,
-                                horse_name=pick.horse_name,
-                                snapshotted_at=snapped_at,
-                                minutes_to_jump=mins_to_jump,
-                                win_odds=hd["win"],
-                                place_odds=hd["place"],
-                                source=hd["source"],
-                            ))
-                            snapped_race_ids.add(pick.race_id)
-                        await session.commit()
-                    log.info("[odds-snapshot] Snapped %d runners for %s", len(horse_data), slug)
-                    # Recompute steam features from full snapshot history for these races
-                    asyncio.create_task(_update_steam_features(list(snapped_race_ids)))
-                except Exception as e:
-                    log.warning("[odds-snapshot] Failed for %s: %s", slug, e)
+            tracks = list(meeting_odds.keys())
+            snapped_at = datetime.utcnow()
+            inserts_by_venue: dict[str, int] = {}
+            snapped_race_ids: set[str] = set()
+            async with get_session() as session:
+                for pick in picks:
+                    try:
+                        _, venue_code, race_num_str = _parse_race_id(pick.race_id)
+                        race_num = int(str(race_num_str).replace("R", ""))
+                    except Exception:
+                        continue
+                    op_track = op.find_matching_track(venue_code, tracks)
+                    if not op_track:
+                        continue
+                    key = (race_num, (pick.horse_name or "").lower().strip())
+                    price = meeting_odds.get(op_track, {}).get(key)
+                    if not price or price <= 1.0:
+                        continue
+                    mins_to_jump = None
+                    if pick.scheduled_time:
+                        try:
+                            jump = datetime.fromisoformat(pick.scheduled_time.replace("Z", "+00:00")).replace(tzinfo=None)
+                            mins_to_jump = round((jump - snapped_at).total_seconds() / 60)
+                        except Exception:
+                            pass
+                    session.add(OddsSnapshotRow(
+                        race_id=pick.race_id,
+                        horse_name=pick.horse_name,
+                        snapshotted_at=snapped_at,
+                        minutes_to_jump=mins_to_jump,
+                        win_odds=float(price),
+                        place_odds=None,  # OddsPro exposes fixed-win only
+                        source="oddspro-fixed",
+                    ))
+                    inserts_by_venue[op_track] = inserts_by_venue.get(op_track, 0) + 1
+                    snapped_race_ids.add(pick.race_id)
+                await session.commit()
+            total = sum(inserts_by_venue.values())
+            log.info("[odds-snapshot] Inserted %d rows for %s across %d venues",
+                     total, target_date, len(inserts_by_venue))
+            # Recompute steam features from full snapshot history for these races
+            if snapped_race_ids:
+                asyncio.create_task(_update_steam_features(list(snapped_race_ids)))
     except Exception as e:
         log.exception("[odds-snapshot] Snapshot failed: %s", e)
 
@@ -11351,6 +11347,35 @@ async def _run_quality_check(target: str) -> dict:
                     "n": len(rank1_with_result),
                     "reason": "Sub-10% win rate suggests systemic pipeline breakage or bad data",
                 })
+
+    # ── Odds-snapshot freshness ────────────────────────────────────
+    # The snapshot cron went silently dark from 2026-06-01 to 2026-07-14 after
+    # the RA/OddsPro pipeline switch. This check flags critical if no snapshot
+    # has been written in the last 24h — steam features degrade without it.
+    async with get_session() as session:
+        latest_snap = (await session.execute(
+            select(OddsSnapshotRow.snapshotted_at)
+            .order_by(OddsSnapshotRow.snapshotted_at.desc())
+            .limit(1)
+        )).scalar()
+    if latest_snap is None:
+        critical.append({
+            "check": "odds_snapshots_missing",
+            "reason": "odds_snapshots table is empty — cron not running or misconfigured",
+        })
+    else:
+        snap_age_hours = (datetime.utcnow() - latest_snap).total_seconds() / 3600
+        info.append({
+            "check": "odds_snapshot_recency",
+            "latest_snapshot_at": latest_snap.isoformat(),
+            "hours_ago": round(snap_age_hours, 1),
+        })
+        if snap_age_hours > 24:
+            critical.append({
+                "check": "odds_snapshots_stale",
+                "hours_ago": round(snap_age_hours, 1),
+                "reason": "No new odds_snapshots row in >24h — steam features stop updating",
+            })
 
     return {
         "date": target,
