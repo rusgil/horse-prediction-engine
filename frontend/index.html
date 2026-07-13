@@ -1611,32 +1611,16 @@
     const placeDisplay = `${placedCount}/${displayRaces} (${placePct}%)`;
     const smallSampleTip = smallSample ? ` — small sample (n=${displayRaces})` : '';
 
-    // Secondary chip in Sharp mode: Sharp meetings context (all rank-1
-    // picks at Sharp-qualifying venues). Shown when it differs from the
-    // sharp-picks-only number, purely as context — NOT the primary
-    // measure of Sharp performance.
-    const hasMeetingsContext = inSharpMode
-      && perf.sharp_meeting_races != null
-      && perf.sharp_meeting_races !== perf.races;
+    // Removed the "at sharp mtgs" secondary chip (2026-07-13): it
+    // counted ALL rank-1 wins at meetings that had ≥1 Sharp race,
+    // which included non-Sharp races at those meetings. That
+    // contradicts the rest of the Sharp filter now that meeting-tile
+    // and race-pill counts filter to Sharp-only. Users found it
+    // confusing (e.g. "4/5 Sharp win + 8/21 at sharp mtgs — where
+    // did 21 come from?").
     const pnlClass = perf.value_pnl >= 0 ? 'good' : 'bad';
     const pnlStr = perf.value_pnl >= 0 ? `+$${perf.value_pnl.toFixed(1)}` : `-$${Math.abs(perf.value_pnl).toFixed(1)}`;
-
-    // Secondary chip: Sharp meetings context (broader "all rank-1 at
-    // Sharp-qualifying venues" scope). Shown as CONTEXT only — Sharp
-    // picks is the primary because it's the actual model-discipline
-    // measure. Sharp meetings dilutes with surrounding non-Sharp picks
-    // and can under-perform the primary on some days.
-    let secondaryHtml = '';
-    if (hasMeetingsContext) {
-      const smPct = Math.round((perf.sharp_meeting_win_rate || 0) * 100);
-      secondaryHtml = `
-        <div class="day-acc-stat" style="padding-left:8px;border-left:1px solid var(--border);margin-left:4px">
-          <span class="day-acc-val" style="color:var(--text-secondary);font-size:0.85em" title="All rank-1 picks at meetings that had at least one Sharp race — broader scope, not the model-discipline metric">
-            ${perf.sharp_meeting_wins}/${perf.sharp_meeting_races} (${smPct}%)
-            <span style="font-size:0.7em;opacity:0.6">at sharp mtgs</span>
-          </span>
-        </div>`;
-    }
+    const secondaryHtml = '';
 
     const prefixText = inSharpMode ? 'Sharp stats:' : 'All stats:';
     const prefixColor = inSharpMode ? '#a855f7' : '#60a5fa';
