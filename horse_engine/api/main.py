@@ -13913,7 +13913,11 @@ async def live_odds(race_id: str):
             select(HistoricalResultRow)
             .where(HistoricalResultRow.race_id == race_id)
         )).scalars().all()
-    db_results = {r.horse_name: r for r in hr_rows}
+    # Key by normalized name — HistoricalResultRow stores names in the case RA
+    # returned (often title case), but enrichment horses can be uppercase.
+    # A raw-string lookup misses position → winner_name=None → model_correct=None,
+    # which showed as "Results in" with no verdict banner (Bairnsdale R2–R8, 2026-07-13).
+    db_results = {_normalize_horse(r.horse_name): r for r in hr_rows}
     db_settled = bool(db_results)
 
     # For settled races use pre-race history probs so overlay isn't contaminated by re-enrichment
@@ -13958,7 +13962,7 @@ async def live_odds(race_id: str):
     all_tote = []
     for horse in all_horses:
         p_odds, p_pos = ra_tote.get(horse, (None, None))
-        db_r = db_results.get(horse)
+        db_r = db_results.get(_normalize_horse(horse))
         # Position: RA live > DB historical
         actual_position = p_pos or (db_r.position if db_r else None)
         # Odds: RA live > DB historical SP > stored enrichment odds
