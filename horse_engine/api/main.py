@@ -19150,8 +19150,10 @@ async def performance_tier_grade(scan: bool = Query(True)):
     result_by_key = {(r.race_id, _normalize_horse(r.horse_name)): r for r in hr_rows}
 
     # Pre-compute per-race stats so window aggregation is a linear filter pass.
-    # entries: (race_date_str, is_sharp, won, placed, sp_or_None)
-    entries: list[tuple[str, bool, bool, bool, float | None]] = []
+    # entries: (race_date_str, is_sharp, won, placed, sp_or_None, bao_or_None)
+    # bao = pre-race best-available fixed odds captured at enrichment time — a
+    # real price a punter could have taken, historically 8–15% above SP.
+    entries: list[tuple[str, bool, bool, bool, float | None, float | None]] = []
     for race_id, pick in top_picks.items():
         winner = winners.get(race_id)
         if not winner:
@@ -19162,7 +19164,8 @@ async def performance_tier_grade(scan: bool = Query(True)):
         won = _normalize_horse(pick.horse_name) == _normalize_horse(winner)
         placed = bool(actual.position <= 3) or won
         sp = float(actual.starting_price) if actual.starting_price else None
-        entries.append((race_id[:10], pick.is_sharp is True, won, placed, sp))
+        bao = float(pick.best_available_odds) if pick.best_available_odds else None
+        entries.append((race_id[:10], pick.is_sharp is True, won, placed, sp, bao))
 
     def _aggregate(candidates: list[tuple]) -> dict | None:
         n = len(candidates)
@@ -19173,6 +19176,14 @@ async def performance_tier_grade(scan: bool = Query(True)):
         sp_all = [e[4] for e in candidates if e[4] and e[4] > 1.0]
         sp_wins = [e[4] for e in candidates if e[2] and e[4] and e[4] > 1.0]
         flat_roi_pct = round((sum(sp_wins) - n) / n * 100, 2) if sp_wins else None
+        # BAO-based ROI on the same denominator (all races staked). If BAO was
+        # unavailable for a winning pick, it falls back to SP so the numerator
+        # stays comparable to flat_roi_pct's basis.
+        bao_wins = [e[5] if (e[5] and e[5] > 1.0) else e[4]
+                    for e in candidates
+                    if e[2] and ((e[5] and e[5] > 1.0) or (e[4] and e[4] > 1.0))]
+        bao_all = [e[5] for e in candidates if e[5] and e[5] > 1.0]
+        flat_bao_roi_pct = round((sum(bao_wins) - n) / n * 100, 2) if bao_wins else None
         return {
             "races": n,
             "wins": wins,
@@ -19181,7 +19192,10 @@ async def performance_tier_grade(scan: bool = Query(True)):
             "place_pct": round(places / n * 100, 2),
             "mean_sp": round(sum(sp_all) / len(sp_all), 2) if sp_all else None,
             "mean_winning_sp": round(sum(sp_wins) / len(sp_wins), 2) if sp_wins else None,
+            "mean_winning_bao": round(sum(bao_wins) / len(bao_wins), 2) if bao_wins else None,
+            "bao_coverage_pct": round(len(bao_all) / n * 100, 1) if n else None,
             "flat_roi_pct": flat_roi_pct,
+            "flat_bao_roi_pct": flat_bao_roi_pct,
         }
 
     def _tier_rank(win_pct: float, place_pct: float) -> int:

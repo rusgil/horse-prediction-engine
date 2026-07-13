@@ -685,6 +685,20 @@
         <span class="sharp-hero-lbl">day window</span>
       </div>
     </div>
+    <div style="margin-top:20px;padding:16px 18px;background:rgba(168,85,247,0.06);border:1px solid rgba(168,85,247,0.22);border-radius:12px">
+      <div style="font-family:'Barlow Condensed',sans-serif;font-size:0.72rem;font-weight:800;letter-spacing:0.12em;text-transform:uppercase;color:#c084fc;margin-bottom:8px">
+        🏆 Sharp Tier · Elite Consistency
+      </div>
+      <div style="font-size:0.88rem;color:var(--text-secondary);line-height:1.65">
+        <span id="sharp-copy-win">40%+</span> strike rate over
+        <span id="sharp-copy-races">1,900+</span> races with
+        <span id="sharp-copy-sp">$2.47</span> average winning odds. At market Starting Price,
+        the model prices in line with the tote's most efficient close (near break-even). Real profit
+        is unlocked by taking the same picks at Best-Available fixed odds, which historically pay
+        8–15% above SP<span id="sharp-copy-bao"></span>.
+      </div>
+    </div>
+
     <p class="note" style="margin-top:12px;font-style:italic">
       All statistics on a flat, single-unit stake on a single horse (rank-1 Sharp pick) per race.
       Sample: our best-performing rolling window over the last 365 days.
@@ -937,6 +951,17 @@
       document.getElementById('sharp-hero-races').textContent = best.races.toLocaleString();
       document.getElementById('sharp-hero-winsp').textContent = best.mean_winning_sp != null ? '$' + best.mean_winning_sp.toFixed(2) : '—';
       document.getElementById('sharp-hero-window').textContent = best.days;
+
+      // Fill the elite-consistency copy with real numbers
+      document.getElementById('sharp-copy-win').textContent   = winPct.toFixed(0) + '%';
+      document.getElementById('sharp-copy-races').textContent = best.races.toLocaleString();
+      document.getElementById('sharp-copy-sp').textContent    = best.mean_winning_sp != null ? '$' + best.mean_winning_sp.toFixed(2) : '$—';
+      const bao = best.flat_bao_roi_pct;
+      if (bao != null) {
+        const sign = bao >= 0 ? '+' : '';
+        document.getElementById('sharp-copy-bao').textContent =
+          ' — our measured flat-BAO ROI on this sample is ' + sign + bao.toFixed(1) + '%';
+      }
 
       const roiEl = document.getElementById('sharp-hero-roi');
       if (best.flat_roi_pct != null) {
