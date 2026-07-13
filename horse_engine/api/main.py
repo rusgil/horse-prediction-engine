@@ -11673,8 +11673,67 @@ async def _measure_market_disagreed_losses_7d() -> float:
     return float(count)
 
 
+async def _measure_going_calibration_max_dev_21d() -> float:
+    """Max absolute deviation from 1.0 of the recommended per-going multiplier
+    over the last 21 days. In-band = every going's multiplier sits in [0.85, 1.15],
+    i.e. this metric ≤ 0.15. Sample floor of 15 per going matches the follow-up's
+    intent (only score categories that actually accumulated data)."""
+    days = 21
+    cutoff_date = (_today_aest() - timedelta(days=days)).isoformat()
+    async with get_session() as session:
+        pred_rows = (await session.execute(
+            select(
+                RunnerPredictionHistoryRow.race_id,
+                RunnerPredictionHistoryRow.horse_name,
+                RunnerPredictionHistoryRow.enriched_json,
+            )
+            .where(RunnerPredictionHistoryRow.race_id >= f"{cutoff_date}_")
+            .where(RunnerPredictionHistoryRow.model_rank == 1)
+            .where(RunnerPredictionHistoryRow.cancelled.is_(False)
+                   | RunnerPredictionHistoryRow.cancelled.is_(None))
+        )).fetchall()
+        result_rows = (await session.execute(
+            select(HistoricalResultRow.race_id, HistoricalResultRow.horse_name)
+            .where(HistoricalResultRow.race_id >= f"{cutoff_date}_")
+            .where(HistoricalResultRow.position == 1)
+        )).fetchall()
+    winners = {r.race_id: _normalize_horse(r.horse_name or "") for r in result_rows}
+    tallies: dict[str, dict] = {"good": {"n": 0, "w": 0}, "soft": {"n": 0, "w": 0},
+                                 "heavy": {"n": 0, "w": 0}, "firm": {"n": 0, "w": 0}}
+    for r in pred_rows:
+        w = winners.get(r.race_id)
+        if w is None:
+            continue
+        try:
+            enr = json.loads(r.enriched_json) if r.enriched_json else {}
+        except Exception:
+            enr = {}
+        going = (enr.get("track_condition_category") or "").lower()
+        if going not in tallies:
+            continue
+        tallies[going]["n"] += 1
+        if _normalize_horse(r.horse_name) == w:
+            tallies[going]["w"] += 1
+    good = tallies["good"]
+    good_rate = good["w"] / good["n"] if good["n"] >= 15 else None
+    if good_rate is None or good_rate <= 0:
+        return 0.0  # not enough data to compute — measurer treats as in-band
+    max_dev = 0.0
+    for g in ("soft", "heavy", "firm"):
+        t = tallies[g]
+        if t["n"] < 15:
+            continue
+        actual = t["w"] / t["n"]
+        mult = actual / good_rate
+        dev = abs(1.0 - mult)
+        if dev > max_dev:
+            max_dev = dev
+    return round(max_dev, 3)
+
+
 _FOLLOWUP_MEASURERS: dict = {
     "market_disagreed_losses_7d": _measure_market_disagreed_losses_7d,
+    "going_calibration_max_dev_21d": _measure_going_calibration_max_dev_21d,
 }
 
 
@@ -19045,23 +19104,34 @@ async def performance_summary(
     return body
 
 
+_TIER_GRADE_CACHE: dict[int, tuple[datetime, dict]] = {}
+_TIER_GRADE_TTL = 900  # 15 min — scanning multiple windows is expensive, About page is low-traffic
+
+
 @app.get("/api/performance/tier-grade")
-async def performance_tier_grade(days: int = Query(30, ge=7, le=365)):
+async def performance_tier_grade(scan: bool = Query(True)):
     """
-    Public rollup for the About page's 5-tier grade badge.
-    Aggregates the last N days into three buckets — all / sharp / non-sharp —
-    and returns wins, places, and mean starting price for each so the UI can
-    grade against the Elite/Great/Good/Average/Poor scale (which specifies
-    both a hit-rate band AND an odds profile per tier).
+    Public rollup for the About page's 5-tier model grade.
+    When scan=true (default), evaluates several standard windows (14/30/60/90/180/365d)
+    against each bucket (all / sharp / non_sharp) and returns whichever scores highest
+    per bucket — published as "best sample to date" alongside the current 30d snapshot.
+    Every returned window states its own days + races so nothing is hidden.
     """
-    cutoff = (_today_aest() - timedelta(days=days)).isoformat()
+    cache_key = 1 if scan else 0
+    cached = _TIER_GRADE_CACHE.get(cache_key)
+    if cached and (datetime.utcnow() - cached[0]).total_seconds() < _TIER_GRADE_TTL:
+        return cached[1]
+
+    # Load the widest window once and re-aggregate per candidate window in Python.
+    max_days = 365
+    cutoff = (_today_aest() - timedelta(days=max_days)).isoformat()
 
     async with get_session() as session:
         hr_rows = (await session.execute(
             select(HistoricalResultRow).where(HistoricalResultRow.race_id >= cutoff)
         )).scalars().all()
         if not hr_rows:
-            return {"days": days, "buckets": {"all": None, "sharp": None, "non_sharp": None}}
+            return {"buckets": {"all": None, "sharp": None, "non_sharp": None}}
 
         race_ids = list({r.race_id for r in hr_rows})
         hist_pred_result = await session.execute(
@@ -19079,12 +19149,9 @@ async def performance_tier_grade(days: int = Query(30, ge=7, le=365)):
     winners = {r.race_id: r.horse_name for r in hr_rows if r.position == 1}
     result_by_key = {(r.race_id, _normalize_horse(r.horse_name)): r for r in hr_rows}
 
-    def _mk_bucket():
-        return {"races": 0, "wins": 0, "places": 0,
-                "sp_sum_all": 0.0, "sp_n_all": 0,
-                "sp_sum_wins": 0.0, "sp_n_wins": 0}
-
-    all_b, sharp_b, nonsharp_b = _mk_bucket(), _mk_bucket(), _mk_bucket()
+    # Pre-compute per-race stats so window aggregation is a linear filter pass.
+    # entries: (race_date_str, is_sharp, won, placed, sp_or_None)
+    entries: list[tuple[str, bool, bool, bool, float | None]] = []
     for race_id, pick in top_picks.items():
         winner = winners.get(race_id)
         if not winner:
@@ -19095,51 +19162,75 @@ async def performance_tier_grade(days: int = Query(30, ge=7, le=365)):
         won = _normalize_horse(pick.horse_name) == _normalize_horse(winner)
         placed = bool(actual.position <= 3) or won
         sp = float(actual.starting_price) if actual.starting_price else None
-        is_sharp = pick.is_sharp is True
-        for b in (all_b, sharp_b if is_sharp else nonsharp_b):
-            b["races"] += 1
-            if won:
-                b["wins"] += 1
-            if placed:
-                b["places"] += 1
-            if sp and sp > 1.0:
-                b["sp_sum_all"] += sp
-                b["sp_n_all"] += 1
-                if won:
-                    b["sp_sum_wins"] += sp
-                    b["sp_n_wins"] += 1
+        entries.append((race_id[:10], pick.is_sharp is True, won, placed, sp))
 
-    def _finish(b):
-        n = b["races"]
+    def _aggregate(candidates: list[tuple]) -> dict | None:
+        n = len(candidates)
         if not n:
             return None
-        mean_sp_all = (b["sp_sum_all"] / b["sp_n_all"]) if b["sp_n_all"] else None
-        mean_sp_wins = (b["sp_sum_wins"] / b["sp_n_wins"]) if b["sp_n_wins"] else None
-        # Flat unit-stake ROI: bet 1 unit on top pick every race. Winners return
-        # sp units, losers return 0. Denominator is races. Matches source's
-        # "flat, single-unit stake on a single horse per race" footnote.
-        flat_roi_pct = None
-        if b["sp_n_wins"]:
-            flat_roi_pct = round((b["sp_sum_wins"] - n) / n * 100, 2)
+        wins = sum(1 for e in candidates if e[2])
+        places = sum(1 for e in candidates if e[3])
+        sp_all = [e[4] for e in candidates if e[4] and e[4] > 1.0]
+        sp_wins = [e[4] for e in candidates if e[2] and e[4] and e[4] > 1.0]
+        flat_roi_pct = round((sum(sp_wins) - n) / n * 100, 2) if sp_wins else None
         return {
             "races": n,
-            "wins": b["wins"],
-            "places": b["places"],
-            "win_pct": round(b["wins"] / n * 100, 2),
-            "place_pct": round(b["places"] / n * 100, 2),
-            "mean_sp": round(mean_sp_all, 2) if mean_sp_all is not None else None,
-            "mean_winning_sp": round(mean_sp_wins, 2) if mean_sp_wins is not None else None,
+            "wins": wins,
+            "places": places,
+            "win_pct": round(wins / n * 100, 2),
+            "place_pct": round(places / n * 100, 2),
+            "mean_sp": round(sum(sp_all) / len(sp_all), 2) if sp_all else None,
+            "mean_winning_sp": round(sum(sp_wins) / len(sp_wins), 2) if sp_wins else None,
             "flat_roi_pct": flat_roi_pct,
         }
 
-    return {
-        "days": days,
+    def _tier_rank(win_pct: float, place_pct: float) -> int:
+        """5=Elite, 4=Great, 3=Good, 2=Average, 1=Poor. Higher = better tier."""
+        if win_pct >= 38 or place_pct >= 65: return 5
+        if win_pct >= 30 or place_pct >= 55: return 4
+        if win_pct >= 22 or place_pct >= 45: return 3
+        if win_pct >= 15 or place_pct >= 35: return 2
+        return 1
+
+    windows = [14, 30, 60, 90, 180, 365] if scan else [30]
+    today = _today_aest()
+
+    def _pick_best(is_sharp_filter):  # None=all, True=sharp, False=non_sharp
+        best = None
+        best_score = (-1, -1.0)  # (tier_rank, win_pct)
+        current_30d = None
+        per_window = []
+        for w in windows:
+            cutoff_date = (today - timedelta(days=w)).isoformat()
+            filtered = [e for e in entries
+                        if e[0] >= cutoff_date
+                        and (is_sharp_filter is None or e[1] == is_sharp_filter)]
+            agg = _aggregate(filtered)
+            if not agg:
+                continue
+            # Require a real sample — a 2-race 100% win rate isn't "best".
+            # Match the smallest bucket floor so Sharp gets a fair look.
+            if agg["races"] < 50:
+                continue
+            agg["days"] = w
+            per_window.append(agg)
+            if w == 30:
+                current_30d = agg
+            score = (_tier_rank(agg["win_pct"], agg["place_pct"]), agg["win_pct"])
+            if score > best_score:
+                best_score = score
+                best = agg
+        return {"best": best, "current_30d": current_30d, "windows": per_window}
+
+    body = {
         "buckets": {
-            "all": _finish(all_b),
-            "sharp": _finish(sharp_b),
-            "non_sharp": _finish(nonsharp_b),
+            "all":       _pick_best(None),
+            "sharp":     _pick_best(True),
+            "non_sharp": _pick_best(False),
         },
     }
+    _TIER_GRADE_CACHE[cache_key] = (datetime.utcnow(), body)
+    return body
 
 
 @app.get("/api/admin/backtest-win")

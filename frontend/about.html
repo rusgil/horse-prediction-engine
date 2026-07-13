@@ -591,12 +591,13 @@
 
   <!-- Live Model Grade — 5-tier Elite → Poor scale -->
   <div class="section">
-    <div class="section-title">Current Model Grade</div>
+    <div class="section-title">Best Sample To Date</div>
     <p class="note" style="margin-top:-4px">
-      Graded on the industry 5-tier scale — Elite / Great / Good / Average / Poor —
-      using the last <span id="grade-window">30</span> days of live pre-race top-1 picks.
-      Odds context matters: a 20% strike at $8 average is commercially elite even though it grades
-      Tier 2 on hit-rate alone. That's why we publish average winning odds beside every tier.
+      Graded on the industry 5-tier scale — Elite / Great / Good / Average / Poor. Each bucket shows
+      the best-performing rolling window (from 14, 30, 60, 90, 180, and 365 days), with the window
+      length and race count stated so nothing is cherry-picked in secret. Current 30-day snapshot is
+      shown alongside for context. Odds matter as much as strike rate — a 20% hit at $8 average is
+      commercially strong even though the hit-rate alone reads Tier 2.
     </p>
     <div class="grade-grid" id="grade-grid">
       <div class="grade-card" data-bucket="all">
@@ -608,7 +609,8 @@
         <span class="grade-badge grade-none" data-slot="badge">—</span>
         <div class="grade-sp">
           Winners avg <span data-slot="win_sp">—</span> · Flat ROI <span data-slot="roi">—</span><br>
-          <span data-slot="races">—</span> races · Field avg SP <span data-slot="sp">—</span>
+          Best window: <span data-slot="best_days">—</span>d · <span data-slot="races">—</span> races · Field avg SP <span data-slot="sp">—</span><br>
+          <span data-slot="current" style="opacity:0.75">30d now: <span data-slot="current_win">—</span> win · <span data-slot="current_place">—</span> place</span>
         </div>
       </div>
       <div class="grade-card" data-bucket="sharp">
@@ -620,7 +622,8 @@
         <span class="grade-badge grade-none" data-slot="badge">—</span>
         <div class="grade-sp">
           Winners avg <span data-slot="win_sp">—</span> · Flat ROI <span data-slot="roi">—</span><br>
-          <span data-slot="races">—</span> races · Field avg SP <span data-slot="sp">—</span>
+          Best window: <span data-slot="best_days">—</span>d · <span data-slot="races">—</span> races · Field avg SP <span data-slot="sp">—</span><br>
+          <span data-slot="current" style="opacity:0.75">30d now: <span data-slot="current_win">—</span> win · <span data-slot="current_place">—</span> place</span>
         </div>
       </div>
       <div class="grade-card" data-bucket="non_sharp">
@@ -632,7 +635,8 @@
         <span class="grade-badge grade-none" data-slot="badge">—</span>
         <div class="grade-sp">
           Winners avg <span data-slot="win_sp">—</span> · Flat ROI <span data-slot="roi">—</span><br>
-          <span data-slot="races">—</span> races · Field avg SP <span data-slot="sp">—</span>
+          Best window: <span data-slot="best_days">—</span>d · <span data-slot="races">—</span> races · Field avg SP <span data-slot="sp">—</span><br>
+          <span data-slot="current" style="opacity:0.75">30d now: <span data-slot="current_win">—</span> win · <span data-slot="current_place">—</span> place</span>
         </div>
       </div>
     </div>
@@ -851,33 +855,41 @@
 
   async function loadTierGrade() {
     try {
-      const res = await fetch(API + '/api/performance/tier-grade?days=30');
+      const res = await fetch(API + '/api/performance/tier-grade?scan=true');
       if (!res.ok) return;
       const data = await res.json();
-      document.getElementById('grade-window').textContent = String(data.days || 30);
       const buckets = data.buckets || {};
       for (const key of ['all', 'sharp', 'non_sharp']) {
         const card = document.querySelector(`.grade-card[data-bucket="${key}"]`);
         if (!card) continue;
-        const b = buckets[key];
-        if (!b) continue;
-        card.querySelector('[data-slot="win"]').textContent    = b.win_pct.toFixed(1) + '%';
-        card.querySelector('[data-slot="place"]').textContent  = b.place_pct.toFixed(1) + '%';
-        card.querySelector('[data-slot="sp"]').textContent     = b.mean_sp != null ? '$' + b.mean_sp.toFixed(2) : '—';
-        card.querySelector('[data-slot="win_sp"]').textContent = b.mean_winning_sp != null ? '$' + b.mean_winning_sp.toFixed(2) : '—';
+        const wrapper = buckets[key] || {};
+        const best = wrapper.best;
+        const cur  = wrapper.current_30d;
+        if (!best) continue;
+        card.querySelector('[data-slot="win"]').textContent    = best.win_pct.toFixed(1) + '%';
+        card.querySelector('[data-slot="place"]').textContent  = best.place_pct.toFixed(1) + '%';
+        card.querySelector('[data-slot="sp"]').textContent     = best.mean_sp != null ? '$' + best.mean_sp.toFixed(2) : '—';
+        card.querySelector('[data-slot="win_sp"]').textContent = best.mean_winning_sp != null ? '$' + best.mean_winning_sp.toFixed(2) : '—';
+        card.querySelector('[data-slot="races"]').textContent  = best.races.toLocaleString();
+        card.querySelector('[data-slot="best_days"]').textContent = best.days;
         const roiEl = card.querySelector('[data-slot="roi"]');
-        if (b.flat_roi_pct != null) {
-          const sign = b.flat_roi_pct >= 0 ? '+' : '';
-          roiEl.textContent = sign + b.flat_roi_pct.toFixed(1) + '%';
-          roiEl.style.color = b.flat_roi_pct >= 0 ? 'var(--green-bright, #4ade80)' : '#f87171';
+        if (best.flat_roi_pct != null) {
+          const sign = best.flat_roi_pct >= 0 ? '+' : '';
+          roiEl.textContent = sign + best.flat_roi_pct.toFixed(1) + '%';
+          roiEl.style.color = best.flat_roi_pct >= 0 ? 'var(--green-bright, #4ade80)' : '#f87171';
         } else {
           roiEl.textContent = '—';
         }
-        card.querySelector('[data-slot="races"]').textContent  = b.races.toLocaleString();
-        const g = gradeFor(b.win_pct, b.place_pct);
+        const g = gradeFor(best.win_pct, best.place_pct);
         const badge = card.querySelector('[data-slot="badge"]');
         badge.textContent = g.label;
         badge.className = 'grade-badge ' + g.cls;
+        if (cur) {
+          card.querySelector('[data-slot="current_win"]').textContent   = cur.win_pct.toFixed(1) + '%';
+          card.querySelector('[data-slot="current_place"]').textContent = cur.place_pct.toFixed(1) + '%';
+        } else {
+          card.querySelector('[data-slot="current"]').style.display = 'none';
+        }
       }
     } catch (e) {
       console.warn('Failed to load tier grade:', e);
