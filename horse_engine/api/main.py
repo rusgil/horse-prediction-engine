@@ -19106,6 +19106,7 @@ async def performance_summary(
 
 _TIER_GRADE_CACHE: dict[int, tuple[datetime, dict]] = {}
 _TIER_GRADE_TTL = 900  # 15 min — scanning multiple windows is expensive, About page is low-traffic
+_TIER_GRADE_VERSION = 2  # bump to invalidate cache after contamination fix
 
 
 @app.get("/api/performance/tier-grade")
@@ -19117,7 +19118,7 @@ async def performance_tier_grade(scan: bool = Query(True)):
     per bucket — published as "best sample to date" alongside the current 30d snapshot.
     Every returned window states its own days + races so nothing is hidden.
     """
-    cache_key = 1 if scan else 0
+    cache_key = (_TIER_GRADE_VERSION, 1 if scan else 0)
     cached = _TIER_GRADE_CACHE.get(cache_key)
     if cached and (datetime.utcnow() - cached[0]).total_seconds() < _TIER_GRADE_TTL:
         return cached[1]
@@ -19134,12 +19135,17 @@ async def performance_tier_grade(scan: bool = Query(True)):
             return {"buckets": {"all": None, "sharp": None, "non_sharp": None}}
 
         race_ids = list({r.race_id for r in hr_rows})
+        # Contamination guard: only source="live" (real pre-race predictions),
+        # never source="backfill" (post-hoc, may leak). Order by enriched_at ASC
+        # and take EARLIEST per race so we get the genuine pre-race snapshot,
+        # not a later re-enrichment.
         hist_pred_result = await session.execute(
             select(RunnerPredictionHistoryRow)
             .where(RunnerPredictionHistoryRow.race_id.in_(race_ids))
             .where(RunnerPredictionHistoryRow.model_rank == 1)
             .where(RunnerPredictionHistoryRow.cancelled.is_(False) | RunnerPredictionHistoryRow.cancelled.is_(None))
-            .order_by(RunnerPredictionHistoryRow.enriched_at.desc())
+            .where(RunnerPredictionHistoryRow.source == "live")
+            .order_by(RunnerPredictionHistoryRow.enriched_at.asc())
         )
         top_picks: dict[str, RunnerPredictionHistoryRow] = {}
         for p in hist_pred_result.scalars().all():
