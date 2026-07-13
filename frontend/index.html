@@ -1322,15 +1322,17 @@
         const pct = Math.round(pillWinRate * 100);
         const placePct = Math.round(pillPlaceRate * 100);
         // Performance tiers (matches the legend at the top):
-        //   Elite         35%+   → gold
+        //   Elite         35%+   → purple
         //   Professional  25-34% → green
         //   Value         15-24% → gold-amber (ok)
         //   Below         <15%   → red
-        // Zero wins → red regardless of sample size (small-sample
-        // guard prevents artificial green on 1/2 = 50%).
+        // Colors apply regardless of sample size — a 2/4 = 50% pill
+        // shows purple even though the denominator is small. The
+        // "small sample" caveat is still communicated via the tooltip
+        // (see tipSuffix below).
         const cls = pillWins === 0
           ? 'bad'
-          : (smallSample ? 'ok' : (pct >= 35 ? 'elite' : pct >= 25 ? 'good' : pct >= 15 ? 'ok' : 'bad'));
+          : (pct >= 35 ? 'elite' : pct >= 25 ? 'good' : pct >= 15 ? 'ok' : 'bad');
         // Unified "x/y (z%)" format across both banner and pills.
         const winLabel = `${pillWins}/${pillRaces} (${pct}%)`;
         const placeLabel = `${Math.round(pillPlaceRate * pillRaces)}/${pillRaces} (${placePct}%)`;
@@ -1594,11 +1596,13 @@
     // unambiguously bad regardless of sample size. So: zero wins → red,
     // small sample with any win → amber, otherwise threshold-based.
     // Tiers match the KEY legend at top of page:
-    //   35%+ = Elite (gold), 25-34% = Professional (green),
-    //   15-24% = Value (amber), <15% = below baseline (red)
+    //   35%+ = Elite (purple), 25-34% = Professional (green),
+    //   15-24% = Value (amber), <15% = below baseline (red).
+    // Small-sample caveat is in the tooltip, not the color — user
+    // asked for 2/4 = 50% to show as Elite purple, not amber.
     const rateClass = displayWins === 0
       ? 'bad'
-      : (smallSample ? 'ok' : (pct >= 35 ? 'elite' : pct >= 25 ? 'good' : pct >= 15 ? 'ok' : 'bad'));
+      : (pct >= 35 ? 'elite' : pct >= 25 ? 'good' : pct >= 15 ? 'ok' : 'bad');
     const primaryLabel = inSharpMode ? 'Sharp picks' : 'All rank-1';
     // Unified format "x/y (z%)" — shows both the ratio and the pct so
     // small samples are self-explanatory (1/2 (50%)) and large samples
