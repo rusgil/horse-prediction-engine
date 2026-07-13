@@ -19109,6 +19109,122 @@ _TIER_GRADE_TTL = 900  # 15 min — scanning multiple windows is expensive, Abou
 _TIER_GRADE_VERSION = 4  # bump to invalidate cache after switching to N-race sample anchor
 
 
+@app.get("/api/admin/tier-grade-best-window")
+async def tier_grade_best_window(
+    sample_size: int = 500,
+    x_cron_secret: Optional[str] = Header(None),
+):
+    """Diagnostic: for each bucket (all / sharp / non_sharp), slide an
+    N-race window over clean pre-race live picks (contamination guards
+    applied) and return (a) the most-recent window and (b) the best
+    rolling window by tier-rank then win_pct. Purpose: answer 'is there
+    a better 500-race window than the current one?'"""
+    _check_admin(x_cron_secret)
+    async with get_session() as session:
+        hr_rows = (await session.execute(
+            select(HistoricalResultRow.race_id, HistoricalResultRow.horse_name,
+                   HistoricalResultRow.position, HistoricalResultRow.starting_price)
+        )).fetchall()
+        pred_rows = (await session.execute(
+            select(RunnerPredictionHistoryRow)
+            .where(RunnerPredictionHistoryRow.model_rank == 1)
+            .where(RunnerPredictionHistoryRow.cancelled.is_(False) | RunnerPredictionHistoryRow.cancelled.is_(None))
+            .where(RunnerPredictionHistoryRow.source == "live")
+            .order_by(RunnerPredictionHistoryRow.enriched_at.asc())
+        )).scalars().all()
+
+    winners = {r.race_id: _normalize_horse(r.horse_name or "") for r in hr_rows if r.position == 1}
+    result_by_key = {(r.race_id, _normalize_horse(r.horse_name)): r for r in hr_rows}
+
+    top_picks: dict[str, RunnerPredictionHistoryRow] = {}
+    for p in pred_rows:
+        if p.race_id in top_picks:
+            continue
+        if p.scheduled_time:
+            try:
+                sched_dt = datetime.fromisoformat(p.scheduled_time.replace("Z", ""))
+                if p.enriched_at and p.enriched_at >= sched_dt:
+                    continue
+            except Exception:
+                pass
+        top_picks[p.race_id] = p
+
+    entries = []  # (race_date, is_sharp, won, placed, sp)
+    for rid, pick in top_picks.items():
+        w = winners.get(rid)
+        if w is None:
+            continue
+        actual = result_by_key.get((rid, _normalize_horse(pick.horse_name)))
+        if not actual or not actual.position or actual.position <= 0:
+            continue
+        won = _normalize_horse(pick.horse_name) == w
+        placed = bool(actual.position <= 3) or won
+        sp = float(actual.starting_price) if actual.starting_price else None
+        entries.append((rid[:10], pick.is_sharp is True, won, placed, sp))
+    entries.sort(key=lambda e: e[0])  # oldest first for the sliding window
+
+    def _tier_rank(win_pct, place_pct):
+        if win_pct >= 38 or place_pct >= 65: return 5
+        if win_pct >= 30 or place_pct >= 55: return 4
+        if win_pct >= 22 or place_pct >= 45: return 3
+        if win_pct >= 15 or place_pct >= 35: return 2
+        return 1
+
+    def _stats(window):
+        n = len(window)
+        if not n:
+            return None
+        wins = sum(1 for e in window if e[2])
+        places = sum(1 for e in window if e[3])
+        sp_wins = [e[4] for e in window if e[2] and e[4] and e[4] > 1.0]
+        return {
+            "races": n,
+            "wins": wins,
+            "places": places,
+            "win_pct": round(wins / n * 100, 2),
+            "place_pct": round(places / n * 100, 2),
+            "mean_winning_sp": round(sum(sp_wins) / len(sp_wins), 2) if sp_wins else None,
+            "flat_roi_pct": round((sum(sp_wins) - n) / n * 100, 2) if sp_wins else None,
+            "earliest_race_date": window[0][0],
+            "latest_race_date": window[-1][0],
+        }
+
+    def _scan(is_sharp_filter):
+        rows = [e for e in entries
+                if is_sharp_filter is None or e[1] == is_sharp_filter]
+        total = len(rows)
+        if total == 0:
+            return {"total_clean_rows": 0, "most_recent": None, "best_rolling": None, "windows_scanned": 0}
+        most_recent = _stats(rows[-sample_size:])
+        best = None
+        best_score = (-1, -1.0)
+        windows_scanned = 0
+        if total >= sample_size:
+            for i in range(0, total - sample_size + 1):
+                w = rows[i:i+sample_size]
+                s = _stats(w)
+                if s is None:
+                    continue
+                windows_scanned += 1
+                score = (_tier_rank(s["win_pct"], s["place_pct"]), s["win_pct"])
+                if score > best_score:
+                    best_score = score
+                    best = s
+        return {
+            "total_clean_rows": total,
+            "windows_scanned": windows_scanned,
+            "most_recent": most_recent,
+            "best_rolling": best,
+        }
+
+    return {
+        "sample_size": sample_size,
+        "all":       _scan(None),
+        "sharp":     _scan(True),
+        "non_sharp": _scan(False),
+    }
+
+
 @app.get("/api/admin/tier-grade-audit")
 async def tier_grade_audit(x_cron_secret: Optional[str] = Header(None)):
     """Diagnostic: source distribution + enriched-vs-scheduled-time integrity
