@@ -11756,9 +11756,85 @@ async def _measure_going_calibration_max_dev_21d() -> float:
     return round(max_dev, 3)
 
 
+async def _measure_premium_bao_roi_500() -> float:
+    """Return Premium bucket's flat BAO ROI on the last 500 clean pre-race picks.
+    Contamination guards match /api/performance/tier-grade: source='live', earliest
+    enrichment per race, enriched_at < scheduled_time when known. Premium filter:
+    overlay > 5pp AND SP >= $3 AND model win prob >= 30%.
+
+    Purpose: on 2026-07-14 Premium showed -18.01% flat SP ROI on 156 clean races,
+    killing the 'Premium is our positive-ROI tier' story. Snapshot cron rebuilt
+    same day; ~4 weeks later we should have real early-market BAO data. This
+    measurer answers 'did BAO uplift push Premium into positive territory?'
+    Baseline: -18.01. target_above: 0.0."""
+    cutoff = (_today_aest() - timedelta(days=365)).isoformat()
+    async with get_session() as session:
+        hr_rows = (await session.execute(
+            select(HistoricalResultRow).where(HistoricalResultRow.race_id >= cutoff)
+        )).scalars().all()
+        if not hr_rows:
+            return 0.0
+        race_ids = list({r.race_id for r in hr_rows})
+        pred_result = await session.execute(
+            select(RunnerPredictionHistoryRow)
+            .where(RunnerPredictionHistoryRow.race_id.in_(race_ids))
+            .where(RunnerPredictionHistoryRow.model_rank == 1)
+            .where(RunnerPredictionHistoryRow.cancelled.is_(False) | RunnerPredictionHistoryRow.cancelled.is_(None))
+            .where(RunnerPredictionHistoryRow.source == "live")
+            .order_by(RunnerPredictionHistoryRow.enriched_at.asc())
+        )
+        top_picks: dict[str, RunnerPredictionHistoryRow] = {}
+        for p in pred_result.scalars().all():
+            if p.race_id in top_picks:
+                continue
+            if p.scheduled_time:
+                try:
+                    sched_dt = datetime.fromisoformat(p.scheduled_time.replace("Z", ""))
+                    if p.enriched_at and p.enriched_at >= sched_dt:
+                        continue
+                except Exception:
+                    pass
+            top_picks[p.race_id] = p
+
+    winners = {r.race_id: r.horse_name for r in hr_rows if r.position == 1}
+    result_by_key = {(r.race_id, _normalize_horse(r.horse_name)): r for r in hr_rows}
+
+    premium: list[tuple] = []  # (race_date, won, sp, bao)
+    for rid, pick in top_picks.items():
+        w = winners.get(rid)
+        if not w:
+            continue
+        actual = result_by_key.get((rid, _normalize_horse(pick.horse_name)))
+        if not actual or not actual.position or actual.position <= 0:
+            continue
+        sp = float(actual.starting_price) if actual.starting_price else None
+        overlay = float(pick.overlay) if pick.overlay else 0.0
+        model_win_prob = float(pick.win_probability) if pick.win_probability else 0.0
+        if not (overlay > 0.05 and sp is not None and sp >= 3.0 and model_win_prob >= 0.30):
+            continue
+        bao = float(pick.best_available_odds) if pick.best_available_odds else None
+        won = _normalize_horse(pick.horse_name) == _normalize_horse(w)
+        premium.append((rid[:10], won, sp, bao))
+
+    premium.sort(key=lambda e: e[0], reverse=True)
+    sample = premium[:500]
+    n = len(sample)
+    if not n:
+        return 0.0
+    # BAO for winners; fall back to SP if BAO missing so we still compare to
+    # the same denominator (n races staked).
+    bao_wins = [(e[3] if (e[3] and e[3] > 1.0) else e[2])
+                for e in sample
+                if e[1] and ((e[3] and e[3] > 1.0) or (e[2] and e[2] > 1.0))]
+    if not bao_wins:
+        return 0.0
+    return round((sum(bao_wins) - n) / n * 100, 2)
+
+
 _FOLLOWUP_MEASURERS: dict = {
     "market_disagreed_losses_7d": _measure_market_disagreed_losses_7d,
     "going_calibration_max_dev_21d": _measure_going_calibration_max_dev_21d,
+    "premium_bao_roi_500": _measure_premium_bao_roi_500,
 }
 
 
