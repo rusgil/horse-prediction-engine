@@ -1297,14 +1297,24 @@
     if (sharpBtn) sharpBtn.classList.toggle('active', mode === 'sharp');
     if (allBtn) allBtn.classList.toggle('active', mode === 'all');
     // If switching to Sharp and the currently-selected meeting doesn't
-    // qualify, clear the race section so a non-Sharp meeting isn't left
-    // visible underneath the filtered pills.
+    // qualify, wipe ALL downstream state — race list, runners, race
+    // content, results — so a non-Sharp meeting isn't left visible
+    // underneath the filtered pills. Previous version only cleared the
+    // race pills; the horse cards below raceContent survived.
     if (mode === 'sharp' && S.selectedMeeting && !isSharpMeeting(S.selectedMeeting)) {
       S.selectedMeeting = null;
       S.races = [];
       S.selectedRaceId = null;
+      S.runners = [];
+      stopLiveOddsPolling();
       const racesSection = document.getElementById('racesSection');
       if (racesSection) racesSection.style.display = 'none';
+      const resultsSection = document.getElementById('resultsSection');
+      if (resultsSection) { resultsSection.innerHTML = ''; resultsSection.style.display = 'none'; }
+      const raceContent = document.getElementById('raceContent');
+      if (raceContent) raceContent.innerHTML = '';
+      const infoBar = document.getElementById('infoBar');
+      if (infoBar) infoBar.innerHTML = '';
     }
     renderMeetingPills();
     // Re-fetch the 7-day performance strip with the new filter so the

@@ -80,7 +80,13 @@ class HorseModel:
         place_base = softmax(place_raw)
         n = len(feature_vectors)
         places = 3 if n >= 8 else 2 if n >= 5 else 1
-        place_probs = [round(min(p * places, 0.95), 4) for p in place_base]
+        # Cap per-horse place probability at 0.85 (was 0.95). The softmax
+        # with temp=0.5 concentrates mass on dominant runners; without a
+        # tighter cap, a 22%-win favourite in a weak field can show 94%
+        # place (Jasstar / Balaklava R4 2026-07-15), which no single horse
+        # can realistically achieve. 0.85 still lets true monsters look
+        # like near-certainties while preventing the pathological blowup.
+        place_probs = [round(min(p * places, 0.85), 4) for p in place_base]
 
         return [round(p, 4) for p in win_probs], place_probs
 
