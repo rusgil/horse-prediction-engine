@@ -196,44 +196,71 @@ async def _scheduled_odds_snapshot():
             snapped_at = datetime.utcnow()
             inserts_by_venue: dict[str, int] = {}
             snapped_race_ids: set[str] = set()
+
+            # Pull the FULL active field for these races (not just rank-1) so
+            # the piggyback populates best_available_odds for every runner —
+            # otherwise horses 2..N in the Hot Seat field expansion stay at
+            # 'TBA' until the 3h live-odds window opens.
+            pick_race_ids = {p.race_id for p in picks}
             async with get_session() as session:
-                for pick in picks:
+                field_rows = (await session.execute(
+                    select(RunnerPredictionRow)
+                    .where(RunnerPredictionRow.race_id.in_(pick_race_ids))
+                    .where(RunnerPredictionRow.cancelled.is_(False) | RunnerPredictionRow.cancelled.is_(None))
+                )).scalars().all()
+
+            async with get_session() as session:
+                for row in field_rows:
                     try:
-                        _, venue_code, race_num_str = _parse_race_id(pick.race_id)
+                        _, venue_code, race_num_str = _parse_race_id(row.race_id)
                         race_num = int(str(race_num_str).replace("R", ""))
                     except Exception:
                         continue
                     op_track = op.find_matching_track(venue_code, tracks)
                     if not op_track:
                         continue
-                    key = (race_num, (pick.horse_name or "").lower().strip())
-                    price = meeting_odds.get(op_track, {}).get(key)
+                    name_lower = (row.horse_name or "").lower().strip()
+                    name_norm = _normalize_horse(row.horse_name or "")
+                    track_map = meeting_odds.get(op_track, {})
+                    price = track_map.get((race_num, name_lower)) or track_map.get((race_num, name_norm))
                     if not price or price <= 1.0:
                         continue
                     mins_to_jump = None
-                    if pick.scheduled_time:
+                    if row.scheduled_time:
                         try:
-                            jump = datetime.fromisoformat(pick.scheduled_time.replace("Z", "+00:00")).replace(tzinfo=None)
+                            jump = datetime.fromisoformat(row.scheduled_time.replace("Z", "+00:00")).replace(tzinfo=None)
                             mins_to_jump = round((jump - snapped_at).total_seconds() / 60)
                         except Exception:
                             pass
-                    session.add(OddsSnapshotRow(
-                        race_id=pick.race_id,
-                        horse_name=pick.horse_name,
-                        snapshotted_at=snapped_at,
-                        minutes_to_jump=mins_to_jump,
-                        win_odds=float(price),
-                        place_odds=None,  # OddsPro exposes fixed-win only
-                        source="oddspro-fixed",
-                    ))
-                    # Piggyback: also update the displayed odds on the rank-1
-                    # prediction row so morning users don't see 'TBA' for
-                    # races 3+ hours out (was only refreshed by the separate
-                    # live-odds cron, gated to next-3h window). Reuses the
-                    # OddsPro data we already have — zero extra API traffic.
-                    pick.best_available_odds = float(price)
+                    # Snapshot history — only for rank-1 to keep the table's
+                    # steam-computation cost bounded (same as before this fix).
+                    if row.model_rank == 1:
+                        session.add(OddsSnapshotRow(
+                            race_id=row.race_id,
+                            horse_name=row.horse_name,
+                            snapshotted_at=snapped_at,
+                            minutes_to_jump=mins_to_jump,
+                            win_odds=float(price),
+                            place_odds=None,  # OddsPro exposes fixed-win only
+                            source="oddspro-fixed",
+                        ))
+                        snapped_race_ids.add(row.race_id)
+                    # Piggyback the displayed odds — re-fetch inside THIS
+                    # session so the mutation actually persists. The prior
+                    # implementation set the attribute on a detached instance
+                    # (loaded in an earlier `async with` block that had already
+                    # closed), so the update silently vanished at commit time —
+                    # symptom: every rank-1 pick showed 'TBA' all day (2026-07-15
+                    # Balaklava/Bunbury/etc.). Zero extra OddsPro traffic.
+                    db_row = await session.get(RunnerPredictionRow, row.id)
+                    if db_row is not None:
+                        db_row.best_available_odds = float(price)
+                        market_implied = 1.0 / float(price)
+                        db_row.overlay = round((db_row.win_probability or 0) - market_implied, 4)
+                        db_row.value_rating = _value_rating(
+                            db_row.win_probability or 0, float(price), db_row.overlay
+                        )
                     inserts_by_venue[op_track] = inserts_by_venue.get(op_track, 0) + 1
-                    snapped_race_ids.add(pick.race_id)
                 await session.commit()
             total = sum(inserts_by_venue.values())
             log.info("[odds-snapshot] Inserted %d rows for %s across %d venues",
