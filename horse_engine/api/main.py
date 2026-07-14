@@ -152,10 +152,12 @@ async def _scheduled_odds_snapshot():
     """
     from horse_engine.clients.oddspro import OddsProClient
 
-    delay = random.uniform(0, 600)
-    log.info("[odds-snapshot] Waiting %.0fs before OddsPro requests", delay)
+    # Small jitter (0-30s) so overlapping fires from redeploys don't stack.
+    # Was 0-600s when the cron ran every 15 min; that's too much padding for
+    # a 2-min cadence — would cause fires to overlap.
+    delay = random.uniform(0, 30)
     await asyncio.sleep(delay)
-    log.info("[odds-snapshot] Running odds snapshot")
+    log.debug("[odds-snapshot] Running odds snapshot")
     try:
         op = OddsProClient()
         now_aest = datetime.now(_AEST)
@@ -217,6 +219,12 @@ async def _scheduled_odds_snapshot():
                         place_odds=None,  # OddsPro exposes fixed-win only
                         source="oddspro-fixed",
                     ))
+                    # Piggyback: also update the displayed odds on the rank-1
+                    # prediction row so morning users don't see 'TBA' for
+                    # races 3+ hours out (was only refreshed by the separate
+                    # live-odds cron, gated to next-3h window). Reuses the
+                    # OddsPro data we already have — zero extra API traffic.
+                    pick.best_available_odds = float(price)
                     inserts_by_venue[op_track] = inserts_by_venue.get(op_track, 0) + 1
                     snapped_race_ids.add(pick.race_id)
                 await session.commit()
@@ -2432,9 +2440,16 @@ async def lifespan(app: FastAPI):
     # settles and before the Monday-morning weekly review.
     scheduler.add_job(_scheduled_refresh_about_stats,
                       CronTrigger(day_of_week="sun", hour=8, minute=0, timezone="Australia/Sydney"))
+    # Every 2 min during racing hours. Bumped from 15-min cadence so morning
+    # UI users see odds populate as soon as bookmakers open markets (was TBA
+    # until the last 3h before jump via the separate live-odds cron).
+    # The snapshot cron now also updates best_available_odds on the rank-1
+    # pick row (piggyback), so displayed odds and snapshot history stay in
+    # sync. ~5 OddsPro calls per fire × 30 fires/hour = 150/hour — OddsPro
+    # tolerates well below its rate limit.
     scheduler.add_job(
         _scheduled_odds_snapshot,
-        CronTrigger(hour="9-20", minute="0,15,30,45", timezone="Australia/Sydney")
+        CronTrigger(hour="9-20", minute="*/2", timezone="Australia/Sydney")
     )
     scheduler.add_job(
         _scheduled_pre_race_enrich_and_scratch,
