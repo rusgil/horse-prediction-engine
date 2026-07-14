@@ -133,18 +133,26 @@ class OddsProClient:
     def find_matching_track(self, venue: str, tracks: list[str]) -> Optional[str]:
         """
         Match an RA venue name to an OddsPro track name.
-        e.g. 'Sandown Lakeside' → 'Sandown'
+        e.g. 'Sandown Lakeside' → 'Sandown', 'eagle-farm' → 'Eagle Farm'
         """
-        venue_lower = venue.lower()
+        # Normalize hyphens to spaces on both sides — our venue codes use
+        # 'eagle-farm' while OddsPro shows 'Eagle Farm'. Without this normalize,
+        # multi-word tracks silently failed and best_available_odds stayed 0
+        # (Balaklava-diagnostic 2026-07-15: eagle-farm and warwick-farm both
+        # unmatched even though OddsPro had them).
+        def norm(s: str) -> str:
+            return s.lower().replace('-', ' ').strip()
+
+        venue_norm = norm(venue)
         for t in tracks:
-            if t.lower() == venue_lower:
+            if norm(t) == venue_norm:
                 return t
         # OddsPro name is a prefix/substring of RA venue (most common mismatch)
         for t in tracks:
-            if t.lower() in venue_lower:
+            if norm(t) in venue_norm:
                 return t
         # RA venue is contained in OddsPro name
         for t in tracks:
-            if venue_lower in t.lower():
+            if venue_norm in norm(t):
                 return t
         return None
