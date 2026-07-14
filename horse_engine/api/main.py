@@ -20835,6 +20835,14 @@ async def _run_calibration_sweep(holdout_days: int = 14) -> dict:
 
 async def _scheduled_calibrate():
     """Run by APScheduler every Sunday at 2am AEST — sweeps all three models."""
+    # 10-40 min random start delay — spreads the actual kickoff across
+    # 02:10–02:40 AEST so the job doesn't fire on a predictable minute
+    # boundary. Also gives any late Saturday-night settlement/enrichment
+    # jobs extra headroom to finish before we lock feature snapshots for
+    # calibration.
+    delay = random.uniform(600, 2400)
+    log.info("[scheduler] Weekly calibration — sleeping %.0fs before start", delay)
+    await asyncio.sleep(delay)
     log.info("[scheduler] Running weekly calibration sweep (win + place + exotic)")
     for label, fn in [
         ("win", _run_calibration_sweep),
