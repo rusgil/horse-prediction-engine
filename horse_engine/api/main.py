@@ -2440,16 +2440,16 @@ async def lifespan(app: FastAPI):
     # settles and before the Monday-morning weekly review.
     scheduler.add_job(_scheduled_refresh_about_stats,
                       CronTrigger(day_of_week="sun", hour=8, minute=0, timezone="Australia/Sydney"))
-    # Every 2 min during racing hours. Bumped from 15-min cadence so morning
-    # UI users see odds populate as soon as bookmakers open markets (was TBA
-    # until the last 3h before jump via the separate live-odds cron).
+    # Every 2 min from 5am AEST — bookies open early-fixed-odds markets
+    # from ~5am for the day's meetings and users want to see them straight
+    # away (was TBA-until-3h-before-jump via the separate live-odds cron).
     # The snapshot cron now also updates best_available_odds on the rank-1
     # pick row (piggyback), so displayed odds and snapshot history stay in
     # sync. ~5 OddsPro calls per fire × 30 fires/hour = 150/hour — OddsPro
     # tolerates well below its rate limit.
     scheduler.add_job(
         _scheduled_odds_snapshot,
-        CronTrigger(hour="9-20", minute="*/2", timezone="Australia/Sydney")
+        CronTrigger(hour="5-20", minute="*/2", timezone="Australia/Sydney")
     )
     scheduler.add_job(
         _scheduled_pre_race_enrich_and_scratch,
@@ -18814,6 +18814,50 @@ async def backtest_place(
         "overall_place_rate_pct": round(overall_place_rate, 1),
         "avg_predicted_place_pct": round(avg_predicted, 1),
         "calibration_gap_pct": round(avg_predicted - overall_place_rate, 1),
+    }
+
+
+@app.get("/api/admin/odds-track-match")
+async def admin_odds_track_match(
+    race_date: str = "",
+    x_cron_secret: Optional[str] = Header(None),
+):
+    """Diagnostic: for a given date, list our meeting venue_codes and the
+    OddsPro track names, and show which ones matched vs which failed the
+    matcher. Answers 'why is Balaklava showing best_odds=0?' style questions."""
+    _check_admin(x_cron_secret)
+    from horse_engine.clients.oddspro import OddsProClient
+    target = race_date or _today_aest().isoformat()
+    async with get_session() as session:
+        meetings = (await session.execute(
+            select(RunnerPredictionRow.race_id, RunnerPredictionRow.venue)
+            .where(RunnerPredictionRow.race_id.like(f"{target}_%"))
+            .where(RunnerPredictionRow.model_rank == 1)
+            .distinct()
+        )).fetchall()
+    our_venue_codes = sorted({row.race_id.split("_")[1] for row in meetings})
+
+    op = OddsProClient()
+    try:
+        op_tracks = await op.get_tracks(target)
+    except Exception as e:
+        return {"date": target, "error": f"OddsPro get_tracks failed: {e}"}
+    op_meeting_odds = await op.get_meeting_odds(target)
+
+    matched, unmatched = [], []
+    for vc in our_venue_codes:
+        m = op.find_matching_track(vc, op_tracks)
+        row = {"venue_code": vc, "matched_op_track": m,
+               "odds_count": len(op_meeting_odds.get(m, {})) if m else 0}
+        (matched if m else unmatched).append(row)
+
+    return {
+        "date": target,
+        "our_venue_count": len(our_venue_codes),
+        "oddspro_tracks_count": len(op_tracks),
+        "oddspro_tracks_sample": op_tracks[:30],
+        "matched": matched,
+        "unmatched": unmatched,
     }
 
 
