@@ -314,6 +314,28 @@
     .date-pill-acc.bad   { color: #f87171; }
     .date-pill.past { opacity: 0.8; }
 
+    /* Toggle for showing/hiding the older 7 date pills */
+    .date-pill-toggle {
+      display: inline-flex; align-items: center; justify-content: center;
+      background: var(--bg-elevated);
+      border: 1px dashed var(--border);
+      color: var(--text-dim);
+      font-family: 'Barlow Condensed', sans-serif;
+      font-size: 0.72rem; font-weight: 700;
+      letter-spacing: 0.06em; text-transform: uppercase;
+      padding: 8px 12px;
+      border-radius: 10px;
+      cursor: pointer;
+      white-space: nowrap;
+      transition: background 0.15s, color 0.15s, border-color 0.15s;
+    }
+    .date-pill-toggle:hover {
+      background: var(--bg-hover);
+      color: var(--text-secondary);
+      border-color: var(--gold-mid);
+      border-style: solid;
+    }
+
     /* Key/legend for the date-pill win/place pills */
     .acc-key {
       display: flex;
@@ -1137,8 +1159,6 @@
   <!-- Key for the win/place pills shown on each past date -->
   <div class="acc-key" id="accKey">
     <span class="acc-key-label">KEY</span>
-    <span class="acc-key-item"><span class="acc-key-swatch win">Win</span>Top pick won</span>
-    <span class="acc-key-item"><span class="acc-key-swatch place">Plc</span>Top pick top-3</span>
     <div class="acc-key-tiers" title="Performance tiers for rank-1 win/place rate.">
       <span class="acc-key-tier-row"><span class="acc-key-tier elite">●</span><strong style="color:#c084fc">🏆 Elite</strong><span class="acc-key-range">Win 35%+ · Plc 65%+</span></span>
       <span class="acc-key-tier-row"><span class="acc-key-tier good">●</span><strong style="color:#10b981">📈 Pro</strong><span class="acc-key-range">Win 25–34% · Plc 50–64%</span></span>
@@ -1245,6 +1265,7 @@
     meetingStats: {}, // venue_code → {wins, total} for win% pills
     statsLoadGen: 0,  // incremented on date change to cancel stale _loadMeetingWinRate callbacks
     mainMode: 'sharp', // 'sharp' or 'all' — Sharp shows meetings with ≥30% best-pick confidence
+    showOlderDates: false, // when false, only Today/Mon/Sun shown; older 7 days behind a toggle
   };
 
   // A meeting qualifies as 'Sharp' when it has at least one race with a
@@ -1323,17 +1344,23 @@
     container.innerHTML = '';
     const today = todayISO();
     let todayEl = null;
-    // 9 past days → today. Extended back from -7 to -9 so the previous
-    // weekend (last Sat + Sun) is visible for comparison against the
-    // current weekend when either has odd numbers.
-    // Removed future days (tomorrow / +2) — they showed empty pills
-    // all morning and only had meaningful data once the 8:30am cron
-    // had enriched them.
-    for (let i = -9; i <= 0; i++) {
+    // Layout: Today | Yesterday | Day-before | [toggle for older 7 days].
+    // Recent 3 days are always visible at the LEFT (most-frequently accessed).
+    // Older 7 (i=-3 through i=-9) collapse behind a "Show older" toggle so
+    // the pill row stays uncluttered.
+    const buildPill = (i) => {
       const iso = addDays(today, i);
       const isPast = i < 0;
       const el = document.createElement('div');
       el.className = 'date-pill' + (S.date === iso ? ' active' : '') + (isPast ? ' past' : '');
+      return { iso, isPast, el };
+    };
+    // Recent 3 pills first — but we still need each pill's HTML built the
+    // same way. Extract the whole pill-building block into a closure so we
+    // can call it for each i.
+    const renderPill = (i) => {
+      const { iso, isPast, el } = buildPill(i);
+      // === original pill-content logic starts ===
       const perf = isPast ? S.perfByDate[iso] : null;
       let accHtml = '';
       if (perf) {
@@ -1373,23 +1400,49 @@
         const cls = pillWins === 0
           ? 'bad'
           : (pct >= 35 ? 'elite' : pct >= 25 ? 'good' : pct >= 15 ? 'ok' : 'bad');
-        // Unified "x/y (z%)" format across both banner and pills.
-        const winLabel = `${pillWins}/${pillRaces} (${pct}%)`;
-        const placeLabel = `${Math.round(pillPlaceRate * pillRaces)}/${pillRaces} (${placePct}%)`;
+        // Compact "Win: XX% / Plc: XX%" format on pills — the "x/y" detail
+        // still shows in the tooltip.
+        const winLabel = `Win: ${pct}%`;
+        const placeLabel = `Plc: ${placePct}%`;
+        const winTooltipDetail = `${pillWins}/${pillRaces}`;
+        const placeTooltipDetail = `${Math.round(pillPlaceRate * pillRaces)}/${pillRaces}`;
         const tipSuffix = smallSample ? ' — small sample' : (inSharp ? ' (Sharp picks)' : '');
         // Pipeline-chaos days: suppress the WIN chip only (Sharp mode);
         // place still shown because it's the more stable, less
         // over-confidence-sensitive metric.
         const winHtml = suppressSharpWin
           ? `<span class="date-pill-acc" style="color:var(--text-dim);background:var(--bg-elevated);border-color:var(--border)" title="Pipeline issues on this day — Sharp win metric suppressed. Place rate still valid. See Follow-Ups tab.">N/A</span>`
-          : `<span class="date-pill-acc ${cls}" title="${complete ? 'Win rate' : 'Win rate (partial)'}${tipSuffix}">${winLabel}</span>`;
-        accHtml = `${winHtml}<span class="date-pill-acc" style="color:#60a5fa;background:rgba(59,130,246,0.12);border-color:rgba(59,130,246,0.25);opacity:${complete ? 1 : 0.75}" title="${complete ? 'Place rate' : 'Place rate (partial)'}${tipSuffix}">${placeLabel}</span>`;
+          : `<span class="date-pill-acc ${cls}" title="${complete ? 'Win rate' : 'Win rate (partial)'} — ${winTooltipDetail}${tipSuffix}">${winLabel}</span>`;
+        accHtml = `${winHtml}<span class="date-pill-acc" style="color:#60a5fa;background:rgba(59,130,246,0.12);border-color:rgba(59,130,246,0.25);opacity:${complete ? 1 : 0.75}" title="${complete ? 'Place rate' : 'Place rate (partial)'} — ${placeTooltipDetail}${tipSuffix}">${placeLabel}</span>`;
       }
       el.innerHTML = `<span class="date-pill-day">${formatDayLabel(iso)}</span><span class="date-pill-date">${formatShortDate(iso)}</span>${accHtml}`;
       el.addEventListener('click', () => selectDate(iso));
       container.appendChild(el);
       if (i === 0) todayEl = el;
+    };
+
+    // Recent 3 always visible: today, yesterday, day-before (left → right)
+    renderPill(0);
+    renderPill(-1);
+    renderPill(-2);
+
+    // Toggle for the older 7 days
+    const toggle = document.createElement('button');
+    toggle.type = 'button';
+    toggle.className = 'date-pill-toggle';
+    toggle.textContent = S.showOlderDates ? '‹ Hide older' : '+ 7 earlier days';
+    toggle.title = S.showOlderDates ? 'Hide days beyond the last 3' : 'Show the previous 7 days';
+    toggle.addEventListener('click', () => {
+      S.showOlderDates = !S.showOlderDates;
+      renderDatePills();
+    });
+    container.appendChild(toggle);
+
+    // Older 7 days appear only when expanded (i=-3 back through i=-9)
+    if (S.showOlderDates) {
+      for (let i = -3; i >= -9; i--) renderPill(i);
     }
+
     // Scroll today into view (horizontally)
     if (todayEl) setTimeout(() => todayEl.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' }), 50);
   }
