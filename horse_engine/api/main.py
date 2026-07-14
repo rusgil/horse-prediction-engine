@@ -2529,6 +2529,9 @@ async def lifespan(app: FastAPI):
         await _scheduled_enrich()
     asyncio.create_task(_startup_enrich_if_stale())
 
+    # One-shot idempotent follow-up seed — noop after the first successful run.
+    asyncio.create_task(_seed_sharp_bao_roi_followup())
+
     # Bet-gen + settlement + result-seed catch-up on startup. Without this,
     # any deploy that lands between cron ticks defers all of these to the
     # NEXT scheduled run — sometimes an hour away. On heavy-deploy days
@@ -11894,11 +11897,135 @@ async def _measure_premium_bao_roi_500() -> float:
     return round((sum(bao_wins) - n) / n * 100, 2)
 
 
+async def _measure_sharp_bao_roi_500() -> float:
+    """Return Sharp bucket's flat BAO ROI on the last 500 clean pre-race picks.
+    Contamination guards match /api/performance/tier-grade: source='live', earliest
+    enrichment per race, enriched_at < scheduled_time when known. Sharp filter:
+    is_sharp = True on the rank-1 pick.
+
+    Purpose: on 2026-07-15 the odds-snapshot piggyback (added 2026-07-14) was
+    found to be silently no-op'ing due to a detached-instance bug — every
+    rank-1 pick showed 'TBA' all day even though OddsPro had real prices. That
+    meant RunnerPredictionHistoryRow.best_available_odds was near-empty for
+    late-morning-and-afternoon races (bao_coverage 5.6% on Sharp at fix time).
+    Post-fix, coverage should climb toward ~100% for races written from
+    2026-07-15+. This measurer answers 'did the fixed-odds capture change the
+    Sharp ROI story?'
+
+    Only counts picks written on/after 2026-07-15 so the pre-fix zero-BAO
+    rows can't dilute the number. Baseline: -14.41 (current SP-fallback ROI).
+    target_above: 0.0 (turning Sharp break-even/positive on BAO)."""
+    cutoff_iso = "2026-07-15"  # first day with full-day BAO population post-fix
+    async with get_session() as session:
+        hr_rows = (await session.execute(
+            select(HistoricalResultRow).where(HistoricalResultRow.race_id >= cutoff_iso)
+        )).scalars().all()
+        if not hr_rows:
+            return 0.0
+        race_ids = list({r.race_id for r in hr_rows})
+        pred_result = await session.execute(
+            select(RunnerPredictionHistoryRow)
+            .where(RunnerPredictionHistoryRow.race_id.in_(race_ids))
+            .where(RunnerPredictionHistoryRow.model_rank == 1)
+            .where(RunnerPredictionHistoryRow.cancelled.is_(False) | RunnerPredictionHistoryRow.cancelled.is_(None))
+            .where(RunnerPredictionHistoryRow.source == "live")
+            .where(RunnerPredictionHistoryRow.is_sharp.is_(True))
+            .order_by(RunnerPredictionHistoryRow.enriched_at.asc())
+        )
+        top_picks: dict[str, RunnerPredictionHistoryRow] = {}
+        for p in pred_result.scalars().all():
+            if p.race_id in top_picks:
+                continue
+            if p.scheduled_time:
+                try:
+                    sched_dt = datetime.fromisoformat(p.scheduled_time.replace("Z", ""))
+                    if p.enriched_at and p.enriched_at >= sched_dt:
+                        continue
+                except Exception:
+                    pass
+            top_picks[p.race_id] = p
+
+    winners = {r.race_id: r.horse_name for r in hr_rows if r.position == 1}
+    result_by_key = {(r.race_id, _normalize_horse(r.horse_name)): r for r in hr_rows}
+
+    sharp: list[tuple] = []  # (race_date, won, sp, bao)
+    for rid, pick in top_picks.items():
+        w = winners.get(rid)
+        if not w:
+            continue
+        actual = result_by_key.get((rid, _normalize_horse(pick.horse_name)))
+        if not actual or not actual.position or actual.position <= 0:
+            continue
+        sp = float(actual.starting_price) if actual.starting_price else None
+        bao = float(pick.best_available_odds) if pick.best_available_odds else None
+        won = _normalize_horse(pick.horse_name) == _normalize_horse(w)
+        sharp.append((rid[:10], won, sp, bao))
+
+    sharp.sort(key=lambda e: e[0], reverse=True)
+    sample = sharp[:500]
+    n = len(sample)
+    if not n:
+        return 0.0
+    # BAO for winners; fall back to SP if BAO missing so we still compare to
+    # the same denominator (n races staked).
+    bao_wins = [(e[3] if (e[3] and e[3] > 1.0) else e[2])
+                for e in sample
+                if e[1] and ((e[3] and e[3] > 1.0) or (e[2] and e[2] > 1.0))]
+    if not bao_wins:
+        return 0.0
+    return round((sum(bao_wins) - n) / n * 100, 2)
+
+
 _FOLLOWUP_MEASURERS: dict = {
     "market_disagreed_losses_7d": _measure_market_disagreed_losses_7d,
     "going_calibration_max_dev_21d": _measure_going_calibration_max_dev_21d,
     "premium_bao_roi_500": _measure_premium_bao_roi_500,
+    "sharp_bao_roi_500": _measure_sharp_bao_roi_500,
 }
+
+
+async def _seed_sharp_bao_roi_followup() -> None:
+    """Idempotent startup seed for the sharp_bao_roi_500 follow-up.
+    Inserts a single WeeklyReviewFollowUpRow scheduled 2026-08-15 (~4 weeks
+    of post-fix BAO capture) if one doesn't already exist. Safe to re-run —
+    checks measurement_type before insert. Removes itself as a no-op once
+    the row exists."""
+    try:
+        async with get_session() as session:
+            existing = (await session.execute(
+                select(WeeklyReviewFollowUpRow)
+                .where(WeeklyReviewFollowUpRow.measurement_type == "sharp_bao_roi_500")
+                .limit(1)
+            )).scalar_one_or_none()
+            if existing is not None:
+                return
+            row = WeeklyReviewFollowUpRow(
+                title="Sharp BAO ROI vs SP ROI (500 clean picks)",
+                scheduled_for="2026-08-15",
+                measurement_type="sharp_bao_roi_500",
+                baseline_value=-14.41,  # current Sharp SP-fallback ROI at fix time
+                target_below=None,
+                target_above=0.0,
+                context_md=(
+                    "Post odds-snapshot piggyback fix (commit 09f8e58, 2026-07-15). "
+                    "BAO coverage on Sharp was 5.6% at fix time — should climb toward "
+                    "~100% for races written from 2026-07-15 onward. This measures the "
+                    "flat BAO ROI on the last 500 clean Sharp picks (with SP fallback "
+                    "for any winner still missing BAO). Question: does captured BAO "
+                    "uplift the Sharp bucket from -14.41% toward break-even?"
+                ),
+                action_md=(
+                    "If BAO ROI is materially better than SP ROI (e.g. +3pp or more), "
+                    "publish BAO ROI alongside SP on the About page. If not, keep the "
+                    "SP-only framing and investigate whether OddsPro's early-market "
+                    "prices genuinely reflect a takeable price."
+                ),
+            )
+            session.add(row)
+            await session.commit()
+            log.info("[followup-seed] Inserted sharp_bao_roi_500 followup (scheduled 2026-08-15)")
+    except Exception as e:
+        log.warning("[followup-seed] sharp_bao_roi_500 seed failed: %s", e)
 
 
 async def _resolve_followup(row: WeeklyReviewFollowUpRow) -> dict:
