@@ -520,10 +520,10 @@
     <h1 class="hero-title">About <span>FunkyIQ</span></h1>
     <p class="hero-desc">
       FunkyIQ™ is a progressive AI engine that scans every Australian thoroughbred race,
-      processing millions of data points to surface the races where the model has a
+      processing numerous data points to surface the races where the model has a
       genuine edge over the market. Five surfaces, one engine — predictions, exotic
       hunting, live betting tools, and paper-trading sandbox all powered by the same
-      36-feature win, place, and exotic models retrained nightly.
+      win, place, and exotic models trained on historical Australian racing data.
     </p>
   </div>
 
@@ -631,12 +631,12 @@
     <div class="feature-card">
       <span class="feature-icon">🧠</span>
       <div>
-        <div class="feature-title">36 Predictive Signals</div>
+        <div class="feature-title">Numerous Predictive Signals</div>
         <div class="feature-desc">
-          The model synthesises 36 independent factors per runner: recent form, win rates by distance and track,
-          surface suitability, barrier draw, days since last run, class change, trainer and jockey patterns,
-          pedigree signals, gear changes, weight vs field, live market rank, and live odds movement in the
-          hour before jump. Each factor is weighted by its historical predictive power.
+          The model synthesises numerous independent factors per runner: recent form, win rates by distance
+          and track, surface suitability, barrier draw, days since last run, class change, trainer and jockey
+          patterns, pedigree signals, gear changes, weight vs field, live market rank, and market movement
+          patterns. Each factor is weighted by its historical predictive power.
         </div>
       </div>
     </div>
@@ -758,10 +758,10 @@
       <div>
         <div class="feature-title" style="color:var(--purple-bright)">Premium Pick</div>
         <div class="feature-desc">
-          The rarest signal. A Premium Pick requires all three conditions to align simultaneously:
-          the model rates the horse at ≥30% win probability, the market is offering $3.00 or better,
-          and the model's probability is at least 5% higher than what the odds imply. This is the
-          intersection of model confidence and market underpricing.
+          The rarest signal — where high model confidence meets a market that's underpricing the horse.
+          The intersection of a strong pick and a genuine value overlay. Premium picks are the tier we
+          track for ROI (rather than raw strike rate) because they're specifically selected to beat
+          the closing market.
         </div>
       </div>
     </div>
@@ -794,9 +794,9 @@
       <div>
         <div class="feature-title" style="color:var(--green)">Strong Pick</div>
         <div class="feature-desc">
-          The broadest tier — model confidence of ≥30%. Strong Picks represent races where the
-          model has a clear top-ranked selection with meaningful separation from the rest of the
-          field. Live win rate tracking is in progress.
+          Races where the model assigns 30–34% win probability to the top-ranked runner. The broadest
+          confidence tier — represents races where the model has a clear top pick with meaningful
+          separation from the rest of the field. Live win rate tracking is in progress.
         </div>
       </div>
     </div>
@@ -804,7 +804,7 @@
 
   <!-- The Numbers -->
   <div class="section">
-    <div class="section-title">30-Day Backtested Win Rates</div>
+    <div class="section-title">30-Day Live Performance</div>
     <div id="stats-building" style="display:none;background:rgba(245,200,66,0.06);border:1px solid rgba(245,200,66,0.2);border-radius:12px;padding:20px 24px;margin-bottom:16px;">
       <div style="font-size:0.85rem;font-weight:600;color:#f5c842;margin-bottom:6px;">Accumulating data</div>
       <div style="font-size:0.82rem;color:var(--text-dim);line-height:1.6;">
@@ -932,8 +932,8 @@
         }
 
         document.getElementById('stats-note').textContent =
-          'Hot / High / Strong tiers report 30-day backtested win rate across ' +
-          totalRaces.toLocaleString() + ' races. Premium reports backtested ROI ' +
+          'Hot / High / Strong tiers report 30-day live win rate across ' +
+          totalRaces.toLocaleString() + ' pre-race predictions. Premium reports live ROI ' +
           'on a $10 flat stake (win rate alone is misleading for a value-overlay tier).';
       }
     } catch (e) {
