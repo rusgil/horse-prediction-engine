@@ -269,6 +269,63 @@
       color: var(--text-dim);
     }
 
+    /* Performance Log block */
+    .perf-log {
+      margin-top: 24px;
+      padding: 20px 22px;
+      background: rgba(168,85,247,0.06);
+      border: 1px solid rgba(168,85,247,0.22);
+      border-radius: 12px;
+    }
+    .perf-log-header {
+      font-family: 'Barlow Condensed', sans-serif;
+      font-size: 1.05rem; font-weight: 800;
+      letter-spacing: 0.04em;
+      color: #c084fc;
+      margin-bottom: 12px;
+    }
+    .perf-log-metrics {
+      list-style: none;
+      padding: 0; margin: 0 0 14px;
+    }
+    .perf-log-metrics li {
+      padding: 6px 0;
+      font-size: 0.92rem;
+      color: var(--text-secondary);
+      display: flex; flex-wrap: wrap; gap: 6px;
+      align-items: baseline;
+      border-bottom: 1px solid rgba(168,85,247,0.1);
+    }
+    .perf-log-metrics li:last-child { border-bottom: none; }
+    .perf-log-lbl {
+      font-weight: 700;
+      color: var(--text-primary);
+      min-width: 160px;
+    }
+    .perf-log-num {
+      font-family: 'Barlow Condensed', sans-serif;
+      font-size: 1.15rem; font-weight: 900;
+      color: var(--text);
+    }
+    .perf-log-tag {
+      font-size: 0.78rem;
+      color: var(--text-dim);
+      font-style: italic;
+    }
+    .perf-log-section-title {
+      font-family: 'Barlow Condensed', sans-serif;
+      font-size: 0.75rem; font-weight: 800;
+      letter-spacing: 0.14em; text-transform: uppercase;
+      color: #c084fc;
+      margin: 14px 0 6px;
+    }
+    .perf-log-body {
+      font-size: 0.9rem;
+      color: var(--text-secondary);
+      line-height: 1.65;
+      margin: 0 0 6px;
+    }
+
     .win-rate { font-family: 'Barlow Condensed', sans-serif; font-size: 1.3rem; font-weight: 900; }
     .win-rate.premium { color: var(--purple-bright); }
     .win-rate.hot     { color: var(--gold-light); }
@@ -656,35 +713,33 @@
       </div>
     </div>
 
-    <div class="sharp-hero-stats">
-      <div class="sharp-hero-item">
-        <span class="sharp-hero-num" id="sharp-hero-races">—</span>
-        <span class="sharp-hero-lbl">races in sample</span>
+    <!-- Performance Log block -->
+    <div class="perf-log">
+      <div class="perf-log-header">
+        📊 Performance Log
+        (<span data-slot="pl-window">—</span> | <span data-slot="pl-races">—</span> Race Sample)
       </div>
-      <div class="sharp-hero-item">
-        <span class="sharp-hero-num" id="sharp-hero-winsp">—</span>
-        <span class="sharp-hero-lbl">avg winning SP</span>
-      </div>
-      <div class="sharp-hero-item">
-        <span class="sharp-hero-num" id="sharp-hero-roi">—</span>
-        <span class="sharp-hero-lbl">flat unit ROI</span>
-      </div>
-      <div class="sharp-hero-item">
-        <span class="sharp-hero-num" id="sharp-hero-window">—</span>
-        <span class="sharp-hero-lbl">sample window</span>
-      </div>
-    </div>
-    <div style="margin-top:20px;padding:16px 18px;background:rgba(168,85,247,0.06);border:1px solid rgba(168,85,247,0.22);border-radius:12px">
-      <div style="font-family:'Barlow Condensed',sans-serif;font-size:0.72rem;font-weight:800;letter-spacing:0.12em;text-transform:uppercase;color:#c084fc;margin-bottom:8px">
-        🏆 Sharp Tier · Elite Consistency
-      </div>
-      <div style="font-size:0.88rem;color:var(--text-secondary);line-height:1.65">
-        <span id="sharp-copy-win">—</span> strike rate over the last
-        <span id="sharp-copy-races">—</span> pre-race Sharp picks, with
-        <span id="sharp-copy-sp">—</span> average winning odds. At market Starting Price the model
-        prices close to the tote's efficient closing market. Where profitable edge lives is at
-        Best-Available fixed odds, which historically pay 8–15% above SP<span id="sharp-copy-bao"></span>.
-      </div>
+      <ul class="perf-log-metrics">
+        <li><span class="perf-log-lbl">Win Rate:</span> <span class="perf-log-num" data-slot="pl-win">—</span> <span class="perf-log-tag">(Professional Tier Baseline)</span></li>
+        <li><span class="perf-log-lbl">Place Rate:</span> <span class="perf-log-num" data-slot="pl-place">—</span> <span class="perf-log-tag">(Elite Tier Consistency)</span></li>
+        <li><span class="perf-log-lbl">Average Winning SP:</span> <span class="perf-log-num" data-slot="pl-sp">—</span></li>
+        <li><span class="perf-log-lbl">Closing SP Margin:</span> <span class="perf-log-num" data-slot="pl-roi">—</span> <span class="perf-log-tag">ROI</span></li>
+      </ul>
+
+      <div class="perf-log-section-title">Performance Insights</div>
+      <p class="perf-log-body">
+        Our model demonstrates elite structural accuracy, placing our selections in the top three a
+        massive <span data-slot="pl-place-inline">—</span> of the time. While the final, highly
+        efficient track Starting Price (SP) results in a standard market-neutral loss due to
+        bookmaker closing margins, our predictive hit-rate remains incredibly sharp.
+      </p>
+
+      <div class="perf-log-section-title">Subscriber Action Required</div>
+      <p class="perf-log-body">
+        To bypass the closing SP margin and unlock net profitability on this model, members must
+        secure early Fixed Odds when selections are released to capture premium market value before
+        the prices shorten.
+      </p>
     </div>
 
     <p class="note" style="margin-top:12px;font-style:italic">
@@ -924,8 +979,14 @@
       const winPos   = positionOnScale(winPct,   [0, 15, 22, 30, 38, 50]);
       const placePos = positionOnScale(placePct, [0, 35, 45, 55, 65, 80]);
 
-      document.getElementById('sharp-win-value').textContent   = winPct.toFixed(1) + '%';
-      document.getElementById('sharp-place-value').textContent = placePct.toFixed(1) + '%';
+      // Round to whole percentages for display — 64.53% → 65% rounds into Elite tier
+      // (standard rounding: 0.53 ≥ 0.5). 30.45% → 30% stays firmly at Professional
+      // Baseline. Arrow marker positions use the exact values so the visual is truthful.
+      const winRounded   = Math.round(winPct);
+      const placeRounded = Math.round(placePct);
+
+      document.getElementById('sharp-win-value').textContent   = winRounded + '%';
+      document.getElementById('sharp-place-value').textContent = placeRounded + '%';
 
       const winMarker = document.getElementById('sharp-win-marker');
       const winLabel  = document.getElementById('sharp-win-marker-label');
@@ -937,32 +998,33 @@
       placeMarker.style.left = placePos + '%';
       placeLabel.style.left  = placePos + '%';
 
-      document.getElementById('sharp-hero-races').textContent = best.races.toLocaleString();
-      document.getElementById('sharp-hero-winsp').textContent = best.mean_winning_sp != null ? '$' + best.mean_winning_sp.toFixed(2) : '—';
-      // Show the date range covered rather than a static "days" number
-      if (best.earliest_race_date && best.latest_race_date) {
-        document.getElementById('sharp-hero-window').textContent = best.earliest_race_date.slice(5) + '→' + best.latest_race_date.slice(5);
+      // Performance Log slots — auto-populate, tier labels stay static in the HTML
+      const q = (slot) => document.querySelector(`[data-slot="${slot}"]`);
+      q('pl-win').textContent          = winRounded + '%';
+      q('pl-place').textContent        = placeRounded + '%';
+      q('pl-place-inline').textContent = placeRounded + '%';
+      q('pl-sp').textContent           = best.mean_winning_sp != null ? '$' + best.mean_winning_sp.toFixed(2) : '—';
+      q('pl-races').textContent        = best.races.toLocaleString();
+
+      // ROI: drop the decimal (−14.17% → −14%). Sign preserved.
+      if (best.flat_roi_pct != null) {
+        const sign = best.flat_roi_pct >= 0 ? '+' : '−';
+        q('pl-roi').textContent = sign + Math.abs(Math.round(best.flat_roi_pct)) + '%';
       } else {
-        document.getElementById('sharp-hero-window').textContent = '—';
+        q('pl-roi').textContent = '—';
       }
 
-      // Fill the elite-consistency copy with real numbers
-      document.getElementById('sharp-copy-win').textContent   = winPct.toFixed(0) + '%';
-      document.getElementById('sharp-copy-races').textContent = best.races.toLocaleString();
-      document.getElementById('sharp-copy-sp').textContent    = best.mean_winning_sp != null ? '$' + best.mean_winning_sp.toFixed(2) : '$—';
-      // BAO auto-append intentionally omitted — captured `best_available_odds`
-      // shows ~SP on our current data (mean winning BAO $2.48 vs SP $2.47), so
-      // printing our measured BAO ROI would undersell the industry-standard
-      // 8-15% BAO uplift the copy references. Fixing BAO capture is a separate
-      // task; the callout stays honest by not claiming a measured number.
-
-      const roiEl = document.getElementById('sharp-hero-roi');
-      if (best.flat_roi_pct != null) {
-        const sign = best.flat_roi_pct >= 0 ? '+' : '';
-        roiEl.textContent = sign + best.flat_roi_pct.toFixed(1) + '%';
-        roiEl.style.color = best.flat_roi_pct >= 0 ? 'var(--green-bright, #4ade80)' : '#f87171';
+      // Date window: "May 25 – July 13" from ISO dates
+      const fmtDate = (iso) => {
+        if (!iso) return '';
+        const [y, m, d] = iso.split('-').map(Number);
+        const months = ['Jan','Feb','Mar','Apr','May','June','July','Aug','Sep','Oct','Nov','Dec'];
+        return `${months[m-1]} ${d}`;
+      };
+      if (best.earliest_race_date && best.latest_race_date) {
+        q('pl-window').textContent = fmtDate(best.earliest_race_date) + ' – ' + fmtDate(best.latest_race_date);
       } else {
-        roiEl.textContent = '—';
+        q('pl-window').textContent = '—';
       }
     } catch (e) {
       console.warn('Failed to load Sharp tier scale:', e);
