@@ -11239,7 +11239,7 @@ async def _run_quality_check(target: str) -> dict:
     # proxy), so they added nothing but false-positive alerts in the
     # morning report. Historical reference for those URLs kept in git.
     external_urls = [
-        "https://170-64-130-33.sslip.io/proxy/FreeFields/Calendar.aspx?State=NSW",
+        "https://170-64-147-74.sslip.io/proxy/FreeFields/Calendar.aspx?State=NSW",
     ]
 
     async def _probe(client: "_httpx_probe.AsyncClient", url: str) -> dict:
@@ -11275,7 +11275,7 @@ async def _run_quality_check(target: str) -> dict:
                 "check": "ra_proxy_droplet_down",
                 "urls": broken_external,
                 "reason": "The DigitalOcean RA proxy is unreachable. Self-heal (ra-proxy-healthcheck.timer) should have restarted it within 2 minutes. If you see this in the morning report, the droplet is powered off, OOM globally, or the self-heal timer failed to install.",
-                "remediation": "SSH to 170.64.130.33, run: systemctl status ra-proxy-healthcheck.timer; tail -50 /var/log/ra-proxy-healthcheck.log",
+                "remediation": "SSH to 170.64.147.74, run: systemctl status ra-proxy-healthcheck.timer; tail -50 /var/log/ra-proxy-healthcheck.log",
             })
         info.append({
             "check": "url_health",
