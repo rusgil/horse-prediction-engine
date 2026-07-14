@@ -13643,11 +13643,18 @@ async def get_meeting(race_date: str, venue_code: str):
     # latency for zero information gain.
     ra_times: dict[str, str] = {}  # race_id → startTime, for DB back-fill
     is_past_date = race_date < _today_aest().isoformat()
-    if not is_past_date:
+    client = get_tab_client() if not is_past_date else None
+    # Respect the RA circuit breaker — when RA is confirmed down, skip the
+    # call entirely rather than paying the timeout on every request. Cuts
+    # meeting page load from 25s → <100ms when the DO proxy is unresponsive.
+    if not is_past_date and not _ra_breaker_open(client):
         try:
-            client = get_tab_client()
             slug = _meeting_slug(venue_code, race_date)
-            raw_races = await asyncio.wait_for(client.get_meeting_races(slug), timeout=25)
+            # 25s → 6s. Even a healthy RA responds in <3s; 6s is enough
+            # headroom for a hiccup while catching real degradation fast.
+            # The Lounge fires this per meeting on every date click, so
+            # a stuck RA used to freeze the UI for the full 25s per venue.
+            raw_races = await asyncio.wait_for(client.get_meeting_races(slug), timeout=6)
             ra_by_num = {r.get("eventNumber"): r for r in raw_races}
             existing_nums = {r["race_number"] for r in race_list}
             for r_num, r in ra_by_num.items():
