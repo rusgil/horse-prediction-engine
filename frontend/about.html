@@ -269,6 +269,13 @@
       font-size: 0.68rem;
       color: var(--text-dim);
     }
+    /* Mobile: stack legend items vertically — one per line, three lines total. */
+    @media (max-width: 640px) {
+      .bench-legend {
+        flex-direction: column;
+        gap: 4px;
+      }
+    }
     .bench-legend-item { display: flex; align-items: center; gap: 5px; }
     .bench-legend-swatch {
       display: inline-block; width: 9px; height: 9px; border-radius: 50%;
