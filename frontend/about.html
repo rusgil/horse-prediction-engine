@@ -876,14 +876,6 @@
       </thead>
       <tbody>
         <tr>
-          <td><span class="tier-badge tier-premium">💎 Premium</span></td>
-          <td>
-            <span class="win-rate premium" id="stat-premium-rate">—</span>
-            <span style="display:block;font-size:0.65rem;font-weight:700;letter-spacing:0.1em;text-transform:uppercase;color:var(--text-dim);margin-top:2px;">ROI · $10 flat stake</span>
-          </td>
-          <td><span class="sample-size" id="stat-premium-races">—</span></td>
-        </tr>
-        <tr>
           <td><span class="tier-badge tier-hot">🔥 Hot Pick</span></td>
           <td><span class="win-rate hot" id="stat-hot-rate">—</span></td>
           <td><span class="sample-size" id="stat-hot-races">—</span></td>
@@ -949,12 +941,8 @@
 
   async function loadStats() {
     try {
-      const [trRes, prRes] = await Promise.all([
-        fetch(API + '/api/track-record'),
-        fetch(API + '/api/performance/premium/public'),
-      ]);
+      const trRes = await fetch(API + '/api/track-record');
       const tr = trRes.ok ? await trRes.json() : null;
-      const pr = prRes.ok ? await prRes.json() : null;
 
       const tierMap = {};
       if (tr && tr.tiers) {
@@ -975,21 +963,9 @@
         if (high)   { document.getElementById('stat-high-rate').textContent   = high.win_pct + '%';   document.getElementById('stat-high-races').textContent   = high.races.toLocaleString() + ' races'; }
         if (strong) { document.getElementById('stat-strong-rate').textContent = strong.win_pct + '%'; document.getElementById('stat-strong-races').textContent = strong.races.toLocaleString() + ' races'; }
 
-        if (pr && pr.roi_pct != null) {
-          // Premium tier reports ROI (not win rate) — win % is misleading
-          // for a value-overlay tier where most picks are mid-priced.
-          const roi = pr.roi_pct;
-          const sign = roi >= 0 ? '+' : '';
-          const el = document.getElementById('stat-premium-rate');
-          el.textContent = sign + roi + '%';
-          el.style.color = roi >= 0 ? 'var(--green-bright)' : '#f87171';
-          document.getElementById('stat-premium-races').textContent = (pr.bets || 0).toLocaleString() + ' bets';
-        }
-
         document.getElementById('stats-note').textContent =
           'Hot / High / Strong tiers report 30-day live win rate across ' +
-          totalRaces.toLocaleString() + ' pre-race predictions. Premium reports live ROI ' +
-          'on a $10 flat stake (win rate alone is misleading for a value-overlay tier).';
+          totalRaces.toLocaleString() + ' pre-race predictions.';
       }
     } catch (e) {
       console.warn('Failed to load stats:', e);
