@@ -309,6 +309,7 @@
       font-size: 0.68rem; font-weight: 700; display: block; margin-top: 2px;
     }
     .date-pill-acc.elite { color: #c084fc; text-shadow: 0 0 6px rgba(192,132,252,0.35); }
+    .date-pill-acc.great { color: #60a5fa; }
     .date-pill-acc.good  { color: #10b981; }
     .date-pill-acc.ok    { color: var(--gold); }
     .date-pill-acc.bad   { color: #f87171; }
@@ -1159,10 +1160,11 @@
   <!-- Key for the win/place pills shown on each past date -->
   <div class="acc-key" id="accKey">
     <span class="acc-key-label">KEY</span>
-    <div class="acc-key-tiers" title="Performance tiers for rank-1 win/place rate.">
-      <span class="acc-key-tier-row"><span class="acc-key-tier elite">●</span><strong style="color:#c084fc">🏆 Elite</strong><span class="acc-key-range">Win 35%+ · Plc 65%+</span></span>
-      <span class="acc-key-tier-row"><span class="acc-key-tier good">●</span><strong style="color:#10b981">📈 Pro</strong><span class="acc-key-range">Win 25–34% · Plc 50–64%</span></span>
-      <span class="acc-key-tier-row"><span class="acc-key-tier ok">●</span><strong style="color:var(--gold)">🔍 Value</strong><span class="acc-key-range">Win 15–24% · Plc 35–49%</span></span>
+    <div class="acc-key-tiers" title="Performance tiers — aligned with the About page 5-tier scale.">
+      <span class="acc-key-tier-row"><span class="acc-key-tier elite">●</span><strong style="color:#c084fc">🏆 Elite</strong><span class="acc-key-range">Win 38%+ · Plc 65%+</span></span>
+      <span class="acc-key-tier-row"><span class="acc-key-tier great" style="color:#60a5fa">●</span><strong style="color:#60a5fa">📈 Great</strong><span class="acc-key-range">Win 30–37% · Plc 55–64%</span></span>
+      <span class="acc-key-tier-row"><span class="acc-key-tier good">●</span><strong style="color:#10b981">🔍 Good</strong><span class="acc-key-range">Win 22–29% · Plc 45–54%</span></span>
+      <span class="acc-key-tier-row"><span class="acc-key-tier ok">●</span><strong style="color:var(--gold)">⚖️ Average</strong><span class="acc-key-range">Win 15–21% · Plc 35–44%</span></span>
     </div>
   </div>
 
@@ -1388,18 +1390,22 @@
         const smallSample = pillRaces < 5;
         const pct = Math.round(pillWinRate * 100);
         const placePct = Math.round(pillPlaceRate * 100);
-        // Performance tiers (matches the legend at the top):
-        //   Elite         35%+   → purple
-        //   Professional  25-34% → green
-        //   Value         15-24% → gold-amber (ok)
-        //   Below         <15%   → red
+        // Performance tiers — aligned with the About page 5-tier scale:
+        //   Elite    38%+     → purple
+        //   Great    30-37%   → blue
+        //   Good     22-29%   → green
+        //   Average  15-21%   → gold-amber (ok)
+        //   Below    <15%     → red (present but not shown in legend)
         // Colors apply regardless of sample size — a 2/4 = 50% pill
         // shows purple even though the denominator is small. The
-        // "small sample" caveat is still communicated via the tooltip
-        // (see tipSuffix below).
+        // "small sample" caveat is still communicated via the tooltip.
         const cls = pillWins === 0
           ? 'bad'
-          : (pct >= 35 ? 'elite' : pct >= 25 ? 'good' : pct >= 15 ? 'ok' : 'bad');
+          : (pct >= 38 ? 'elite'
+            : pct >= 30 ? 'great'
+            : pct >= 22 ? 'good'
+            : pct >= 15 ? 'ok'
+            : 'bad');
         // Compact "Win: XX% / Plc: XX%" format on pills — the "x/y" detail
         // still shows in the tooltip.
         const winLabel = `Win: ${pct}%`;
@@ -1421,26 +1427,25 @@
       if (i === 0) todayEl = el;
     };
 
-    // Recent 3 always visible: today, yesterday, day-before (left → right)
+    // Recent 2 always visible: today + yesterday (left → right)
     renderPill(0);
     renderPill(-1);
-    renderPill(-2);
 
-    // Toggle for the older 7 days
+    // Toggle for the older 8 days
     const toggle = document.createElement('button');
     toggle.type = 'button';
     toggle.className = 'date-pill-toggle';
-    toggle.textContent = S.showOlderDates ? '‹ Hide older' : '+ 7 earlier days';
-    toggle.title = S.showOlderDates ? 'Hide days beyond the last 3' : 'Show the previous 7 days';
+    toggle.textContent = S.showOlderDates ? '‹ Hide older' : '+ 8 earlier days';
+    toggle.title = S.showOlderDates ? 'Hide days beyond today + yesterday' : 'Show the previous 8 days';
     toggle.addEventListener('click', () => {
       S.showOlderDates = !S.showOlderDates;
       renderDatePills();
     });
     container.appendChild(toggle);
 
-    // Older 7 days appear only when expanded (i=-3 back through i=-9)
+    // Older 8 days appear only when expanded (i=-2 back through i=-9)
     if (S.showOlderDates) {
-      for (let i = -3; i >= -9; i--) renderPill(i);
+      for (let i = -2; i >= -9; i--) renderPill(i);
     }
 
     // Scroll today into view (horizontally)
