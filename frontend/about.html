@@ -565,6 +565,105 @@
     </p>
   </div>
 
+  <!-- Sharp-only tier scale — visual placement on the industry 5-tier scale -->
+  <div class="section">
+    <div class="section-title">Sharp Picks · Where We Sit</div>
+    <p class="note" style="margin-top:-4px">
+      Sharp picks graded against the industry 5-tier scale — Poor to Elite. The arrows mark where
+      FunkyIQ currently sits.
+    </p>
+
+    <div class="tier-scale">
+      <div class="tier-scale-label">
+        <span>Win Rate</span>
+        <span class="tier-scale-value" id="sharp-win-value">—</span>
+      </div>
+      <div class="tier-marker-you" id="sharp-win-marker-label">👑 FunkyIQ</div>
+      <div class="tier-marker" id="sharp-win-marker"></div>
+      <div class="tier-scale-bar" id="sharp-win-bar">
+        <div class="tier-band b-poor">Poor</div>
+        <div class="tier-band b-average">Avg</div>
+        <div class="tier-band b-good">Good</div>
+        <div class="tier-band b-great">Great</div>
+        <div class="tier-band b-elite">Elite</div>
+        <div class="bench-dot b-blind" style="left:20%" title="🎯 Blind Selection · ~10% win"></div>
+        <div class="bench-dot b-media" style="left:54%" title="📰 Media Tipster Avg · ~27% win"></div>
+        <div class="bench-dot b-fav"   style="left:76%" title="📊 Track Favourite · ~35% win"></div>
+      </div>
+      <div class="tier-scale-ticks">
+        <span>0%</span><span>15%</span><span>22%</span><span>30%</span><span>38%</span><span>50%+</span>
+      </div>
+      <div class="bench-legend">
+        <span class="bench-legend-item"><span class="bench-legend-swatch b-you"></span>👑 FunkyIQ (Sharp Tier)</span>
+        <span class="bench-legend-item"><span class="bench-legend-swatch b-fav"></span>📊 Track Favourite (Market Ceiling)</span>
+        <span class="bench-legend-item"><span class="bench-legend-swatch b-media"></span>📰 Media Tipster Avg (Public Baseline)</span>
+        <span class="bench-legend-item"><span class="bench-legend-swatch b-blind"></span>🎯 Blind Selection (Floor)</span>
+      </div>
+    </div>
+
+    <div class="tier-scale">
+      <div class="tier-scale-label">
+        <span>Place Rate</span>
+        <span class="tier-scale-value" id="sharp-place-value">—</span>
+      </div>
+      <div class="tier-marker-you" id="sharp-place-marker-label">👑 FunkyIQ</div>
+      <div class="tier-marker" id="sharp-place-marker"></div>
+      <div class="tier-scale-bar" id="sharp-place-bar">
+        <div class="tier-band b-poor">Poor</div>
+        <div class="tier-band b-average">Avg</div>
+        <div class="tier-band b-good">Good</div>
+        <div class="tier-band b-great">Great</div>
+        <div class="tier-band b-elite">Elite</div>
+        <!-- Positions calculated against place-rate scale [0, 35, 45, 55, 65, 80] with 20% per band -->
+        <!-- Blind 30% → poor band 85.7% through → 17.1%. Media 52% → good band 70% → 54%. Fav 67% → elite 10% → 82%. -->
+        <div class="bench-dot b-blind" style="left:17%" title="🎯 Blind Selection · ~30% place"></div>
+        <div class="bench-dot b-media" style="left:54%" title="📰 Media Tipster Avg · ~52% place"></div>
+        <div class="bench-dot b-fav"   style="left:82%" title="📊 Track Favourite · ~67% place"></div>
+      </div>
+      <div class="tier-scale-ticks">
+        <span>0%</span><span>35%</span><span>45%</span><span>55%</span><span>65%</span><span>80%+</span>
+      </div>
+      <div class="bench-legend">
+        <span class="bench-legend-item"><span class="bench-legend-swatch b-you"></span>👑 FunkyIQ (Sharp Tier)</span>
+        <span class="bench-legend-item"><span class="bench-legend-swatch b-fav"></span>📊 Track Favourite (Market Ceiling)</span>
+        <span class="bench-legend-item"><span class="bench-legend-swatch b-media"></span>📰 Media Tipster Avg (Public Baseline)</span>
+        <span class="bench-legend-item"><span class="bench-legend-swatch b-blind"></span>🎯 Blind Selection (Floor)</span>
+      </div>
+    </div>
+
+    <!-- Performance Log block -->
+    <div class="perf-log">
+      <div class="perf-log-header">
+        📊 Performance Log
+        (<span data-slot="pl-window">—</span> | <span data-slot="pl-races">—</span> Race Sample)
+      </div>
+      <ul class="perf-log-metrics">
+        <li><span class="perf-log-lbl">Win Rate:</span> <span class="perf-log-num" data-slot="pl-win">—</span> <span class="perf-log-tag">📈 (Professional Tier Baseline)</span></li>
+        <li><span class="perf-log-lbl">Place Rate:</span> <span class="perf-log-num" data-slot="pl-place">—</span> <span class="perf-log-tag">🏆 (Elite Tier Consistency)</span></li>
+        <li><span class="perf-log-lbl">Average Winning SP:</span> <span class="perf-log-num" data-slot="pl-sp">—</span></li>
+      </ul>
+
+      <div class="perf-log-section-title">Performance Insights</div>
+      <p class="perf-log-body">
+        Our model demonstrates elite structural accuracy, placing our selections in the top three a
+        massive <span data-slot="pl-place-inline">—</span> of the time.
+      </p>
+
+      <div class="perf-log-section-title">Subscriber Action Required</div>
+      <p class="perf-log-body">
+        To bypass the closing SP margin and unlock net profitability on this model, members must
+        secure early Fixed Odds when selections are released to capture premium market value before
+        the prices shorten.
+      </p>
+    </div>
+
+    <p class="note" style="margin-top:12px;font-style:italic">
+      All statistics on a flat, single-unit stake on a single horse (rank-1 Sharp pick) per race.
+      Sample: only genuine pre-race predictions (source="live", enriched before race jump).
+      Backfilled and post-race reconstructions are excluded to prevent look-ahead bias.
+    </p>
+  </div>
+
   <!-- Feature directory -->
   <div class="section">
     <div class="section-title">What's Inside</div>
@@ -701,107 +800,6 @@
         </div>
       </div>
     </div>
-  </div>
-
-  <!-- Sharp-only tier scale — visual placement on the industry 5-tier scale -->
-  <div class="section">
-    <div class="section-title">Sharp Picks · Where We Sit</div>
-    <p class="note" style="margin-top:-4px">
-      Sharp picks graded against the industry 5-tier scale — Poor to Elite. The arrows mark where
-      FunkyIQ currently sits.
-    </p>
-
-    <div class="tier-scale">
-      <div class="tier-scale-label">
-        <span>Win Rate</span>
-        <span class="tier-scale-value" id="sharp-win-value">—</span>
-      </div>
-      <div class="tier-marker-you" id="sharp-win-marker-label">👑 FunkyIQ</div>
-      <div class="tier-marker" id="sharp-win-marker"></div>
-      <div class="tier-scale-bar" id="sharp-win-bar">
-        <div class="tier-band b-poor">Poor</div>
-        <div class="tier-band b-average">Avg</div>
-        <div class="tier-band b-good">Good</div>
-        <div class="tier-band b-great">Great</div>
-        <div class="tier-band b-elite">Elite</div>
-        <div class="bench-dot b-blind" style="left:20%" title="🎯 Blind Selection · ~10% win"></div>
-        <div class="bench-dot b-media" style="left:54%" title="📰 Media Tipster Avg · ~27% win"></div>
-        <div class="bench-dot b-fav"   style="left:76%" title="📊 Track Favourite · ~35% win"></div>
-      </div>
-      <div class="tier-scale-ticks">
-        <span>0%</span><span>15%</span><span>22%</span><span>30%</span><span>38%</span><span>50%+</span>
-      </div>
-      <div class="bench-legend">
-        <span class="bench-legend-item"><span class="bench-legend-swatch b-you"></span>👑 FunkyIQ (Sharp Tier)</span>
-        <span class="bench-legend-item"><span class="bench-legend-swatch b-fav"></span>📊 Track Favourite (Market Ceiling)</span>
-        <span class="bench-legend-item"><span class="bench-legend-swatch b-media"></span>📰 Media Tipster Avg (Public Baseline)</span>
-        <span class="bench-legend-item"><span class="bench-legend-swatch b-blind"></span>🎯 Blind Selection (Floor)</span>
-      </div>
-    </div>
-
-    <div class="tier-scale">
-      <div class="tier-scale-label">
-        <span>Place Rate</span>
-        <span class="tier-scale-value" id="sharp-place-value">—</span>
-      </div>
-      <div class="tier-marker-you" id="sharp-place-marker-label">👑 FunkyIQ</div>
-      <div class="tier-marker" id="sharp-place-marker"></div>
-      <div class="tier-scale-bar" id="sharp-place-bar">
-        <div class="tier-band b-poor">Poor</div>
-        <div class="tier-band b-average">Avg</div>
-        <div class="tier-band b-good">Good</div>
-        <div class="tier-band b-great">Great</div>
-        <div class="tier-band b-elite">Elite</div>
-        <!-- Positions calculated against place-rate scale [0, 35, 45, 55, 65, 80] with 20% per band -->
-        <!-- Blind 30% → poor band 85.7% through → 17.1%. Media 52% → good band 70% → 54%. Fav 67% → elite 10% → 82%. -->
-        <div class="bench-dot b-blind" style="left:17%" title="🎯 Blind Selection · ~30% place"></div>
-        <div class="bench-dot b-media" style="left:54%" title="📰 Media Tipster Avg · ~52% place"></div>
-        <div class="bench-dot b-fav"   style="left:82%" title="📊 Track Favourite · ~67% place"></div>
-      </div>
-      <div class="tier-scale-ticks">
-        <span>0%</span><span>35%</span><span>45%</span><span>55%</span><span>65%</span><span>80%+</span>
-      </div>
-      <div class="bench-legend">
-        <span class="bench-legend-item"><span class="bench-legend-swatch b-you"></span>👑 FunkyIQ (Sharp Tier)</span>
-        <span class="bench-legend-item"><span class="bench-legend-swatch b-fav"></span>📊 Track Favourite (Market Ceiling)</span>
-        <span class="bench-legend-item"><span class="bench-legend-swatch b-media"></span>📰 Media Tipster Avg (Public Baseline)</span>
-        <span class="bench-legend-item"><span class="bench-legend-swatch b-blind"></span>🎯 Blind Selection (Floor)</span>
-      </div>
-    </div>
-
-    <!-- Performance Log block -->
-    <div class="perf-log">
-      <div class="perf-log-header">
-        📊 Performance Log
-        (<span data-slot="pl-window">—</span> | <span data-slot="pl-races">—</span> Race Sample)
-      </div>
-      <ul class="perf-log-metrics">
-        <li><span class="perf-log-lbl">Win Rate:</span> <span class="perf-log-num" data-slot="pl-win">—</span> <span class="perf-log-tag">📈 (Professional Tier Baseline)</span></li>
-        <li><span class="perf-log-lbl">Place Rate:</span> <span class="perf-log-num" data-slot="pl-place">—</span> <span class="perf-log-tag">🏆 (Elite Tier Consistency)</span></li>
-        <li><span class="perf-log-lbl">Average Winning SP:</span> <span class="perf-log-num" data-slot="pl-sp">—</span></li>
-      </ul>
-
-      <div class="perf-log-section-title">Performance Insights</div>
-      <p class="perf-log-body">
-        Our model demonstrates elite structural accuracy, placing our selections in the top three a
-        massive <span data-slot="pl-place-inline">—</span> of the time. While the final, highly
-        efficient track Starting Price (SP) results in a standard market-neutral loss due to
-        bookmaker closing margins, our predictive hit-rate remains incredibly sharp.
-      </p>
-
-      <div class="perf-log-section-title">Subscriber Action Required</div>
-      <p class="perf-log-body">
-        To bypass the closing SP margin and unlock net profitability on this model, members must
-        secure early Fixed Odds when selections are released to capture premium market value before
-        the prices shorten.
-      </p>
-    </div>
-
-    <p class="note" style="margin-top:12px;font-style:italic">
-      All statistics on a flat, single-unit stake on a single horse (rank-1 Sharp pick) per race.
-      Sample: only genuine pre-race predictions (source="live", enriched before race jump).
-      Backfilled and post-race reconstructions are excluded to prevent look-ahead bias.
-    </p>
   </div>
 
   <!-- Tiers explained -->
