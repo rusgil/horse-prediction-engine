@@ -152,10 +152,17 @@ async def _scheduled_odds_snapshot():
     """
     from horse_engine.clients.oddspro import OddsProClient
 
-    # Small jitter (0-30s) so overlapping fires from redeploys don't stack.
-    # Was 0-600s when the cron ran every 15 min; that's too much padding for
-    # a 2-min cadence — would cause fires to overlap.
-    delay = random.uniform(0, 30)
+    # Hour gate — IntervalTrigger runs 24/7 so we enforce racing-hours
+    # (5am–8pm AEST) here. Skip early morning / overnight fires.
+    now_aest = datetime.now(_AEST)
+    if now_aest.hour < 5 or now_aest.hour > 20:
+        return
+
+    # Variable delay 1-60s. Combined with the 90s interval trigger this
+    # gives an effective spacing of 91-150s between fires — deliberately
+    # non-uniform so our request pattern is harder for a WAF to
+    # fingerprint (RA blocked us on an exact 2-min cadence earlier today).
+    delay = random.uniform(1, 60)
     await asyncio.sleep(delay)
     log.debug("[odds-snapshot] Running odds snapshot")
     try:
@@ -2322,6 +2329,7 @@ async def lifespan(app: FastAPI):
 
     from apscheduler.schedulers.asyncio import AsyncIOScheduler
     from apscheduler.triggers.cron import CronTrigger
+    from apscheduler.triggers.interval import IntervalTrigger
 
     global _scheduler
     scheduler = AsyncIOScheduler(timezone="Australia/Sydney")
@@ -2440,16 +2448,16 @@ async def lifespan(app: FastAPI):
     # settles and before the Monday-morning weekly review.
     scheduler.add_job(_scheduled_refresh_about_stats,
                       CronTrigger(day_of_week="sun", hour=8, minute=0, timezone="Australia/Sydney"))
-    # Every 2 min from 5am AEST — bookies open early-fixed-odds markets
-    # from ~5am for the day's meetings and users want to see them straight
-    # away (was TBA-until-3h-before-jump via the separate live-odds cron).
-    # The snapshot cron now also updates best_available_odds on the rank-1
-    # pick row (piggyback), so displayed odds and snapshot history stay in
-    # sync. ~5 OddsPro calls per fire × 30 fires/hour = 150/hour — OddsPro
-    # tolerates well below its rate limit.
+    # Every 90s base + 1-60s random delay = 91-150s between fires.
+    # The variable interval is deliberate: makes our request pattern less
+    # WAF-friendly-to-detect (RA blocked us when we hit them on an exact
+    # 2-min cadence). Hour restriction (5am-8pm AEST) moved inside the
+    # function since IntervalTrigger doesn't support cron-style hour
+    # ranges. Same piggyback behavior — updates best_available_odds on
+    # rank-1 rows while writing snapshot history.
     scheduler.add_job(
         _scheduled_odds_snapshot,
-        CronTrigger(hour="5-20", minute="*/2", timezone="Australia/Sydney")
+        IntervalTrigger(seconds=90),
     )
     scheduler.add_job(
         _scheduled_pre_race_enrich_and_scratch,
