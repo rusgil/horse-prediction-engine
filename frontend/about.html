@@ -722,7 +722,6 @@
         <li><span class="perf-log-lbl">Win Rate:</span> <span class="perf-log-num" data-slot="pl-win">—</span> <span class="perf-log-tag">📈 (Professional Tier Baseline)</span></li>
         <li><span class="perf-log-lbl">Place Rate:</span> <span class="perf-log-num" data-slot="pl-place">—</span> <span class="perf-log-tag">🏆 (Elite Tier Consistency)</span></li>
         <li><span class="perf-log-lbl">Average Winning SP:</span> <span class="perf-log-num" data-slot="pl-sp">—</span></li>
-        <li><span class="perf-log-lbl">Closing SP Margin:</span> <span class="perf-log-num" data-slot="pl-roi">—</span> <span class="perf-log-tag">ROI</span></li>
       </ul>
 
       <div class="perf-log-section-title">Performance Insights</div>
@@ -1004,14 +1003,6 @@
       q('pl-place-inline').textContent = placeRounded + '%';
       q('pl-sp').textContent           = best.mean_winning_sp != null ? '$' + best.mean_winning_sp.toFixed(2) : '—';
       q('pl-races').textContent        = best.races.toLocaleString();
-
-      // ROI: drop the decimal (−14.17% → −14%). Sign preserved.
-      if (best.flat_roi_pct != null) {
-        const sign = best.flat_roi_pct >= 0 ? '+' : '−';
-        q('pl-roi').textContent = sign + Math.abs(Math.round(best.flat_roi_pct)) + '%';
-      } else {
-        q('pl-roi').textContent = '—';
-      }
 
       // Date window: "May 25 – July 13" from ISO dates
       const fmtDate = (iso) => {
