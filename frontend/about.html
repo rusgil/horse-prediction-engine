@@ -862,44 +862,6 @@
     </div>
   </div>
 
-  <!-- The Numbers -->
-  <div class="section">
-    <div class="section-title">30-Day Live Performance</div>
-    <div id="stats-building" style="display:none;background:rgba(245,200,66,0.06);border:1px solid rgba(245,200,66,0.2);border-radius:12px;padding:20px 24px;margin-bottom:16px;">
-      <div style="font-size:0.85rem;font-weight:600;color:#f5c842;margin-bottom:6px;">Accumulating data</div>
-      <div style="font-size:0.82rem;color:var(--text-dim);line-height:1.6;">
-        Performance data is building — check back soon.
-      </div>
-    </div>
-    <table class="stats-table" id="stats-table">
-      <thead>
-        <tr>
-          <th>Tier</th>
-          <th>Performance</th>
-          <th>Sample</th>
-        </tr>
-      </thead>
-      <tbody>
-        <tr>
-          <td><span class="tier-badge tier-hot">🔥 Hot Pick</span></td>
-          <td><span class="win-rate hot" id="stat-hot-rate">—</span></td>
-          <td><span class="sample-size" id="stat-hot-races">—</span></td>
-        </tr>
-        <tr>
-          <td><span class="tier-badge tier-high">⚡ High Confidence</span></td>
-          <td><span class="win-rate high" id="stat-high-rate">—</span></td>
-          <td><span class="sample-size" id="stat-high-races">—</span></td>
-        </tr>
-        <tr>
-          <td><span class="tier-badge tier-strong">Strong Pick</span></td>
-          <td><span class="win-rate strong" id="stat-strong-rate">—</span></td>
-          <td><span class="sample-size" id="stat-strong-races">—</span></td>
-        </tr>
-      </tbody>
-    </table>
-    <p class="note" id="stats-note"></p>
-  </div>
-
   <!-- Reading the signals -->
   <div class="section">
     <div class="section-title">Reading the Signals</div>
@@ -939,45 +901,6 @@
 
 <script>
   const API = 'https://web-production-dec62.up.railway.app';
-
-  function fmt(pct, races) {
-    return { rate: pct != null ? pct + '%' : '—', races: races != null ? races + ' races' : '—' };
-  }
-
-  async function loadStats() {
-    try {
-      const trRes = await fetch(API + '/api/track-record');
-      const tr = trRes.ok ? await trRes.json() : null;
-
-      const tierMap = {};
-      if (tr && tr.tiers) {
-        for (const t of tr.tiers) tierMap[t.badge] = t;
-      }
-
-      const hot    = tierMap['hot'];
-      const high   = tierMap['high'];
-      const strong = tierMap['standard'];
-
-      const totalRaces = (hot ? hot.races : 0) + (high ? high.races : 0) + (strong ? strong.races : 0);
-
-      if (totalRaces > 0) {
-        document.getElementById('stats-building').style.display = 'none';
-        document.getElementById('stats-note').style.display     = '';
-
-        if (hot)    { document.getElementById('stat-hot-rate').textContent    = hot.win_pct + '%';    document.getElementById('stat-hot-races').textContent    = hot.races.toLocaleString() + ' races'; }
-        if (high)   { document.getElementById('stat-high-rate').textContent   = high.win_pct + '%';   document.getElementById('stat-high-races').textContent   = high.races.toLocaleString() + ' races'; }
-        if (strong) { document.getElementById('stat-strong-rate').textContent = strong.win_pct + '%'; document.getElementById('stat-strong-races').textContent = strong.races.toLocaleString() + ' races'; }
-
-        document.getElementById('stats-note').textContent =
-          'Hot / High / Strong tiers report 30-day live win rate across ' +
-          totalRaces.toLocaleString() + ' pre-race predictions.';
-      }
-    } catch (e) {
-      console.warn('Failed to load stats:', e);
-    }
-  }
-
-  loadStats();
 
   // Sharp tier scale: hardcoded HTML defaults render instantly. A tiny fetch
   // to /api/performance/tier-grade/published swaps in fresh values IF the
