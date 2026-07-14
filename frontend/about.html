@@ -188,7 +188,9 @@
 
     /* Sharp tier-scale visual */
     .tier-scale {
-      margin: 18px 0 6px;
+      margin: 30px 0 6px;
+      position: relative;   /* anchor for markers */
+      padding-top: 32px;    /* room for FunkyIQ callout + arrow above bar */
     }
     .tier-scale-label {
       font-family: 'Barlow Condensed', sans-serif;
@@ -219,16 +221,21 @@
     .tier-band.b-good    { background: rgba(34,197,94,0.22); }
     .tier-band.b-great   { background: rgba(59,130,246,0.26); }
     .tier-band.b-elite   { background: rgba(168,85,247,0.32); }
+    /* FunkyIQ marker (main arrow) — parented to .tier-scale so it's not clipped by the bar */
     .tier-marker {
-      position: absolute; top: -6px;
+      position: absolute;
+      top: 22px;          /* triangle base at 32px = bar top */
       width: 0; height: 0;
       border-left: 8px solid transparent;
       border-right: 8px solid transparent;
       border-bottom: 10px solid #fff;
       transform: translateX(-50%);
+      z-index: 3;
+      /* left set dynamically via JS */
     }
     .tier-marker-you {
-      position: absolute; top: -26px;
+      position: absolute;
+      top: 0;
       transform: translateX(-50%);
       font-family: 'Barlow Condensed', sans-serif;
       font-size: 0.7rem; font-weight: 900;
@@ -239,7 +246,38 @@
       border: 1px solid var(--border);
       border-radius: 4px;
       white-space: nowrap;
+      z-index: 3;
+      /* left set dynamically via JS */
     }
+    /* Benchmark comparison dots sit ON the bar itself */
+    .bench-dot {
+      position: absolute;
+      top: 50%;
+      width: 10px; height: 10px;
+      border-radius: 50%;
+      transform: translate(-50%, -50%);
+      border: 1.5px solid rgba(0,0,0,0.5);
+      z-index: 2;
+    }
+    .bench-dot.b-fav    { background: #c084fc; }  /* purple — sits near/in Elite */
+    .bench-dot.b-media  { background: #4ade80; }  /* green — Good tier */
+    .bench-dot.b-blind  { background: #f87171; }  /* red — Poor tier */
+    /* Legend row below the ticks */
+    .bench-legend {
+      display: flex; flex-wrap: wrap; gap: 12px;
+      margin-top: 8px;
+      font-size: 0.68rem;
+      color: var(--text-dim);
+    }
+    .bench-legend-item { display: flex; align-items: center; gap: 5px; }
+    .bench-legend-swatch {
+      display: inline-block; width: 9px; height: 9px; border-radius: 50%;
+      border: 1.5px solid rgba(0,0,0,0.5);
+    }
+    .bench-legend-swatch.b-you   { background: #fff; border-color: rgba(0,0,0,0.5); }
+    .bench-legend-swatch.b-fav   { background: #c084fc; }
+    .bench-legend-swatch.b-media { background: #4ade80; }
+    .bench-legend-swatch.b-blind { background: #f87171; }
     .tier-scale-ticks {
       display: flex;
       margin-top: 6px;
@@ -678,17 +716,26 @@
         <span>Win Rate</span>
         <span class="tier-scale-value" id="sharp-win-value">—</span>
       </div>
-      <div class="tier-scale-bar">
+      <div class="tier-marker-you" id="sharp-win-marker-label">👑 FunkyIQ</div>
+      <div class="tier-marker" id="sharp-win-marker"></div>
+      <div class="tier-scale-bar" id="sharp-win-bar">
         <div class="tier-band b-poor">Poor</div>
         <div class="tier-band b-average">Avg</div>
         <div class="tier-band b-good">Good</div>
         <div class="tier-band b-great">Great</div>
         <div class="tier-band b-elite">Elite</div>
-        <div class="tier-marker-you" id="sharp-win-marker-label">FunkyIQ</div>
-        <div class="tier-marker" id="sharp-win-marker"></div>
+        <div class="bench-dot b-blind" style="left:20%" title="🎯 Blind Selection · ~10% win"></div>
+        <div class="bench-dot b-media" style="left:54%" title="📰 Media Tipster Avg · ~27% win"></div>
+        <div class="bench-dot b-fav"   style="left:76%" title="📊 Track Favourite · ~35% win"></div>
       </div>
       <div class="tier-scale-ticks">
         <span>0%</span><span>15%</span><span>22%</span><span>30%</span><span>38%</span><span>50%+</span>
+      </div>
+      <div class="bench-legend">
+        <span class="bench-legend-item"><span class="bench-legend-swatch b-you"></span>👑 FunkyIQ (Sharp Tier)</span>
+        <span class="bench-legend-item"><span class="bench-legend-swatch b-fav"></span>📊 Track Favourite (Market Ceiling)</span>
+        <span class="bench-legend-item"><span class="bench-legend-swatch b-media"></span>📰 Media Tipster Avg (Public Baseline)</span>
+        <span class="bench-legend-item"><span class="bench-legend-swatch b-blind"></span>🎯 Blind Selection (Floor)</span>
       </div>
     </div>
 
@@ -697,17 +744,28 @@
         <span>Place Rate</span>
         <span class="tier-scale-value" id="sharp-place-value">—</span>
       </div>
-      <div class="tier-scale-bar">
+      <div class="tier-marker-you" id="sharp-place-marker-label">👑 FunkyIQ</div>
+      <div class="tier-marker" id="sharp-place-marker"></div>
+      <div class="tier-scale-bar" id="sharp-place-bar">
         <div class="tier-band b-poor">Poor</div>
         <div class="tier-band b-average">Avg</div>
         <div class="tier-band b-good">Good</div>
         <div class="tier-band b-great">Great</div>
         <div class="tier-band b-elite">Elite</div>
-        <div class="tier-marker-you" id="sharp-place-marker-label">FunkyIQ</div>
-        <div class="tier-marker" id="sharp-place-marker"></div>
+        <!-- Positions calculated against place-rate scale [0, 35, 45, 55, 65, 80] with 20% per band -->
+        <!-- Blind 30% → poor band 85.7% through → 17.1%. Media 52% → good band 70% → 54%. Fav 67% → elite 10% → 82%. -->
+        <div class="bench-dot b-blind" style="left:17%" title="🎯 Blind Selection · ~30% place"></div>
+        <div class="bench-dot b-media" style="left:54%" title="📰 Media Tipster Avg · ~52% place"></div>
+        <div class="bench-dot b-fav"   style="left:82%" title="📊 Track Favourite · ~67% place"></div>
       </div>
       <div class="tier-scale-ticks">
         <span>0%</span><span>35%</span><span>45%</span><span>55%</span><span>65%</span><span>80%+</span>
+      </div>
+      <div class="bench-legend">
+        <span class="bench-legend-item"><span class="bench-legend-swatch b-you"></span>👑 FunkyIQ (Sharp Tier)</span>
+        <span class="bench-legend-item"><span class="bench-legend-swatch b-fav"></span>📊 Track Favourite (Market Ceiling)</span>
+        <span class="bench-legend-item"><span class="bench-legend-swatch b-media"></span>📰 Media Tipster Avg (Public Baseline)</span>
+        <span class="bench-legend-item"><span class="bench-legend-swatch b-blind"></span>🎯 Blind Selection (Floor)</span>
       </div>
     </div>
 
