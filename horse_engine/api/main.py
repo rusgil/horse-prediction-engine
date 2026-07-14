@@ -11559,6 +11559,13 @@ async def _scheduled_quality_check():
     applies safe auto-heals, re-runs to verify, and persists the
     combined report. Logs at severity-matching levels for monitoring.
     """
+    # 10-40 min random start delay — same rationale as _scheduled_calibrate:
+    # the quality check probes RA (via _probe URL Calendar.aspx?State=NSW),
+    # and firing at exactly 04:00:00 is a WAF-friendly pattern to detect.
+    # Effective kickoff 04:10–04:40 AEST. Well before the 05:00 odds cron.
+    delay = random.uniform(600, 2400)
+    log.info("[cron] quality-check — sleeping %.0fs before start", delay)
+    await asyncio.sleep(delay)
     target = (_today_aest() - timedelta(days=1)).isoformat()
     try:
         initial = await _run_quality_check(target)
