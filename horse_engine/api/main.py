@@ -2426,6 +2426,12 @@ async def lifespan(app: FastAPI):
     # the nightly's single-day window).
     scheduler.add_job(_scheduled_weekly_review,
                       CronTrigger(day_of_week="mon", hour=3, minute=0, timezone="Australia/Sydney"))
+    # Weekly About-page Sharp stats refresh. Publishes only if the fresh
+    # best-window figures beat what's currently on the page (tier rank first,
+    # win rate as tiebreak). Runs Sunday 08:00 AEST — after Saturday racing
+    # settles and before the Monday-morning weekly review.
+    scheduler.add_job(_scheduled_refresh_about_stats,
+                      CronTrigger(day_of_week="sun", hour=8, minute=0, timezone="Australia/Sydney"))
     scheduler.add_job(
         _scheduled_odds_snapshot,
         CronTrigger(hour="9-20", minute="0,15,30,45", timezone="Australia/Sydney")
@@ -19541,6 +19547,136 @@ async def performance_tier_grade(sample_size: int = Query(500, ge=100, le=2000))
     }
     _TIER_GRADE_CACHE[cache_key] = (datetime.utcnow(), body)
     return body
+
+
+_PUBLISHED_TIER_GRADE_KEY = "published_tier_grade_sharp"
+_published_tier_grade_cache: tuple[datetime, dict] | None = None
+_PUBLISHED_TTL = 3600  # 1 hour — cron writes weekly, users hit the endpoint often
+
+
+def _tier_rank_pct(win_pct: float, place_pct: float) -> int:
+    """5=Elite, 4=Great, 3=Good, 2=Average, 1=Poor. Higher = better."""
+    if win_pct >= 38 or place_pct >= 65: return 5
+    if win_pct >= 30 or place_pct >= 55: return 4
+    if win_pct >= 22 or place_pct >= 45: return 3
+    if win_pct >= 15 or place_pct >= 35: return 2
+    return 1
+
+
+def _is_better(candidate: dict, current: dict | None) -> bool:
+    """Publish rule: tier rank first, then win rate as tiebreak. Never publish
+    a regression — that's the entire point of storing 'last published' state
+    instead of just serving the current best-window on every load."""
+    if current is None:
+        return True
+    c_rank = _tier_rank_pct(candidate["win_pct"], candidate["place_pct"])
+    p_rank = _tier_rank_pct(current["win_pct"], current["place_pct"])
+    if c_rank != p_rank:
+        return c_rank > p_rank
+    return candidate["win_pct"] > current["win_pct"]
+
+
+async def _scheduled_refresh_about_stats():
+    """Weekly: compute the current best-window Sharp stats and publish them if
+    they're materially better than what's currently in the ResponseCacheRow.
+    Serves the About page's 5-tier scale section."""
+    global _published_tier_grade_cache
+    log.info("[refresh-about-stats] Running weekly refresh")
+    try:
+        # Reuse the tier-grade endpoint's computation by calling it directly.
+        # It's idempotent and cached — safe to call from cron.
+        fresh = await performance_tier_grade(sample_size=500)
+        sharp = (fresh.get("buckets") or {}).get("sharp")
+        if not sharp:
+            log.info("[refresh-about-stats] No Sharp bucket in fresh compute — skipping")
+            return
+
+        candidate = {
+            "win_pct": sharp["win_pct"],
+            "place_pct": sharp["place_pct"],
+            "mean_winning_sp": sharp.get("mean_winning_sp"),
+            "races": sharp["races"],
+            "earliest_race_date": sharp.get("earliest_race_date"),
+            "latest_race_date": sharp.get("latest_race_date"),
+            "computed_at": datetime.utcnow().isoformat(),
+        }
+
+        async with get_session() as session:
+            row = (await session.execute(
+                select(ResponseCacheRow).where(ResponseCacheRow.cache_key == _PUBLISHED_TIER_GRADE_KEY)
+            )).scalar_one_or_none()
+            current = None
+            if row:
+                try:
+                    current = json.loads(row.payload_json)
+                except Exception:
+                    current = None
+
+            if not _is_better(candidate, current):
+                log.info(
+                    "[refresh-about-stats] Skipping — candidate not better than published. "
+                    "cand=%s%%win/%s%%place  published=%s%%win/%s%%place",
+                    candidate["win_pct"], candidate["place_pct"],
+                    (current or {}).get("win_pct"), (current or {}).get("place_pct")
+                )
+                return
+
+            payload = json.dumps(candidate)
+            if row:
+                row.payload_json = payload
+                row.updated_at = datetime.utcnow()
+                row.cache_version = (row.cache_version or 0) + 1
+            else:
+                session.add(ResponseCacheRow(
+                    cache_key=_PUBLISHED_TIER_GRADE_KEY,
+                    payload_json=payload,
+                    cache_version=1,
+                    updated_at=datetime.utcnow(),
+                ))
+            await session.commit()
+            log.info(
+                "[refresh-about-stats] Published %s%%win/%s%%place (%d races, %s → %s)",
+                candidate["win_pct"], candidate["place_pct"], candidate["races"],
+                candidate["earliest_race_date"], candidate["latest_race_date"]
+            )
+        _published_tier_grade_cache = None  # bust in-memory cache
+    except Exception as e:
+        log.exception("[refresh-about-stats] Failed: %s", e)
+
+
+@app.get("/api/performance/tier-grade/published")
+async def performance_tier_grade_published():
+    """Return the currently-published Sharp tier-grade values for the About
+    page. Updated weekly by _scheduled_refresh_about_stats — never regresses.
+    Serves from a 1-hour in-memory cache after the first DB read."""
+    global _published_tier_grade_cache
+    if _published_tier_grade_cache is not None:
+        ts, body = _published_tier_grade_cache
+        if (datetime.utcnow() - ts).total_seconds() < _PUBLISHED_TTL:
+            return body
+    async with get_session() as session:
+        row = (await session.execute(
+            select(ResponseCacheRow).where(ResponseCacheRow.cache_key == _PUBLISHED_TIER_GRADE_KEY)
+        )).scalar_one_or_none()
+    if not row:
+        return {"published": None}
+    try:
+        published = json.loads(row.payload_json)
+    except Exception:
+        return {"published": None}
+    body = {"published": published, "updated_at": row.updated_at.isoformat() if row.updated_at else None}
+    _published_tier_grade_cache = (datetime.utcnow(), body)
+    return body
+
+
+@app.post("/api/admin/refresh-about-stats-now")
+async def admin_refresh_about_stats_now(x_cron_secret: Optional[str] = Header(None)):
+    """Force-run the weekly refresh immediately. Useful for the initial
+    publish (before the first Sunday cron fires) and for verifying the
+    'better-only' comparator during development."""
+    _check_admin(x_cron_secret)
+    await _scheduled_refresh_about_stats()
+    return {"ok": True}
 
 
 @app.get("/api/admin/backtest-win")
