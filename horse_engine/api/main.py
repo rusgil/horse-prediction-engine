@@ -19131,7 +19131,7 @@ async def performance_summary(
 
 _TIER_GRADE_CACHE: dict[int, tuple[datetime, dict]] = {}
 _TIER_GRADE_TTL = 900  # 15 min — scanning multiple windows is expensive, About page is low-traffic
-_TIER_GRADE_VERSION = 4  # bump to invalidate cache after switching to N-race sample anchor
+_TIER_GRADE_VERSION = 5  # bump: added premium bucket + overlay/model_prob to entries
 
 
 @app.get("/api/admin/tier-grade-best-window")
@@ -19372,10 +19372,10 @@ async def performance_tier_grade(sample_size: int = Query(500, ge=100, le=2000))
     result_by_key = {(r.race_id, _normalize_horse(r.horse_name)): r for r in hr_rows}
 
     # Pre-compute per-race stats so window aggregation is a linear filter pass.
-    # entries: (race_date_str, is_sharp, won, placed, sp_or_None, bao_or_None)
-    # bao = pre-race best-available fixed odds captured at enrichment time — a
-    # real price a punter could have taken, historically 8–15% above SP.
-    entries: list[tuple[str, bool, bool, bool, float | None, float | None]] = []
+    # Fields: race_date, is_sharp, won, placed, sp, bao, overlay, model_win_prob
+    # bao = pre-race best-available fixed odds captured at enrichment time.
+    # overlay + model_win_prob feed the Premium value-overlay bucket.
+    entries: list[tuple] = []
     for race_id, pick in top_picks.items():
         winner = winners.get(race_id)
         if not winner:
@@ -19387,7 +19387,10 @@ async def performance_tier_grade(sample_size: int = Query(500, ge=100, le=2000))
         placed = bool(actual.position <= 3) or won
         sp = float(actual.starting_price) if actual.starting_price else None
         bao = float(pick.best_available_odds) if pick.best_available_odds else None
-        entries.append((race_id[:10], pick.is_sharp is True, won, placed, sp, bao))
+        overlay = float(pick.overlay) if pick.overlay else 0.0
+        model_win_prob = float(pick.win_probability) if pick.win_probability else 0.0
+        entries.append((race_id[:10], pick.is_sharp is True, won, placed, sp, bao,
+                        overlay, model_win_prob))
 
     def _aggregate(candidates: list[tuple]) -> dict | None:
         n = len(candidates)
@@ -19423,9 +19426,8 @@ async def performance_tier_grade(sample_size: int = Query(500, ge=100, le=2000))
     # Sort entries newest-first by race_date for the N-race trimming.
     entries.sort(key=lambda e: e[0], reverse=True)
 
-    def _bucket(is_sharp_filter):  # None=all, True=sharp, False=non_sharp
-        filtered = [e for e in entries
-                    if is_sharp_filter is None or e[1] == is_sharp_filter]
+    def _bucket(filter_fn):
+        filtered = [e for e in entries if filter_fn(e)]
         # Take the most-recent N. If fewer than N clean rows exist we return
         # what we have and state the count honestly.
         sample = filtered[:sample_size]
@@ -19434,18 +19436,31 @@ async def performance_tier_grade(sample_size: int = Query(500, ge=100, le=2000))
         agg = _aggregate(sample)
         if agg is None:
             return None
-        if sample:
-            agg["earliest_race_date"] = sample[-1][0]
-            agg["latest_race_date"] = sample[0][0]
+        agg["earliest_race_date"] = sample[-1][0]
+        agg["latest_race_date"] = sample[0][0]
         agg["requested_sample_size"] = sample_size
         return agg
+
+    # Premium filter matches the historical value-overlay Premium tier:
+    #   overlay > 5pp AND SP >= $3 AND model win prob >= 30%
+    # Independent of is_sharp — a pick can be Sharp, Premium, both, or neither.
+    def _is_premium(e):
+        sp = e[4]
+        overlay = e[6]
+        model_win_prob = e[7]
+        return (
+            overlay > 0.05
+            and sp is not None and sp >= 3.0
+            and model_win_prob >= 0.30
+        )
 
     body = {
         "sample_size": sample_size,
         "buckets": {
-            "all":       _bucket(None),
-            "sharp":     _bucket(True),
-            "non_sharp": _bucket(False),
+            "all":       _bucket(lambda e: True),
+            "sharp":     _bucket(lambda e: e[1] is True),
+            "non_sharp": _bucket(lambda e: e[1] is False),
+            "premium":   _bucket(_is_premium),
         },
     }
     _TIER_GRADE_CACHE[cache_key] = (datetime.utcnow(), body)
