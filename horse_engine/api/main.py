@@ -11291,8 +11291,18 @@ async def _run_quality_check(target: str) -> dict:
     # failed (RA blocks Railway's IP, which is exactly why we have the
     # proxy), so they added nothing but false-positive alerts in the
     # morning report. Historical reference for those URLs kept in git.
+    #
+    # Probe the /health endpoint (unauthenticated) rather than a
+    # /proxy/* path — the proxy's /proxy/* routes are secret-gated and
+    # return HTTP 403 without X-Proxy-Secret, which this probe doesn't
+    # send. Prior URL caused every morning report to alert
+    # 'ra_proxy_droplet_down' even when the droplet, Caddy, and the RA
+    # pipeline were all healthy (2026-07-15 diagnosis: droplet ICMP
+    # 0% loss, Caddy 264ms, actual enrich crons succeeding). Real RA
+    # blocks surface via the actual enrich cron failures — no need to
+    # simulate the full call path from the health probe.
     external_urls = [
-        "https://170-64-147-74.sslip.io/proxy/FreeFields/Calendar.aspx?State=NSW",
+        "https://170-64-147-74.sslip.io/health",
     ]
 
     async def _probe(client: "_httpx_probe.AsyncClient", url: str) -> dict:
