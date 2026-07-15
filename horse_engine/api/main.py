@@ -2464,12 +2464,18 @@ async def lifespan(app: FastAPI):
     # 04:00 nightly. Runs at 10:00, 13:00, 16:00, 19:00 AEST.
     scheduler.add_job(_scheduled_racing_hours_heal,
                       CronTrigger(hour="10,13,16,19", minute=0, timezone="Australia/Sydney"))
-    # Weekly-review follow-up resolver — Sunday 07:00 AEST. Walks
-    # weekly_review_followups where scheduled_for <= today and
+    # Follow-up resolver — daily at 05:30 AEST (was Sunday-only, but
+    # once we started seeding daily follow-ups from candidate reviews
+    # and same-day measurements like shortest_fav_rank1_confidence,
+    # waiting for Sunday was leaving actionable items stale for up to
+    # 6 days). Runs after _scheduled_calibrate (02:00 Sun) and before
+    # the 06:30 edge-warm; costs are DB-only (measurers read history +
+    # results, no external API calls) so any hour after 3am is safe.
+    # Walks weekly_review_followups where scheduled_for <= today and
     # measured_at IS NULL, runs the measurement, records verdict +
     # next action. Dashboard's "Follow-Ups" tab renders the results.
     scheduler.add_job(_scheduled_weekly_review_followup_check,
-                      CronTrigger(day_of_week="sun", hour=7, minute=0,
+                      CronTrigger(hour=5, minute=30,
                                   timezone="Australia/Sydney"))
     # Nightly review intentionally DISABLED (2026-06-30) — single-day
     # denominators were too small to surface actionable signals; weekly
@@ -22291,6 +22297,37 @@ async def _scheduled_output_calibration():
         log.exception("[cron] output_calibration failed: %s", e)
 
 
+async def _close_candidate_review_followup(candidate_id: int, artefact: str,
+                                             outcome: str, note: str) -> None:
+    """Mark the linked candidate-review follow-up row as measured so the
+    dashboard card flips from 'Awaiting review' to a resolved verdict.
+    Matches on measurement_type + title-contains '#<id>'. Silent no-op if
+    no matching row (e.g. seed failed earlier)."""
+    from sqlalchemy import update as sa_update
+    measurement_type = f"candidate_review_{artefact}"
+    try:
+        async with get_session() as session:
+            row = (await session.execute(
+                select(WeeklyReviewFollowUpRow)
+                .where(WeeklyReviewFollowUpRow.measurement_type == measurement_type)
+                .where(WeeklyReviewFollowUpRow.title.like(f"%#{candidate_id}%"))
+                .limit(1)
+            )).scalar_one_or_none()
+            if row is None:
+                return
+            row.measured_at = datetime.utcnow()
+            row.measured_value = 1.0 if outcome == "promoted" else 0.0
+            row.verdict = "fixed" if outcome == "promoted" else "worse"
+            row.next_action_md = (
+                f"Candidate {candidate_id} {outcome}. "
+                f"Reviewer note: {note or '(none)'}. "
+                f"See status via GET /api/admin/{artefact}-candidate/{candidate_id}."
+            )
+            await session.commit()
+    except Exception as e:
+        log.warning("[followup-close] failed to close candidate %d: %s", candidate_id, e)
+
+
 @app.post("/api/admin/isotonic-candidate/{candidate_id}/promote")
 async def admin_isotonic_promote(
     candidate_id: int,
@@ -22298,7 +22335,8 @@ async def admin_isotonic_promote(
     x_cron_secret: Optional[str] = Header(None),
 ):
     """Human promotion: flip a candidate curve to status='active', archive
-    any prior active row. Only path from candidate → active."""
+    any prior active row. Only path from candidate → active. Also closes
+    the linked follow-up row so the dashboard card resolves."""
     _check_admin(x_cron_secret)
     async with get_session() as session:
         candidate = await session.get(WinCalibrationCurveRow, candidate_id)
@@ -22315,6 +22353,7 @@ async def admin_isotonic_promote(
         candidate.reviewed_at = datetime.utcnow()
         candidate.reviewed_note = note or "promoted via admin endpoint"
         await session.commit()
+    await _close_candidate_review_followup(candidate_id, "isotonic", "promoted", note)
     return {"ok": True, "promoted": candidate_id, "archived": [p.id for p in prior]}
 
 
@@ -22324,7 +22363,8 @@ async def admin_isotonic_reject(
     note: str = Query("", description="Optional reviewer note"),
     x_cron_secret: Optional[str] = Header(None),
 ):
-    """Human rejection: mark a candidate as rejected. Kept for audit."""
+    """Human rejection: mark a candidate as rejected. Kept for audit.
+    Also closes the linked follow-up row."""
     _check_admin(x_cron_secret)
     async with get_session() as session:
         candidate = await session.get(WinCalibrationCurveRow, candidate_id)
@@ -22336,6 +22376,7 @@ async def admin_isotonic_reject(
         candidate.reviewed_at = datetime.utcnow()
         candidate.reviewed_note = note or "rejected via admin endpoint"
         await session.commit()
+    await _close_candidate_review_followup(candidate_id, "isotonic", "rejected", note)
     return {"ok": True, "rejected": candidate_id}
 
 

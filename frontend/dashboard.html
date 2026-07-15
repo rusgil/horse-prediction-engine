@@ -611,18 +611,11 @@
       wrap.innerHTML = `<div class="nr-empty">No follow-ups yet. Create one via POST /api/admin/weekly-review-followup/create.</div>`;
       return;
     }
-    // Given today's day-of-week, work out how many days until the next
-    // Sunday 07:00 AEST cron actually runs. Used for the "waiting" label
-    // so we don't tell the user "fires in 1 day" on Wednesday when it
-    // actually fires Sunday.
-    function nextCronDays() {
-      const now = new Date();
-      // 0 = Sunday, 1 = Monday, ...
-      const dow = now.getDay();
-      // Sunday and it's before 07:00 → today. Otherwise → next Sunday.
-      if (dow === 0 && now.getHours() < 7) return 0;
-      return (7 - dow) % 7 || 7;
-    }
+    // Resolver cron now runs daily at 05:30 AEST — see main.py
+    // scheduler.add_job(_scheduled_weekly_review_followup_check,
+    // CronTrigger(hour=5, minute=30, ...)). No day-of-week math needed
+    // any more; if the row's scheduled_for has passed, the next 05:30
+    // will fire it.
     wrap.innerHTML = rows.map(r => {
       const measured = r.measured_at != null;
       const days = daysUntil(r.scheduled_for);
@@ -641,17 +634,11 @@
         // Candidate reviews are human-gated, not cron-gated — no fire date.
         statusChip = `<span style="background:rgba(139,92,246,0.14);color:#c4b5fd;border:1px solid rgba(139,92,246,0.35);padding:3px 10px;border-radius:999px;font-size:0.75rem;font-weight:600">👀 Awaiting review</span>`;
       } else if (days > 0) {
-        const cronDays = nextCronDays();
-        const cronNote = cronDays === 0 ? '' : ` · runs on next Sun cron in ${cronDays}d`;
-        statusChip = `<span style="background:rgba(245,200,66,0.14);color:#f5c842;border:1px solid rgba(245,200,66,0.35);padding:3px 10px;border-radius:999px;font-size:0.75rem;font-weight:600">⏳ Fires in ${days}d${cronNote}</span>`;
+        statusChip = `<span style="background:rgba(245,200,66,0.14);color:#f5c842;border:1px solid rgba(245,200,66,0.35);padding:3px 10px;border-radius:999px;font-size:0.75rem;font-weight:600">⏳ Fires in ${days}d · daily 05:30 cron</span>`;
       } else if (days === 0) {
-        const cronDays = nextCronDays();
-        const cronNote = cronDays === 0 ? ' — Sunday cron fires today' : ` — Sunday cron will fire in ${cronDays}d`;
-        statusChip = `<span style="background:rgba(59,130,246,0.14);color:#60a5fa;border:1px solid rgba(59,130,246,0.35);padding:3px 10px;border-radius:999px;font-size:0.75rem;font-weight:600">Due today${cronNote}</span>`;
+        statusChip = `<span style="background:rgba(59,130,246,0.14);color:#60a5fa;border:1px solid rgba(59,130,246,0.35);padding:3px 10px;border-radius:999px;font-size:0.75rem;font-weight:600">Due today · daily 05:30 cron</span>`;
       } else {
-        const cronDays = nextCronDays();
-        const cronNote = cronDays === 0 ? ' — Sunday cron fires today' : ` — next Sun cron in ${cronDays}d`;
-        statusChip = `<span style="background:rgba(239,68,68,0.14);color:#ef4444;border:1px solid rgba(239,68,68,0.35);padding:3px 10px;border-radius:999px;font-size:0.75rem;font-weight:600">Overdue by ${-days}d${cronNote}</span>`;
+        statusChip = `<span style="background:rgba(239,68,68,0.14);color:#ef4444;border:1px solid rgba(239,68,68,0.35);padding:3px 10px;border-radius:999px;font-size:0.75rem;font-weight:600">Overdue by ${-days}d — next 05:30 cron</span>`;
       }
       const outcomeBlock = measured ? `
         <div style="margin-top:12px;padding:12px;background:rgba(59,130,246,0.06);border-left:3px solid #60a5fa;border-radius:4px">
