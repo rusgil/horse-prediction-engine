@@ -695,6 +695,15 @@ def _parse_results_page(html: str) -> dict[int, dict]:
         hi = header.index("Horse")
         mi = header.index("Margin") if "Margin" in header else None
         si = header.index("Starting Price") if "Starting Price" in header else None
+        # RA's results table has a "No." column with the saddle number =
+        # tab_number. Previously ignored, which meant seed_ra_results had
+        # to derive tab_number by name-matching against our own prediction
+        # rows. Any finisher that wasn't in our pre-race field (late
+        # scratchings, missed enrichment) got tab_number=NULL and left
+        # bet settlement stuck 'pending' forever (health-check finding
+        # top3_missing_tab_number). Extract it here so RA is the primary
+        # source of truth for tab_number.
+        ti = header.index("No.") if "No." in header else None
 
         for row in rows[1:]:
             cells = [c.get_text(strip=True) for c in row.find_all(["td", "th"])]
@@ -725,10 +734,20 @@ def _parse_results_page(html: str) -> dict[int, dict]:
                 except ValueError:
                     pass
 
+            tab_number = None
+            if ti is not None and ti < len(cells):
+                tab_raw = cells[ti].strip()
+                if tab_raw:
+                    try:
+                        tab_number = int(tab_raw)
+                    except ValueError:
+                        pass
+
             results[current_race_num]["runners"][horse.lower()] = {
                 "position": position,
                 "margin": margin,
                 "sp": sp,
+                "tab_number": tab_number,
             }
 
     return results

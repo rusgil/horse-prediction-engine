@@ -1734,9 +1734,15 @@ async def _seed_results_for_date(race_date: str) -> int:
                         placed=pos <= 3,
                         starting_price=rd.get("sp"),
                         # tab_number is required by the bet-settlement path —
-                        # without it, hit/miss can't be evaluated. Pull from
-                        # the matched prediction row (same race + horse).
-                        tab_number=getattr(matched, "tab_number", None) if matched else None,
+                        # without it, hit/miss can't be evaluated. Prefer RA's
+                        # own 'No.' column (populated by _parse_results_page)
+                        # so finishers absent from our pre-race field still
+                        # get a saddle number; fall back to the matched
+                        # prediction row when RA didn't provide one.
+                        tab_number=(
+                            rd.get("tab_number")
+                            or (getattr(matched, "tab_number", None) if matched else None)
+                        ),
                         feature_vector_json=matched.enriched_json if matched else None,
                     ))
                     ra_seeded_total += 1
@@ -2005,6 +2011,13 @@ async def _seed_race_results_on_demand(race_ids: list[str]) -> dict[tuple, int]:
                             if p.get("priceType") in ("StartingPrice", "SP"):
                                 sp = float(p.get("winPrice", 0) or 0) or None
                                 break
+                        _tab_num = None
+                        _tab_raw = r.get("runnerNumber")
+                        if _tab_raw:
+                            try:
+                                _tab_num = int(_tab_raw)
+                            except (TypeError, ValueError):
+                                _tab_num = None
                         rows_to_add.append(HistoricalResultRow(
                             race_id=race_id,
                             horse_name=horse,
@@ -2013,6 +2026,7 @@ async def _seed_race_results_on_demand(race_ids: list[str]) -> dict[tuple, int]:
                             winner=int(pos) == 1,
                             placed=int(pos) <= 3,
                             starting_price=sp,
+                            tab_number=_tab_num,
                         ))
                         db_positions[(race_id, horse)] = int(pos)
                     if rows_to_add:
@@ -16499,12 +16513,18 @@ async def seed_ra_results(
                         # Without tab_number, _settle_bets_for_race can't
                         # map finishing positions to bet-box tab numbers
                         # and leaves the race in 'pending' forever.
-                        # Priority: matched_pred.tab_number → history-row
-                        # fallback → None.
+                        # Priority: RA's own results 'No.' column →
+                        # matched_pred.tab_number → history-row fallback.
+                        # RA is primary now because finishers can appear
+                        # in results that were not in our pre-race field
+                        # (missed enrichment, late scratchings), and
+                        # those cases previously left tab_number NULL
+                        # forever with no way to recover from our own DB.
                         tab_number=(
-                            getattr(matched_pred, "tab_number", None)
-                            if matched_pred and matched_pred.tab_number is not None
-                            else tab_from_hist
+                            rd.get("tab_number")
+                            or (getattr(matched_pred, "tab_number", None)
+                                if matched_pred and matched_pred.tab_number is not None
+                                else tab_from_hist)
                         ),
                         feature_vector_json=fv_json,
                     ))
@@ -16748,6 +16768,11 @@ async def get_meeting_results(race_date: str, venue_code: str):
                     winner=position == 1,
                     placed=position <= 3,
                     starting_price=rd.get("sp"),
+                    # Prefer RA 'No.' column, fall back to matched prediction row.
+                    tab_number=(
+                        rd.get("tab_number")
+                        or (getattr(fv_row, "tab_number", None) if fv_row else None)
+                    ),
                     feature_vector_json=fv_row.enriched_json if fv_row else None,
                 ))
                 await session.commit()
