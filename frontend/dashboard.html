@@ -1003,9 +1003,24 @@
             ${premData ? `
             <div class="stat-card">
               <div class="stat-card-num" style="color:${premCol}">${premRoi != null ? premRoi.toFixed(1) + '%' : '—'}</div>
-              <div class="stat-card-label">Premium Tier ROI</div>
+              <div class="stat-card-label">Premium Tier ROI (SP)</div>
               <div class="stat-card-sub">${premData.bets ?? 0} picks · ${premData.win_pct?.toFixed(1) ?? '—'}% win · last 30d</div>
             </div>
+            ${premData.roi_pct_bao != null ? (() => {
+              const baoRoi = premData.roi_pct_bao;
+              const baoCol = baoRoi >= 10 ? 'var(--green-bright)'
+                          : baoRoi >= 0 ? 'var(--gold-light)' : '#f87171';
+              const cov = premData.bao_coverage_pct ?? 0;
+              // Warn when coverage is thin so the reader knows the number
+              // is mostly SP-fallback and won't overreact to a small delta.
+              const covWarn = cov < 30 ? ` <span style="color:#f5c842">(mostly SP fallback)</span>` : '';
+              return `
+                <div class="stat-card">
+                  <div class="stat-card-num" style="color:${baoCol}">${baoRoi.toFixed(1)}%</div>
+                  <div class="stat-card-label">Premium Tier ROI (BAO)</div>
+                  <div class="stat-card-sub">Coverage ${cov.toFixed(1)}%${covWarn} · avg BAO $${premData.avg_bao?.toFixed(2) ?? '—'}</div>
+                </div>`;
+            })() : ''}
             <div class="stat-card">
               <div class="stat-card-num" style="color:${premData.pnl_at_10 >= 0 ? 'var(--green-bright)' : '#f87171'}">$${(premData.pnl_at_10 ?? 0).toFixed(0)}</div>
               <div class="stat-card-label">Premium PnL @ \$10 stake</div>
@@ -1359,21 +1374,48 @@
 
       if (cals.length > 2) {
         const calReversed = [...cals].reverse();
+        const hasBao = calReversed.some(c => c.value_roi_bao != null);
+        const datasets = [{
+          label: 'SP',
+          data: calReversed.map(c => c.value_roi != null ? +c.value_roi.toFixed(2) : null),
+          borderColor: '#3b82f6',
+          backgroundColor: 'rgba(59,130,246,0.08)',
+          fill: true, tension: 0.35,
+          pointBackgroundColor: calReversed.map(c => c.drift_flag ? '#e8a020' : '#3b82f6'),
+          pointRadius: 5, pointHoverRadius: 7,
+        }];
+        if (hasBao) {
+          datasets.push({
+            label: 'BAO',
+            data: calReversed.map(c => c.value_roi_bao != null ? +c.value_roi_bao.toFixed(2) : null),
+            borderColor: '#22c55e',
+            backgroundColor: 'rgba(34,197,94,0.05)',
+            fill: false, tension: 0.35,
+            borderDash: [5, 4],
+            pointBackgroundColor: '#22c55e',
+            pointRadius: 4, pointHoverRadius: 6,
+            spanGaps: true,
+          });
+        }
         new Chart(document.getElementById('roiTrendChart'), {
           type: 'line',
-          data: {
-            labels: calReversed.map(c => fmtDate(c.ran_at)),
-            datasets: [{
-              data: calReversed.map(c => +c.value_roi.toFixed(2)),
-              borderColor: '#3b82f6',
-              backgroundColor: 'rgba(59,130,246,0.08)',
-              fill: true, tension: 0.35,
-              pointBackgroundColor: calReversed.map(c => c.drift_flag ? '#e8a020' : '#3b82f6'),
-              pointRadius: 5, pointHoverRadius: 7,
-            }]
-          },
+          data: { labels: calReversed.map(c => fmtDate(c.ran_at)), datasets },
           options: {
             ...chartDefaults,
+            plugins: {
+              ...chartDefaults.plugins,
+              legend: { display: hasBao, position: 'top', labels: { color: '#94a3b8', font: { size: 10 }, boxWidth: 14 } },
+              tooltip: {
+                callbacks: {
+                  label: ctx => ` ${ctx.dataset.label || ''}: ${ctx.parsed.y}%`,
+                  afterLabel: ctx => {
+                    if (ctx.dataset.label !== 'BAO') return '';
+                    const cov = calReversed[ctx.dataIndex]?.bao_coverage_pct;
+                    return cov != null ? `BAO coverage: ${cov}%` : '';
+                  },
+                },
+              },
+            },
             scales: { ...chartDefaults.scales, y: { ...chartDefaults.scales.y, ticks: { ...chartDefaults.scales.y.ticks, callback: v => v + '%' } } }
           }
         });

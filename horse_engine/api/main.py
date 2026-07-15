@@ -18547,6 +18547,13 @@ async def backtest_report(
     top_pick_places = 0
     value_pnl = 0.0
     value_bets = 0
+    # BAO parallel — same value-bet definition, but pays out at the model's
+    # captured best-available-odds when populated, falling back to SP when
+    # not. bao_available_ct tracks how many of the value bets had a real
+    # BAO (as opposed to SP fallback) so the reviewer knows how much of
+    # the BAO ROI is signal vs a re-badged SP number.
+    value_pnl_bao = 0.0
+    bao_available_ct = 0
 
     # Per-condition breakdown
     condition_stats: dict[str, dict] = {}
@@ -18564,6 +18571,7 @@ async def backtest_report(
         won = actual.position == 1
         placed = bool(actual.position and actual.position <= 3)
         sp = actual.starting_price or 0.0
+        bao = pick.best_available_odds or 0.0
         overlay = pick.overlay or 0.0
 
         if won:
@@ -18575,6 +18583,12 @@ async def backtest_report(
         if overlay > 0.15 and sp > 0:
             value_bets += 1
             value_pnl += (sp - 1.0) if won else -1.0
+            # BAO payout when we have a real one, else fall back to SP so
+            # the denominator matches value_bets exactly.
+            payout_odds = bao if (bao and bao > 1.0) else sp
+            if bao and bao > 1.0:
+                bao_available_ct += 1
+            value_pnl_bao += (payout_odds - 1.0) if won else -1.0
 
         # Track condition breakdown — derive from race_id prefix
         parts = race_id.split("_")
@@ -18606,6 +18620,8 @@ async def backtest_report(
     win_rate = round(top_pick_wins / total_races, 3) if total_races else 0
     place_rate = round(top_pick_places / total_races, 3) if total_races else 0
     value_roi = round(value_pnl / value_bets, 3) if value_bets else 0
+    value_roi_bao = round(value_pnl_bao / value_bets, 3) if value_bets else 0
+    bao_coverage_pct = round(bao_available_ct / value_bets * 100, 1) if value_bets else 0
 
     return {
         "days": days,
@@ -18616,7 +18632,10 @@ async def backtest_report(
         "top_pick_place_rate": place_rate,
         "value_bets": value_bets,
         "value_pnl": round(value_pnl, 2),
+        "value_pnl_bao": round(value_pnl_bao, 2),
         "value_roi_per_bet": value_roi,
+        "value_roi_bao_per_bet": value_roi_bao,
+        "bao_coverage_pct": bao_coverage_pct,
         "recent_picks": recent_picks,
     }
 
@@ -20763,21 +20782,34 @@ async def premium_performance_public():
     result_by_key = {(r.race_id, _normalize_horse(r.horse_name)): r for r in hr_rows}
     bets = wins = 0
     total_pnl = 0.0
+    # BAO-parallel — same denominator, but pay winners at captured
+    # best_available_odds where present, falling back to SP otherwise.
+    # bao_ct tracks how many bets landed with a real BAO.
+    total_pnl_bao = 0.0
+    bao_ct = 0
     sp_list = []
+    bao_list = []
     for race_id, pick in top_picks.items():
         actual = result_by_key.get((race_id, _normalize_horse(pick.horse_name)))
         if not actual:
             continue
         sp = actual.starting_price or 0.0
+        bao = pick.best_available_odds or 0.0
         overlay = pick.overlay or 0.0
         model_pct = (pick.win_probability or 0) * 100
         if (pick.place_model_rank or 0) >= 2:
             bets += 1
+            payout_odds = bao if (bao and bao > 1.0) else sp
+            if bao and bao > 1.0:
+                bao_ct += 1
+                bao_list.append(bao)
             if actual.position == 1:
                 wins += 1
                 total_pnl += sp - 1.0
+                total_pnl_bao += payout_odds - 1.0
             else:
                 total_pnl -= 1.0
+                total_pnl_bao -= 1.0
             sp_list.append(sp)
 
     return {
@@ -20786,8 +20818,12 @@ async def premium_performance_public():
         "wins": wins,
         "win_pct": round(wins / bets * 100, 1) if bets else None,
         "pnl_at_10": round(total_pnl * 10, 2),
+        "pnl_at_10_bao": round(total_pnl_bao * 10, 2),
         "roi_pct": round(total_pnl / bets * 100, 1) if bets else None,
+        "roi_pct_bao": round(total_pnl_bao / bets * 100, 1) if bets else None,
+        "bao_coverage_pct": round(bao_ct / bets * 100, 1) if bets else None,
         "avg_sp": round(sum(sp_list) / len(sp_list), 2) if sp_list else None,
+        "avg_bao": round(sum(bao_list) / len(bao_list), 2) if bao_list else None,
     }
 
 
@@ -21008,6 +21044,16 @@ async def _run_calibration_sweep(holdout_days: int = 14) -> dict:
         if r.position == 1:
             winners[r.race_id] = _normalize_horse(r.horse_name)
 
+    # BAO lookup for value-ROI-BAO tracking. Populated only for horses that
+    # were in the pre-race field and had best_available_odds captured (via
+    # the odds-snapshot cron). Sparse historically (~5-15%) because the
+    # cron's piggyback was broken from db378c5 → 09f8e58 (2026-07-14/15).
+    # Populates properly from 2026-07-15 onwards.
+    bao_by_key: dict[tuple, float] = {}
+    for p in all_pred:
+        if p.best_available_odds and p.best_available_odds > 1.0:
+            bao_by_key[(p.race_id, p.horse_name)] = float(p.best_available_odds)
+
     # Holdout = predictions in the most recent N days, grouped by race.
     holdout_races: dict[str, list] = {}
     for p in all_pred:
@@ -21088,6 +21134,8 @@ async def _run_calibration_sweep(holdout_days: int = 14) -> dict:
         # Score holdout races with candidate model
         win_picks = place_picks = value_bets = total_races = 0
         value_pnl = 0.0
+        value_pnl_bao = 0.0
+        bao_available_ct = 0
 
         for race_id, runners in holdout_races.items():
             runner_fvs = []
@@ -21126,14 +21174,26 @@ async def _run_calibration_sweep(holdout_days: int = 14) -> dict:
                 place_picks += 1
 
             sp = actual.starting_price or 0
+            # BAO lookup — the retrained sweep's top pick may or may not
+            # match production's top pick, but if the horse was in the
+            # field its BAO was captured in RunnerPredictionHistoryRow.
+            # Falls back to SP so bao_coverage_pct honestly reflects how
+            # much of the number is real BAO.
+            bao = bao_by_key.get((race_id, top_runner.horse_name), 0) or 0
             implied = 1 / sp if sp > 1 else 0
             if (top_prob - implied) > 0.05 and sp > 0:
                 value_bets += 1
                 value_pnl += (sp - 1.0) if actual_won else -1.0
+                payout_odds = bao if (bao and bao > 1.0) else sp
+                if bao and bao > 1.0:
+                    bao_available_ct += 1
+                value_pnl_bao += (payout_odds - 1.0) if actual_won else -1.0
 
         win_rate = round(win_picks / total_races, 3) if total_races else 0
         place_rate = round(place_picks / total_races, 3) if total_races else 0
         roi = round(value_pnl / value_bets, 3) if value_bets else 0
+        roi_bao = round(value_pnl_bao / value_bets, 3) if value_bets else 0
+        bao_cov_pct = round(bao_available_ct / value_bets * 100, 1) if value_bets else 0
 
         result = {
             "window_days": window,
@@ -21148,7 +21208,10 @@ async def _run_calibration_sweep(holdout_days: int = 14) -> dict:
             "place_rate": place_rate,
             "value_bets": value_bets,
             "value_pnl": round(value_pnl, 2),
+            "value_pnl_bao": round(value_pnl_bao, 2),
             "value_roi": roi,
+            "value_roi_bao": roi_bao,
+            "bao_coverage_pct": bao_cov_pct,
         }
         window_results.append(result)
         log.info("[calibrate] window=%d win=%.1f%% roi=%.3f", window, win_rate * 100, roi)
@@ -21201,6 +21264,8 @@ async def _run_calibration_sweep(holdout_days: int = 14) -> dict:
         win_rate=best_result.get("win_rate"),
         place_rate=best_result.get("place_rate"),
         value_roi=best_result.get("value_roi"),
+        value_roi_bao=best_result.get("value_roi_bao"),
+        bao_coverage_pct=best_result.get("bao_coverage_pct"),
         value_bets=best_result.get("value_bets"),
         total_races=best_result.get("holdout_races"),
         drift_flag=drift_flag,
@@ -21311,6 +21376,8 @@ async def calibration_history(
                 "win_rate": r.win_rate,
                 "place_rate": r.place_rate,
                 "value_roi": r.value_roi,
+                "value_roi_bao": r.value_roi_bao,
+                "bao_coverage_pct": r.bao_coverage_pct,
                 "value_bets": r.value_bets,
                 "total_races": r.total_races,
                 "drift_flag": r.drift_flag,

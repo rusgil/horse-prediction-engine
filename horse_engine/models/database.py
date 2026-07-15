@@ -202,12 +202,19 @@ class CalibrationRow(Base):
     best_window = Column(Integer)           # winning training window in days
     win_rate = Column(Float)
     place_rate = Column(Float)
-    value_roi = Column(Float)
+    value_roi = Column(Float)               # SP-based value bet ROI (per $1)
     value_bets = Column(Integer)
     total_races = Column(Integer)
     drift_flag = Column(Boolean, default=False)
     drift_reason = Column(Text, nullable=True)
     all_results_json = Column(Text)         # JSON list of per-window stats
+    # BAO-based value bet ROI (2026-07-15). Uses RunnerPredictionHistoryRow.
+    # best_available_odds when populated, falls back to starting_price so
+    # rows with sparse BAO (pre-2026-07-15 odds-snapshot fix) still count
+    # against the same denominator. bao_coverage_pct tells the reviewer
+    # how much of the number is real BAO vs SP fallback.
+    value_roi_bao = Column(Float, nullable=True)
+    bao_coverage_pct = Column(Float, nullable=True)
 
 
 class WinCalibrationCurveRow(Base):
@@ -512,6 +519,9 @@ async def init_db() -> None:
         "ALTER TABLE win_calibration_curve ADD COLUMN IF NOT EXISTS reviewed_note TEXT",
         "CREATE INDEX IF NOT EXISTS ix_win_cal_status ON win_calibration_curve (status)",
         "UPDATE win_calibration_curve SET status = 'active' WHERE status IS NULL",
+        # BAO variant on calibration trend (2026-07-15).
+        "ALTER TABLE calibrations ADD COLUMN IF NOT EXISTS value_roi_bao DOUBLE PRECISION",
+        "ALTER TABLE calibrations ADD COLUMN IF NOT EXISTS bao_coverage_pct DOUBLE PRECISION",
         "CREATE INDEX IF NOT EXISTS ix_hist_batch_id ON runner_prediction_history (batch_id)",
         "CREATE UNIQUE INDEX IF NOT EXISTS uq_history_race_horse ON runner_prediction_history (race_id, horse_name)",
         "CREATE INDEX IF NOT EXISTS ix_runner_pred_race_rank ON runner_predictions (race_id, model_rank)",
