@@ -10734,7 +10734,9 @@ async def admin_prediction_trace(
         venue_name = (m or {}).get("venue", venue_code)
         state = (m or {}).get("state", "")
         stage = "get_meeting_races"
-        await client.get_meeting_races(slug, force_fresh=True)
+        # CompositeClient.get_meeting_races doesn't accept force_fresh — the
+        # RA client under it does, but the wrapper drops the kwarg.
+        await client.get_meeting_races(slug)
         stage = "get_race"
         full_event = await client.get_race(slug, race_num)
         if not full_event:
