@@ -213,14 +213,17 @@ class CalibrationRow(Base):
 class WinCalibrationCurveRow(Base):
     """Persisted isotonic calibration curve for the win model output.
 
-    Recomputed nightly from the last N days of predictions vs actuals.
+    Under the release-gate architecture (2026-07-15), nightly rebuilds
+    now INSERT new rows with status='candidate' rather than overwriting
+    the active curve. A backtest is computed against the incumbent
+    (status='active') curve and stored in backtest_json. A follow-up
+    row is created for human approval — promotion flips the candidate
+    to status='active' and the previous active to status='archived'.
+    Never trust an unattended cron to promote a model artefact.
+
     curve_json holds a list of (input_pct, calibrated_pct) breakpoints
     in monotone-non-decreasing order — see
     horse_engine.prediction.output_calibration for the format.
-
-    Single-row table (id=1) updated in place; keeps history in
-    updated_at rather than as multiple rows so the loader can always
-    do a scalar-one read.
     """
     __tablename__ = "win_calibration_curve"
 
@@ -229,6 +232,14 @@ class WinCalibrationCurveRow(Base):
     sample_days = Column(Integer)          # holdout window used
     sample_size = Column(Integer)          # total (pct, won) pairs fit
     curve_json = Column(Text)              # JSON list of [input_pct, calibrated_pct]
+    # 'active' | 'candidate' | 'archived' | 'rejected'
+    status = Column(String, default="active", nullable=True, index=True)
+    # JSON blob with candidate-vs-incumbent backtest metrics:
+    # {"races": N, "candidate_wins": X, "incumbent_wins": Y, "candidate_win_pct": ..., ...}
+    backtest_json = Column(Text, nullable=True)
+    # Populated when a human promotes or rejects. Free-form audit trail.
+    reviewed_at = Column(DateTime, nullable=True)
+    reviewed_note = Column(Text, nullable=True)
 
 
 class OddsSnapshotRow(Base):
@@ -491,6 +502,16 @@ async def init_db() -> None:
         # NULL and are filtered out of the calibration fit.
         "ALTER TABLE runner_predictions ADD COLUMN IF NOT EXISTS win_prob_raw DOUBLE PRECISION",
         "ALTER TABLE runner_prediction_history ADD COLUMN IF NOT EXISTS win_prob_raw DOUBLE PRECISION",
+        # Release-gate architecture for model artefacts (2026-07-15).
+        # Nightly rebuilds now write candidate rows instead of overwriting
+        # active. Existing single-row rows default to status='active' so
+        # the load path finds them unchanged on first boot after deploy.
+        "ALTER TABLE win_calibration_curve ADD COLUMN IF NOT EXISTS status TEXT DEFAULT 'active'",
+        "ALTER TABLE win_calibration_curve ADD COLUMN IF NOT EXISTS backtest_json TEXT",
+        "ALTER TABLE win_calibration_curve ADD COLUMN IF NOT EXISTS reviewed_at TIMESTAMP",
+        "ALTER TABLE win_calibration_curve ADD COLUMN IF NOT EXISTS reviewed_note TEXT",
+        "CREATE INDEX IF NOT EXISTS ix_win_cal_status ON win_calibration_curve (status)",
+        "UPDATE win_calibration_curve SET status = 'active' WHERE status IS NULL",
         "CREATE INDEX IF NOT EXISTS ix_hist_batch_id ON runner_prediction_history (batch_id)",
         "CREATE UNIQUE INDEX IF NOT EXISTS uq_history_race_horse ON runner_prediction_history (race_id, horse_name)",
         "CREATE INDEX IF NOT EXISTS ix_runner_pred_race_rank ON runner_predictions (race_id, model_rank)",

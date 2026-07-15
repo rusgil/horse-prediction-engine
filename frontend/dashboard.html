@@ -642,6 +642,27 @@
           <div style="font-size:0.75rem;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.03em;font-weight:600;margin-bottom:4px">Will measure on ${escHtml(r.scheduled_for)}</div>
           <div style="font-size:0.8rem;color:var(--text-secondary)">Metric: ${escHtml(r.measurement_type || '')} · baseline ${r.baseline_value} ${r.target_below ? `· target <${r.target_below}` : (r.target_above ? `· target >${r.target_above}` : '')}</div>
         </div>`;
+      // Model-artefact candidate reviews get promote/reject buttons in
+      // addition to the standard card content. measurement_type prefix
+      // "candidate_review_<artefact>" carries the artefact (e.g. isotonic)
+      // and the title trailing "#<id>" carries the DB row id.
+      let candidateActions = '';
+      if ((r.measurement_type || '').startsWith('candidate_review_') && !r.reviewed_at) {
+        const artefact = (r.measurement_type || '').replace('candidate_review_', '');
+        const idMatch = (r.title || '').match(/#(\d+)/);
+        const candidateId = idMatch ? idMatch[1] : null;
+        if (candidateId) {
+          candidateActions = `
+            <div style="margin-top:12px;padding:10px;background:rgba(139,92,246,0.06);border:1px dashed rgba(139,92,246,0.35);border-radius:6px">
+              <div style="font-size:0.75rem;color:#c4b5fd;text-transform:uppercase;letter-spacing:0.03em;font-weight:700;margin-bottom:8px">Model Release Gate — Human Review Required</div>
+              <div style="display:flex;gap:8px;flex-wrap:wrap">
+                <button class="btn" style="background:#22c55e20;border-color:#22c55e;color:#22c55e" onclick="reviewCandidate('${artefact}', ${candidateId}, 'promote')">✓ Promote</button>
+                <button class="btn" style="background:#ef444420;border-color:#ef4444;color:#ef4444" onclick="reviewCandidate('${artefact}', ${candidateId}, 'reject')">✗ Reject</button>
+                <a class="btn" style="text-decoration:none" href="${API}/api/admin/${artefact}-candidate/${candidateId}" target="_blank">🔍 Inspect curve</a>
+              </div>
+            </div>`;
+        }
+      }
       return `
         <div style="background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius);padding:16px;margin-bottom:14px">
           <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;margin-bottom:8px;flex-wrap:wrap">
@@ -650,9 +671,30 @@
           </div>
           <div style="font-size:0.83rem;color:var(--text-secondary);margin-bottom:6px"><strong>Context:</strong> ${escHtml(r.context_md || '')}</div>
           <div style="font-size:0.83rem;color:var(--text-secondary)"><strong>Applied:</strong> ${escHtml(r.action_md || '')}</div>
+          ${candidateActions}
           ${outcomeBlock}
         </div>`;
     }).join('');
+  }
+
+  async function reviewCandidate(artefact, candidateId, action) {
+    const label = action === 'promote' ? 'PROMOTE' : 'REJECT';
+    const note = prompt(`${label} ${artefact} candidate #${candidateId}?\n\nOptional reviewer note:`, '');
+    if (note === null) return; // cancelled
+    try {
+      const url = `${API}/api/admin/${artefact}-candidate/${candidateId}/${action}?note=${encodeURIComponent(note)}`;
+      const res = await fetch(url, { method: 'POST', headers: { 'x-cron-secret': adminSecret } });
+      const body = await res.json();
+      if (!res.ok) {
+        alert(`Failed: ${body.detail || res.status}`);
+        return;
+      }
+      alert(`${label} succeeded — reload follow-ups.`);
+      followUpsLoaded = false;
+      loadFollowUps();
+    } catch (e) {
+      alert(`Request failed: ${e}`);
+    }
   }
 
   // ═══════════════════════════════════════════════════════════

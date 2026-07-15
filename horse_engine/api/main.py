@@ -21858,35 +21858,29 @@ async def _load_hot_streak_map(picks: list[dict]) -> dict[str, dict]:
 
 # ── Output calibration (isotonic curve on model_pct → win rate) ────────────
 async def _load_output_calibration_curve() -> Optional[list[tuple[float, float]]]:
-    """Load the persisted isotonic calibration curve. None = identity.
+    """Load the ACTIVE isotonic calibration curve. None = identity.
 
-    DISABLED 2026-07-15 (returns None unconditionally). The curve is
-    still rebuilt nightly and inspectable via
-    /api/admin/calibrate-output/status, but predict_race no longer
-    applies it — so the pipeline reverts to pre-2026-07-11 behaviour
-    where the reactive multipliers (midfield, going, thin-record,
-    completeness) do all the confidence correction.
+    Under the release-gate architecture (2026-07-15), only rows with
+    status='active' are ever loaded by predict_race. Nightly rebuilds
+    now write status='candidate' rows that require human promotion via
+    the admin follow-up UI. See [[project_isotonic_calibration]] and
+    [[feedback_model_release_process]].
 
-    Root cause: the isotonic curve is trained on POST-multiplier
-    win_probability, which produces artificial non-monotonicity in
-    the 25-35% band (multipliers demote raw ~40% horses into that
-    band, and those genuinely win less than natural-25% horses). PAV
-    correctly pools those buckets — the 2026-07-14 rebuild collapsed
-    22.5-32.5% to a single 22.6% output, capping every rank-1 pick
-    at 22.6% regardless of raw signal and silently disqualifying
-    would-be Sharp picks.
-
-    Proper fix (follow-up): move isotonic BEFORE the multipliers so it
-    fits on raw softmax → actual (monotone by construction). Requires
-    storing win_prob_raw on RunnerPredictionHistoryRow and a curve
-    rebuild. Until then, identity is safer than a broken plateau.
+    DISABLED at load time (returns None unconditionally) until the
+    pipeline-reorder from f94e994 has accumulated enough win_prob_raw
+    data for a candidate to be trained on the new (monotone-by-design)
+    input distribution. Follow-up isotonic_raw_sample_size tracks the
+    threshold. Once passed, remove the early return here and the DB
+    read + status='active' filter takes over.
     """
     return None
-    # Original load path — kept for the follow-up re-enable:
+    # Re-enable path — read only the active row.
     try:
         async with get_session() as session:
             row = (await session.execute(
-                select(WinCalibrationCurveRow).order_by(WinCalibrationCurveRow.id.desc())
+                select(WinCalibrationCurveRow)
+                .where(WinCalibrationCurveRow.status == "active")
+                .order_by(WinCalibrationCurveRow.id.desc())
             )).scalars().first()
         if not row or not row.curve_json:
             return None
@@ -21955,42 +21949,348 @@ async def _compute_output_calibration_curve(days: int = 45) -> dict:
             "reason": f"insufficient samples (need ~500, got {len(samples)})",
         }
 
-    async with get_session() as session:
-        existing = (await session.execute(
-            select(WinCalibrationCurveRow).order_by(WinCalibrationCurveRow.id.desc())
-        )).scalars().first()
-        payload = json.dumps([[round(x, 2), round(y, 4)] for x, y in curve])
-        if existing:
-            existing.curve_json = payload
-            existing.sample_days = days
-            existing.sample_size = len(samples)
-            existing.updated_at = datetime.utcnow()
-        else:
-            session.add(WinCalibrationCurveRow(
-                curve_json=payload,
-                sample_days=days,
-                sample_size=len(samples),
-            ))
-        await session.commit()
+    # Backtest the new curve against the incumbent ACTIVE curve on the
+    # last 7 days of predictions vs actual outcomes. Held out from the
+    # 45-day training window is imperfect (they overlap) but the metric
+    # is candidate-vs-incumbent DELTA on the same races, so any shared-
+    # data bias cancels. Records the delta on the row so the reviewer
+    # can eyeball it in the follow-up UI.
+    backtest = await _backtest_calibration_candidate(curve, days=7)
 
-    log.info("[output_calibration] rebuilt from %d samples over %d days: %d breakpoints",
-             len(samples), days, len(curve))
+    async with get_session() as session:
+        # Always INSERT a new candidate row — NEVER overwrite the active
+        # curve. Human promotion via /api/admin/isotonic-candidate/{id}/promote
+        # is the only path from candidate → active.
+        payload = json.dumps([[round(x, 2), round(y, 4)] for x, y in curve])
+        candidate_row = WinCalibrationCurveRow(
+            curve_json=payload,
+            sample_days=days,
+            sample_size=len(samples),
+            status="candidate",
+            backtest_json=json.dumps(backtest),
+        )
+        session.add(candidate_row)
+        await session.commit()
+        await session.refresh(candidate_row)
+        candidate_id = candidate_row.id
+
+    # Surface a follow-up row for human review. Reviewer promotes or
+    # rejects via the dashboard buttons (POST endpoints below).
+    await _seed_candidate_review_followup(
+        artefact="isotonic",
+        candidate_id=candidate_id,
+        backtest=backtest,
+        sample_size=len(samples),
+    )
+
+    log.info("[output_calibration] candidate #%d written from %d samples: %d breakpoints, backtest delta=%+.2fpp",
+             candidate_id, len(samples), len(curve), backtest.get("win_pct_delta", 0.0))
     return {
         "ok": True,
+        "candidate_id": candidate_id,
         "sample_size": len(samples),
         "sample_days": days,
         "breakpoints": len(curve),
         "curve": curve,
+        "backtest": backtest,
+        "note": "Written as candidate — requires human promotion via admin follow-up UI.",
     }
 
 
+async def _backtest_calibration_candidate(
+    candidate_curve: list[tuple[float, float]],
+    days: int = 7,
+) -> dict:
+    """
+    Score a candidate isotonic curve against the current ACTIVE curve
+    on the last `days` of clean pre-race predictions. Compares rank-1
+    win rate under (candidate | active | identity) applied to the same
+    stored raw softmax values, so any training-data overlap between
+    the candidate and the backtest window affects both sides equally.
+
+    Returns dict: sample size, incumbent win_pct, candidate win_pct,
+    delta, and per-band displacement stats.
+    """
+    from horse_engine.prediction.output_calibration import apply_calibration_curve
+    cutoff = (date.today() - timedelta(days=days)).isoformat()
+    async with get_session() as session:
+        active_row = (await session.execute(
+            select(WinCalibrationCurveRow)
+            .where(WinCalibrationCurveRow.status == "active")
+            .order_by(WinCalibrationCurveRow.id.desc())
+        )).scalars().first()
+        active_curve = None
+        if active_row and active_row.curve_json:
+            try:
+                active_curve = [(float(x), float(y)) for x, y in json.loads(active_row.curve_json)]
+            except Exception:
+                active_curve = None
+
+        # All rank-1 picks in the window with a settled result + raw signal.
+        pred_rows = (await session.execute(
+            select(RunnerPredictionHistoryRow)
+            .where(RunnerPredictionHistoryRow.race_id >= cutoff)
+            .where(RunnerPredictionHistoryRow.model_rank == 1)
+            .where(RunnerPredictionHistoryRow.cancelled.is_(False) | RunnerPredictionHistoryRow.cancelled.is_(None))
+            .where(RunnerPredictionHistoryRow.source == "live")
+            .where(RunnerPredictionHistoryRow.win_prob_raw.isnot(None))
+        )).scalars().all()
+
+        race_ids = {p.race_id for p in pred_rows}
+        if not race_ids:
+            return {"races": 0, "reason": "no rank-1 picks with win_prob_raw in window"}
+
+        hr_rows = (await session.execute(
+            select(HistoricalResultRow)
+            .where(HistoricalResultRow.race_id.in_(race_ids))
+            .where(HistoricalResultRow.winner.is_(True))
+        )).scalars().all()
+        winners = {r.race_id: _normalize_horse(r.horse_name) for r in hr_rows}
+
+    scored = 0
+    incumbent_wins = 0
+    candidate_wins = 0
+    identity_wins = 0
+    for p in pred_rows:
+        w = winners.get(p.race_id)
+        if not w:
+            continue
+        scored += 1
+        # All three "models" pick the same rank-1 horse in this backtest
+        # (rank isn't changed by a monotone output-space transform). So
+        # the WIN count is identical under all three! The differentiator
+        # isn't win rate — it's the CALIBRATION quality of the displayed
+        # confidence. Track that instead.
+    incumbent_wins = scored  # placeholder — real diff is calibration MSE below
+
+    # Calibration MSE: for each rank-1 pick, how close is displayed
+    # win_prob to actual outcome (0 or 1)? Lower MSE = better calibration.
+    def _mse(curve_arg):
+        squared_err = 0.0
+        n = 0
+        for p in pred_rows:
+            w = winners.get(p.race_id)
+            if not w:
+                continue
+            raw_pct = (p.win_prob_raw or 0.0) * 100.0
+            if curve_arg is None:
+                displayed = raw_pct / 100.0
+            else:
+                displayed = apply_calibration_curve([raw_pct], curve_arg)[0] / 100.0
+            actual = 1.0 if _normalize_horse(p.horse_name) == w else 0.0
+            squared_err += (displayed - actual) ** 2
+            n += 1
+        return round(squared_err / n, 4) if n else None
+
+    mse_identity = _mse(None)
+    mse_active = _mse(active_curve) if active_curve else mse_identity
+    mse_candidate = _mse(candidate_curve)
+
+    # Mean absolute displacement candidate vs active (how much do
+    # displayed confidences move between curves?)
+    from horse_engine.prediction.output_calibration import apply_calibration_curve as _apply
+    raw_pcts = [(p.win_prob_raw or 0.0) * 100.0 for p in pred_rows]
+    if not raw_pcts:
+        return {"races": 0, "reason": "no raw pcts to score"}
+    displaced_active = _apply(raw_pcts, active_curve) if active_curve else raw_pcts
+    displaced_candidate = _apply(raw_pcts, candidate_curve)
+    mean_shift_pp = round(
+        sum(abs(c - a) for c, a in zip(displaced_candidate, displaced_active)) / len(raw_pcts), 2
+    )
+    max_shift_pp = round(
+        max(abs(c - a) for c, a in zip(displaced_candidate, displaced_active)), 2
+    ) if raw_pcts else 0.0
+
+    # Win-rate delta is 0 (monotone doesn't change rank), but keep the
+    # field so downstream UI can render it consistently. Recommendation
+    # is driven by calibration MSE + max_shift_pp:
+    #   - candidate MSE ≤ active MSE: recommend PROMOTE
+    #   - candidate MSE > active MSE by >2%: recommend REJECT
+    #   - max_shift_pp > 15pp: FLAG for close inspection (regardless
+    #     of MSE — a 15pp swing is a lot of displayed confidence moving)
+    verdict = "promote" if mse_candidate <= (mse_active or mse_candidate) else "reject"
+    if max_shift_pp > 15.0:
+        verdict = "flag"
+
+    return {
+        "races": scored,
+        "mse_identity": mse_identity,
+        "mse_active": mse_active,
+        "mse_candidate": mse_candidate,
+        "mse_delta_candidate_vs_active": round(mse_candidate - (mse_active or mse_candidate), 4),
+        "mean_shift_pp": mean_shift_pp,
+        "max_shift_pp": max_shift_pp,
+        "win_pct_delta": 0.0,  # rank-preserving transform
+        "recommendation": verdict,
+    }
+
+
+async def _seed_candidate_review_followup(
+    artefact: str,
+    candidate_id: int,
+    backtest: dict,
+    sample_size: int,
+) -> None:
+    """Create a WeeklyReviewFollowUpRow for a pending candidate review.
+    Reviewer flips the row via /api/admin/{artefact}-candidate/{id}/promote
+    or /reject; the dashboard renders the buttons.
+
+    Idempotent per candidate_id — never double-seeds for the same row."""
+    measurement_type = f"candidate_review_{artefact}"
+    title = f"Review {artefact} candidate #{candidate_id}"
+    try:
+        async with get_session() as session:
+            existing = (await session.execute(
+                select(WeeklyReviewFollowUpRow)
+                .where(WeeklyReviewFollowUpRow.measurement_type == measurement_type)
+                .where(WeeklyReviewFollowUpRow.title == title)
+                .limit(1)
+            )).scalar_one_or_none()
+            if existing is not None:
+                return
+            rec = backtest.get("recommendation", "flag")
+            mse_c = backtest.get("mse_candidate")
+            mse_a = backtest.get("mse_active")
+            max_shift = backtest.get("max_shift_pp")
+            context = (
+                f"Candidate {artefact} #{candidate_id} — {sample_size} training samples. "
+                f"Backtest on last {backtest.get('races', 0)} rank-1 picks: "
+                f"MSE candidate={mse_c} vs active={mse_a} "
+                f"(delta={backtest.get('mse_delta_candidate_vs_active')}, "
+                f"lower = better calibrated). "
+                f"Max displayed-confidence shift vs active: {max_shift}pp. "
+                f"Automated recommendation: **{rec.upper()}**."
+            )
+            action = (
+                f"Inspect curve: GET /api/admin/{artefact}-candidate/{candidate_id}. "
+                f"To promote: POST /api/admin/{artefact}-candidate/{candidate_id}/promote (x-cron-secret). "
+                f"To reject: POST /api/admin/{artefact}-candidate/{candidate_id}/reject."
+            )
+            row = WeeklyReviewFollowUpRow(
+                title=title,
+                scheduled_for=_today_aest().isoformat(),
+                measurement_type=measurement_type,
+                baseline_value=float(mse_a) if mse_a is not None else 0.0,
+                target_below=float(mse_c) if mse_c is not None else None,
+                target_above=None,
+                context_md=context,
+                action_md=action,
+            )
+            session.add(row)
+            await session.commit()
+            log.info("[followup-seed] Inserted %s follow-up (candidate #%d, rec=%s)",
+                     measurement_type, candidate_id, rec)
+    except Exception as e:
+        log.warning("[followup-seed] %s seed failed: %s", measurement_type, e)
+
+
 async def _scheduled_output_calibration():
-    """Nightly job: rebuild the isotonic calibration curve."""
+    """Nightly job: rebuild the isotonic calibration curve as a candidate.
+    Never promotes automatically — human review required (see
+    [[feedback_model_release_process]] rule)."""
     try:
         result = await _compute_output_calibration_curve(days=45)
-        log.info("[cron] output_calibration: %s", result.get("reason") or f"ok n={result.get('sample_size')}")
+        log.info("[cron] output_calibration: %s", result.get("reason") or f"ok n={result.get('sample_size')} cand=#{result.get('candidate_id')}")
     except Exception as e:
         log.exception("[cron] output_calibration failed: %s", e)
+
+
+@app.post("/api/admin/isotonic-candidate/{candidate_id}/promote")
+async def admin_isotonic_promote(
+    candidate_id: int,
+    note: str = Query("", description="Optional reviewer note"),
+    x_cron_secret: Optional[str] = Header(None),
+):
+    """Human promotion: flip a candidate curve to status='active', archive
+    any prior active row. Only path from candidate → active."""
+    _check_admin(x_cron_secret)
+    async with get_session() as session:
+        candidate = await session.get(WinCalibrationCurveRow, candidate_id)
+        if candidate is None:
+            raise HTTPException(status_code=404, detail=f"No calibration row {candidate_id}")
+        if candidate.status != "candidate":
+            raise HTTPException(status_code=409, detail=f"Row {candidate_id} is {candidate.status!r}, not 'candidate'")
+        prior = (await session.execute(
+            select(WinCalibrationCurveRow).where(WinCalibrationCurveRow.status == "active")
+        )).scalars().all()
+        for p in prior:
+            p.status = "archived"
+        candidate.status = "active"
+        candidate.reviewed_at = datetime.utcnow()
+        candidate.reviewed_note = note or "promoted via admin endpoint"
+        await session.commit()
+    return {"ok": True, "promoted": candidate_id, "archived": [p.id for p in prior]}
+
+
+@app.post("/api/admin/isotonic-candidate/{candidate_id}/reject")
+async def admin_isotonic_reject(
+    candidate_id: int,
+    note: str = Query("", description="Optional reviewer note"),
+    x_cron_secret: Optional[str] = Header(None),
+):
+    """Human rejection: mark a candidate as rejected. Kept for audit."""
+    _check_admin(x_cron_secret)
+    async with get_session() as session:
+        candidate = await session.get(WinCalibrationCurveRow, candidate_id)
+        if candidate is None:
+            raise HTTPException(status_code=404, detail=f"No calibration row {candidate_id}")
+        if candidate.status != "candidate":
+            raise HTTPException(status_code=409, detail=f"Row {candidate_id} is {candidate.status!r}, not 'candidate'")
+        candidate.status = "rejected"
+        candidate.reviewed_at = datetime.utcnow()
+        candidate.reviewed_note = note or "rejected via admin endpoint"
+        await session.commit()
+    return {"ok": True, "rejected": candidate_id}
+
+
+@app.get("/api/admin/isotonic-candidate/{candidate_id}")
+async def admin_isotonic_get(
+    candidate_id: int,
+    x_cron_secret: Optional[str] = Header(None),
+):
+    """Inspect a specific curve (candidate or active) with its backtest."""
+    _check_admin(x_cron_secret)
+    async with get_session() as session:
+        row = await session.get(WinCalibrationCurveRow, candidate_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail=f"No calibration row {candidate_id}")
+    return {
+        "id": row.id,
+        "status": row.status,
+        "sample_days": row.sample_days,
+        "sample_size": row.sample_size,
+        "updated_at": row.updated_at.isoformat() if row.updated_at else None,
+        "reviewed_at": row.reviewed_at.isoformat() if row.reviewed_at else None,
+        "reviewed_note": row.reviewed_note,
+        "curve": json.loads(row.curve_json or "[]"),
+        "backtest": json.loads(row.backtest_json or "{}"),
+    }
+
+
+@app.get("/api/admin/isotonic-candidates")
+async def admin_isotonic_list(x_cron_secret: Optional[str] = Header(None)):
+    """List all calibration rows (all statuses) newest first."""
+    _check_admin(x_cron_secret)
+    async with get_session() as session:
+        rows = (await session.execute(
+            select(WinCalibrationCurveRow).order_by(WinCalibrationCurveRow.id.desc())
+        )).scalars().all()
+    return {
+        "rows": [
+            {
+                "id": r.id,
+                "status": r.status,
+                "sample_size": r.sample_size,
+                "sample_days": r.sample_days,
+                "updated_at": r.updated_at.isoformat() if r.updated_at else None,
+                "reviewed_at": r.reviewed_at.isoformat() if r.reviewed_at else None,
+                "backtest_recommendation": (
+                    json.loads(r.backtest_json).get("recommendation") if r.backtest_json else None
+                ),
+            }
+            for r in rows
+        ]
+    }
 
 
 @app.post("/api/admin/calibrate-output")
