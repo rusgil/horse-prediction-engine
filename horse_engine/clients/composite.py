@@ -71,24 +71,43 @@ class CompositeClient:
         if not op_track:
             log.debug("OddsPro: no track match for '%s' on %s", venue, race_date)
 
-        odds_map, ra_results = await asyncio.gather(
+        # Load BOTH the movers dict (for opening prices / steam signals, when
+        # we bring those back) AND the full-market meeting dict. The movers
+        # endpoint only returns runners whose price has moved recently, so
+        # relying on it alone left firm-priced favourites (and every non-mover)
+        # with sel.topToteWin=None. Market features then defaulted every
+        # horse's market_implied_prob to 1/N, blinding the model to the market
+        # signal. Root cause of the 2026-07-15/16 flat-distribution incident.
+        # Full-market fetch is one API call for the whole country, cached
+        # for 2 minutes inside OddsProClient — cheap.
+        odds_map, meeting_odds, ra_results = await asyncio.gather(
             self._odds.get_track_odds(op_track) if op_track else _empty_dict(),
+            self._odds.get_meeting_odds(race_date) if op_track else _empty_dict(),
             self._ra.get_results(ra_key) if ra_key else _empty_dict(),
         )
+        full_market = meeting_odds.get((op_track or "").lower(), {}) if op_track else {}
 
         race_results: dict[str, dict] = (ra_results.get(race_number) or {}).get("runners", {})
 
-        # ── Odds priority for each runner: OddsPro currentBestOdds → RA SP ─────
+        # ── Odds priority for each runner:
+        #    OddsPro movers.currentBestOdds → OddsPro full-market → RA SP
+        # Movers keeps whatever opening-price signal we later need; full-market
+        # is the fallback that ensures firm favourites and stable prices land.
         for sel in raw.get("selections", []):
             name_raw = (sel.get("competitor") or {}).get("name", "")
             name = name_raw.lower()
+            name_norm = _normalize(name_raw)
             op = odds_map.get((race_number, name), {})
             ra = race_results.get(name, {})
 
             if not sel.get("topToteWin"):
-                if op:
+                if op and op.get("currentBestOdds"):
                     sel["topToteWin"] = op.get("currentBestOdds")
                     sel["_odds_opening"] = op.get("firstPrice")
+                else:
+                    fm_price = full_market.get((race_number, name)) or full_market.get((race_number, name_norm))
+                    if fm_price and fm_price > 1.0:
+                        sel["topToteWin"] = fm_price
 
             if ra:
                 sel["_finishing_position"] = ra.get("position")
