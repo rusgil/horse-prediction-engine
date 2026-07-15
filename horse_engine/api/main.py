@@ -21765,7 +21765,31 @@ async def _load_hot_streak_map(picks: list[dict]) -> dict[str, dict]:
 
 # ── Output calibration (isotonic curve on model_pct → win rate) ────────────
 async def _load_output_calibration_curve() -> Optional[list[tuple[float, float]]]:
-    """Load the persisted isotonic calibration curve. None = identity."""
+    """Load the persisted isotonic calibration curve. None = identity.
+
+    DISABLED 2026-07-15 (returns None unconditionally). The curve is
+    still rebuilt nightly and inspectable via
+    /api/admin/calibrate-output/status, but predict_race no longer
+    applies it — so the pipeline reverts to pre-2026-07-11 behaviour
+    where the reactive multipliers (midfield, going, thin-record,
+    completeness) do all the confidence correction.
+
+    Root cause: the isotonic curve is trained on POST-multiplier
+    win_probability, which produces artificial non-monotonicity in
+    the 25-35% band (multipliers demote raw ~40% horses into that
+    band, and those genuinely win less than natural-25% horses). PAV
+    correctly pools those buckets — the 2026-07-14 rebuild collapsed
+    22.5-32.5% to a single 22.6% output, capping every rank-1 pick
+    at 22.6% regardless of raw signal and silently disqualifying
+    would-be Sharp picks.
+
+    Proper fix (follow-up): move isotonic BEFORE the multipliers so it
+    fits on raw softmax → actual (monotone by construction). Requires
+    storing win_prob_raw on RunnerPredictionHistoryRow and a curve
+    rebuild. Until then, identity is safer than a broken plateau.
+    """
+    return None
+    # Original load path — kept for the follow-up re-enable:
     try:
         async with get_session() as session:
             row = (await session.execute(
