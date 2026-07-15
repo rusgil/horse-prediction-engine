@@ -17,14 +17,26 @@
       'padding:10px 16px',
       'font-size:14px',
       'letter-spacing:0.02em',
+      'border-top:2px solid #7f1d1d',
       'border-bottom:2px solid #7f1d1d',
-      'position:sticky',
-      'top:0',
-      'z-index:9999',
+      'z-index:9998',
       'box-shadow:0 2px 6px rgba(0,0,0,0.35)'
     ].join(';');
     banner.textContent = '⚠ ' + msg;
-    if (document.body) document.body.insertBefore(banner, document.body.firstChild);
+    // Insert immediately AFTER the FunkyIQ brand bar so the top-of-page
+    // chrome ("FunkyIQ / Horse Racing") remains visible above the alert.
+    // Falls back to first child of body if the brand bar isn't present
+    // (defensive — every user page currently ships one).
+    var brand = document.querySelector('.brand-bar');
+    if (brand && brand.parentNode) {
+      if (brand.nextSibling) {
+        brand.parentNode.insertBefore(banner, brand.nextSibling);
+      } else {
+        brand.parentNode.appendChild(banner);
+      }
+    } else if (document.body) {
+      document.body.insertBefore(banner, document.body.firstChild);
+    }
   }
   function init() {
     fetch(API + '/api/config/site-warnings')
