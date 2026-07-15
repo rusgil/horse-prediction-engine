@@ -1297,11 +1297,13 @@
     if (sharpBtn) sharpBtn.classList.toggle('active', mode === 'sharp');
     if (allBtn) allBtn.classList.toggle('active', mode === 'all');
     // If switching to Sharp and the currently-selected meeting doesn't
-    // qualify, wipe ALL downstream state — race list, runners, race
-    // content, results — so a non-Sharp meeting isn't left visible
-    // underneath the filtered pills. Previous version only cleared the
-    // race pills; the horse cards below raceContent survived.
-    if (mode === 'sharp' && S.selectedMeeting && !isSharpMeeting(S.selectedMeeting)) {
+    // qualify, wipe downstream state ONLY when a Sharp-qualifying
+    // alternative exists in today's card. When zero Sharp meetings
+    // exist (Sharp fallback), keep the current meeting + R1 visible
+    // so the user isn't stuck on a blank page (matches the Edge and
+    // Hot Seat Sharp-empty fallback shipped in 1ba7183).
+    const anySharpMeeting = S.meetings.some(m => !m.cancelled && isSharpMeeting(m));
+    if (mode === 'sharp' && S.selectedMeeting && !isSharpMeeting(S.selectedMeeting) && anySharpMeeting) {
       S.selectedMeeting = null;
       S.races = [];
       S.selectedRaceId = null;
@@ -1315,6 +1317,24 @@
       if (raceContent) raceContent.innerHTML = '';
       const infoBar = document.getElementById('infoBar');
       if (infoBar) infoBar.innerHTML = '';
+      // Auto-select the first Sharp meeting so R1 renders immediately.
+      const firstSharp = S.meetings.find(m => !m.cancelled && isSharpMeeting(m));
+      if (firstSharp) {
+        renderMeetingPills();
+        loadPerformanceStrip();
+        selectMeeting(firstSharp);
+        return;
+      }
+    } else if (mode === 'sharp' && !S.selectedMeeting) {
+      // No meeting selected yet — pick one (Sharp if possible, else fallback).
+      const firstActive = S.meetings.find(m => !m.cancelled && isSharpMeeting(m))
+                       || S.meetings.find(m => !m.cancelled);
+      if (firstActive) {
+        renderMeetingPills();
+        loadPerformanceStrip();
+        selectMeeting(firstActive);
+        return;
+      }
     }
     renderMeetingPills();
     // Re-fetch the 7-day performance strip with the new filter so the
@@ -1342,6 +1362,11 @@
   function formatDayLabel(iso) {
     const today = todayISO();
     if (iso === today) return 'Today';
+    // Explicit "Yesterday" is clearer than the day name (users have to
+    // do the mental "was yesterday Wed?" calc otherwise). Only the day
+    // pill for exactly-yesterday relabels; older days keep their name.
+    const yesterday = addDays(today, -1);
+    if (iso === yesterday) return 'Yesterday';
     const d = new Date(iso + 'T00:00:00');
     return d.toLocaleDateString('en-AU', { weekday: 'short' });
   }
@@ -1780,14 +1805,18 @@
       document.getElementById('meetingsSection').style.display = '';
 
       // Auto-select first eligible meeting for the current mode. In
-      // Sharp mode only pick a Sharp-qualifying meeting; otherwise
-      // any non-cancelled. Prevents mobile-UI bug where Sharp-mode
-      // empty pills coexisted with a race prediction for a non-Sharp
-      // meeting silently rendered below.
+      // Sharp mode prefer a Sharp-qualifying meeting; if none exist AND
+      // there are non-Sharp meetings available, fall back to the first
+      // non-cancelled meeting (Sharp fallback — same banner + all
+      // meetings shown pattern used by Edge/Hot Seat). Prevents blank
+      // page when no meeting qualifies as Sharp.
       const inSharp = S.mainMode === 'sharp';
-      const firstActive = inSharp
+      let firstActive = inSharp
         ? S.meetings.find(m => !m.cancelled && isSharpMeeting(m))
         : S.meetings.find(m => !m.cancelled);
+      if (inSharp && !firstActive) {
+        firstActive = S.meetings.find(m => !m.cancelled);
+      }
       if (firstActive) {
         await selectMeeting(firstActive);
       } else {
@@ -1811,16 +1840,22 @@
   function renderMeetingPills() {
     const container = document.getElementById('meetingPills');
     container.innerHTML = '';
-    const meetings = S.mainMode === 'sharp'
+    let meetings = S.mainMode === 'sharp'
       ? S.meetings.filter(m => isSharpMeeting(m))
       : S.meetings;
-    // Empty-state when Sharp filters everything out
+    // Sharp fallback — when Sharp filters everything out, don't leave the
+    // page blank. Show a violet banner explaining that no meetings met the
+    // Sharp gate, then render ALL meetings below so the user has something
+    // to click. Matches the pattern shipped for Edge/Hot Seat in 1ba7183.
+    let sharpFallbackActive = false;
     if (S.mainMode === 'sharp' && !meetings.length && S.meetings.length) {
+      sharpFallbackActive = true;
+      meetings = S.meetings.filter(m => !m.cancelled);
       container.innerHTML = `
-        <div style="padding:14px 16px;color:var(--text-dim);font-size:0.85rem;font-style:italic;border:1px dashed var(--border);border-radius:10px;width:100%;text-align:center;">
-          No meetings today have a pick ≥30% confidence yet — try <strong style="color:#c084fc;cursor:pointer" onclick="setMainMode('all')">All meetings</strong> while the model warms up.
+        <div style="background:rgba(139,92,246,0.08);border:1px solid rgba(139,92,246,0.3);border-radius:10px;padding:12px 16px;margin-bottom:14px;color:#c4b5fd;font-size:14px;line-height:1.4;width:100%">
+          <div style="font-weight:600;margin-bottom:2px">🎯 No Sharp Meetings</div>
+          <div style="color:rgba(196,181,253,0.85);font-size:13px">Sharp thresholds weren't met for any meeting today — showing all meetings below.</div>
         </div>`;
-      return;
     }
     meetings.forEach(m => {
       const el = document.createElement('div');
@@ -1984,14 +2019,14 @@
       // Load results in background for today's meetings
       if (S.date === todayISO()) loadMeetingResults(m);
 
-      // Auto-select first race
       // Auto-select first race — in Sharp mode prefer the first
-      // Sharp-qualifying race, otherwise first available. If none
-      // qualify (all-non-sharp meeting in Sharp mode) clear the race
-      // panel so we don't render a race the pill strip is hiding.
+      // Sharp-qualifying race, but always fall back to R1 (the first
+      // race in the card) so a shown meeting NEVER has a blank race
+      // panel. User rule: "if there is a meeting, always have R1
+      // selected with horses showing" (Sharp fallback UX 2026-07-16).
       const inSharpAuto = S.mainMode === 'sharp';
       const firstRace = inSharpAuto
-        ? (S.races.find(r => _isSharpRace(r)) || null)
+        ? (S.races.find(r => _isSharpRace(r)) || S.races[0] || null)
         : (S.races[0] || null);
       if (firstRace) {
         await selectRace(firstRace);
@@ -2122,13 +2157,19 @@
     // is consistent with the meeting-tile filter. All mode shows every
     // race as before.
     const inSharp = S.mainMode === 'sharp';
-    const visible = inSharp ? S.races.filter(r => _isSharpRace(r)) : S.races;
-    if (inSharp && !visible.length && S.races.length) {
+    // Race-pill Sharp fallback — when a meeting has no Sharp-qualifying
+    // races (either because we're in the Sharp meeting-fallback state OR
+    // this specific meeting has no Sharp races), show a small violet
+    // note and render all races so R1 stays visible instead of leaving
+    // the pill strip blank. Matches the meeting-pill fallback above.
+    const sharpRaces = S.races.filter(r => _isSharpRace(r));
+    const raceFallback = inSharp && !sharpRaces.length && S.races.length;
+    const visible = inSharp && sharpRaces.length ? sharpRaces : S.races;
+    if (raceFallback) {
       container.innerHTML = `
-        <div style="padding:14px 16px;color:var(--text-dim);font-size:0.85rem;font-style:italic;border:1px dashed var(--border);border-radius:10px;width:100%;text-align:center;">
-          This meeting has no Sharp-qualifying races. Switch to <strong style="color:#c084fc;cursor:pointer" onclick="setMainMode('all')">All picks</strong> to view every race here.
+        <div style="background:rgba(139,92,246,0.06);border:1px solid rgba(139,92,246,0.25);border-radius:8px;padding:8px 12px;margin-bottom:10px;color:#c4b5fd;font-size:12px;width:100%">
+          No Sharp-qualifying races here — showing every race in this meeting.
         </div>`;
-      return;
     }
     visible.forEach(r => {
       const raceId = r.race_id;
