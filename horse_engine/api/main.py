@@ -2544,8 +2544,9 @@ async def lifespan(app: FastAPI):
         await _scheduled_enrich()
     asyncio.create_task(_startup_enrich_if_stale())
 
-    # One-shot idempotent follow-up seed — noop after the first successful run.
+    # One-shot idempotent follow-up seeds — noop after first successful run.
     asyncio.create_task(_seed_sharp_bao_roi_followup())
+    asyncio.create_task(_seed_isotonic_reenable_followup())
 
     # Bet-gen + settlement + result-seed catch-up on startup. Without this,
     # any deploy that lands between cron ticks defers all of these to the
@@ -12001,11 +12002,49 @@ async def _measure_sharp_bao_roi_500() -> float:
     return round((sum(bao_wins) - n) / n * 100, 2)
 
 
+async def _measure_isotonic_raw_sample_size() -> float:
+    """Return the count of RunnerPredictionHistoryRow rows with
+    win_prob_raw IS NOT NULL AND a matched historical result. This is
+    the exact sample the nightly output-calibration rebuild sees under
+    the pipeline reorder shipped in f94e994 (isotonic-on-raw-softmax).
+
+    Purpose: gate the re-enable of _load_output_calibration_curve (which
+    currently returns None per 75ee777) until enough post-deploy data
+    has accumulated to fit a robust curve. Isotonic on <5k samples
+    tends to produce jaggy curves; ~10k is a comfortable minimum, ~20k
+    is where the pre-reorder curve was working well.
+
+    Baseline 0 (fresh column). target_above 10000 (safe re-enable
+    threshold). Once this hits target, revert the one-line short-
+    circuit in _load_output_calibration_curve."""
+    async with get_session() as session:
+        pred_ids_result = await session.execute(
+            select(RunnerPredictionHistoryRow.race_id, RunnerPredictionHistoryRow.horse_name)
+            .where(RunnerPredictionHistoryRow.win_prob_raw.isnot(None))
+            .where(RunnerPredictionHistoryRow.source == "live")
+            .where(RunnerPredictionHistoryRow.cancelled.is_(False) | RunnerPredictionHistoryRow.cancelled.is_(None))
+        )
+        pred_keys = {(rid, _normalize_horse(hn)) for rid, hn in pred_ids_result.fetchall()}
+        if not pred_keys:
+            return 0.0
+        race_ids = {rid for rid, _ in pred_keys}
+        hr_rows = (await session.execute(
+            select(HistoricalResultRow.race_id, HistoricalResultRow.horse_name, HistoricalResultRow.position)
+            .where(HistoricalResultRow.race_id.in_(race_ids))
+        )).fetchall()
+    matched = sum(
+        1 for rid, hn, pos in hr_rows
+        if pos is not None and pos > 0 and (rid, _normalize_horse(hn)) in pred_keys
+    )
+    return float(matched)
+
+
 _FOLLOWUP_MEASURERS: dict = {
     "market_disagreed_losses_7d": _measure_market_disagreed_losses_7d,
     "going_calibration_max_dev_21d": _measure_going_calibration_max_dev_21d,
     "premium_bao_roi_500": _measure_premium_bao_roi_500,
     "sharp_bao_roi_500": _measure_sharp_bao_roi_500,
+    "isotonic_raw_sample_size": _measure_isotonic_raw_sample_size,
 }
 
 
@@ -12051,6 +12090,59 @@ async def _seed_sharp_bao_roi_followup() -> None:
             log.info("[followup-seed] Inserted sharp_bao_roi_500 followup (scheduled 2026-08-15)")
     except Exception as e:
         log.warning("[followup-seed] sharp_bao_roi_500 seed failed: %s", e)
+
+
+async def _seed_isotonic_reenable_followup() -> None:
+    """Idempotent startup seed for the isotonic_raw_sample_size follow-up.
+    Tracks post-deploy accumulation of RunnerPredictionHistoryRow rows
+    with win_prob_raw set, so we know when it's safe to revert the
+    short-circuit in _load_output_calibration_curve. Scheduled 2026-08-04
+    (~20 days after the pipeline reorder ships)."""
+    try:
+        async with get_session() as session:
+            existing = (await session.execute(
+                select(WeeklyReviewFollowUpRow)
+                .where(WeeklyReviewFollowUpRow.measurement_type == "isotonic_raw_sample_size")
+                .limit(1)
+            )).scalar_one_or_none()
+            if existing is not None:
+                return
+            row = WeeklyReviewFollowUpRow(
+                title="Isotonic calibration: safe to re-enable?",
+                scheduled_for="2026-08-04",
+                measurement_type="isotonic_raw_sample_size",
+                baseline_value=0.0,  # column fresh as of 2026-07-15
+                target_below=None,
+                target_above=10000.0,
+                context_md=(
+                    "Isotonic output calibration is currently short-circuited "
+                    "(commit 75ee777, 2026-07-15) because fitting on POST-"
+                    "multiplier win_probability produced a plateau that capped "
+                    "every rank-1 pick at 22.6%. The pipeline reorder in "
+                    "f94e994 moved isotonic to run on RAW softmax (win_prob_raw) "
+                    "BEFORE the multipliers — monotone by construction, no "
+                    "plateau possible. But the new fit needs its own training "
+                    "data: only rows written on/after 2026-07-15 have "
+                    "win_prob_raw populated. This measurer counts the matched "
+                    "(prediction, historical_result) pairs available to the "
+                    "nightly rebuild. Safe re-enable threshold: 10,000 pairs "
+                    "(~20 days of live traffic at current volumes)."
+                ),
+                action_md=(
+                    "Once sample_size >= 10,000: (1) inspect the new curve via "
+                    "GET /api/admin/calibrate-output/status — confirm no "
+                    "plateaus in the 20-40% band, (2) revert the short-circuit "
+                    "by deleting the 'return None' at the top of "
+                    "_load_output_calibration_curve (the DB-read branch is "
+                    "preserved below it), (3) monitor Sharp coverage for a "
+                    "few days to make sure rank-1 confidence looks right."
+                ),
+            )
+            session.add(row)
+            await session.commit()
+            log.info("[followup-seed] Inserted isotonic_raw_sample_size followup (scheduled 2026-08-04)")
+    except Exception as e:
+        log.warning("[followup-seed] isotonic_raw_sample_size seed failed: %s", e)
 
 
 async def _resolve_followup(row: WeeklyReviewFollowUpRow) -> dict:
