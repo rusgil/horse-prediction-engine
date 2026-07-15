@@ -1455,7 +1455,26 @@
     // filter the user has on screen.
     renderDailyStats();
     const main = document.getElementById('list');
-    const picks = applyFilters(state.picks, state.winFilter, state.placeFilter, state.venue);
+    let picks = applyFilters(state.picks, state.winFilter, state.placeFilter, state.venue);
+    // Sharp fallback: when Sharp mode is active but yields zero picks (all
+    // other filters still applied), fall back to showing the same list
+    // WITHOUT the Sharp gate — so users see something instead of a blank
+    // "no picks" state. Only kicks in when Sharp is the reason the list
+    // is empty; other filters (win/place/venue/gap/value) are preserved.
+    let sharpFallbackActive = false;
+    if (state.mode === 'sharp' && picks.length === 0) {
+      const savedMode = state.mode;
+      state.mode = 'all';
+      try {
+        const fallback = applyFilters(state.picks, state.winFilter, state.placeFilter, state.venue);
+        if (fallback.length > 0) {
+          picks = fallback;
+          sharpFallbackActive = true;
+        }
+      } finally {
+        state.mode = savedMode;
+      }
+    }
 
     if (!picks.length) {
       main.innerHTML = `
@@ -1469,7 +1488,16 @@
       return;
     }
 
-    main.innerHTML = picks.map(p => {
+    let fallbackBanner = '';
+    if (sharpFallbackActive) {
+      fallbackBanner = `
+        <div style="background:rgba(139,92,246,0.08);border:1px solid rgba(139,92,246,0.3);border-radius:10px;padding:12px 16px;margin-bottom:14px;color:#c4b5fd;font-size:14px;line-height:1.4">
+          <div style="font-weight:600;margin-bottom:2px">🎯 No Sharp Picks Available</div>
+          <div style="color:rgba(196,181,253,0.85);font-size:13px">Sharp thresholds weren't met for any upcoming race — showing all other picks below.</div>
+        </div>`;
+    }
+
+    main.innerHTML = fallbackBanner + picks.map(p => {
       const cd = formatCountdown(p.scheduled_time);
       const jumpTime = formatJumpTime(p.scheduled_time);
       const barPct = progressPct(p.scheduled_time);

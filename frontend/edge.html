@@ -2645,8 +2645,20 @@
 
   function renderContent(data, stake, results) {
     let picks = data.picks;
+    // Sharp fallback: when Sharp mode is on but produces zero picks (typical
+    // early-morning/pre-enrichment window OR a genuinely quiet card), fall
+    // back to showing the full pick set with a banner explaining what
+    // happened. Prior behaviour was a generic empty state that made the
+    // page look broken.
+    let sharpFallbackActive = false;
     if (window.__edgeMode === 'sharp') {
-      picks = picks.filter(isSharpEdgePick);
+      const sharpPicks = picks.filter(isSharpEdgePick);
+      if (sharpPicks.length === 0 && picks.length > 0) {
+        sharpFallbackActive = true;
+        // leave picks as-is (unfiltered)
+      } else {
+        picks = sharpPicks;
+      }
     }
     results = results || {};
 
@@ -2680,6 +2692,13 @@
     }
 
     let html = '';
+    if (sharpFallbackActive) {
+      html += `
+        <div style="background:rgba(139,92,246,0.08);border:1px solid rgba(139,92,246,0.3);border-radius:10px;padding:12px 16px;margin-bottom:16px;color:#c4b5fd;font-size:14px;line-height:1.4">
+          <div style="font-weight:600;margin-bottom:2px">🎯 No Sharp Picks Available</div>
+          <div style="color:rgba(196,181,253,0.85);font-size:13px">Sharp thresholds weren't met for any race in the current window — showing all picks below.</div>
+        </div>`;
+    }
     const todayStr = new Date().toLocaleDateString('en-CA', { timeZone: 'Australia/Sydney' });
     const tomorrowDate = new Date(); tomorrowDate.setDate(tomorrowDate.getDate() + 1);
     const tomorrowStr = tomorrowDate.toLocaleDateString('en-CA', { timeZone: 'Australia/Sydney' });
