@@ -1181,6 +1181,7 @@
       <span class="main-mode-hint">Sharp = meetings with a high-confidence pick (≥30%)</span>
     </div>
     <div class="section-label" id="meetingsLabel">Today's Meetings</div>
+    <div id="meetingsBanner"></div>
     <div class="pills-scroller">
       <div class="pills-row" id="meetingPills"></div>
       <div class="pills-fade-right"></div>
@@ -1839,23 +1840,27 @@
 
   function renderMeetingPills() {
     const container = document.getElementById('meetingPills');
+    const banner = document.getElementById('meetingsBanner');
     container.innerHTML = '';
+    if (banner) banner.innerHTML = '';
     let meetings = S.mainMode === 'sharp'
       ? S.meetings.filter(m => isSharpMeeting(m))
       : S.meetings;
     // Sharp fallback — when Sharp filters everything out, don't leave the
-    // page blank. Show a violet banner explaining that no meetings met the
-    // Sharp gate, then render ALL meetings below so the user has something
-    // to click. Matches the pattern shipped for Edge/Hot Seat in 1ba7183.
+    // page blank. Render the violet banner on its OWN line above the pill
+    // strip (a separate #meetingsBanner container outside .pills-row), then
+    // render ALL meetings below so the user has something to click.
     let sharpFallbackActive = false;
     if (S.mainMode === 'sharp' && !meetings.length && S.meetings.length) {
       sharpFallbackActive = true;
       meetings = S.meetings.filter(m => !m.cancelled);
-      container.innerHTML = `
-        <div style="background:rgba(139,92,246,0.08);border:1px solid rgba(139,92,246,0.3);border-radius:10px;padding:12px 16px;margin-bottom:14px;color:#c4b5fd;font-size:14px;line-height:1.4;width:100%">
-          <div style="font-weight:600;margin-bottom:2px">🎯 No Sharp Meetings</div>
-          <div style="color:rgba(196,181,253,0.85);font-size:13px">Sharp thresholds weren't met for any meeting today — showing all meetings below.</div>
-        </div>`;
+      if (banner) {
+        banner.innerHTML = `
+          <div style="background:rgba(139,92,246,0.08);border:1px solid rgba(139,92,246,0.3);border-radius:10px;padding:12px 16px;margin-bottom:14px;color:#c4b5fd;font-size:14px;line-height:1.4">
+            <div style="font-weight:600;margin-bottom:2px">🎯 No Sharp Meetings</div>
+            <div style="color:rgba(196,181,253,0.85);font-size:13px">Sharp thresholds weren't met for any meeting today — showing all meetings below.</div>
+          </div>`;
+      }
     }
     meetings.forEach(m => {
       const el = document.createElement('div');
@@ -2157,20 +2162,12 @@
     // is consistent with the meeting-tile filter. All mode shows every
     // race as before.
     const inSharp = S.mainMode === 'sharp';
-    // Race-pill Sharp fallback — when a meeting has no Sharp-qualifying
-    // races (either because we're in the Sharp meeting-fallback state OR
-    // this specific meeting has no Sharp races), show a small violet
-    // note and render all races so R1 stays visible instead of leaving
-    // the pill strip blank. Matches the meeting-pill fallback above.
+    // Race-pill Sharp fallback — silently show all races when the
+    // meeting has none Sharp-qualifying. No banner at this level (the
+    // meeting-pill banner above already explains the situation for
+    // the whole page; a second banner here was redundant).
     const sharpRaces = S.races.filter(r => _isSharpRace(r));
-    const raceFallback = inSharp && !sharpRaces.length && S.races.length;
     const visible = inSharp && sharpRaces.length ? sharpRaces : S.races;
-    if (raceFallback) {
-      container.innerHTML = `
-        <div style="background:rgba(139,92,246,0.06);border:1px solid rgba(139,92,246,0.25);border-radius:8px;padding:8px 12px;margin-bottom:10px;color:#c4b5fd;font-size:12px;width:100%">
-          No Sharp-qualifying races here — showing every race in this meeting.
-        </div>`;
-    }
     visible.forEach(r => {
       const raceId = r.race_id;
       const enriched = S.enrichedRaceIds.has(raceId);
