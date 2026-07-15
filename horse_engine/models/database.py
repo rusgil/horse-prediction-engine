@@ -67,6 +67,13 @@ class RunnerPredictionRow(Base):
 
     win_probability = Column(Float)
     place_probability = Column(Float)
+    # Raw softmax output from HorseModel — the pipeline stores this as the
+    # *input* to isotonic calibration (which now runs first). Multipliers
+    # then transform the calibrated value into win_probability. Kept as its
+    # own column so the nightly calibration curve can be re-fit on
+    # raw→actual (monotone by construction), avoiding the plateau failure
+    # mode where post-multiplier win_probability was fed back into isotonic.
+    win_prob_raw = Column(Float, nullable=True)
     model_rank = Column(Integer)
     market_rank = Column(Integer)
     overlay = Column(Float)
@@ -279,6 +286,10 @@ class RunnerPredictionHistoryRow(Base):
 
     win_probability = Column(Float)
     place_probability = Column(Float)
+    # See RunnerPredictionRow.win_prob_raw. Copied verbatim by the pre-race
+    # snapshot cron so the calibration training set can be built purely
+    # from history without touching mutable state.
+    win_prob_raw = Column(Float, nullable=True)
     model_rank = Column(Integer, index=True)
     market_rank = Column(Integer)
     overlay = Column(Float)
@@ -475,6 +486,11 @@ async def init_db() -> None:
         "ALTER TABLE runner_predictions ADD COLUMN IF NOT EXISTS class_change INTEGER",
         "ALTER TABLE runner_prediction_history ADD COLUMN IF NOT EXISTS source TEXT DEFAULT 'live'",
         "ALTER TABLE runner_prediction_history ADD COLUMN IF NOT EXISTS batch_id TEXT",
+        # Isotonic-on-raw-softmax pipeline (2026-07-15). Populated going
+        # forward by predict_race; rows written before this deploy stay
+        # NULL and are filtered out of the calibration fit.
+        "ALTER TABLE runner_predictions ADD COLUMN IF NOT EXISTS win_prob_raw DOUBLE PRECISION",
+        "ALTER TABLE runner_prediction_history ADD COLUMN IF NOT EXISTS win_prob_raw DOUBLE PRECISION",
         "CREATE INDEX IF NOT EXISTS ix_hist_batch_id ON runner_prediction_history (batch_id)",
         "CREATE UNIQUE INDEX IF NOT EXISTS uq_history_race_horse ON runner_prediction_history (race_id, horse_name)",
         "CREATE INDEX IF NOT EXISTS ix_runner_pred_race_rank ON runner_predictions (race_id, model_rank)",

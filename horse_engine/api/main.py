@@ -2312,6 +2312,7 @@ async def _snapshot_prerace_predictions() -> int:
                         trainer=r.trainer,
                         weight=r.weight,
                         win_probability=r.win_probability,
+                        win_prob_raw=r.win_prob_raw,
                         place_probability=r.place_probability,
                         model_rank=r.model_rank,
                         place_model_rank=r.place_model_rank,
@@ -21828,12 +21829,19 @@ async def _compute_output_calibration_curve(days: int = 45) -> dict:
         # Every-runner slice — calibrate across the whole distribution,
         # not just rank-1. Top-pick-only would over-fit the tail and
         # under-serve the mid-band where most value bets sit.
+        # Filter to win_prob_raw IS NOT NULL — the pipeline reordering
+        # (2026-07-15) means calibration is now fit on RAW softmax
+        # (monotone by construction) rather than post-multiplier
+        # win_probability (which produced the 22.5-32.5% plateau).
+        # Rows written before that deploy have win_prob_raw NULL and
+        # are excluded — the fit will be sparse until enough post-deploy
+        # data accumulates (~ 20d @ ~500 rows/day → 10k samples).
         pred_rows = (await session.execute(
             select(RunnerPredictionHistoryRow)
             .where(RunnerPredictionHistoryRow.race_id.in_(race_ids))
             .where(RunnerPredictionHistoryRow.cancelled.is_(False) | RunnerPredictionHistoryRow.cancelled.is_(None))
             .where(RunnerPredictionHistoryRow.source == "live")
-            .where(RunnerPredictionHistoryRow.win_probability.isnot(None))
+            .where(RunnerPredictionHistoryRow.win_prob_raw.isnot(None))
         )).scalars().all()
 
     samples: list[tuple[float, int]] = []
@@ -21843,9 +21851,9 @@ async def _compute_output_calibration_curve(days: int = 45) -> dict:
         # or where the horse was scratched (position 0 / null).
         if not r or r.position is None or r.position <= 0:
             continue
-        model_pct = (p.win_probability or 0.0) * 100.0
+        raw_pct = (p.win_prob_raw or 0.0) * 100.0
         won = 1 if r.winner else 0
-        samples.append((model_pct, won))
+        samples.append((raw_pct, won))
 
     curve = compute_calibration_curve(samples)
     if curve is None:
@@ -22652,6 +22660,9 @@ def _prediction_to_db_dict(pred, race_id: str, scheduled_time: str | None = None
         "trainer": pred.runner.trainer,
         "weight": pred.runner.weight,
         "win_probability": round(pred.win_prob, 4),
+        # Raw softmax value captured before isotonic + multipliers. Feeds
+        # the nightly output-calibration rebuild (monotone by design).
+        "win_prob_raw": round(getattr(pred, "win_prob_raw", pred.win_prob) or 0, 4),
         "place_probability": round(pred.place_prob, 4),
         "model_rank": pred.model_rank,
         "place_model_rank": pred.place_model_rank if pred.place_model_rank else None,

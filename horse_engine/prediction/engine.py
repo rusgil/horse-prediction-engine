@@ -45,6 +45,11 @@ class RunnerPrediction:
         self.runner = runner
         self.enriched = enriched
         self.win_prob = win_prob
+        # Raw softmax value, captured before any calibration/multiplier
+        # transformation. Persisted so the nightly output-calibration
+        # rebuild can fit isotonic on raw→actual (monotone by design)
+        # instead of on the post-multiplier value that produces plateaus.
+        self.win_prob_raw: float = win_prob
         self.place_prob = place_prob
         self.feature_vector = feature_vector
         self.model_rank: int = 0
@@ -376,11 +381,34 @@ def predict_race(race: Race, model: HorseModel, venue_calibration: dict[str, flo
             place_prob=round(pp, 4),
             feature_vector=feature_vectors[i],
         )
+        pred.win_prob_raw = round(wp, 4)  # snapshot BEFORE any calibration or multipliers
         pred.overlay = overlay
         pred.key_flags = _generate_flags(er, wp, overlay)
         # Attach exotic score before sort so ranking pairs the right horse.
         pred._exotic_score = exotic_scores_list[i] if i < len(exotic_scores_list) else 0.0
         predictions.append(pred)
+
+    # Output-space isotonic calibration — moved here (2026-07-15) from AFTER
+    # the multiplier stack. Rationale: fitting isotonic on POST-multiplier
+    # win_probability caused PAV to pool the 22.5-32.5% band into a single
+    # 22.6% output (the multipliers demote raw ~40% horses into that band,
+    # and those genuinely win less than natural-25% horses — non-monotone).
+    # Running isotonic on raw softmax means input→actual is monotone by
+    # construction (the model was trained to maximise likelihood on
+    # winners), so PAV can't pool. The reactive multipliers then apply
+    # their researched corrections to the calibrated probability, which
+    # is what they were tuned to work against anyway.
+    # NOTE: _load_output_calibration_curve currently returns None (short-
+    # circuit shipped 2026-07-15). Once ~30 days of raw data have
+    # accumulated in RunnerPredictionHistoryRow.win_prob_raw, the nightly
+    # rebuild can fit on that column and the short-circuit reverts to a
+    # one-line change.
+    if output_calibration_curve:
+        from horse_engine.prediction.output_calibration import apply_calibration_curve
+        pcts = [p.win_prob * 100.0 for p in predictions]
+        calibrated = apply_calibration_curve(pcts, output_calibration_curve)
+        for p, c in zip(predictions, calibrated):
+            p.win_prob = round(c / 100.0, 4)
 
     # Midfield penalty — 90-day winner-vs-loser feature analysis showed
     # rank-1 picks with speed_map_position='midfield' won at 22.7% vs
@@ -453,18 +481,10 @@ def predict_race(race: Race, model: HorseModel, venue_calibration: dict[str, flo
         elif missing == 1:
             p.win_prob = round(p.win_prob * 0.80, 4)
 
-    # Output-space isotonic calibration — nightly-refit curve mapping
-    # model_pct → empirical win rate, applied AFTER all reactive
-    # multipliers so it corrects whatever miscalibration remains in the
-    # end-to-end pipeline. Monotone-non-decreasing, so within-race rank
-    # order is preserved. Identity fallback when no curve is loaded.
-    # See horse_engine.prediction.output_calibration.
-    if output_calibration_curve:
-        from horse_engine.prediction.output_calibration import apply_calibration_curve
-        pcts = [p.win_prob * 100.0 for p in predictions]
-        calibrated = apply_calibration_curve(pcts, output_calibration_curve)
-        for p, c in zip(predictions, calibrated):
-            p.win_prob = round(c / 100.0, 4)
+    # (Output-space isotonic calibration was moved above, before the
+    # multipliers. Applying it here — on the already-multiplier-adjusted
+    # win_probability — created the plateau failure mode documented in
+    # commit 75ee777 and the block up-pipeline.)
 
     # Market-anchored shrinkage — a large model-vs-market gap is evidence
     # the model is missing information the market has (barrier trials,
