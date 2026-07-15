@@ -2547,6 +2547,7 @@ async def lifespan(app: FastAPI):
     # One-shot idempotent follow-up seeds — noop after first successful run.
     asyncio.create_task(_seed_sharp_bao_roi_followup())
     asyncio.create_task(_seed_isotonic_reenable_followup())
+    asyncio.create_task(_seed_shortest_fav_confidence_followup())
 
     # Bet-gen + settlement + result-seed catch-up on startup. Without this,
     # any deploy that lands between cron ticks defers all of these to the
@@ -12002,6 +12003,39 @@ async def _measure_sharp_bao_roi_500() -> float:
     return round((sum(bao_wins) - n) / n * 100, 2)
 
 
+async def _measure_shortest_fav_rank1_confidence() -> float:
+    """Return the model_pct assigned to the shortest-priced pre-post
+    favourite on TODAY's card where model rank-1 == market rank-1
+    (model and market agree on the favourite). A healthy model should
+    rate a $2-or-shorter favourite at 40-50%. If this reads below 30%,
+    the multiplier stack (midfield / going / thin-record / feature-
+    completeness) or an upstream feature (market_rank_norm) is
+    compressing confidence too aggressively.
+
+    Baseline: 20.4% (Balaklava R1 SWAN DANCE at $1.70 on 2026-07-15
+    — first day we noticed the flat distribution). target_above: 30.0
+    (any rank-1 that both model and market agree is a firm favourite
+    should clear 30%). If measurement is still below baseline after
+    the odds-snapshot fix has had a full day to propagate, that rules
+    out the market_rank_norm hypothesis and points at the multipliers."""
+    today = _today_aest().isoformat()
+    async with get_session() as session:
+        rows = (await session.execute(
+            select(RunnerPredictionRow)
+            .where(RunnerPredictionRow.race_id.like(f"{today}_%"))
+            .where(RunnerPredictionRow.model_rank == 1)
+            .where(RunnerPredictionRow.market_rank == 1)
+            .where(RunnerPredictionRow.best_available_odds.isnot(None))
+            .where(RunnerPredictionRow.best_available_odds > 1.0)
+            .where(RunnerPredictionRow.best_available_odds <= 3.0)
+            .where(RunnerPredictionRow.cancelled.is_(False) | RunnerPredictionRow.cancelled.is_(None))
+            .order_by(RunnerPredictionRow.best_available_odds.asc())
+        )).scalars().all()
+    if not rows:
+        return 0.0
+    return round((rows[0].win_probability or 0.0) * 100.0, 2)
+
+
 async def _measure_isotonic_raw_sample_size() -> float:
     """Return the count of RunnerPredictionHistoryRow rows with
     win_prob_raw IS NOT NULL AND a matched historical result. This is
@@ -12045,6 +12079,7 @@ _FOLLOWUP_MEASURERS: dict = {
     "premium_bao_roi_500": _measure_premium_bao_roi_500,
     "sharp_bao_roi_500": _measure_sharp_bao_roi_500,
     "isotonic_raw_sample_size": _measure_isotonic_raw_sample_size,
+    "shortest_fav_rank1_confidence": _measure_shortest_fav_rank1_confidence,
 }
 
 
@@ -12090,6 +12125,67 @@ async def _seed_sharp_bao_roi_followup() -> None:
             log.info("[followup-seed] Inserted sharp_bao_roi_500 followup (scheduled 2026-08-15)")
     except Exception as e:
         log.warning("[followup-seed] sharp_bao_roi_500 seed failed: %s", e)
+
+
+async def _seed_shortest_fav_confidence_followup() -> None:
+    """Idempotent startup seed for the shortest_fav_rank1_confidence
+    follow-up. Fires 2026-07-16 (tomorrow) after a full day of
+    post-odds-fix / post-plateau-disable predictions. Baseline 20.4
+    from Balaklava R1 SWAN DANCE on 2026-07-15 — a $1.70 pre-post
+    favourite our model somehow rated at only 20.4%. If tomorrow's
+    equivalent short-priced favourite reads similarly low, the odds
+    bug isn't the culprit and the multiplier stack is."""
+    try:
+        async with get_session() as session:
+            existing = (await session.execute(
+                select(WeeklyReviewFollowUpRow)
+                .where(WeeklyReviewFollowUpRow.measurement_type == "shortest_fav_rank1_confidence")
+                .limit(1)
+            )).scalar_one_or_none()
+            if existing is not None:
+                return
+            row = WeeklyReviewFollowUpRow(
+                title="Rank-1 confidence on shortest-priced favourite",
+                scheduled_for="2026-07-16",
+                measurement_type="shortest_fav_rank1_confidence",
+                baseline_value=20.4,
+                target_below=None,
+                target_above=30.0,
+                context_md=(
+                    "2026-07-15: Balaklava R1 SWAN DANCE was rank-1 (agreed with "
+                    "market) at $1.70 fixed odds. Market-implied 58.8%, but our "
+                    "model rated the horse at only 20.4%. Even after the "
+                    "post-re-enrich refresh (which used the fixed odds-snapshot "
+                    "and isotonic-disabled pipeline), rank-1 confidences across "
+                    "the whole card sat at 20-28% — meaning zero races cleared "
+                    "the 30% Sharp gate. Hypothesis: the odds-snapshot bug "
+                    "(09f8e58) left market_rank_norm feature garbage on ~24h "
+                    "of predictions, and today's picks were made using those "
+                    "broken features. Tomorrow's picks are the first fully "
+                    "clean batch, so if the shortest-priced rank-1 favourite "
+                    "still reads below 30%, the multiplier stack is the "
+                    "culprit — not the market_rank feature."
+                ),
+                action_md=(
+                    "If measurement >= 30%: odds bug was the cause; model is "
+                    "recovering. Continue monitoring — Sharp coverage should "
+                    "return to normal over 24-48h. "
+                    "If measurement < 30%: dig into the multiplier stack. "
+                    "Suspects (in order): (1) going-calibration (0.40× on soft, "
+                    "0.55× on heavy) applied to every runner regardless of "
+                    "individual going preference, (2) midfield penalty 0.85× "
+                    "compounding with feature-completeness gate 0.60×/0.80×, "
+                    "(3) thin-record discount over-firing when 3-start starters "
+                    "are treated as unreliable. Log each multiplier's "
+                    "contribution to a single trace and pick the biggest "
+                    "compressor."
+                ),
+            )
+            session.add(row)
+            await session.commit()
+            log.info("[followup-seed] Inserted shortest_fav_rank1_confidence follow-up (scheduled 2026-07-16)")
+    except Exception as e:
+        log.warning("[followup-seed] shortest_fav_rank1_confidence seed failed: %s", e)
 
 
 async def _seed_isotonic_reenable_followup() -> None:
