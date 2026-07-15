@@ -1843,24 +1843,40 @@
     const banner = document.getElementById('meetingsBanner');
     container.innerHTML = '';
     if (banner) banner.innerHTML = '';
+
+    // Sharp fallback (2026-07-16 update): when Sharp is selected but zero
+    // meetings clear the gate, flip the mode filter itself to "All
+    // meetings" so the UI reflects reality — user isn't left visually
+    // stuck on a Sharp toggle that shows no results. The banner still
+    // renders on the All-mode side so the user knows *why* All was
+    // auto-selected. S.sharpAutoDowngraded prevents the user's next
+    // manual click on Sharp from immediately flipping back (they can
+    // still click it — the flag resets on switching to All manually).
+    const anySharp = S.meetings.some(m => !m.cancelled && isSharpMeeting(m));
+    if (S.mainMode === 'sharp' && !anySharp && S.meetings.length) {
+      S.mainMode = 'all';
+      S.sharpAutoDowngraded = true;
+      const sharpBtn = document.getElementById('mainModeSharp');
+      const allBtn = document.getElementById('mainModeAll');
+      if (sharpBtn) sharpBtn.classList.remove('active');
+      if (allBtn) allBtn.classList.add('active');
+    } else if (S.mainMode === 'sharp' || anySharp) {
+      // Reset the downgrade flag once real Sharp meetings exist again.
+      S.sharpAutoDowngraded = S.sharpAutoDowngraded && !anySharp;
+    }
+
     let meetings = S.mainMode === 'sharp'
       ? S.meetings.filter(m => isSharpMeeting(m))
       : S.meetings;
-    // Sharp fallback — when Sharp filters everything out, don't leave the
-    // page blank. Render the violet banner on its OWN line above the pill
-    // strip (a separate #meetingsBanner container outside .pills-row), then
-    // render ALL meetings below so the user has something to click.
-    let sharpFallbackActive = false;
-    if (S.mainMode === 'sharp' && !meetings.length && S.meetings.length) {
-      sharpFallbackActive = true;
-      meetings = S.meetings.filter(m => !m.cancelled);
-      if (banner) {
-        banner.innerHTML = `
-          <div style="background:rgba(139,92,246,0.08);border:1px solid rgba(139,92,246,0.3);border-radius:10px;padding:12px 16px;margin-bottom:14px;color:#c4b5fd;font-size:14px;line-height:1.4">
-            <div style="font-weight:600;margin-bottom:2px">🎯 No Sharp Meetings</div>
-            <div style="color:rgba(196,181,253,0.85);font-size:13px">Sharp thresholds weren't met for any meeting today — showing all meetings below.</div>
-          </div>`;
-      }
+    // Show the fallback banner if we auto-downgraded from Sharp — same
+    // context the previous violet banner conveyed, but now the toggle
+    // above visibly agrees ("All meetings" active).
+    if (S.sharpAutoDowngraded && banner) {
+      banner.innerHTML = `
+        <div style="background:rgba(139,92,246,0.08);border:1px solid rgba(139,92,246,0.3);border-radius:10px;padding:12px 16px;margin-bottom:14px;color:#c4b5fd;font-size:14px;line-height:1.4">
+          <div style="font-weight:600;margin-bottom:2px">🎯 No Sharp Meetings today</div>
+          <div style="color:rgba(196,181,253,0.85);font-size:13px">Sharp thresholds weren't met by any meeting — switched to All meetings automatically.</div>
+        </div>`;
     }
     meetings.forEach(m => {
       const el = document.createElement('div');
