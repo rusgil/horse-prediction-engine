@@ -10708,6 +10708,78 @@ async def admin_enrich_now(x_cron_secret: Optional[str] = Header(None)):
     return {"ok": True, "queued": True, "note": "Enrich running in background — takes 5-10 min for a full day"}
 
 
+_SITE_WARNING_KEY = "config:site_warnings"
+_DEFAULT_SITE_WARNINGS = {
+    "model_unstable": {
+        "active": False,
+        "message": "Model not stable today — NO BETS",
+    }
+}
+
+
+async def _load_site_warnings() -> dict:
+    """Return the site-warning config, hydrated from ResponseCacheRow. Falls
+    back to defaults on any error so a bad row can't take the site down."""
+    try:
+        async with get_session() as session:
+            row = (await session.execute(
+                select(ResponseCacheRow).where(ResponseCacheRow.cache_key == _SITE_WARNING_KEY)
+            )).scalars().first()
+        if row and row.payload_json:
+            data = json.loads(row.payload_json)
+            # Merge over defaults so newly-added flags don't crash old rows.
+            merged = json.loads(json.dumps(_DEFAULT_SITE_WARNINGS))
+            for k, v in (data or {}).items():
+                if k in merged and isinstance(v, dict):
+                    merged[k].update(v)
+                else:
+                    merged[k] = v
+            return merged
+    except Exception as e:
+        log.debug("[site_warnings] load fallback: %s", e)
+    return json.loads(json.dumps(_DEFAULT_SITE_WARNINGS))
+
+
+@app.get("/api/config/site-warnings")
+async def config_site_warnings():
+    """Public — every user-facing page fetches this on load to decide
+    whether to render top-of-page warning banners (model-unstable, etc.)."""
+    return await _load_site_warnings()
+
+
+@app.post("/api/admin/site-warnings/model-unstable")
+async def admin_toggle_model_unstable(
+    active: bool = Query(...),
+    message: str = Query(""),
+    x_cron_secret: Optional[str] = Header(None),
+):
+    """Toggle the model-not-stable red banner. Optional `message` override
+    lets you customise the wording for a specific incident."""
+    _check_admin(x_cron_secret)
+    warnings = await _load_site_warnings()
+    warnings["model_unstable"]["active"] = bool(active)
+    if message:
+        warnings["model_unstable"]["message"] = message
+    payload = json.dumps(warnings)
+    async with get_session() as session:
+        existing = (await session.execute(
+            select(ResponseCacheRow).where(ResponseCacheRow.cache_key == _SITE_WARNING_KEY)
+        )).scalars().first()
+        if existing:
+            existing.payload_json = payload
+            existing.updated_at = datetime.utcnow()
+            existing.cache_version = (existing.cache_version or 0) + 1
+        else:
+            session.add(ResponseCacheRow(
+                cache_key=_SITE_WARNING_KEY,
+                payload_json=payload,
+                cache_version=1,
+                updated_at=datetime.utcnow(),
+            ))
+        await session.commit()
+    return {"ok": True, "model_unstable": warnings["model_unstable"]}
+
+
 @app.get("/api/admin/prediction-trace/{race_id}")
 async def admin_prediction_trace(
     race_id: str,

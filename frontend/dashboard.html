@@ -954,6 +954,7 @@
     `;
 
     mountWinCharts(calData, perfData);
+    if (typeof refreshSiteWarnStatus === 'function') refreshSiteWarnStatus();
     // Lab hit-stats lives in the Exotic panel — call AFTER innerHTML is
     // set so the target div exists. The panel is hidden on initial load
     // (Win tab is default) but the table populates underneath so it's
@@ -1303,8 +1304,63 @@
         </div>`;
     }
 
-    return productionHtml + driftHtml + actionHtml + latestStatsHtml + roiTrendHtml + perfHtml + windowHtml + thresholdHtml + historyHtml;
+    // Site-warning banner toggle. Read the CURRENT state on load and
+    // render a switch that flips the model-unstable red banner across
+    // every user-facing page. See _load_site_warnings in main.py and
+    // /api/config/site-warnings for the shared contract.
+    const siteWarningsHtml = `
+      <div class="section" id="siteWarningsSection">
+        <div class="section-title">Site-Wide Warnings</div>
+        <div class="stat-card" style="padding:16px 20px;display:flex;justify-content:space-between;align-items:center;gap:16px;flex-wrap:wrap">
+          <div>
+            <div style="font-weight:700;font-size:1rem">Model-instability banner</div>
+            <div style="font-size:0.8rem;color:var(--text-secondary);margin-top:2px" id="siteWarnStatus">
+              Loading…
+            </div>
+          </div>
+          <div style="display:flex;gap:10px;align-items:center">
+            <button class="btn" id="siteWarnOn" style="background:#dc262620;border-color:#dc2626;color:#ef4444" onclick="setModelUnstable(true)">🔴 Turn ON</button>
+            <button class="btn" id="siteWarnOff" style="background:#22c55e20;border-color:#22c55e;color:#22c55e" onclick="setModelUnstable(false)">✓ Turn OFF</button>
+          </div>
+        </div>
+        <div style="font-size:0.72rem;color:var(--text-dim);margin-top:8px;line-height:1.5">
+          When ON, every user-facing page (Lounge, Edge, Hot Seat, Funk Me Up, Bets, About) shows a red banner at the top reading the message below. Use for confirmed model drift / bad data days.
+        </div>
+      </div>`;
+    return productionHtml + driftHtml + actionHtml + latestStatsHtml + siteWarningsHtml + roiTrendHtml + perfHtml + windowHtml + thresholdHtml + historyHtml;
   }
+
+  // Site-warning toggle handlers — attached to window so onclick can find them.
+  async function refreshSiteWarnStatus() {
+    try {
+      const res = await fetch(`${API}/api/config/site-warnings`);
+      if (!res.ok) return;
+      const w = await res.json();
+      const mu = w?.model_unstable || {};
+      const el = document.getElementById('siteWarnStatus');
+      if (el) {
+        el.innerHTML = mu.active
+          ? `<span style="color:#ef4444;font-weight:700">🔴 ACTIVE</span> — banner text: "${escHtml(mu.message || '')}"`
+          : `<span style="color:#22c55e;font-weight:700">✓ Off</span> — no banner is being shown`;
+      }
+    } catch (e) { console.warn('site-warn status fetch failed', e); }
+  }
+  async function setModelUnstable(active) {
+    const message = active
+      ? (prompt('Banner message (leave blank for default):', 'Model not stable today — NO BETS') || 'Model not stable today — NO BETS')
+      : '';
+    try {
+      const url = `${API}/api/admin/site-warnings/model-unstable?active=${active}${message ? '&message=' + encodeURIComponent(message) : ''}`;
+      const res = await fetch(url, { method: 'POST', headers: { 'x-cron-secret': adminSecret } });
+      if (!res.ok) { alert('Failed to toggle: ' + res.status); return; }
+      refreshSiteWarnStatus();
+      alert(active ? 'Banner ON — refresh any user page to see it.' : 'Banner OFF.');
+    } catch (e) {
+      alert('Request failed: ' + e);
+    }
+  }
+  window.setModelUnstable = setModelUnstable;
+  window.refreshSiteWarnStatus = refreshSiteWarnStatus;
 
   function mountWinCharts(calData, perfData) {
     const cals = calData?.calibrations || [];

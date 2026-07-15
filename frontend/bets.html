@@ -925,6 +925,7 @@
       .page-title { font-size: 28px; }
     }
   </style>
+  <script src="/api/site-warnings.js" defer></script>
 </head>
 <body>
   <div class="brand-bar">
@@ -1170,22 +1171,54 @@
       resultText = '✗ Miss'; resultCls = 'miss';
     }
     const collapsed = isCollapsed(raceId, group);
+    // Per-horse highlight: any box horse that actually finished top-4
+    // gets a position-specific marker (1st = green, 2nd = amber,
+    // 3rd = amber, 4th = blue). Previously only the whole-box hit
+    // marker (✓) was shown, which under-represented partial hits like
+    // "3 of our 4 boxed horses made the top-4 but not in the exact
+    // trifecta positions".
     const boxes = collapsed ? '' : bets.map(b => {
       const isHit = b.is_hit === true;
       const label = BOX_LABELS[b.strategy_label] || b.strategy_label;
+      const actualTop = Array.isArray(b.actual_top3) ? b.actual_top3 : [];
+      // actual_top3 is stored as [1st_tab, 2nd_tab, 3rd_tab]. For
+      // first_four bets we get the 4th too when available on b.actual_top4
+      const actualTop4 = Array.isArray(b.actual_top4) ? b.actual_top4 : actualTop;
+      const posOf = (tab) => {
+        const i = actualTop4.indexOf(tab);
+        return i >= 0 ? i + 1 : null;  // 1-indexed
+      };
       const horses = (b.box_horses || []).map((tab, i) => {
         const name = (b.box_horse_names || [])[i] || '';
         const odds = ((b.box_horse_odds || [])[i]);
         const oddsTxt = (odds && odds > 1.0) ? ` <span class="tab-odds">$${odds.toFixed(2)}</span>` : '';
-        return `<span class="tab-pair"><span class="tab">${tab}</span><span class="tab-name">${escHtml(name)}</span>${oddsTxt}</span>`;
+        const finPos = posOf(tab);
+        let posBadge = '';
+        let pairCls = '';
+        if (finPos === 1) {
+          pairCls = ' finished-first';
+          posBadge = `<span class="tab-fin-badge first">1st</span>`;
+        } else if (finPos === 2 || finPos === 3) {
+          pairCls = ' finished-placed';
+          posBadge = `<span class="tab-fin-badge placed">${finPos === 2 ? '2nd' : '3rd'}</span>`;
+        } else if (finPos === 4) {
+          pairCls = ' finished-fourth';
+          posBadge = `<span class="tab-fin-badge fourth">4th</span>`;
+        }
+        return `<span class="tab-pair${pairCls}"><span class="tab">${tab}</span><span class="tab-name">${escHtml(name)}</span>${oddsTxt}${posBadge}</span>`;
       }).join('');
+      // Count how many boxed horses actually finished top-4.
+      const finTop4 = (b.box_horses || []).filter(t => actualTop4.includes(t)).length;
+      const finSummary = actualTop4.length && finTop4 > 0
+        ? ` <span class="strategy-block-fin-summary">${finTop4}/${(b.box_horses || []).length} in top-4</span>`
+        : '';
       const hitMark = isHit ? ' ✓' : '';
       const payoutTag = (isHit && b.estimated_payout)
         ? ` <span class="strategy-block-payout">+$${b.estimated_payout.toFixed(2)}</span>`
         : '';
       return `
         <div class="strategy-block-box${isHit ? ' hit' : ''}">
-          <span class="strategy-block-box-label">${escHtml(label)}${hitMark}${payoutTag}</span>
+          <span class="strategy-block-box-label">${escHtml(label)}${hitMark}${finSummary}${payoutTag}</span>
           <div class="strategy-block-box-horses">${horses}</div>
         </div>`;
     }).join('');
