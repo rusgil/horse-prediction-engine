@@ -307,7 +307,7 @@ def enrich_runner(
     )
 
 
-def predict_race(race: Race, model: HorseModel, venue_calibration: dict[str, float] | None = None, place_model: PlaceModel | None = None, exotic_model: ExoticModel | None = None, output_calibration_curve: list[tuple[float, float]] | None = None) -> list[RunnerPrediction]:
+def predict_race(race: Race, model: HorseModel, venue_calibration: dict[str, float] | None = None, place_model: PlaceModel | None = None, exotic_model: ExoticModel | None = None, output_calibration_curve: list[tuple[float, float]] | None = None, trace: dict | None = None) -> list[RunnerPrediction]:
     """Full prediction pipeline for one race. Returns ranked RunnerPredictions."""
     if not race.runners:
         return []
@@ -337,8 +337,29 @@ def predict_race(race: Race, model: HorseModel, venue_calibration: dict[str, flo
 
     from horse_engine.prediction.venue_calibration import apply_venue_calibration
     feature_vectors = [build_feature_vector(er) for er in enriched_runners]
-    win_probs, heuristic_place_probs = model.predict_field(feature_vectors)
-    win_probs = apply_venue_calibration(list(win_probs), race.venue, venue_calibration or {})
+    win_probs_raw, heuristic_place_probs = model.predict_field(feature_vectors)
+    win_probs = apply_venue_calibration(list(win_probs_raw), race.venue, venue_calibration or {})
+    # Diagnostic trace — instrument every multiplier stage so the admin
+    # endpoint can show why any given horse's win_prob is at its final
+    # value. Costs one dict-append per horse per stage when enabled; noop
+    # when trace is None (production path).
+    _venue_mult = (venue_calibration or {}).get(race.venue, 1.0) if venue_calibration else 1.0
+    if trace is not None:
+        for i, (runner, er) in enumerate(zip(race.runners[:len(win_probs)], enriched_runners)):
+            trace[runner.horse_name] = {
+                "raw_softmax": round(win_probs_raw[i], 4),
+                "after_venue_calibration": round(win_probs[i], 4),
+                "venue_multiplier": round(_venue_mult, 4),
+                "metadata": {
+                    "venue": race.venue,
+                    "speed_map_position": getattr(er, "speed_map_position", None),
+                    "track_condition_category": getattr(er, "track_condition_category", None),
+                    "starts_last_10": getattr(er, "starts_last_10", None),
+                    "market_implied_prob": round(getattr(er, "market_implied_prob", 0) or 0, 4),
+                    "race_distance": race.distance,
+                    "race_track_condition": race.track_condition,
+                },
+            }
 
     # Place-prob assembly.
     # PlaceModel.predict_field returns (softmax(raw), softmax(raw × 0.5) × N).
@@ -409,6 +430,12 @@ def predict_race(race: Race, model: HorseModel, venue_calibration: dict[str, flo
         calibrated = apply_calibration_curve(pcts, output_calibration_curve)
         for p, c in zip(predictions, calibrated):
             p.win_prob = round(c / 100.0, 4)
+    if trace is not None:
+        for p in predictions:
+            t = trace.get(p.runner.horse_name)
+            if t is not None:
+                t["after_isotonic"] = p.win_prob
+                t["isotonic_active"] = output_calibration_curve is not None
 
     # Midfield penalty — 90-day winner-vs-loser feature analysis showed
     # rank-1 picks with speed_map_position='midfield' won at 22.7% vs
@@ -420,6 +447,15 @@ def predict_race(race: Race, model: HorseModel, venue_calibration: dict[str, flo
     for p in predictions:
         if getattr(p.enriched, "speed_map_position", None) == "midfield":
             p.win_prob = round(p.win_prob * 0.85, 4)
+            if trace is not None and p.runner.horse_name in trace:
+                trace[p.runner.horse_name]["midfield_multiplier"] = 0.85
+        elif trace is not None and p.runner.horse_name in trace:
+            trace[p.runner.horse_name]["midfield_multiplier"] = 1.0
+    if trace is not None:
+        for p in predictions:
+            t = trace.get(p.runner.horse_name)
+            if t is not None:
+                t["after_midfield"] = p.win_prob
 
     # Going calibration — split per-going multipliers (was a unified 0.55
     # for both soft and heavy). 60-day going-calibration backtest on
@@ -434,10 +470,20 @@ def predict_race(race: Race, model: HorseModel, venue_calibration: dict[str, flo
     # absolute probabilities.
     for p in predictions:
         going = getattr(p.enriched, "track_condition_category", None)
+        mult = 1.0
         if going == "soft":
-            p.win_prob = round(p.win_prob * 0.40, 4)
+            mult = 0.40
         elif going == "heavy":
-            p.win_prob = round(p.win_prob * 0.55, 4)
+            mult = 0.55
+        if mult != 1.0:
+            p.win_prob = round(p.win_prob * mult, 4)
+        if trace is not None and p.runner.horse_name in trace:
+            trace[p.runner.horse_name]["going_multiplier"] = mult
+    if trace is not None:
+        for p in predictions:
+            t = trace.get(p.runner.horse_name)
+            if t is not None:
+                t["after_going"] = p.win_prob
 
     # Thin-record penalty — the model can't distinguish a lightly-raced
     # horse's genuine form from lucky variance. Even at 3 starts a 1-3-3
@@ -448,13 +494,23 @@ def predict_race(race: Race, model: HorseModel, venue_calibration: dict[str, flo
     # Shipped 2026-07-10 after COAL SEAM/mackay R1 went 68.8% → 6th of 8.
     for p in predictions:
         n = getattr(p.enriched, "starts_last_10", None)
+        mult = 1.0
         if isinstance(n, (int, float)):
             if n <= 1:
-                p.win_prob = round(p.win_prob * 0.50, 4)
+                mult = 0.50
             elif n == 2:
-                p.win_prob = round(p.win_prob * 0.70, 4)
+                mult = 0.70
             elif n == 3:
-                p.win_prob = round(p.win_prob * 0.85, 4)
+                mult = 0.85
+        if mult != 1.0:
+            p.win_prob = round(p.win_prob * mult, 4)
+        if trace is not None and p.runner.horse_name in trace:
+            trace[p.runner.horse_name]["thin_record_multiplier"] = mult
+    if trace is not None:
+        for p in predictions:
+            t = trace.get(p.runner.horse_name)
+            if t is not None:
+                t["after_thin_record"] = p.win_prob
 
     # Feature-completeness gate — when critical race-level features are
     # missing (distance=0, going unparseable) or the runner has no market
@@ -476,10 +532,21 @@ def predict_race(race: Race, model: HorseModel, venue_calibration: dict[str, flo
         market_prob = getattr(p.enriched, "market_implied_prob", 0) or 0
         if market_prob <= 0:
             missing += 1
+        mult = 1.0
         if missing >= 2:
-            p.win_prob = round(p.win_prob * 0.60, 4)
+            mult = 0.60
         elif missing == 1:
-            p.win_prob = round(p.win_prob * 0.80, 4)
+            mult = 0.80
+        if mult != 1.0:
+            p.win_prob = round(p.win_prob * mult, 4)
+        if trace is not None and p.runner.horse_name in trace:
+            trace[p.runner.horse_name]["feature_completeness_multiplier"] = mult
+            trace[p.runner.horse_name]["missing_features_count"] = missing
+    if trace is not None:
+        for p in predictions:
+            t = trace.get(p.runner.horse_name)
+            if t is not None:
+                t["after_feature_completeness"] = p.win_prob
 
     # (Output-space isotonic calibration was moved above, before the
     # multipliers. Applying it here — on the already-multiplier-adjusted
@@ -505,22 +572,21 @@ def predict_race(race: Race, model: HorseModel, venue_calibration: dict[str, flo
     _NULL_MARKET_CAP = 0.40  # ceiling for win_prob when market signal is missing
     for p in predictions:
         market = getattr(p.enriched, "market_implied_prob", 0.0) or 0.0
+        shrink_action = "none"
         if market <= 0:
-            # No market signal — we can't verify high confidence against
-            # anything. When win_prob is > cap, blend 50/50 toward the
-            # cap to prevent an un-checked over-confident prediction from
-            # surviving the pipeline. Fixes the pioneer-park R7 case
-            # today: 73.5% survived market anchor because market_implied
-            # was null → this branch now shrinks it to ~57%.
             if p.win_prob > _NULL_MARKET_CAP:
                 p.win_prob = round(0.5 * p.win_prob + 0.5 * _NULL_MARKET_CAP, 4)
-            continue
-        overlay = p.win_prob - market
-        if overlay <= _SHRINK_START:
-            continue
-        excess = min(overlay, _SHRINK_FULL) - _SHRINK_START
-        weight = _SHRINK_MAX * excess / (_SHRINK_FULL - _SHRINK_START)
-        p.win_prob = round((1.0 - weight) * p.win_prob + weight * market, 4)
+                shrink_action = "null_market_cap"
+        else:
+            overlay = p.win_prob - market
+            if overlay > _SHRINK_START:
+                excess = min(overlay, _SHRINK_FULL) - _SHRINK_START
+                weight = _SHRINK_MAX * excess / (_SHRINK_FULL - _SHRINK_START)
+                p.win_prob = round((1.0 - weight) * p.win_prob + weight * market, 4)
+                shrink_action = f"market_anchor(w={round(weight, 3)})"
+        if trace is not None and p.runner.horse_name in trace:
+            trace[p.runner.horse_name]["market_shrinkage"] = shrink_action
+            trace[p.runner.horse_name]["final_win_prob"] = p.win_prob
 
     # Enforce P(top-3) ≥ P(top-1) per horse — a mathematical axiom for
     # the same horse in the same race. If any calibration step made

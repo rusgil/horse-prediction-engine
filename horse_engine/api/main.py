@@ -10708,6 +10708,72 @@ async def admin_enrich_now(x_cron_secret: Optional[str] = Header(None)):
     return {"ok": True, "queued": True, "note": "Enrich running in background — takes 5-10 min for a full day"}
 
 
+@app.get("/api/admin/prediction-trace/{race_id}")
+async def admin_prediction_trace(
+    race_id: str,
+    x_cron_secret: Optional[str] = Header(None),
+):
+    """Return a per-horse trace of every multiplier applied by predict_race
+    for a specific race. Answers 'why is this horse showing X% when I'd
+    expect Y%'. Runs the full pipeline live (no DB write) — you see exactly
+    what production would emit right now for that race."""
+    _check_admin(x_cron_secret)
+    from horse_engine.prediction.engine import predict_race
+    race_date, venue_code, race_num = _parse_race_id(race_id)
+    if not race_date or not venue_code or not race_num:
+        raise HTTPException(400, f"malformed race_id: {race_id}")
+
+    client = get_tab_client()
+    slug = _meeting_slug(venue_code, race_date)
+    meetings = await client.get_meetings(race_date)
+    m = next((mm for mm in meetings if mm.get("slug") == slug), None)
+    venue_name = (m or {}).get("venue", venue_code)
+    state = (m or {}).get("state", "")
+    await client.get_meeting_races(slug, force_fresh=True)
+    full_event = await client.get_race(slug, race_num)
+    if not full_event:
+        raise HTTPException(404, f"Race {race_num} not found in {slug}")
+
+    race = await client.parse_race(full_event, race_date, venue_name, state)
+    async with get_session() as session:
+        model = await _load_model(session)
+        place_model = await _load_place_model(session)
+        exotic_model = await _load_exotic_model(session)
+        await _inject_accumulated_stats(race, session)
+    venue_cal = await _load_venue_calibration()
+    output_cal = await _load_output_calibration_curve()
+
+    trace: dict = {}
+    predictions = predict_race(
+        race, model,
+        venue_calibration=venue_cal,
+        place_model=place_model,
+        exotic_model=exotic_model,
+        output_calibration_curve=output_cal,
+        trace=trace,
+    )
+
+    # Order by final rank so the top pick is first — easiest to read.
+    ranked = sorted(predictions, key=lambda p: p.model_rank or 99)
+    return {
+        "race_id": race_id,
+        "venue": race.venue,
+        "distance": race.distance,
+        "track_condition": race.track_condition,
+        "runner_count": len(predictions),
+        "isotonic_active": output_cal is not None,
+        "venue_multiplier_for_this_venue": (venue_cal or {}).get(race.venue, 1.0) if venue_cal else 1.0,
+        "trace": [
+            {
+                "rank": p.model_rank,
+                "horse": p.runner.horse_name,
+                **(trace.get(p.runner.horse_name) or {}),
+            }
+            for p in ranked
+        ],
+    }
+
+
 @app.post("/api/admin/reenrich-race/{race_id}")
 async def admin_reenrich_race(race_id: str, x_cron_secret: Optional[str] = Header(None)):
     """
