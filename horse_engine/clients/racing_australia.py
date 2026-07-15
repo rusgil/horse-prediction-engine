@@ -738,10 +738,17 @@ def _parse_results_page(html: str) -> dict[int, dict]:
             if ti is not None and ti < len(cells):
                 tab_raw = cells[ti].strip()
                 if tab_raw:
-                    try:
-                        tab_number = int(tab_raw)
-                    except ValueError:
-                        pass
+                    # RA marks emergency runners with an alpha suffix on the
+                    # saddle number ('11e', '16e' — the 'e' = emergency, they
+                    # got the start after a scratching). Strip the suffix so
+                    # the tab_number stored matches what the TAB API/bet
+                    # settlement uses (they only carry the integer part).
+                    m_tab = re.match(r"(\d+)", tab_raw)
+                    if m_tab:
+                        try:
+                            tab_number = int(m_tab.group(1))
+                        except ValueError:
+                            pass
 
             results[current_race_num]["runners"][horse.lower()] = {
                 "position": position,
