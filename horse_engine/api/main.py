@@ -11546,8 +11546,14 @@ async def _run_quality_check(target: str) -> dict:
     # 0% loss, Caddy 264ms, actual enrich crons succeeding). Real RA
     # blocks surface via the actual enrich cron failures — no need to
     # simulate the full call path from the health probe.
+    # Derive the health-probe URL from the RA_PROXY_URL env var when it
+    # points at an sslip.io-style host, so a droplet migration (new IP
+    # → new URL) doesn't require touching this file. Falls back to the
+    # last known-good host if the env var is unset. See scripts/migrate-
+    # ra-proxy.sh for the migration flow.
+    _ra_proxy_url = os.environ.get("RA_PROXY_URL", "").rstrip("/")
     external_urls = [
-        "https://170-64-147-74.sslip.io/health",
+        f"{_ra_proxy_url}/health" if _ra_proxy_url else "https://170-64-147-74.sslip.io/health",
     ]
 
     async def _probe(client: "_httpx_probe.AsyncClient", url: str) -> dict:
@@ -11583,7 +11589,7 @@ async def _run_quality_check(target: str) -> dict:
                 "check": "ra_proxy_droplet_down",
                 "urls": broken_external,
                 "reason": "The DigitalOcean RA proxy is unreachable. Self-heal (ra-proxy-healthcheck.timer) should have restarted it within 2 minutes. If you see this in the morning report, the droplet is powered off, OOM globally, or the self-heal timer failed to install.",
-                "remediation": "SSH to 170.64.147.74, run: systemctl status ra-proxy-healthcheck.timer; tail -50 /var/log/ra-proxy-healthcheck.log",
+                "remediation": f"SSH to {_ra_proxy_url or 'the droplet'}, run: systemctl status ra-proxy-healthcheck.timer; tail -50 /var/log/ra-proxy-healthcheck.log — see scripts/migrate-ra-proxy.sh to rotate to a new droplet",
             })
         info.append({
             "check": "url_health",
