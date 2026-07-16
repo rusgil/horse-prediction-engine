@@ -694,56 +694,9 @@
     .strategy-block-result.miss { color: var(--text-muted); }
     .strategy-block-result.pending { color: var(--teal-bright); }
 
-    /* Inline dividend entry */
-    .dividend-row {
-      margin-top: 8px;
-      padding: 6px 10px;
-      background: rgba(45,212,191,0.06);
-      border: 1px dashed rgba(45,212,191,0.35);
-      border-radius: 8px;
-      display: flex;
-      align-items: center;
-      gap: 6px;
-      font-size: 11px;
-    }
-    .dividend-row .label {
-      color: var(--text-dim);
-      font-weight: 600;
-    }
-    .dividend-row input {
-      flex: 1;
-      background: var(--bg-base);
-      border: 1px solid var(--border);
-      color: var(--text);
-      padding: 4px 8px;
-      border-radius: 6px;
-      font-size: 12px;
-      font-family: 'Outfit', sans-serif;
-      font-variant-numeric: tabular-nums;
-      min-width: 60px;
-    }
-    .dividend-row input:focus {
-      outline: none;
-      border-color: var(--teal);
-    }
-    .dividend-row button {
-      background: var(--teal);
-      border: 0;
-      color: var(--bg-base);
-      padding: 4px 10px;
-      border-radius: 6px;
-      font-weight: 700;
-      font-size: 11px;
-      cursor: pointer;
-    }
-    .dividend-row button:disabled {
-      opacity: 0.5;
-      cursor: not-allowed;
-    }
-    .dividend-row .err {
-      color: var(--red);
-      font-size: 10px;
-    }
+    /* (Inline dividend-entry styles removed 2026-07-17 alongside the
+       manual trifecta $ admin input — see git history for 7264d07.) */
+
 
     /* Day section header */
     .day-divider {
