@@ -66,6 +66,11 @@ from horse_engine.models.database import (
     backfill_prediction_history,
     load_model_weights,
     save_model_weights,
+    save_weight_candidate,
+    load_weight_candidate,
+    promote_weight_candidate,
+    reject_weight_candidate,
+    ModelWeightCandidateRow,
     load_place_model_weights,
     save_place_model_weights,
     load_exotic_model_weights,
@@ -15099,18 +15104,289 @@ async def enrich_meeting_endpoint(race_date: str, venue_code: str):
 
 # ── Retrain ───────────────────────────────────────────────────────────────────
 
+async def _backtest_weight_candidate(
+    model_type: str,
+    candidate_weights: dict[str, float],
+    holdout_days: int = 7,
+) -> dict:
+    """Score a candidate weight set against the current active weights
+    on the last `holdout_days` of rank-1 picks with settled results.
+
+    For win model: compare top-1 hit rate (candidate vs active) on the
+    same held-out races. Reruns predictions off the stored feature
+    vectors using each weight set.
+
+    Returns {races, active_hits, candidate_hits, delta_hits, ...}. If
+    zero delta, the candidate is essentially the active model — safe
+    to reject unless you have another reason to promote."""
+    from horse_engine.prediction.model import HorseModel, PlaceModel, ExoticModel
+    from horse_engine.prediction.features import FEATURE_NAMES
+    ModelCls = {"win": HorseModel, "place": PlaceModel, "exotic": ExoticModel}.get(model_type)
+    if ModelCls is None:
+        return {"error": f"unknown model_type {model_type!r}"}
+
+    def _dict_to_vec(w: dict) -> list:
+        return [w.get(name, 0.0) for name in FEATURE_NAMES]
+
+    cutoff = (_today_aest() - timedelta(days=holdout_days)).isoformat()
+    async with get_session() as session:
+        # Load candidate + active
+        active_row_dict = {}
+        if model_type == "win":
+            active_row_dict = await load_model_weights(session)
+        elif model_type == "place":
+            active_row_dict = await load_place_model_weights(session)
+        elif model_type == "exotic":
+            active_row_dict = await load_exotic_model_weights(session)
+
+        # Held-out races: last N days, group by race_id
+        rows = (await session.execute(
+            select(RunnerPredictionHistoryRow)
+            .where(RunnerPredictionHistoryRow.race_id >= cutoff)
+            .where(RunnerPredictionHistoryRow.source == "live")
+            .where(RunnerPredictionHistoryRow.cancelled.is_(False) | RunnerPredictionHistoryRow.cancelled.is_(None))
+            .where(RunnerPredictionHistoryRow.enriched_json.isnot(None))
+        )).scalars().all()
+
+        hr_rows = (await session.execute(
+            select(HistoricalResultRow).where(HistoricalResultRow.race_id >= cutoff)
+        )).scalars().all()
+
+    winners = {r.race_id: _normalize_horse(r.horse_name) for r in hr_rows if r.position == 1}
+    by_race: dict[str, list] = {}
+    for r in rows:
+        by_race.setdefault(r.race_id, []).append(r)
+
+    m_active = ModelCls(_dict_to_vec(active_row_dict)) if active_row_dict else None
+    m_cand = ModelCls(_dict_to_vec(candidate_weights))
+
+    active_hits = candidate_hits = scored = 0
+    for race_id, runners in by_race.items():
+        w = winners.get(race_id)
+        if not w:
+            continue
+        fvs = []
+        names = []
+        for row in runners:
+            try:
+                er = json.loads(row.enriched_json)
+                # Build FV directly from stored enriched_json fields
+                fv = [float(er.get(name, 0.0)) for name in FEATURE_NAMES]
+            except Exception:
+                continue
+            fvs.append(fv)
+            names.append(_normalize_horse(row.horse_name))
+        if len(fvs) < 2:
+            continue
+        scored += 1
+        cand_probs, _ = m_cand.predict_field(fvs)
+        cand_top_idx = cand_probs.index(max(cand_probs))
+        if names[cand_top_idx] == w:
+            candidate_hits += 1
+        if m_active is not None:
+            act_probs, _ = m_active.predict_field(fvs)
+            act_top_idx = act_probs.index(max(act_probs))
+            if names[act_top_idx] == w:
+                active_hits += 1
+
+    return {
+        "model_type": model_type,
+        "races": scored,
+        "active_hits": active_hits,
+        "candidate_hits": candidate_hits,
+        "active_hit_rate_pct": round(active_hits / scored * 100, 2) if scored else 0,
+        "candidate_hit_rate_pct": round(candidate_hits / scored * 100, 2) if scored else 0,
+        "delta_pp": round((candidate_hits - active_hits) / scored * 100, 2) if scored else 0,
+        "holdout_days": holdout_days,
+        "recommendation": (
+            "promote" if candidate_hits > active_hits else
+            "reject" if candidate_hits < active_hits else
+            "flag"
+        ),
+    }
+
+
+async def _seed_weight_candidate_review_followup(
+    model_type: str,
+    batch_id: str,
+    backtest: dict,
+    meta: dict,
+) -> None:
+    """Follow-up row so the candidate appears in the admin dashboard
+    with Promote / Reject buttons. Same pattern as
+    _seed_candidate_review_followup for isotonic."""
+    measurement_type = f"candidate_review_{model_type}_weights"
+    # Full UUID in the title so the dashboard can extract the batch_id
+    # verbatim and pass it to the promote/reject endpoints. The dashboard
+    # UI display can truncate visually if desired.
+    title = f"Review {model_type} weight candidate #{batch_id}"
+    try:
+        async with get_session() as session:
+            existing = (await session.execute(
+                select(WeeklyReviewFollowUpRow)
+                .where(WeeklyReviewFollowUpRow.measurement_type == measurement_type)
+                .where(WeeklyReviewFollowUpRow.title == title)
+                .limit(1)
+            )).scalar_one_or_none()
+            if existing is not None:
+                return
+            rec = backtest.get("recommendation", "flag")
+            races = backtest.get("races", 0)
+            active_pct = backtest.get("active_hit_rate_pct", 0)
+            candidate_pct = backtest.get("candidate_hit_rate_pct", 0)
+            delta = backtest.get("delta_pp", 0)
+            context = (
+                f"Candidate {model_type} weights #{batch_id[:8]}. "
+                f"Trained on {meta.get('sample_size', 0)} race groups · "
+                f"window={meta.get('training_window_start') or 'all'} → {meta.get('training_window_end') or 'today'}. "
+                f"7-day held-out backtest ({races} races): active hits {active_pct}% · candidate hits {candidate_pct}% "
+                f"(delta {delta:+}pp). Recommendation: **{rec.upper()}**."
+            )
+            action = (
+                f"Inspect full weights: GET /api/admin/weight-candidate/{batch_id}. "
+                f"Promote (swaps into live): POST /api/admin/weight-candidate/{batch_id}/promote. "
+                f"Reject: POST /api/admin/weight-candidate/{batch_id}/reject."
+            )
+            row = WeeklyReviewFollowUpRow(
+                title=title,
+                scheduled_for=_today_aest().isoformat(),
+                measurement_type=measurement_type,
+                baseline_value=float(active_pct),
+                target_below=None,
+                target_above=None,
+                context_md=context,
+                action_md=action,
+            )
+            session.add(row)
+            await session.commit()
+            log.info("[followup-seed] Inserted %s follow-up (batch #%s, rec=%s)",
+                     measurement_type, batch_id[:8], rec)
+    except Exception as e:
+        log.warning("[followup-seed] %s seed failed: %s", measurement_type, e)
+
+
+@app.get("/api/admin/weight-candidates")
+async def admin_weight_candidates_list(x_cron_secret: Optional[str] = Header(None)):
+    """List candidate batches — most recent first — grouped by (model_type, batch_id)."""
+    _check_admin(x_cron_secret)
+    async with get_session() as session:
+        rows = (await session.execute(
+            select(ModelWeightCandidateRow).order_by(ModelWeightCandidateRow.created_at.desc())
+        )).scalars().all()
+    grouped: dict = {}
+    for r in rows:
+        key = (r.model_type, r.batch_id)
+        if key not in grouped:
+            grouped[key] = {
+                "batch_id": r.batch_id,
+                "model_type": r.model_type,
+                "status": r.status,
+                "created_at": r.created_at.isoformat() if r.created_at else None,
+                "reviewed_at": r.reviewed_at.isoformat() if r.reviewed_at else None,
+                "sample_days": r.sample_days,
+                "sample_size": r.sample_size,
+                "training_window_start": r.training_window_start,
+                "training_window_end": r.training_window_end,
+                "backtest": json.loads(r.backtest_json) if r.backtest_json else None,
+                "feature_count": 0,
+            }
+        grouped[key]["feature_count"] += 1
+    return {"candidates": list(grouped.values())}
+
+
+@app.get("/api/admin/weight-candidate/{batch_id}")
+async def admin_weight_candidate_get(
+    batch_id: str,
+    x_cron_secret: Optional[str] = Header(None),
+):
+    """Full weight vector + metadata for one candidate batch."""
+    _check_admin(x_cron_secret)
+    async with get_session() as session:
+        rows = (await session.execute(
+            select(ModelWeightCandidateRow).where(ModelWeightCandidateRow.batch_id == batch_id)
+        )).scalars().all()
+    if not rows:
+        raise HTTPException(status_code=404, detail=f"No candidate batch {batch_id!r}")
+    head = rows[0]
+    return {
+        "batch_id": head.batch_id,
+        "model_type": head.model_type,
+        "status": head.status,
+        "created_at": head.created_at.isoformat() if head.created_at else None,
+        "reviewed_at": head.reviewed_at.isoformat() if head.reviewed_at else None,
+        "reviewed_note": head.reviewed_note,
+        "sample_days": head.sample_days,
+        "sample_size": head.sample_size,
+        "training_window_start": head.training_window_start,
+        "training_window_end": head.training_window_end,
+        "backtest": json.loads(head.backtest_json) if head.backtest_json else None,
+        "weights": {r.feature_name: r.weight for r in rows},
+    }
+
+
+@app.post("/api/admin/weight-candidate/{batch_id}/promote")
+async def admin_weight_candidate_promote(
+    batch_id: str,
+    note: str = Query("", description="Optional reviewer note"),
+    x_cron_secret: Optional[str] = Header(None),
+):
+    """Copy candidate weights into the live model table for its model_type.
+    Archives any prior active batch. Closes the linked follow-up card.
+    Only path from candidate → production weights."""
+    _check_admin(x_cron_secret)
+    async with get_session() as session:
+        try:
+            model_type, copied = await promote_weight_candidate(session, batch_id, note)
+        except ValueError as e:
+            raise HTTPException(status_code=404, detail=str(e))
+    await _close_candidate_review_followup(batch_id, f"{model_type}_weights", "promoted", note)
+    return {"ok": True, "promoted_batch": batch_id, "model_type": model_type, "features_copied": copied}
+
+
+@app.post("/api/admin/weight-candidate/{batch_id}/reject")
+async def admin_weight_candidate_reject(
+    batch_id: str,
+    note: str = Query("", description="Optional reviewer note"),
+    x_cron_secret: Optional[str] = Header(None),
+):
+    """Mark a candidate batch rejected. Kept for audit."""
+    _check_admin(x_cron_secret)
+    async with get_session() as session:
+        try:
+            head = (await session.execute(
+                select(ModelWeightCandidateRow).where(ModelWeightCandidateRow.batch_id == batch_id).limit(1)
+            )).scalars().first()
+            if head is None:
+                raise HTTPException(status_code=404, detail=f"No candidate batch {batch_id!r}")
+            model_type = head.model_type
+            n = await reject_weight_candidate(session, batch_id, note)
+        except ValueError as e:
+            raise HTTPException(status_code=404, detail=str(e))
+    await _close_candidate_review_followup(batch_id, f"{model_type}_weights", "rejected", note)
+    return {"ok": True, "rejected_batch": batch_id, "rows_marked": n}
+
+
 @app.post("/api/retrain")
 async def retrain_model(
     background_tasks: BackgroundTasks,
     days: int = Query(0, ge=0, le=365),
+    end_date: Optional[str] = Query(None, description="Optional ISO date (YYYY-MM-DD) — upper bound for training window. Excludes rows on/after this date. Use to retrain on clean data before a contaminated period."),
     x_cron_secret: Optional[str] = Header(None),
 ):
     """
     Retrain win model using race-grouped softmax (conditional logit).
     Returns immediately; all data loading and training runs in a background task.
-    days=0 (default) uses all available data.
+    days=0 (default) uses all available data. end_date lets you clip the
+    upper bound of the training window (e.g. days=45&end_date=2026-07-10
+    trains on 2026-05-26 → 2026-07-09, avoiding a contaminated tail).
+
+    Writes to model_weight_candidates with status='candidate'. Nothing
+    changes on the live model until a human hits Promote on the
+    resulting follow-up card. See [[feedback_model_release_process]].
     """
     _check_admin(x_cron_secret)
+    if end_date:
+        _validate_date(end_date)
     cutoff = (date.today() - timedelta(days=days)).isoformat() if days > 0 else None
 
     async def _do_win_retrain():
@@ -15137,6 +15413,12 @@ async def retrain_model(
             )
             if cutoff:
                 hist_query = hist_query.where(RunnerPredictionHistoryRow.race_id >= cutoff)
+            if end_date:
+                # end_date is exclusive — race_id 'YYYY-MM-DD_venue_RN' lex-
+                # compares against ISO 'YYYY-MM-DD' correctly. Lets a retrain
+                # clip out contaminated tails (e.g. days=45&end_date=2026-07-10
+                # trains on clean data before the pipeline-chaos period).
+                hist_query = hist_query.where(RunnerPredictionHistoryRow.race_id < end_date)
             hist_rows = (await session.execute(hist_query)).scalars().all()
 
             hr_rows = (await session.execute(select(HistoricalResultRow))).scalars().all()
@@ -15199,12 +15481,44 @@ async def retrain_model(
         log.info("[retrain] %d races assembled for race-grouped training", len(race_groups))
         m = HorseModel()
         s = await asyncio.to_thread(m.train_race_grouped, race_groups, sample_weights=race_weights)
+        # Write to model_weight_candidates — NEVER to model_weights directly.
+        # Promotion requires a human clicking Promote on the follow-up card.
+        import uuid as _uuid
+        batch_id = str(_uuid.uuid4())
+        meta = {
+            "sample_days": days or None,
+            "sample_size": len(race_groups),
+            "holdout_days": None,
+            "best_window": None,
+            "training_window_start": cutoff,
+            "training_window_end": end_date,
+        }
         async with get_session() as sess:
-            await save_model_weights(sess, s["weights"])
-        log.info("[retrain] complete — %d races, top1=%.3f", s.get("races", 0), s.get("top1_hit_rate", 0))
+            await save_weight_candidate(sess, "win", s["weights"], batch_id, meta)
+        # Backtest candidate vs active + seed follow-up for human review.
+        backtest = await _backtest_weight_candidate("win", s["weights"], holdout_days=7)
+        async with get_session() as sess:
+            _rows = (await sess.execute(
+                select(ModelWeightCandidateRow).where(ModelWeightCandidateRow.batch_id == batch_id)
+            )).scalars().all()
+            for r in _rows:
+                r.backtest_json = json.dumps(backtest)
+            await sess.commit()
+        await _seed_weight_candidate_review_followup(
+            model_type="win", batch_id=batch_id, backtest=backtest, meta=meta
+        )
+        log.info(
+            "[retrain] complete — %d races, top1=%.3f — CANDIDATE #%s awaiting review",
+            s.get("races", 0), s.get("top1_hit_rate", 0), batch_id[:8],
+        )
 
     background_tasks.add_task(_do_win_retrain)
-    return {"status": "retrain_started", "training_days": days or "all"}
+    return {
+        "status": "retrain_started",
+        "training_days": days or "all",
+        "end_date": end_date,
+        "note": "Writes to model_weight_candidates. Nothing changes on the live model until a human promotes the resulting candidate via the admin dashboard follow-up card.",
+    }
 
 
 @app.post("/api/admin/cancel-meeting")
@@ -22707,8 +23021,10 @@ async def _scheduled_output_calibration():
         log.exception("[cron] output_calibration failed: %s", e)
 
 
-async def _close_candidate_review_followup(candidate_id: int, artefact: str,
+async def _close_candidate_review_followup(candidate_id, artefact: str,
                                              outcome: str, note: str) -> None:
+    # candidate_id may be int (isotonic curve id) or str (weight batch short-id).
+    # The LIKE query handles both since the title matcher uses '#{id}' literally.
     """Mark the linked candidate-review follow-up row as measured so the
     dashboard card flips from 'Awaiting review' to a resolved verdict.
     Matches on measurement_type + title-contains '#<id>'. Silent no-op if

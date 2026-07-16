@@ -658,16 +658,25 @@
       let candidateActions = '';
       if ((r.measurement_type || '').startsWith('candidate_review_') && !r.reviewed_at) {
         const artefact = (r.measurement_type || '').replace('candidate_review_', '');
-        const idMatch = (r.title || '').match(/#(\d+)/);
+        // Weight candidate titles use a full UUID (#abc12345-1234-4567-89ab-...);
+        // isotonic uses a numeric row id (#47). Match either.
+        const idMatch = (r.title || '').match(/#([0-9a-f-]+)/i);
         const candidateId = idMatch ? idMatch[1] : null;
+        // Weight candidates live under /api/admin/weight-candidate/{id};
+        // other artefacts use /api/admin/{artefact}-candidate/{id}. Route
+        // accordingly so buttons hit the right endpoint.
+        const isWeights = artefact.endsWith('_weights');
+        const inspectUrl = isWeights
+          ? `${API}/api/admin/weight-candidate/${candidateId}`
+          : `${API}/api/admin/${artefact}-candidate/${candidateId}`;
         if (candidateId) {
           candidateActions = `
             <div style="margin-top:12px;padding:10px;background:rgba(139,92,246,0.06);border:1px dashed rgba(139,92,246,0.35);border-radius:6px">
               <div style="font-size:0.75rem;color:#c4b5fd;text-transform:uppercase;letter-spacing:0.03em;font-weight:700;margin-bottom:8px">Model Release Gate — Human Review Required</div>
               <div style="display:flex;gap:8px;flex-wrap:wrap">
-                <button class="btn" style="background:#22c55e20;border-color:#22c55e;color:#22c55e" onclick="reviewCandidate('${artefact}', ${candidateId}, 'promote')">✓ Promote</button>
-                <button class="btn" style="background:#ef444420;border-color:#ef4444;color:#ef4444" onclick="reviewCandidate('${artefact}', ${candidateId}, 'reject')">✗ Reject</button>
-                <a class="btn" style="text-decoration:none" href="${API}/api/admin/${artefact}-candidate/${candidateId}" target="_blank">🔍 Inspect curve</a>
+                <button class="btn" style="background:#22c55e20;border-color:#22c55e;color:#22c55e" onclick="reviewCandidate('${artefact}', '${candidateId}', 'promote')">✓ Promote</button>
+                <button class="btn" style="background:#ef444420;border-color:#ef4444;color:#ef4444" onclick="reviewCandidate('${artefact}', '${candidateId}', 'reject')">✗ Reject</button>
+                <a class="btn" style="text-decoration:none" href="${inspectUrl}" target="_blank">🔍 Inspect</a>
               </div>
             </div>`;
         }
@@ -690,8 +699,18 @@
     const label = action === 'promote' ? 'PROMOTE' : 'REJECT';
     const note = prompt(`${label} ${artefact} candidate #${candidateId}?\n\nOptional reviewer note:`, '');
     if (note === null) return; // cancelled
+    // Weight candidates use /api/admin/weight-candidate/{batch_id}/{action}
+    // (the endpoint pattern is model-type-agnostic; the batch_id encodes
+    // which model_type it targets). Other artefacts (isotonic) use the
+    // per-artefact path /api/admin/{artefact}-candidate/{id}/{action}.
+    // The batch_id parameter for weight endpoints is looked up server-side
+    // from the short id via a LIKE match — but we already have the short
+    // id from the title, so pass it as candidateId directly.
+    const isWeights = artefact.endsWith('_weights');
     try {
-      const url = `${API}/api/admin/${artefact}-candidate/${candidateId}/${action}?note=${encodeURIComponent(note)}`;
+      const url = isWeights
+        ? `${API}/api/admin/weight-candidate/${candidateId}/${action}?note=${encodeURIComponent(note)}`
+        : `${API}/api/admin/${artefact}-candidate/${candidateId}/${action}?note=${encodeURIComponent(note)}`;
       const res = await fetch(url, { method: 'POST', headers: { 'x-cron-secret': adminSecret } });
       const body = await res.json();
       if (!res.ok) {
