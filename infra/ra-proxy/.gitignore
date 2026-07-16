@@ -1,0 +1,18 @@
+# Terraform state — the DO API token, current droplet IPs, and other
+# sensitive info live here. Never commit.
+*.tfstate
+*.tfstate.*
+*.tfstate.backup
+
+# Local vars (holds do_token + proxy_secret)
+terraform.tfvars
+*.auto.tfvars
+
+# Plan artifacts + crash logs
+*.tfplan
+crash.log
+crash.*.log
+
+# Terraform init cache — safe to regenerate with `terraform init`
+.terraform/
+.terraform.lock.hcl

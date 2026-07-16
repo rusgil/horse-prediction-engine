@@ -1,0 +1,41 @@
+# Copy this file to terraform.tfvars and fill in your values.
+# terraform.tfvars is git-ignored — it holds secrets and never gets committed.
+
+# ── Secrets ─────────────────────────────────────────────────────────
+# DigitalOcean API token with read+write scope.
+# Get one at: https://cloud.digitalocean.com/account/api/tokens
+do_token = "dop_v1_..."
+
+# Shared secret between the Railway backend and this proxy.
+# Must MATCH the RA_PROXY_SECRET env var on Railway.
+# Generate a fresh one when rotating:
+#   openssl rand -hex 32
+proxy_secret = "REPLACE_WITH_HEX_SECRET"
+
+# ── SSH access ──────────────────────────────────────────────────────
+# Fingerprints of SSH keys already registered with DigitalOcean.
+# List them with:
+#   doctl compute ssh-key list --format FingerPrint --no-header
+# Add multiple entries to grant several developers access.
+ssh_key_fingerprints = [
+  "aa:bb:cc:dd:ee:ff:00:11:22:33:44:55:66:77:88:99"
+]
+
+# ── Placement ───────────────────────────────────────────────────────
+# Default region is Sydney (syd1) — physically close to Racing Australia
+# and Railway's own AU region. Change only if you have a specific reason.
+region = "syd1"
+
+# Cheapest droplet that comfortably runs Caddy + FastAPI.
+# See: doctl compute size list
+droplet_size = "s-1vcpu-1gb"
+
+# ── Rotation trigger ────────────────────────────────────────────────
+# Bump this value to force droplet recreation (fresh IP).
+# Convention: YYYYMMDD or YYYYMMDD-N. Only change when rotating.
+rotation_id = "20260716"
+
+# ── Optional hardening ──────────────────────────────────────────────
+# Restrict 443 inbound to a specific CIDR (e.g. Railway's egress range
+# if known). Leave as 0.0.0.0/0 for public access.
+# backend_source_ip = "0.0.0.0/0"
