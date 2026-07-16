@@ -1735,6 +1735,7 @@
     .exotic-align-badge.diverge   { color: #f87171; background: rgba(239,68,68,0.1); border: 1px solid rgba(239,68,68,0.25); }
     .exotic-align-badge.no-edge   { color: var(--text-dim); background: var(--bg-elevated); border: 1px solid var(--border); }
   </style>
+  <script src="/sharp.js" defer></script>
   <script src="/site-warnings.js" defer></script>
 </head>
 <body>
@@ -2626,20 +2627,8 @@
   //   Gates: (model_pct ≥30 OR top-3 sum ≥60) AND days_since_last_run ≤180.
   //   Layoff exclusion: pattern_id `edge_sharp_exclude_long_layoff_180d`
   //   (weekly review 2026-06-28: long-layoff Sharp picks lost 83%).
-  function isSharpEdgePick(p) {
-    if (typeof p.is_sharp === 'boolean') return p.is_sharp;
-    const daysOff = p.days_since_last_run;
-    const layoffOk = daysOff == null || daysOff <= 180;
-    if (!layoffOk) return false;
-    if ((p.model_pct || 0) >= 30) return true;
-    const field = p.field || [];
-    const top3Sum = field
-      .filter(f => !f.scratched)
-      .sort((a, b) => (b.win_pct || 0) - (a.win_pct || 0))
-      .slice(0, 3)
-      .reduce((s, f) => s + (f.win_pct || 0), 0);
-    return top3Sum >= 60;
-  }
+  // isSharpEdgePick is defined globally by /sharp.js — single source
+  // of truth shared with Hot Seat and the Lounge. Do not redefine here.
 
   // Page-level sharp/all toggle. Default = sharp.
   if (typeof window.__edgeMode === 'undefined') window.__edgeMode = 'sharp';

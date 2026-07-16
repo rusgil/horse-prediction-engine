@@ -931,6 +931,7 @@
       .page-title { font-size: 28px; }
     }
   </style>
+  <script src="/sharp.js" defer></script>
   <script src="/site-warnings.js" defer></script>
 </head>
 <body>
@@ -1076,29 +1077,8 @@
   //   - Layoff: days_since_last_run ≤ 180. Long-layoff Sharp picks lost
   //     83% of the time across 2026-06-22→28 (pattern_id
   //     `edge_sharp_exclude_long_layoff_180d`).
-  function isSharpPick(p) {
-    // Trust the server's authoritative is_sharp flag when present —
-    // same as Edge. The previous edgeOk (edge_pct >= 0) gate bundled
-    // "value bet" into "Sharp", which caused every high-confidence
-    // pick on a market favourite (e.g. Tamworth R1 2026-07-17: model
-    // 45%, market 55%, edge = -10) to fall out of Sharp view here
-    // while showing on Edge. Value filtering is already a separate
-    // pill in the filter row; don't double-count it into Sharp.
-    if (typeof p.is_sharp === 'boolean') return p.is_sharp;
-    // Fallback for older / cache-warmed rows that predate the server
-    // shipping is_sharp — matches the server's gate.
-    const modelPct = p.model_pct || 0;
-    const field = p.field || [];
-    const top3Sum = field
-      .filter(f => !f.scratched)
-      .sort((a, b) => (b.win_pct || 0) - (a.win_pct || 0))
-      .slice(0, 3)
-      .reduce((s, f) => s + (f.win_pct || 0), 0);
-    const confident = modelPct >= 30 || top3Sum >= 60;
-    const daysOff = p.days_since_last_run;
-    const layoffOk = daysOff == null || daysOff <= 180;
-    return confident && layoffOk;
-  }
+  // isSharpPick is defined globally by /sharp.js — single source of
+  // truth shared with Edge and the Lounge. Do not redefine here.
 
   // Display-only aliases for venue labels. Slug stays the same in the DB
   // and API; only the rendered string changes.

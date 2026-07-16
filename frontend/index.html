@@ -1124,6 +1124,7 @@
       .page-title { font-size: 28px; }
     }
   </style>
+  <script src="/sharp.js" defer></script>
   <script src="/site-warnings.js" defer></script>
 </head>
 <body>
@@ -1967,8 +1968,12 @@
   //   "is_sharp IS TRUE"). Previously the fallback to top≥30% was
   //   over-counting one race on Thu 07-10 that had is_sharp=null in
   //   the DB, producing 6 races via venue tiles but 5 via date pill.
+  // _isSharpRace delegates to the shared FIQSharp module (loaded from
+  // /sharp.js). Kept as a local alias so existing call sites read the
+  // same. isSharpMeeting below stays local — it aggregates across a
+  // meeting's races using Lounge-only state (S.meetingStats).
   function _isSharpRace(r) {
-    return r.is_sharp === true;
+    return (window.FIQSharp && window.FIQSharp.isSharp(r)) || r?.is_sharp === true;
   }
 
   async function _loadMeetingWinRate(m) {
