@@ -10709,6 +10709,70 @@ async def admin_enrich_now(x_cron_secret: Optional[str] = Header(None)):
     return {"ok": True, "queued": True, "note": "Enrich running in background — takes 5-10 min for a full day"}
 
 
+_MODEL_SNAPSHOT_PREFIX = "snapshot:model_state:"
+
+
+async def _load_model_snapshot(name: str) -> Optional[dict]:
+    """Retrieve a persisted model-performance snapshot. Used by follow-up
+    measurers so the check that fires weeks later can compare current
+    metrics against a known anchor (e.g. the post-fix state we captured
+    the day the incident closed)."""
+    try:
+        async with get_session() as session:
+            row = (await session.execute(
+                select(ResponseCacheRow).where(ResponseCacheRow.cache_key == _MODEL_SNAPSHOT_PREFIX + name)
+            )).scalars().first()
+        if row and row.payload_json:
+            return json.loads(row.payload_json)
+    except Exception as e:
+        log.debug("[model_snapshot] load %s failed: %s", name, e)
+    return None
+
+
+@app.get("/api/admin/model-snapshots/{name}")
+async def admin_model_snapshot_get(
+    name: str,
+    x_cron_secret: Optional[str] = Header(None),
+):
+    """Retrieve a persisted model-performance snapshot by name."""
+    _check_admin(x_cron_secret)
+    snap = await _load_model_snapshot(name)
+    if snap is None:
+        raise HTTPException(status_code=404, detail=f"No snapshot named {name!r}")
+    return {"name": name, "snapshot": snap}
+
+
+@app.post("/api/admin/model-snapshots/{name}")
+async def admin_model_snapshot_put(
+    name: str,
+    payload: dict,
+    x_cron_secret: Optional[str] = Header(None),
+):
+    """Persist a model-performance snapshot. Overwrites any prior snapshot
+    with the same name. Payload is stored verbatim so any shape works —
+    the caller decides which fields to record."""
+    _check_admin(x_cron_secret)
+    key = _MODEL_SNAPSHOT_PREFIX + name
+    body = json.dumps(payload)
+    async with get_session() as session:
+        existing = (await session.execute(
+            select(ResponseCacheRow).where(ResponseCacheRow.cache_key == key)
+        )).scalars().first()
+        if existing:
+            existing.payload_json = body
+            existing.updated_at = datetime.utcnow()
+            existing.cache_version = (existing.cache_version or 0) + 1
+        else:
+            session.add(ResponseCacheRow(
+                cache_key=key,
+                payload_json=body,
+                cache_version=1,
+                updated_at=datetime.utcnow(),
+            ))
+        await session.commit()
+    return {"ok": True, "name": name, "size": len(body)}
+
+
 _SITE_WARNING_KEY = "config:site_warnings"
 _DEFAULT_SITE_WARNINGS = {
     "model_unstable": {
@@ -12208,12 +12272,17 @@ async def _measure_clean_market_history_count() -> float:
     everything before). This is the training window that will finally let
     the model learn to trust market signal properly.
 
+    Also loads the retrain_2026-07-16 snapshot (persisted via
+    POST /api/admin/model-snapshots/retrain_2026-07-16 on 2026-07-16) and
+    logs a comparison between the snapshot's Sharp count / max rank-1 pct
+    and today's live edge state. The follow-up cron doesn't have a channel
+    to return the delta as structured data, so we surface it via a log
+    line the admin dashboard's next_action_md picks up.
+
     Baseline: 0 (column-fresh cutoff). target_above: 5000 (roughly two
     weeks of live traffic at ~350 clean picks/day). Once above, retrain
-    the win model on this window and the model will stop under-rating
-    market favourites (2026-07-16 diagnosis: EVERYBODY RISE at $2.40
-    market fav rated 24.7% by model — 17pp below market — because
-    training data taught it market signal was noise)."""
+    the win model on this window and compare Sharp coverage + max rank-1
+    pct against the persisted snapshot."""
     cutoff = "2026-07-16"
     async with get_session() as session:
         pred_keys_result = await session.execute(
@@ -12225,16 +12294,32 @@ async def _measure_clean_market_history_count() -> float:
         )
         pred_keys = {(rid, _normalize_horse(hn)) for rid, hn in pred_keys_result.fetchall()}
         if not pred_keys:
-            return 0.0
-        race_ids = {rid for rid, _ in pred_keys}
-        hr_rows = (await session.execute(
-            select(HistoricalResultRow.race_id, HistoricalResultRow.horse_name, HistoricalResultRow.position)
-            .where(HistoricalResultRow.race_id.in_(race_ids))
-        )).fetchall()
-    matched = sum(
-        1 for rid, hn, pos in hr_rows
-        if pos is not None and pos > 0 and (rid, _normalize_horse(hn)) in pred_keys
-    )
+            matched = 0
+        else:
+            race_ids = {rid for rid, _ in pred_keys}
+            hr_rows = (await session.execute(
+                select(HistoricalResultRow.race_id, HistoricalResultRow.horse_name, HistoricalResultRow.position)
+                .where(HistoricalResultRow.race_id.in_(race_ids))
+            )).fetchall()
+            matched = sum(
+                1 for rid, hn, pos in hr_rows
+                if pos is not None and pos > 0 and (rid, _normalize_horse(hn)) in pred_keys
+            )
+
+    # Snapshot comparison — for the admin dashboard to read out of the
+    # follow-up row's context. Snapshot is a JSON blob stored in
+    # ResponseCacheRow under 'snapshot:model_state:retrain_2026-07-16'.
+    snap = await _load_model_snapshot("retrain_2026-07-16")
+    if snap:
+        log.info(
+            "[followup] clean_market_history_count=%d "
+            "(snapshot: sharp=%s, max_rank1_pct=%s, min_fav_gap_pp=%s) "
+            "— compare against current /api/edge state before retraining",
+            matched,
+            snap.get("sharp_count"),
+            snap.get("max_rank1_pct"),
+            snap.get("min_fav_gap_pp"),
+        )
     return float(matched)
 
 
@@ -12364,12 +12449,17 @@ async def _seed_clean_market_retrain_followup() -> None:
                     "to retrain and let the model finally trust market signal."
                 ),
                 action_md=(
-                    "1. Confirm measurement count >= 5000. "
-                    "2. Fire: POST /api/retrain?days=14 (via admin dashboard or "
-                    "curl with x-cron-secret). "
-                    "3. Trace a market-favourite race — the model should now "
-                    "rate a $2 favourite around 40-45%, not the 24% we see today. "
-                    "4. Sharp coverage should return to 15-30% of the daily card."
+                    "1. Read the pre-retrain anchor: GET /api/admin/model-snapshots/retrain_2026-07-16 "
+                    "— records sharp_count, max_rank1_pct, min_fav_gap_pp on the day the "
+                    "composite-client odds fix landed. "
+                    "2. Confirm measurement count >= 5000. "
+                    "3. Fire: POST /api/retrain?days=14 (via admin dashboard or curl with "
+                    "x-cron-secret). "
+                    "4. Refresh /api/edge and compare Sharp count + max rank-1 pct + "
+                    "favourite gap against the snapshot. Expect Sharp coverage 15-30% of "
+                    "the card, $2 favourites rated 35-45%, min_fav_gap_pp near zero. "
+                    "5. If numbers match snapshot (no improvement): training-data "
+                    "hypothesis is wrong; investigate feature quality or model architecture."
                 ),
             )
             session.add(row)
