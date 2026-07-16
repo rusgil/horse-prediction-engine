@@ -1449,7 +1449,9 @@
         const placeLabel = `Plc: ${placePct}%`;
         const winTooltipDetail = `${pillWins}/${pillRaces}`;
         const placeTooltipDetail = `${Math.round(pillPlaceRate * pillRaces)}/${pillRaces}`;
-        const tipSuffix = smallSample ? ' — small sample' : (inSharp ? ' (Sharp picks)' : '');
+        const tipSuffix = perf._fallback_to_all
+          ? ' (All-picks — no Sharp qualifiers this day)'
+          : (smallSample ? ' — small sample' : (inSharp ? ' (Sharp picks)' : ''));
         // Pipeline-chaos days: suppress the WIN chip only (Sharp mode);
         // place still shown because it's the more stable, less
         // over-confidence-sensitive metric.
@@ -1568,15 +1570,29 @@
       if (allData && allData.summary) {
         for (const d of allData.summary) allByDate[d.date] = d;
       }
+      // Sharp-filtered days where the model had no qualifying pick are
+      // omitted from the Sharp API response entirely. Seed perfByDate
+      // from the ALL response first so every date has a row, then
+      // overlay Sharp-specific numbers where they exist. Otherwise the
+      // Yesterday pill goes blank on days with 0 Sharp picks (2026-07-15
+      // was the trigger for this fix).
+      const sharpByDate = {};
+      for (const d of data.summary) sharpByDate[d.date] = d;
       S.perfByDate = {};
-      for (const d of data.summary) {
-        const allRow = allByDate[d.date];
-        S.perfByDate[d.date] = {
-          ...d,
+      const allDates = new Set([...Object.keys(allByDate), ...Object.keys(sharpByDate)]);
+      for (const iso of allDates) {
+        const allRow = allByDate[iso];
+        const sharpRow = sharpByDate[iso];
+        // Prefer Sharp numbers when in Sharp mode AND Sharp had picks
+        // that day. Otherwise fall back to All so the pill always
+        // renders something meaningful. All-fallback is annotated so
+        // the tooltip can say "showing All (no Sharp today)".
+        const usingSharp = S.mainMode === 'sharp' && sharpRow && sharpRow.races > 0;
+        const base = usingSharp ? sharpRow : (allRow || sharpRow);
+        S.perfByDate[iso] = {
+          ...base,
           // "Sharp meeting" metric — rank-1 wins across all races at any
-          // meeting that had at least one Sharp-qualifying race. Matches
-          // what a user sees clicking through Sharp mode on the Lounge:
-          // all 6 Ballarat races at a Sharp-qualifying Ballarat meeting.
+          // meeting that had at least one Sharp-qualifying race.
           sharp_meeting_races: allRow?.sharp_meeting_races,
           sharp_meeting_wins: allRow?.sharp_meeting_wins,
           sharp_meeting_win_rate: allRow?.sharp_meeting_win_rate,
@@ -1585,6 +1601,9 @@
           all_wins: allRow?.wins,
           all_win_rate: allRow?.win_rate,
           all_place_rate: allRow?.place_rate,
+          // Flag so the pill tooltip can explain why an "All" number
+          // is showing in Sharp mode.
+          _fallback_to_all: S.mainMode === 'sharp' && !usingSharp && !!allRow,
         };
       }
       renderDatePills();
@@ -1861,6 +1880,11 @@
       const allBtn = document.getElementById('mainModeAll');
       if (sharpBtn) sharpBtn.classList.remove('active');
       if (allBtn) allBtn.classList.add('active');
+      // Perf strip was Sharp-filtered on the initial fetch; re-fetch
+      // now with All-mode so past-day pills stop looking empty on
+      // no-Sharp-today cards. Fire-and-forget — it'll re-render pills
+      // when it lands.
+      if (typeof loadPerformanceStrip === 'function') loadPerformanceStrip();
     } else if (S.mainMode === 'sharp' || anySharp) {
       // Reset the downgrade flag once real Sharp meetings exist again.
       S.sharpAutoDowngraded = S.sharpAutoDowngraded && !anySharp;
