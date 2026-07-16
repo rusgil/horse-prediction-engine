@@ -1283,10 +1283,14 @@
     // a moment later. Without this, the initial page load shows the
     // empty-state because no meetings have stats yet.
     if (!stats) return true;
-    // Prefer the authoritative sharpTotal (count of races where the
-    // server flagged is_sharp=true AND our pick actually finished on
-    // past dates). Fall back to maxConf ≥30 approximation when the
-    // background fetch hasn't populated sharpTotal yet.
+    // sharpAny is "any race in this meeting the server flagged is_sharp",
+    // regardless of whether it's run yet. That's the right classification
+    // signal for the morning pre-race view — a meeting with three Sharp
+    // races that haven't jumped yet should show as Sharp. sharpTotal
+    // (the settled subset) is retained for stats display below but is
+    // NOT the right gate for meeting-visibility.
+    if (typeof stats.sharpAny === 'number') return stats.sharpAny > 0;
+    // Backward compat: older cached rows lack sharpAny.
     if (typeof stats.sharpTotal === 'number') return stats.sharpTotal > 0;
     if (stats.maxConf == null) return true;
     return stats.maxConf >= 30;
@@ -1986,6 +1990,12 @@
       // whichever the current filter selects.
       const sharpSettled = settled.filter(_isSharpRace);
       const sharpSettledWithPlace = settledWithPlace.filter(_isSharpRace);
+      // sharpAny counts EVERY race the server flagged is_sharp=true —
+      // settled or not. Used by isSharpMeeting() for Sharp/All-mode
+      // classification. Prior definition used only sharpSettled, which
+      // made the whole card appear as no-Sharp in the morning before
+      // any race had run (all meetings had sharpTotal=0 pre-noon).
+      const sharpAny = races.filter(_isSharpRace);
       S.meetingStats[key] = {
         wins: settled.filter(r => r.model_correct).length,
         placed: settledWithPlace.filter(r => r.model_placed).length,
@@ -1993,6 +2003,7 @@
         sharpWins: sharpSettled.filter(r => r.model_correct).length,
         sharpPlaced: sharpSettledWithPlace.filter(r => r.model_placed).length,
         sharpTotal: sharpSettled.length,
+        sharpAny: sharpAny.length,
         enriched: enriched.length, maxConf
       };
 
