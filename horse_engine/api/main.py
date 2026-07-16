@@ -2554,6 +2554,7 @@ async def lifespan(app: FastAPI):
     asyncio.create_task(_seed_sharp_bao_roi_followup())
     asyncio.create_task(_seed_isotonic_reenable_followup())
     asyncio.create_task(_seed_shortest_fav_confidence_followup())
+    asyncio.create_task(_seed_clean_market_retrain_followup())
 
     # Bet-gen + settlement + result-seed catch-up on startup. Without this,
     # any deploy that lands between cron ticks defers all of these to the
@@ -12199,6 +12200,44 @@ async def _measure_shortest_fav_rank1_confidence() -> float:
     return round((rows[0].win_probability or 0.0) * 100.0, 2)
 
 
+async def _measure_clean_market_history_count() -> float:
+    """Return the count of matched (history, historical_result) pairs where
+    the history row was written on/after 2026-07-16 — i.e. under the
+    composite-client odds fix shipped in 74b605e. Those are the rows with
+    real market_implied_prob values (not the 1/N default that plagued
+    everything before). This is the training window that will finally let
+    the model learn to trust market signal properly.
+
+    Baseline: 0 (column-fresh cutoff). target_above: 5000 (roughly two
+    weeks of live traffic at ~350 clean picks/day). Once above, retrain
+    the win model on this window and the model will stop under-rating
+    market favourites (2026-07-16 diagnosis: EVERYBODY RISE at $2.40
+    market fav rated 24.7% by model — 17pp below market — because
+    training data taught it market signal was noise)."""
+    cutoff = "2026-07-16"
+    async with get_session() as session:
+        pred_keys_result = await session.execute(
+            select(RunnerPredictionHistoryRow.race_id, RunnerPredictionHistoryRow.horse_name)
+            .where(RunnerPredictionHistoryRow.race_id >= cutoff)
+            .where(RunnerPredictionHistoryRow.model_rank == 1)
+            .where(RunnerPredictionHistoryRow.source == "live")
+            .where(RunnerPredictionHistoryRow.cancelled.is_(False) | RunnerPredictionHistoryRow.cancelled.is_(None))
+        )
+        pred_keys = {(rid, _normalize_horse(hn)) for rid, hn in pred_keys_result.fetchall()}
+        if not pred_keys:
+            return 0.0
+        race_ids = {rid for rid, _ in pred_keys}
+        hr_rows = (await session.execute(
+            select(HistoricalResultRow.race_id, HistoricalResultRow.horse_name, HistoricalResultRow.position)
+            .where(HistoricalResultRow.race_id.in_(race_ids))
+        )).fetchall()
+    matched = sum(
+        1 for rid, hn, pos in hr_rows
+        if pos is not None and pos > 0 and (rid, _normalize_horse(hn)) in pred_keys
+    )
+    return float(matched)
+
+
 async def _measure_isotonic_raw_sample_size() -> float:
     """Return the count of RunnerPredictionHistoryRow rows with
     win_prob_raw IS NOT NULL AND a matched historical result. This is
@@ -12243,6 +12282,7 @@ _FOLLOWUP_MEASURERS: dict = {
     "sharp_bao_roi_500": _measure_sharp_bao_roi_500,
     "isotonic_raw_sample_size": _measure_isotonic_raw_sample_size,
     "shortest_fav_rank1_confidence": _measure_shortest_fav_rank1_confidence,
+    "clean_market_history_count": _measure_clean_market_history_count,
 }
 
 
@@ -12288,6 +12328,55 @@ async def _seed_sharp_bao_roi_followup() -> None:
             log.info("[followup-seed] Inserted sharp_bao_roi_500 followup (scheduled 2026-08-15)")
     except Exception as e:
         log.warning("[followup-seed] sharp_bao_roi_500 seed failed: %s", e)
+
+
+async def _seed_clean_market_retrain_followup() -> None:
+    """Idempotent startup seed — reminder to retrain the win model on the
+    clean-market-signal training window. Scheduled 2026-07-30 (~2 weeks
+    after the composite-client odds fix, giving enough clean rows to
+    train on). The measurer just counts eligible rows; the actual
+    retrain is a manual POST /api/retrain?days=14."""
+    try:
+        async with get_session() as session:
+            existing = (await session.execute(
+                select(WeeklyReviewFollowUpRow)
+                .where(WeeklyReviewFollowUpRow.measurement_type == "clean_market_history_count")
+                .limit(1)
+            )).scalar_one_or_none()
+            if existing is not None:
+                return
+            row = WeeklyReviewFollowUpRow(
+                title="Retrain win model on clean-market training window",
+                scheduled_for="2026-07-30",
+                measurement_type="clean_market_history_count",
+                baseline_value=0.0,
+                target_below=None,
+                target_above=5000.0,
+                context_md=(
+                    "Composite-client odds fix (74b605e, 2026-07-16) restored "
+                    "real market_implied_prob values in enrichment. Before that, "
+                    "every horse defaulted to 1/N and the model learned market "
+                    "signal was noise. Post-retrain check on 2026-07-16 showed "
+                    "the model still under-rates market favourites by 10-17pp "
+                    "(EVERYBODY RISE at $2.40 market fav rated 24.7% by model), "
+                    "which is the training-data-contamination cost. ~2 weeks of "
+                    "post-fix data should give ~5000 clean matched rows — enough "
+                    "to retrain and let the model finally trust market signal."
+                ),
+                action_md=(
+                    "1. Confirm measurement count >= 5000. "
+                    "2. Fire: POST /api/retrain?days=14 (via admin dashboard or "
+                    "curl with x-cron-secret). "
+                    "3. Trace a market-favourite race — the model should now "
+                    "rate a $2 favourite around 40-45%, not the 24% we see today. "
+                    "4. Sharp coverage should return to 15-30% of the daily card."
+                ),
+            )
+            session.add(row)
+            await session.commit()
+            log.info("[followup-seed] Inserted clean_market_history_count follow-up (scheduled 2026-07-30)")
+    except Exception as e:
+        log.warning("[followup-seed] clean_market_history_count seed failed: %s", e)
 
 
 async def _seed_shortest_fav_confidence_followup() -> None:
