@@ -10966,7 +10966,11 @@ async def admin_prediction_trace(
 
 
 @app.post("/api/admin/reenrich-race/{race_id}")
-async def admin_reenrich_race(race_id: str, x_cron_secret: Optional[str] = Header(None)):
+async def admin_reenrich_race(
+    race_id: str,
+    force: bool = False,
+    x_cron_secret: Optional[str] = Header(None),
+):
     """
     Re-run the enrich + predict pipeline for a single race and overwrite
     its RunnerPredictionRow / RunnerPredictionHistoryRow rows. Bypasses
@@ -10976,6 +10980,11 @@ async def admin_reenrich_race(race_id: str, x_cron_secret: Optional[str] = Heade
 
     Loads all calibrations (venue, output-isotonic) so the resulting rows
     reflect the latest pipeline exactly as production would emit them.
+
+    force=True (query param): also overwrite the latest RunnerPredictionHistoryRow
+    snapshot with the recomputed values. Use ONLY when the existing snapshot is
+    known-broken (e.g. captured during an upstream outage) — this violates
+    Ground Rule 1 (immutable history), so it must not be a default path.
     """
     _check_admin(x_cron_secret)
     race_date, venue_code, race_num = _parse_race_id(race_id)
@@ -11049,10 +11058,17 @@ async def admin_reenrich_race(race_id: str, x_cron_secret: Optional[str] = Heade
                 race_id,
                 [_prediction_to_db_dict(p, race_id, race.scheduled_time, race=race)
                  for p in predictions],
+                force=force,
             )
     except Exception as e:
         log.exception("[reenrich-race] %s failed at stage=%s: %s", race_id, stage, e)
         raise HTTPException(500, f"reenrich failed at stage '{stage}': {type(e).__name__}: {e}")
+
+    if force:
+        log.warning(
+            "[reenrich-race] %s FORCE-rewrote latest history snapshot "
+            "(Ground Rule 1 bypass — admin repair)", race_id,
+        )
 
     global _edge_response_cache
     _edge_response_cache = None
@@ -11060,6 +11076,7 @@ async def admin_reenrich_race(race_id: str, x_cron_secret: Optional[str] = Heade
     return {
         "ok": True,
         "race_id": race_id,
+        "force": force,
         "runners_written": len(predictions),
         "top_pick": predictions[0].runner.horse_name if predictions else None,
         "top_pick_win_prob": round(predictions[0].win_prob, 4) if predictions else None,

@@ -381,6 +381,11 @@ class RunnerPredictionHistoryRow(Base):
 
     recorded_at = Column(DateTime, default=datetime.utcnow, index=True)  # when history was written
     batch_id = Column(String, nullable=True, index=True)    # UUID shared by all runners in one enrichment run
+    # Data-quality flag. True marks rows written during a period known to
+    # be corrupted (pipeline chaos, odds bug, WAF outage). Retrains and
+    # backtests filter these out by default. See init_db migrations for
+    # the specific windows currently marked.
+    contaminated = Column(Boolean, default=False, nullable=True, index=True)
     # Sharp eligibility frozen at snapshot time. Set on rank-1 picks
     # using the Sharp gate active when the row was written. Once written
     # it is never recomputed — future gate refinements only affect new
@@ -762,7 +767,7 @@ async def backfill_prediction_history(session: AsyncSession) -> int:
     return copied
 
 
-async def save_race_predictions(session: AsyncSession, race_id: str, predictions: list[dict]) -> None:
+async def save_race_predictions(session: AsyncSession, race_id: str, predictions: list[dict], force: bool = False) -> None:
     from sqlalchemy import delete, func
 
     # Check if an immutable history snapshot already exists for this race
@@ -774,7 +779,11 @@ async def save_race_predictions(session: AsyncSession, race_id: str, predictions
     # Block post-race re-enrichment only when a pre-race snapshot already exists.
     # If history_exists=False the race has never been snapshotted — allow the write
     # so late-listed meetings can still get their first prediction captured.
-    if predictions and history_exists:
+    # force=True bypasses the guard AND mirrors the fresh values into the
+    # latest history snapshot too. Use ONLY for admin repair when the
+    # existing snapshot is known-broken (e.g. captured during an outage);
+    # normal callers must leave force=False so Ground Rule 1 holds.
+    if predictions and history_exists and not force:
         scheduled_time = predictions[0].get("scheduled_time")
         if scheduled_time:
             try:
@@ -888,6 +897,62 @@ async def save_race_predictions(session: AsyncSession, race_id: str, predictions
                 .values(cancelled=True)
             )
         await session.commit()
+
+    # Force-mirror path: history already exists and the caller asked to overwrite.
+    # Update the LATEST snapshot batch's rows with the fresh probabilities/rank so
+    # settled-race consumers (/api/edge for races with results) see the corrected
+    # values. Only fields the pipeline recomputes are touched — batch_id, source,
+    # enriched_at, recorded_at are left alone so the audit trail of the original
+    # snapshot moment is preserved.
+    if force and history_exists and predictions:
+        from sqlalchemy import update as sa_update
+        latest_at = (await session.execute(
+            select(func.max(RunnerPredictionHistoryRow.enriched_at))
+            .where(RunnerPredictionHistoryRow.race_id == race_id)
+        )).scalar()
+        if latest_at is not None:
+            by_name = {p.get("horse_name"): p for p in predictions if p.get("horse_name")}
+            # Recompute race-level is_sharp for the rank-1 pick, mirroring the
+            # gate used at snapshot time (see _snapshot_prerace_predictions).
+            active = [p for p in predictions if not p.get("cancelled")]
+            active_sorted = sorted(active, key=lambda p: p.get("model_rank") or 99)
+            rank1 = active_sorted[0] if active_sorted else None
+            top3_sum = sum((p.get("win_probability") or 0) for p in active_sorted[:3])
+            race_is_sharp = None
+            if rank1 is not None:
+                r1_conf = (rank1.get("win_probability") or 0) >= 0.30 or top3_sum >= 0.60
+                r1_days_off = rank1.get("days_since_last_run")
+                r1_layoff_ok = r1_days_off is None or r1_days_off <= 180
+                race_is_sharp = bool(r1_conf and r1_layoff_ok)
+            hist_rows = (await session.execute(
+                select(RunnerPredictionHistoryRow)
+                .where(RunnerPredictionHistoryRow.race_id == race_id)
+                .where(RunnerPredictionHistoryRow.enriched_at == latest_at)
+            )).scalars().all()
+            for hrow in hist_rows:
+                p = by_name.get(hrow.horse_name)
+                if p is None:
+                    continue
+                new_values = {
+                    "win_probability": p.get("win_probability"),
+                    "place_probability": p.get("place_probability"),
+                    "model_rank": p.get("model_rank"),
+                    "place_model_rank": p.get("place_model_rank"),
+                    "exotic_model_rank": p.get("exotic_model_rank"),
+                    "best_available_odds": p.get("best_available_odds"),
+                    "overlay": p.get("overlay"),
+                    "value_rating": p.get("value_rating"),
+                    "cancelled": p.get("cancelled"),
+                }
+                # Only rank-1 carries the Sharp flag (race-level property).
+                if p.get("model_rank") == 1:
+                    new_values["is_sharp"] = race_is_sharp
+                await session.execute(
+                    sa_update(RunnerPredictionHistoryRow)
+                    .where(RunnerPredictionHistoryRow.id == hrow.id)
+                    .values(**new_values)
+                )
+            await session.commit()
 
     # Push to immutable history if this is a pre-race prediction and not already recorded
     if not history_exists and predictions:
