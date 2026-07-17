@@ -1,0 +1,39 @@
+# Copy this file to terraform.tfvars and fill in the secrets. tfvars is
+# gitignored — never commit it. This example file IS committed to show
+# the shape, so keep it free of real secrets.
+
+# Hetzner Cloud API token. Generate at:
+#   https://console.hetzner.cloud → your project → Security → API Tokens
+# Give it "Read & Write" access to the project. This is the ONE secret
+# that lets Terraform provision servers on your bill.
+hcloud_token = "hcloud_..."
+
+# Shared secret between Railway backend and the proxy. Must match the
+# RA_PROXY_SECRET env var on Railway. Generate a random one with:
+#   openssl rand -hex 32
+proxy_secret = "REPLACE_WITH_RANDOM_HEX_STRING"
+
+# SSH key names — must already exist in your Hetzner project. Add via
+# console (Security → SSH Keys) or CLI:
+#   hcloud ssh-key create --name laptop --public-key-from-file ~/.ssh/id_ed25519.pub
+# Get existing:
+#   hcloud ssh-key list
+ssh_key_names = ["laptop"]
+
+# Hetzner Cloud location. sin=Singapore (closest to Racing Australia,
+# ~90ms extra vs Sydney). ash=Ashburn US. fsn1=Falkenstein DE.
+# hel1=Helsinki FI. hil=Hillsboro US-West.
+location = "sin"
+
+# Server type. cpx11 (AMD 2vCPU/2GB, ~AUD $7/mo) is ideal — the proxy
+# uses <50MB RAM but the extra core helps under enrichment spikes.
+# Full list: hcloud server-type list
+server_type = "cpx11"
+
+# Bump this on every rotation. Format: YYYYMMDD or YYYYMMDD-N.
+# rotate.sh auto-bumps it if you use the wrapper.
+rotation_id = "20260718"
+
+# Optional — restrict inbound 443 to Railway's egress CIDR when known.
+# Leave 0.0.0.0/0 unless you have a firm CIDR for Railway.
+backend_source_ip = "0.0.0.0/0"
