@@ -16,7 +16,7 @@ Design:
   - Rotates UA + browser-realistic headers, same as the in-app RA client.
 
 Deploy:
-  See README.md in this directory. tl;dr — Caddy in front for free TLS,
+  See README.md in this directory. tl;dr - Caddy in front for free TLS,
   systemd unit to run the FastAPI app, ufw locking down to 22/80/443.
 """
 from __future__ import annotations
@@ -46,16 +46,17 @@ USER_AGENTS = [
     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36 Edg/131.0.0.0",
 ]
 
-# Single-flight + delay between requests — the proxy IS our single client to RA,
+# Single-flight + delay between requests - the proxy IS our single client to RA,
 # so it must not hammer. asyncio.Lock + jittered sleep between each request.
 _request_lock = asyncio.Lock()
 _last_request_at = 0.0
 _MIN_INTERVAL = 0.7  # seconds; with jitter, ~0.7-1.2s between RA calls
 
-# Daily cap — 5000 RA fetches per rolling 24h is well above any sane real
-# use (~5 req/min sustained) and well below RA's plausible scraper-detection
-# thresholds. Belt-and-braces against runaway callers.
-_DAILY_CAP = 5000
+# Daily cap - rolling 24h. Belt-and-braces against runaway callers.
+# Env-tunable via RA_PROXY_DAILY_CAP so a retrain / big enrichment day
+# doesn't need a code change; default 10000 covers steady-state + a
+# nightly retrain surge with headroom.
+_DAILY_CAP = int(os.environ.get("RA_PROXY_DAILY_CAP", "10000"))
 _daily_count = 0
 _daily_window_start = 0.0  # set on first request
 
@@ -89,18 +90,53 @@ async def health():
     return {"status": "ok"}
 
 
+@app.get("/admin/cap-status")
+async def cap_status(request: Request):
+    """Report daily counter state. Gated by x-proxy-secret."""
+    if request.headers.get("x-proxy-secret", "") != PROXY_SECRET:
+        raise HTTPException(status_code=403, detail="Forbidden")
+    now = time.monotonic()
+    window_age_s = (now - _daily_window_start) if _daily_window_start else 0.0
+    return {
+        "daily_count": _daily_count,
+        "daily_cap": _DAILY_CAP,
+        "window_age_seconds": window_age_s,
+        "window_remaining_seconds": max(0.0, 86400 - window_age_s) if _daily_window_start else 0.0,
+        "recent_403_count": _recent_403_count,
+    }
+
+
+@app.post("/admin/reset-cap")
+async def reset_cap(request: Request):
+    """Zero the rolling-24h counter without restarting the service.
+    For the rare case where a legit workload bumps the cap and we
+    need to keep going. Gated by x-proxy-secret."""
+    global _daily_count, _daily_window_start, _recent_403_count
+    if request.headers.get("x-proxy-secret", "") != PROXY_SECRET:
+        raise HTTPException(status_code=403, detail="Forbidden")
+    prev_count = _daily_count
+    _daily_count = 0
+    _recent_403_count = 0
+    _daily_window_start = time.monotonic()
+    import logging as _l
+    _l.getLogger("ra-proxy").warning(
+        "Daily counter reset via /admin/reset-cap (was %d/%d)", prev_count, _DAILY_CAP
+    )
+    return {"reset": True, "previous_count": prev_count, "daily_cap": _DAILY_CAP}
+
+
 @app.get("/proxy/{path:path}")
 async def proxy(path: str, request: Request):
     """Forward GET to {UPSTREAM_BASE}/{path}?{query} and return upstream
     body + status verbatim. Caller must send X-Proxy-Secret."""
     global _last_request_at, _daily_count, _daily_window_start, _recent_403_count
 
-    # Auth — fail closed.
+    # Auth - fail closed.
     secret = request.headers.get("x-proxy-secret", "")
     if secret != PROXY_SECRET:
         raise HTTPException(status_code=403, detail="Forbidden")
 
-    # Daily cap — rolling 24h window. Hard 503 when exceeded so a runaway
+    # Daily cap - rolling 24h window. Hard 503 when exceeded so a runaway
     # caller can't drain the budget overnight without anyone noticing.
     now = time.monotonic()
     if _daily_window_start == 0.0 or (now - _daily_window_start) > 86400:
@@ -110,7 +146,7 @@ async def proxy(path: str, request: Request):
     if _daily_count >= _DAILY_CAP:
         import logging as _l
         _l.getLogger("ra-proxy").warning(
-            "Daily cap reached (%d requests in current 24h window) — refusing further calls",
+            "Daily cap reached (%d requests in current 24h window) - refusing further calls",
             _daily_count,
         )
         raise HTTPException(status_code=503, detail="Daily request cap reached")
@@ -123,7 +159,7 @@ async def proxy(path: str, request: Request):
 
     referer = request.headers.get("x-proxy-referer") or None
 
-    # Single-flight with min interval — proxy must not become the new hammer.
+    # Single-flight with min interval - proxy must not become the new hammer.
     async with _request_lock:
         elapsed = time.monotonic() - _last_request_at
         if elapsed < _MIN_INTERVAL:
@@ -142,7 +178,7 @@ async def proxy(path: str, request: Request):
         _recent_403_count += 1
         import logging as _l
         _l.getLogger("ra-proxy").critical(
-            "RA returned 403 (count=%d/cap=%d daily window) — droplet IP may be WAF-blocked. url=%s",
+            "RA returned 403 (count=%d/cap=%d daily window) - droplet IP may be WAF-blocked. url=%s",
             _recent_403_count, _daily_count, upstream_url[:200],
         )
 

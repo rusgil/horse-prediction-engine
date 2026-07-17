@@ -29,7 +29,7 @@ users:
     homedir: /opt/ra-proxy
 
 write_files:
-  # /etc/ra-proxy.env — read by the systemd service (EnvironmentFile).
+  # /etc/ra-proxy.env - read by the systemd service (EnvironmentFile).
   # 0600 root:root is intentional; only root and the ra-proxy user need read.
   - path: /etc/ra-proxy.env
     permissions: "0600"
@@ -37,23 +37,26 @@ write_files:
     content: |
       PROXY_SECRET=${proxy_secret}
 
-  # /opt/ra-proxy/proxy.py — the FastAPI proxy itself.
+  # /opt/ra-proxy/proxy.py - the FastAPI proxy itself.
+  # owner is root here (not ra-proxy) because write_files runs before the
+  # users module creates the ra-proxy user; runcmd chowns this to
+  # ra-proxy:ra-proxy below once the user exists.
   - path: /opt/ra-proxy/proxy.py
     permissions: "0644"
-    owner: ra-proxy:ra-proxy
+    owner: root:root
     content: |
       ${indent(6, proxy_py_content)}
 
-  # /opt/ra-proxy/requirements.txt — pinned deps
+  # /opt/ra-proxy/requirements.txt - pinned deps (see owner note above)
   - path: /opt/ra-proxy/requirements.txt
     permissions: "0644"
-    owner: ra-proxy:ra-proxy
+    owner: root:root
     content: |
       fastapi==0.115.5
       uvicorn[standard]==0.32.1
       httpx==0.27.2
 
-  # /etc/systemd/system/ra-proxy.service — systemd unit
+  # /etc/systemd/system/ra-proxy.service - systemd unit
   - path: /etc/systemd/system/ra-proxy.service
     permissions: "0644"
     content: |
@@ -79,7 +82,7 @@ write_files:
       [Install]
       WantedBy=multi-user.target
 
-  # Caddyfile — TLS-fronted reverse proxy to 127.0.0.1:8000.
+  # Caddyfile - TLS-fronted reverse proxy to 127.0.0.1:8000.
   # Hostname is baked in from Terraform (${proxy_hostname}) so LetsEncrypt
   # can validate the sslip.io host on first boot.
   - path: /etc/caddy/Caddyfile
@@ -104,16 +107,19 @@ write_files:
           }
       }
 
-  # Health-check script — restarts services if /health fails.
+  # Health-check script - restarts services if /health fails.
   # Runs via systemd timer every 2 min.
   - path: /usr/local/bin/ra-proxy-healthcheck.sh
     permissions: "0755"
     content: |
       #!/bin/bash
-      CODE=$$(curl -s -o /dev/null -w '%%{http_code}' -m 5 http://localhost:8000/ || echo 000)
-      # Root returns 404 (no route) — that means FastAPI is UP.
-      if [[ "$$CODE" != "200" && "$$CODE" != "404" ]]; then
-          echo "$$(date -u -Iseconds) health failed (code=$$CODE) — restarting ra-proxy" >> /var/log/ra-proxy-healthcheck.log
+      # NOTE: `$` in this block passes through terraform templatefile() untouched
+      # because it is not followed by `{`. Only `%%{http_code}` needs escaping —
+      # `%{...}` is terraform's directive syntax and `%%{` emits a literal `%{`.
+      CODE=$(curl -s -o /dev/null -w '%%{http_code}' -m 5 http://localhost:8000/ || echo 000)
+      # Root returns 404 (no route) - that means FastAPI is UP.
+      if [[ "$CODE" != "200" && "$CODE" != "404" ]]; then
+          echo "$(date -u -Iseconds) health failed (code=$CODE) - restarting ra-proxy" >> /var/log/ra-proxy-healthcheck.log
           systemctl restart ra-proxy
       fi
 
@@ -138,12 +144,17 @@ write_files:
       WantedBy=timers.target
 
 runcmd:
-  # Install Caddy from official Cloudsmith repo (idempotent on re-run)
+  # Install Caddy from official Cloudsmith repo (idempotent on re-run).
+  # write_files already dropped our /etc/caddy/Caddyfile before this runs,
+  # so the package install hits a conffile conflict; force non-interactive
+  # + keep-ours so dpkg doesn't block on a stdin prompt that never comes
+  # (which previously left the postinst - and the caddy system user it
+  # creates - half-finished).
   - |
     curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' | gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
     curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' | tee /etc/apt/sources.list.d/caddy-stable.list
     apt-get update
-    apt-get install -y caddy
+    DEBIAN_FRONTEND=noninteractive apt-get install -y -o Dpkg::Options::="--force-confold" caddy
 
   # Python venv + deps
   - python3 -m venv /opt/ra-proxy/venv
