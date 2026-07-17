@@ -2202,11 +2202,39 @@ async def _scheduled_exotic_retrain():
         m = ExoticModel()
         loop = asyncio.get_event_loop()
         stats = await loop.run_in_executor(None, m.train_exotic, race_groups)
+        # Nightly cron is now candidate-only per the release-gate rule
+        # ([[feedback_model_release_process]]). No more unattended
+        # overwrite of exotic_model_weights. A human operator promotes
+        # a candidate they've reviewed on the admin dashboard.
+        import uuid as _uuid
+        batch_id = str(_uuid.uuid4())
+        meta = {
+            "sample_days": None,
+            "sample_size": len(race_groups),
+            "holdout_days": None,
+            "best_window": None,
+            "training_window_start": None,
+            "training_window_end": None,
+        }
         async with get_session() as session:
-            await save_exotic_model_weights(session, stats["weights"])
+            await save_weight_candidate(session, "exotic", stats["weights"], batch_id, meta)
+        try:
+            backtest = await _backtest_weight_candidate("exotic", stats["weights"], holdout_days=7)
+            async with get_session() as sess:
+                _rows = (await sess.execute(
+                    select(ModelWeightCandidateRow).where(ModelWeightCandidateRow.batch_id == batch_id)
+                )).scalars().all()
+                for r in _rows:
+                    r.backtest_json = json.dumps(backtest)
+                await sess.commit()
+            await _seed_weight_candidate_review_followup(
+                model_type="exotic", batch_id=batch_id, backtest=backtest, meta=meta
+            )
+        except Exception as _bt_err:
+            log.warning("[scheduler] Exotic candidate backtest / follow-up failed: %s", _bt_err)
         log.info(
-            "[scheduler] Exotic retrain complete — %d races, tri_box=%.3f ff_box=%.3f",
-            len(race_groups), stats.get("tri_box_hit_rate", 0), stats.get("ff_box_hit_rate", 0),
+            "[scheduler] Exotic retrain complete — %d races, tri_box=%.3f ff_box=%.3f — CANDIDATE #%s awaiting review",
+            len(race_groups), stats.get("tri_box_hit_rate", 0), stats.get("ff_box_hit_rate", 0), batch_id[:8],
         )
     except Exception as e:
         log.exception("[scheduler] Exotic retrain failed: %s", e)
@@ -15691,13 +15719,18 @@ async def cancel_meeting(
 async def retrain_place_model(
     background_tasks: BackgroundTasks,
     days: int = Query(0, ge=0, le=365),
+    end_date: Optional[str] = Query(None, description="Optional ISO date (YYYY-MM-DD) upper bound for training window."),
     x_cron_secret: Optional[str] = Header(None),
 ):
     """
     Train the place model on P(position ≤ 3) labels.
     Returns immediately; all data loading and training runs in a background task.
+    Writes to model_weight_candidates with model_type='place'. Live place
+    weights only change when a human promotes via the dashboard.
     """
     _check_admin(x_cron_secret)
+    if end_date:
+        _validate_date(end_date)
     cutoff = (date.today() - timedelta(days=days)).isoformat() if days > 0 else None
 
     async def _do_place_retrain():
@@ -15717,6 +15750,9 @@ async def retrain_place_model(
             )
             if cutoff:
                 hist_query = hist_query.where(RunnerPredictionHistoryRow.race_id >= cutoff)
+            if end_date:
+                # end_date exclusive — race_id ISO-date prefix lex-compares OK.
+                hist_query = hist_query.where(RunnerPredictionHistoryRow.race_id < end_date)
             hist_rows = (await session.execute(hist_query)).scalars().all()
 
             hr_rows = (await session.execute(select(HistoricalResultRow))).scalars().all()
@@ -15765,25 +15801,62 @@ async def retrain_place_model(
                  len(training_data), placed_count, placed_count / len(training_data) * 100)
         m = PlaceModel()
         s = await asyncio.to_thread(m.train, training_data, sample_weights=place_sample_weights)
+        # Write to model_weight_candidates (model_type='place') — never
+        # touch place_model_weights directly. Promotion requires a human
+        # click on the follow-up card.
+        import uuid as _uuid
+        batch_id = str(_uuid.uuid4())
+        meta = {
+            "sample_days": days or None,
+            "sample_size": len(training_data),
+            "holdout_days": None,
+            "best_window": None,
+            "training_window_start": cutoff,
+            "training_window_end": end_date,
+        }
         async with get_session() as sess:
-            await save_place_model_weights(sess, s["weights"])
-        log.info("[place-retrain] complete — %d examples, accuracy=%.3f", len(training_data), s.get("accuracy", 0))
+            await save_weight_candidate(sess, "place", s["weights"], batch_id, meta)
+        backtest = await _backtest_weight_candidate("place", s["weights"], holdout_days=7)
+        async with get_session() as sess:
+            _rows = (await sess.execute(
+                select(ModelWeightCandidateRow).where(ModelWeightCandidateRow.batch_id == batch_id)
+            )).scalars().all()
+            for r in _rows:
+                r.backtest_json = json.dumps(backtest)
+            await sess.commit()
+        await _seed_weight_candidate_review_followup(
+            model_type="place", batch_id=batch_id, backtest=backtest, meta=meta
+        )
+        log.info(
+            "[place-retrain] complete — %d examples, accuracy=%.3f — CANDIDATE #%s awaiting review",
+            len(training_data), s.get("accuracy", 0), batch_id[:8],
+        )
 
     background_tasks.add_task(_do_place_retrain)
-    return {"status": "place_retrain_started", "cutoff": cutoff or "all"}
+    return {
+        "status": "place_retrain_started",
+        "cutoff": cutoff or "all",
+        "end_date": end_date,
+        "note": "Writes to model_weight_candidates. Nothing changes on the live place model until a human promotes via the admin dashboard follow-up card.",
+    }
 
 
 @app.post("/api/admin/retrain-exotic")
 async def retrain_exotic_model(
     background_tasks: BackgroundTasks,
     days: int = Query(0, ge=0, le=365),
+    end_date: Optional[str] = Query(None, description="Optional ISO date (YYYY-MM-DD) upper bound for training window."),
     x_cron_secret: Optional[str] = Header(None),
 ):
     """
     Train the exotic model using race-grouped trifecta-aware loss.
     Returns immediately; all data loading and training runs in a background task.
+    Writes to model_weight_candidates with model_type='exotic'. Live exotic
+    weights only change when a human promotes via the dashboard.
     """
     _check_admin(x_cron_secret)
+    if end_date:
+        _validate_date(end_date)
     cutoff = (date.today() - timedelta(days=days)).isoformat() if days > 0 else None
 
     async def _do_exotic_retrain():
@@ -15791,6 +15864,8 @@ async def retrain_exotic_model(
             hr_query = select(HistoricalResultRow)
             if cutoff:
                 hr_query = hr_query.where(HistoricalResultRow.race_id >= cutoff)
+            if end_date:
+                hr_query = hr_query.where(HistoricalResultRow.race_id < end_date)
             hr_rows = (await session.execute(hr_query)).scalars().all()
 
             hist_query = select(RunnerPredictionHistoryRow).where(
@@ -15801,6 +15876,8 @@ async def retrain_exotic_model(
             )
             if cutoff:
                 hist_query = hist_query.where(RunnerPredictionHistoryRow.race_id >= cutoff)
+            if end_date:
+                hist_query = hist_query.where(RunnerPredictionHistoryRow.race_id < end_date)
             hist_rows = (await session.execute(hist_query)).scalars().all()
 
         result_lookup: dict[tuple, tuple] = {
@@ -15837,13 +15914,43 @@ async def retrain_exotic_model(
         log.info("[exotic-retrain] %d races, %d runners", len(race_groups), total_runners)
         m = ExoticModel()
         s = await asyncio.get_event_loop().run_in_executor(None, m.train_exotic, race_groups)
+        # Write to model_weight_candidates (model_type='exotic') — never
+        # touch exotic_model_weights directly.
+        import uuid as _uuid
+        batch_id = str(_uuid.uuid4())
+        meta = {
+            "sample_days": days or None,
+            "sample_size": len(race_groups),
+            "holdout_days": None,
+            "best_window": None,
+            "training_window_start": cutoff,
+            "training_window_end": end_date,
+        }
         async with get_session() as sess:
-            await save_exotic_model_weights(sess, s["weights"])
-        log.info("[exotic-retrain] complete — %d races, tri_box=%.3f ff_box=%.3f",
-                 len(race_groups), s.get("tri_box_hit_rate", 0), s.get("ff_box_hit_rate", 0))
+            await save_weight_candidate(sess, "exotic", s["weights"], batch_id, meta)
+        backtest = await _backtest_weight_candidate("exotic", s["weights"], holdout_days=7)
+        async with get_session() as sess:
+            _rows = (await sess.execute(
+                select(ModelWeightCandidateRow).where(ModelWeightCandidateRow.batch_id == batch_id)
+            )).scalars().all()
+            for r in _rows:
+                r.backtest_json = json.dumps(backtest)
+            await sess.commit()
+        await _seed_weight_candidate_review_followup(
+            model_type="exotic", batch_id=batch_id, backtest=backtest, meta=meta
+        )
+        log.info(
+            "[exotic-retrain] complete — %d races, tri_box=%.3f — CANDIDATE #%s awaiting review",
+            len(race_groups), s.get("tri_box_hit_rate", 0), batch_id[:8],
+        )
 
     background_tasks.add_task(_do_exotic_retrain)
-    return {"status": "exotic_retrain_started", "cutoff": cutoff or "all"}
+    return {
+        "status": "exotic_retrain_started",
+        "cutoff": cutoff or "all",
+        "end_date": end_date,
+        "note": "Writes to model_weight_candidates. Nothing changes on the live exotic model until a human promotes via the admin dashboard follow-up card.",
+    }
 
 
 @app.get("/api/admin/model-weights/status")
