@@ -910,10 +910,11 @@ async def _scheduled_pre_race_enrich_and_scratch():
         # (Previously cleared client._ra._meeting_cache here. That was
         # wiping the 30-min TTL every 15 min and forcing the first user
         # click on any venue after each sweep tick to pay a 25s RA
-        # round-trip. The sweep's own per-meeting calls below now pass
-        # force_fresh=True — bypass the cache read but STILL write the
-        # fresh result back, so user endpoints hit warm cache while the
-        # sweep still detects scratchings against fresh RA data.)
+        # round-trip. The sweep now relies on the composite cache's own
+        # short TTL for today's meetings — fresh enough to catch
+        # scratchings, warm enough for user endpoints. force_fresh=True
+        # was removed because CompositeClient.get_meeting_races drops
+        # the kwarg.)
 
         async with get_session() as session:
             model = await _load_model(session)
@@ -966,10 +967,10 @@ async def _scheduled_pre_race_enrich_and_scratch():
                 continue  # blocklisted bush venue — no enrich, no scratch check
             meeting_meta[vc] = (slug, m.get("venue", vc), m.get("state", ""))
             try:
-                # force_fresh=True: sweep needs current runner list to
-                # catch scratchings, but the fresh result IS cached so
-                # subsequent user-facing calls hit warm cache.
-                venue_raw_events[vc] = await client.get_meeting_races(slug, force_fresh=True)
+                # CompositeClient wrapper drops force_fresh (only the raw
+                # RA client accepts it), so pass without it. The composite
+                # cache is already short-lived for today's meetings.
+                venue_raw_events[vc] = await client.get_meeting_races(slug)
             except Exception as e:
                 log.debug("[pre-race] get_meeting_races failed for %s: %s", slug, e)
 
@@ -10997,7 +10998,9 @@ async def admin_reenrich_race(race_id: str, x_cron_secret: Optional[str] = Heade
         # needs _slug_to_key populated, which get_meetings alone doesn't
         # always do (especially on a warm-cache path). get_meeting_races
         # calls _fetch_meeting → populates _slug_to_key + returns races.
-        raw_races = await client.get_meeting_races(slug, force_fresh=True)
+        # CompositeClient wrapper drops force_fresh (only the raw RA client
+        # accepts it), so pass without it. See commit e898bf6.
+        raw_races = await client.get_meeting_races(slug)
         if not raw_races:
             raise HTTPException(404, f"No races returned for meeting {slug}")
 
