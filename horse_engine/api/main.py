@@ -15416,13 +15416,21 @@ async def _seed_weight_candidate_review_followup(
 
 
 @app.get("/api/admin/weight-candidates")
-async def admin_weight_candidates_list(x_cron_secret: Optional[str] = Header(None)):
-    """List candidate batches — most recent first — grouped by (model_type, batch_id)."""
+async def admin_weight_candidates_list(
+    model_type: Optional[str] = Query(None, description="Filter by win/place/exotic"),
+    status: Optional[str] = Query(None, description="Filter by candidate/active/archived/rejected"),
+    x_cron_secret: Optional[str] = Header(None),
+):
+    """List weight batches — most recent first — grouped by (model_type, batch_id).
+    Use status=archived to find batches available for restore."""
     _check_admin(x_cron_secret)
     async with get_session() as session:
-        rows = (await session.execute(
-            select(ModelWeightCandidateRow).order_by(ModelWeightCandidateRow.created_at.desc())
-        )).scalars().all()
+        q = select(ModelWeightCandidateRow).order_by(ModelWeightCandidateRow.created_at.desc())
+        if model_type:
+            q = q.where(ModelWeightCandidateRow.model_type == model_type)
+        if status:
+            q = q.where(ModelWeightCandidateRow.status == status)
+        rows = (await session.execute(q)).scalars().all()
     grouped: dict = {}
     for r in rows:
         key = (r.model_type, r.batch_id)
@@ -15519,6 +15527,62 @@ async def admin_weight_candidate_reject(
             raise HTTPException(status_code=404, detail=str(e))
     await _close_candidate_review_followup(batch_id, f"{model_type}_weights", "rejected", note)
     return {"ok": True, "rejected_batch": batch_id, "rows_marked": n}
+
+
+@app.post("/api/admin/weight-candidate/{batch_id}/restore")
+async def admin_weight_candidate_restore(
+    batch_id: str,
+    note: str = Query("", description="Optional reviewer note (required for audit)"),
+    x_cron_secret: Optional[str] = Header(None),
+):
+    """Restore an archived batch back to the live model — the "undo"
+    action when a post-promotion follow-up flags a bad promotion.
+
+    Semantics are IDENTICAL to /promote: the target batch's weights get
+    copied into the live table, prior active gets archived, target's
+    status flips to 'active'. The distinct endpoint name makes intent
+    explicit — audit trails read as "restored from archive" rather
+    than "promoted a candidate" — and lets us seed a post-RESTORATION
+    follow-up so we can measure whether the rollback fixed things.
+
+    A restore of a batch that's already active is a no-op (409). A
+    restore of a batch marked 'rejected' works — rejection is just a
+    status marker, the weights are still there.
+    """
+    _check_admin(x_cron_secret)
+    async with get_session() as session:
+        head = (await session.execute(
+            select(ModelWeightCandidateRow).where(ModelWeightCandidateRow.batch_id == batch_id).limit(1)
+        )).scalars().first()
+        if head is None:
+            raise HTTPException(status_code=404, detail=f"No batch {batch_id!r}")
+        if head.status == "active":
+            raise HTTPException(status_code=409, detail=f"Batch {batch_id[:8]} is already active — nothing to restore")
+        prior_status = head.status
+        try:
+            model_type, copied = await promote_weight_candidate(
+                session, batch_id,
+                reviewer_note=(note or f"restored from {prior_status}"),
+            )
+        except ValueError as e:
+            raise HTTPException(status_code=404, detail=str(e))
+
+    # Seed a post-RESTORATION follow-up so we can measure whether the
+    # rollback actually improved things. Reuses the same measurer and
+    # measurement_type as post-promotion — from the measurer's
+    # perspective, the currently-active batch is what it evaluates.
+    await _seed_post_promotion_followup(model_type=model_type, batch_id=batch_id)
+    log.info(
+        "[weight-restore] batch #%s (%s) restored from %s — %d features copied",
+        batch_id[:8], model_type, prior_status, copied,
+    )
+    return {
+        "ok": True,
+        "restored_batch": batch_id,
+        "model_type": model_type,
+        "restored_from_status": prior_status,
+        "features_copied": copied,
+    }
 
 
 @app.post("/api/retrain")
