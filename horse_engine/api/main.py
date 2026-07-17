@@ -2241,15 +2241,160 @@ async def _scheduled_exotic_retrain():
         log.exception("[scheduler] Exotic retrain failed: %s", e)
 
 
+async def _upstream_health_check(client) -> tuple[bool, str]:
+    """Probe the currently-active upstream client's health before we let any
+    persistence path (snapshot writes, model releases) run against it.
+
+    Provider-agnostic: reads the composite client's own circuit-breaker
+    state and its recent 5xx tally. If we later swap RA for a commercial
+    API, the same probe applies — the check is "is our client healthy?",
+    not "is Racing Australia specifically up?".
+
+    Returns (healthy, reason). reason is a short slug on the failure side
+    for structured logging.
+    """
+    # Primary signal: composite client's own breaker.
+    if _ra_breaker_open(client):
+        return False, "breaker_open"
+    # Secondary signal: recent 5xx rate through the client. Composite clients
+    # that don't expose these counters are treated as healthy — we prefer
+    # false negatives over false positives here (blocking a legit snapshot
+    # is worse than letting one through during ambiguity).
+    for attr in ("_recent_5xx_ratio", "recent_5xx_ratio"):
+        fn = getattr(getattr(client, "_ra", client), attr, None)
+        if callable(fn):
+            try:
+                ratio = fn()
+                if ratio is not None and ratio > 0.30:
+                    return False, f"recent_5xx_ratio={ratio:.2f}"
+            except Exception:
+                pass
+            break
+    return True, "ok"
+
+
+def _detect_snapshot_distribution_degradation(races: dict) -> tuple[bool, str]:
+    """Sanity-check the distribution of rank-1 win probabilities across the
+    batch about to be snapshotted.
+
+    Signals that indicate a compressed / degraded model output — the exact
+    pattern that caused the 2026-07-17 incident where every rank-1 landed
+    at 22.6% because feature enrichment was silently degraded upstream:
+
+      1. Max rank-1 win_probability across all races < 0.30 despite the
+         batch having ≥5 races. Healthy days always have at least one
+         30%+ pick; a whole card capped below Sharp is a red flag.
+
+      2. Std-dev of rank-1 win_probabilities < 0.03 across ≥5 races.
+         Real fields have variance — a flat distribution is the
+         compression fingerprint.
+
+    Both signals must trip for the "degraded" verdict, so a legitimate
+    weak-field day (no dominant favourite anywhere) doesn't false-alarm.
+
+    Returns (degraded, reason). Callers should still write the snapshot
+    but mark it contaminated=True so consumers can filter, and flip the
+    model-unstable banner.
+    """
+    if not races or len(races) < 5:
+        return False, "too_few_races"
+    rank1_probs: list[float] = []
+    for _, runners in races.items():
+        active = [rr for rr in runners if not rr.cancelled]
+        if not active:
+            continue
+        top = min(active, key=lambda rr: rr.model_rank or 99)
+        rank1_probs.append(float(top.win_probability or 0))
+    if len(rank1_probs) < 5:
+        return False, "too_few_rank1"
+    max_p = max(rank1_probs)
+    mean_p = sum(rank1_probs) / len(rank1_probs)
+    var_p = sum((p - mean_p) ** 2 for p in rank1_probs) / len(rank1_probs)
+    std_p = var_p ** 0.5
+    max_below_sharp = max_p < 0.30
+    flat_distribution = std_p < 0.03
+    if max_below_sharp and flat_distribution:
+        return True, (
+            f"compressed(max={max_p:.3f} std={std_p:.3f} "
+            f"n={len(rank1_probs)})"
+        )
+    return False, f"ok(max={max_p:.3f} std={std_p:.3f})"
+
+
+async def _set_model_unstable_banner_internal(active: bool, reason: str) -> None:
+    """Flip the site-wide 'Model not stable — NO BETS' banner from inside
+    a scheduled job (no HTTP round-trip). Mirrors the endpoint at
+    /api/admin/site-warnings/model-unstable but callable from any async
+    context. Used by the snapshot-time defenses so a detected degradation
+    surfaces to users immediately rather than waiting for a human to notice."""
+    try:
+        warnings = await _load_site_warnings()
+        already = bool(warnings.get("model_unstable", {}).get("active"))
+        if already == active:
+            return  # no-op — don't churn cache_version
+        warnings.setdefault("model_unstable", {})["active"] = active
+        if active:
+            warnings["model_unstable"]["message"] = (
+                f"Model not stable — NO BETS ({reason})"
+            )
+        payload = json.dumps(warnings)
+        async with get_session() as session:
+            existing = (await session.execute(
+                select(ResponseCacheRow).where(ResponseCacheRow.cache_key == _SITE_WARNING_KEY)
+            )).scalars().first()
+            if existing:
+                existing.payload_json = payload
+                existing.updated_at = datetime.utcnow()
+                existing.cache_version = (existing.cache_version or 0) + 1
+            else:
+                session.add(ResponseCacheRow(
+                    cache_key=_SITE_WARNING_KEY,
+                    payload_json=payload,
+                    cache_version=1,
+                    updated_at=datetime.utcnow(),
+                ))
+            await session.commit()
+        log.warning("[snapshot-defense] model_unstable banner set to %s: %s", active, reason)
+    except Exception as e:
+        log.exception("[snapshot-defense] banner toggle failed: %s", e)
+
+
 async def _snapshot_prerace_predictions() -> int:
     """
     9am AEST job: write RunnerPredictionHistoryRow for every today race that
     (a) has no history snapshot yet, and (b) hasn't started yet.
     Idempotent — safe to call multiple times.
+
+    Defensive gates (2026-07-17 incident):
+      - If the upstream client is degraded (breaker open, high 5xx rate),
+        SKIP the write entirely. A missed snapshot is recoverable on the
+        next tick; a bad-features snapshot is immutable.
+      - After building the batch, sanity-check the rank-1 distribution.
+        If it's compressed (max < 30% and flat), still write the rows so
+        the audit trail exists — but mark them contaminated=True and flip
+        the model_unstable banner ON. Consumers filter contaminated rows,
+        so users don't see broken values.
     """
     today = _today_aest().isoformat()
     now_utc = datetime.utcnow()
     written = 0
+
+    # DEFENSE #1 — upstream health gate. If the client is degraded, refuse
+    # to snapshot. Better to miss a tick than to persist bad features.
+    try:
+        client_for_health = get_tab_client()
+        healthy, reason = await _upstream_health_check(client_for_health)
+    except Exception as e:
+        # If the health probe itself fails, treat as unhealthy —
+        # we can't verify the client is OK.
+        healthy, reason = False, f"health_probe_error:{type(e).__name__}"
+    if not healthy:
+        log.critical(
+            "[snapshot-defense] SKIPPING snapshot for %s — upstream degraded (%s). "
+            "Will retry next tick.", today, reason,
+        )
+        await _set_model_unstable_banner_internal(True, f"upstream:{reason}")
+        return 0
 
     # Build race_id → scheduled_time from Racing Australia (authoritative start times)
     sched_map: dict[str, datetime] = {}
@@ -2310,6 +2455,18 @@ async def _snapshot_prerace_predictions() -> int:
     if not races:
         log.info("[snapshot] No unsnapshotted pre-race races for %s", today)
         return 0
+
+    # DEFENSE #2 — output distribution sanity check. If the whole batch is
+    # compressed, still write the audit trail but mark contaminated so no
+    # downstream consumer treats it as ground truth. Also flip the banner.
+    degraded, degraded_reason = _detect_snapshot_distribution_degradation(races)
+    if degraded:
+        log.critical(
+            "[snapshot-defense] Distribution DEGRADED for %s (%s) — "
+            "writing rows contaminated=True and flipping banner.",
+            today, degraded_reason,
+        )
+        await _set_model_unstable_banner_internal(True, f"distribution:{degraded_reason}")
 
     import uuid as _uuid
     async with get_session() as session:
@@ -2374,6 +2531,12 @@ async def _snapshot_prerace_predictions() -> int:
                         source="live",
                         batch_id=batch_id,
                         recorded_at=now_utc,
+                        # Defense #2: mark contaminated when the batch-level
+                        # distribution check tripped. Consumers (/api/edge for
+                        # settled races, calibration retrain, backtests) filter
+                        # contaminated=True out by default so bad snapshots
+                        # never drive UX or training.
+                        contaminated=bool(degraded),
                         # Only the rank-1 row carries the race-level Sharp flag.
                         is_sharp=race_is_sharp if r.model_rank == 1 else None,
                     ))
