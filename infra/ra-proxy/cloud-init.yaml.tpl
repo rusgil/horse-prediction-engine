@@ -113,9 +113,6 @@ write_files:
     permissions: "0755"
     content: |
       #!/bin/bash
-      # NOTE: `$` in this block passes through terraform templatefile() untouched
-      # because it is not followed by `{`. Only `%%{http_code}` needs escaping —
-      # `%{...}` is terraform's directive syntax and `%%{` emits a literal `%{`.
       CODE=$(curl -s -o /dev/null -w '%%{http_code}' -m 5 http://localhost:8000/ || echo 000)
       # Root returns 404 (no route) - that means FastAPI is UP.
       if [[ "$CODE" != "200" && "$CODE" != "404" ]]; then
