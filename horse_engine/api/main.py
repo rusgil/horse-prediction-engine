@@ -12702,8 +12702,111 @@ async def _seed_isotonic_reenable_followup() -> None:
         log.warning("[followup-seed] isotonic_raw_sample_size seed failed: %s", e)
 
 
+async def _recontextualise_followup(row: WeeklyReviewFollowUpRow) -> tuple[bool, str]:
+    """Check whether the state of the world has drifted from what the
+    follow-up assumed at seed time. Returns (should_skip, reason).
+
+    Currently checks:
+      - batch drift on post_promotion_* measurements — the follow-up was
+        seeded for a specific batch_id (extracted from title). If the
+        currently-active batch for that model_type is different (a newer
+        candidate was promoted, or the batch was restored from archive),
+        the measurement will report a nonsense number against the old
+        baseline.
+      - candidate existence on candidate_review_* measurements — if the
+        candidate row has since been rejected or archived (i.e. isn't
+        actionable anymore), the check no longer applies.
+
+    Returns (False, "") when either no drift check applies to this
+    measurement_type or the check passes. See [[feedback_followups_
+    recontextualise]] for the design rationale."""
+    mt = row.measurement_type or ""
+    title = row.title or ""
+
+    # Extract a batch_id from the title (works for both post_promotion_*
+    # and candidate_review_* titles which both use "#<uuid>" format).
+    import re as _re
+    m = _re.search(r"#([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})", title, _re.I)
+    seeded_batch_id = m.group(1) if m else None
+
+    # ── post_promotion_{model_type}_hit_rate ──
+    if mt.startswith("post_promotion_") and mt.endswith("_hit_rate") and seeded_batch_id:
+        model_type = mt[len("post_promotion_"):-len("_hit_rate")]
+        try:
+            async with get_session() as session:
+                active = (await session.execute(
+                    select(ModelWeightCandidateRow)
+                    .where(ModelWeightCandidateRow.model_type == model_type)
+                    .where(ModelWeightCandidateRow.status == "active")
+                    .limit(1)
+                )).scalars().first()
+                if active is None:
+                    return True, f"no active {model_type} batch to measure — model_weight_candidates has no status='active' row"
+                if active.batch_id != seeded_batch_id:
+                    return True, (
+                        f"seeded for {model_type} batch #{seeded_batch_id[:8]}, "
+                        f"but #{active.batch_id[:8]} is currently active. "
+                        f"The measurement would compare the new batch against the old one's "
+                        f"baseline — nonsense. Seed a fresh post-promotion follow-up for "
+                        f"the current batch instead."
+                    )
+        except Exception as e:
+            log.warning("[recontextualise] check failed for %s: %s", mt, e)
+            return False, ""
+
+    # ── candidate_review_{artefact} ──
+    if mt.startswith("candidate_review_") and seeded_batch_id:
+        try:
+            async with get_session() as session:
+                cand = (await session.execute(
+                    select(ModelWeightCandidateRow)
+                    .where(ModelWeightCandidateRow.batch_id == seeded_batch_id)
+                    .limit(1)
+                )).scalars().first()
+                if cand is None:
+                    return True, f"candidate batch #{seeded_batch_id[:8]} no longer exists in model_weight_candidates"
+                # Any status other than 'candidate' means someone already acted.
+                # The follow-up should already be closed via _close_candidate_
+                # review_followup, but this catches the case where a candidate
+                # was deleted or manually flipped without going through the
+                # promote/reject endpoints.
+                if cand.status != "candidate":
+                    return True, f"candidate batch #{seeded_batch_id[:8]} is now status='{cand.status}' — decided outside the promote/reject flow, no action left"
+        except Exception as e:
+            log.warning("[recontextualise] check failed for %s: %s", mt, e)
+            return False, ""
+
+    return False, ""
+
+
 async def _resolve_followup(row: WeeklyReviewFollowUpRow) -> dict:
-    """Run the measurement + derive verdict + next action."""
+    """Run the measurement + derive verdict + next action.
+
+    Before running the measurer, checks whether the follow-up's premises
+    have drifted since seed time. If so, marks verdict='context_changed'
+    and skips the measurement — a stale premise produces a wrong verdict,
+    not a right one."""
+    # Recontextualise check — [[feedback_followups_recontextualise]].
+    # Runs first so the measurement is skipped entirely on drift.
+    should_skip, drift_reason = await _recontextualise_followup(row)
+    if should_skip:
+        row.measured_at = datetime.utcnow()
+        row.measured_value = 0.0  # not-applicable — verdict tells the reader
+        row.verdict = "context_changed"
+        row.next_action_md = (
+            f"CONTEXT CHANGED — the follow-up's premise no longer holds: "
+            f"{drift_reason}. The scheduled measurement was skipped; verdict "
+            f"reflects drift, not a real result. If the underlying concern "
+            f"still applies, seed a fresh follow-up against the current state."
+        )
+        return {
+            "measured": None,
+            "baseline": row.baseline_value or 0,
+            "verdict": "context_changed",
+            "next_action_md": row.next_action_md,
+            "recontextualise_drift": drift_reason,
+        }
+
     measurer = _FOLLOWUP_MEASURERS.get(row.measurement_type or "")
     if measurer is None:
         return {"skipped": True, "reason": f"unknown measurement_type {row.measurement_type!r}"}

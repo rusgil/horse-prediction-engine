@@ -622,12 +622,18 @@
       const isCandidate = (r.measurement_type || '').startsWith('candidate_review_');
       let statusChip;
       if (measured) {
+        // context_changed = drift detected by _recontextualise_followup;
+        // measurement was skipped. Purple to distinguish from the four
+        // "real result" verdicts and read as "situation moved" not "bad".
         const vColor = r.verdict === 'fixed' ? '#22c55e'
           : r.verdict === 'partial' ? '#f59e0b'
-          : r.verdict === 'worse' ? '#ef4444' : 'var(--text-dim)';
+          : r.verdict === 'worse' ? '#ef4444'
+          : r.verdict === 'context_changed' ? '#a855f7'
+          : 'var(--text-dim)';
         const vLabel = r.verdict === 'fixed' ? '✓ FIXED'
           : r.verdict === 'partial' ? '~ PARTIAL'
           : r.verdict === 'worse' ? '✗ WORSE'
+          : r.verdict === 'context_changed' ? '⤳ CONTEXT CHANGED'
           : '— UNCHANGED';
         statusChip = `<span style="background:${vColor}20;color:${vColor};border:1px solid ${vColor};padding:3px 10px;border-radius:999px;font-size:0.75rem;font-weight:700">${vLabel}</span>`;
       } else if (isCandidate) {
