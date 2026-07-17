@@ -1357,6 +1357,45 @@
         <div style="font-size:0.72rem;color:var(--text-dim);margin-top:8px;line-height:1.5">
           When ON, every user-facing page (Lounge, Edge, Hot Seat, Funk Me Up, Bets, About) shows a red banner at the top reading the message below. Use for confirmed model drift / bad data days.
         </div>
+      </div>
+
+      <div class="section" id="raProxyRotateSection">
+        <div class="section-title">RA Proxy — Droplet Rotation</div>
+        <div class="stat-card" style="padding:16px 20px">
+          <div style="font-weight:700;font-size:1rem;margin-bottom:6px">When to run</div>
+          <div style="font-size:0.85rem;color:var(--text-secondary);line-height:1.5;margin-bottom:14px">
+            Rotate to a fresh DigitalOcean droplet (new IP) when Racing Australia starts returning 403s to the current proxy IP, or when the daily-cap 503s can't be cleared with a simple counter reset. One command; ~8-10 min end-to-end; Railway env var is auto-updated.
+          </div>
+          <div style="font-weight:700;font-size:1rem;margin-bottom:6px">Run from your laptop terminal</div>
+          <pre style="background:#0a0f1c;color:#c8d0e0;padding:12px 14px;border-radius:6px;font-size:0.78rem;line-height:1.5;overflow-x:auto;margin:0 0 14px 0"><code>cd ~/funkyiq/horseprediction/infra/ra-proxy
+export CRON_SECRET='&lt;your CRON_SECRET&gt;'
+./rotate.sh --yes</code></pre>
+          <div style="font-weight:700;font-size:1rem;margin-bottom:6px">What it does</div>
+          <ol style="font-size:0.82rem;color:var(--text-secondary);line-height:1.6;margin:0 0 14px 20px;padding:0">
+            <li>Auto-bumps <code>rotation_id</code> in <code>terraform.tfvars</code></li>
+            <li><code>terraform apply</code> — new droplet up, old destroyed</li>
+            <li>Waits for HTTPS on the new sslip URL to answer 200</li>
+            <li>Verifies healer script + <code>/admin/cap-status</code> on new droplet</li>
+            <li><code>railway variables set RA_PROXY_URL=&lt;new-url&gt;</code></li>
+            <li>Waits 90s for Railway redeploy, then probes end-to-end</li>
+          </ol>
+          <div style="font-weight:700;font-size:1rem;margin-bottom:6px">Prereqs (on your laptop)</div>
+          <ul style="font-size:0.82rem;color:var(--text-secondary);line-height:1.6;margin:0 0 14px 20px;padding:0">
+            <li><code>terraform</code> and <code>railway</code> CLIs installed</li>
+            <li><code>railway whoami</code> shows your account; <code>railway status</code> shows the horse-prediction service linked</li>
+            <li><code>infra/ra-proxy/terraform.tfvars</code> has valid <code>do_token</code>, <code>proxy_secret</code>, and SSH key fingerprints (gitignored)</li>
+          </ul>
+          <div style="font-weight:700;font-size:1rem;margin-bottom:6px">Flags</div>
+          <ul style="font-size:0.82rem;color:var(--text-secondary);line-height:1.6;margin:0 0 0 20px;padding:0">
+            <li><code>./rotate.sh</code> — interactive, confirms before apply and before Railway flip</li>
+            <li><code>./rotate.sh --yes</code> — non-interactive, fires end-to-end</li>
+            <li><code>./rotate.sh --plan-only</code> — show Terraform plan, don't apply</li>
+            <li><code>./rotate.sh --skip-railway</code> — rotate droplet only, leave <code>RA_PROXY_URL</code> alone</li>
+          </ul>
+        </div>
+        <div style="font-size:0.72rem;color:var(--text-dim);margin-top:8px;line-height:1.5">
+          Can't run from the dashboard: needs your local Terraform state, DO API token, Railway CLI creds, and SSH key. All laptop-only by design.
+        </div>
       </div>`;
     return productionHtml + driftHtml + actionHtml + latestStatsHtml + siteWarningsHtml + roiTrendHtml + perfHtml + windowHtml + thresholdHtml + historyHtml;
   }
