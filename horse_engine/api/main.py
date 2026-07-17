@@ -12304,34 +12304,29 @@ async def _measure_shortest_fav_rank1_confidence() -> float:
     return round((rows[0].win_probability or 0.0) * 100.0, 2)
 
 
-async def _measure_post_promotion_win_hit_rate() -> float:
-    """Return the win-model rank-1 hit rate on races that ran after the
-    CURRENT active batch was promoted. Baseline for comparison is the
-    active_hit_rate_pct recorded on the candidate at promotion time
-    (stored in backtest_json). Feeds the post_promotion_win_hit_rate
-    follow-up seeded automatically on every /promote call.
+async def _post_promotion_hit_rate(model_type: str, rank_field, hit_field) -> float:
+    """Generic post-promotion hit-rate measurer. Shared across
+    win/place/exotic — differs only in which rank field it filters on
+    (model_rank / place_model_rank / exotic_model_rank) and how it
+    scores a hit (winner / placed / top-3 for exotic).
 
-    Returns 0.0 if no active batch has a promotion date + backtest_json,
-    or if fewer than 20 races have run since promotion (small-sample
-    noise — wait for the follow-up to fire on a bigger window)."""
+    Returns 0.0 if no active batch of this model_type has a promotion
+    date + backtest_json, or if fewer than 20 races have run since
+    promotion (small-sample noise)."""
     async with get_session() as session:
-        # Load the currently-active win batch
         active = (await session.execute(
             select(ModelWeightCandidateRow)
-            .where(ModelWeightCandidateRow.model_type == "win")
+            .where(ModelWeightCandidateRow.model_type == model_type)
             .where(ModelWeightCandidateRow.status == "active")
             .limit(1)
         )).scalars().first()
         if active is None or not active.reviewed_at:
             return 0.0
-
         promo_date = active.reviewed_at.date().isoformat()
-        # Rank-1 picks that ran AFTER promotion (race_id lex-compares OK
-        # since race_id starts with ISO date).
         rows = (await session.execute(
             select(RunnerPredictionHistoryRow)
             .where(RunnerPredictionHistoryRow.race_id > promo_date)
-            .where(RunnerPredictionHistoryRow.model_rank == 1)
+            .where(rank_field == 1)
             .where(RunnerPredictionHistoryRow.source == "live")
             .where(RunnerPredictionHistoryRow.cancelled.is_(False) | RunnerPredictionHistoryRow.cancelled.is_(None))
         )).scalars().all()
@@ -12341,22 +12336,48 @@ async def _measure_post_promotion_win_hit_rate() -> float:
         hr_rows = (await session.execute(
             select(HistoricalResultRow)
             .where(HistoricalResultRow.race_id.in_(race_ids))
-            .where(HistoricalResultRow.winner.is_(True))
         )).scalars().all()
-
-    winners = {r.race_id: _normalize_horse(r.horse_name) for r in hr_rows}
-    scored = 0
-    hits = 0
+    by_key = {(r.race_id, _normalize_horse(r.horse_name)): r for r in hr_rows}
+    scored = hits = 0
     for p in rows:
-        w = winners.get(p.race_id)
-        if not w:
+        actual = by_key.get((p.race_id, _normalize_horse(p.horse_name)))
+        if not actual or actual.position is None:
             continue
         scored += 1
-        if _normalize_horse(p.horse_name) == w:
+        if hit_field(actual):
             hits += 1
     if scored < 20:
         return 0.0
     return round(hits / scored * 100, 2)
+
+
+async def _measure_post_promotion_win_hit_rate() -> float:
+    """Win model: rank-1 pick actually won."""
+    return await _post_promotion_hit_rate(
+        "win",
+        RunnerPredictionHistoryRow.model_rank,
+        lambda r: bool(r.winner),
+    )
+
+
+async def _measure_post_promotion_place_hit_rate() -> float:
+    """Place model: place_model_rank == 1 pick finished top-3."""
+    return await _post_promotion_hit_rate(
+        "place",
+        RunnerPredictionHistoryRow.place_model_rank,
+        lambda r: r.position is not None and 1 <= r.position <= 3,
+    )
+
+
+async def _measure_post_promotion_exotic_hit_rate() -> float:
+    """Exotic model: exotic_model_rank == 1 pick finished top-3
+    (i.e. would have been part of a trifecta box). Weaker signal than
+    a full trifecta hit but more sample-efficient at 20 races."""
+    return await _post_promotion_hit_rate(
+        "exotic",
+        RunnerPredictionHistoryRow.exotic_model_rank,
+        lambda r: r.position is not None and 1 <= r.position <= 3,
+    )
 
 
 async def _measure_clean_market_history_count() -> float:
@@ -12464,6 +12485,8 @@ _FOLLOWUP_MEASURERS: dict = {
     "shortest_fav_rank1_confidence": _measure_shortest_fav_rank1_confidence,
     "clean_market_history_count": _measure_clean_market_history_count,
     "post_promotion_win_hit_rate": _measure_post_promotion_win_hit_rate,
+    "post_promotion_place_hit_rate": _measure_post_promotion_place_hit_rate,
+    "post_promotion_exotic_hit_rate": _measure_post_promotion_exotic_hit_rate,
 }
 
 
@@ -15314,8 +15337,13 @@ async def _seed_post_promotion_followup(model_type: str, batch_id: str) -> None:
                 except Exception:
                     baseline_hit = 0.0
 
+            # Route to the correct model-type-specific measurer + title.
+            # Prior version hard-coded "win" for all promotions, which
+            # meant a place or exotic promotion silently produced a
+            # win-model measurement 7 days later.
+            measurement_type = f"post_promotion_{model_type}_hit_rate"
             when = (_today_aest() + timedelta(days=7)).isoformat()
-            title = f"Post-promotion win-model check · batch #{batch_id[:8]}"
+            title = f"Post-promotion {model_type}-model check · batch #{batch_id[:8]}"
             existing = (await session.execute(
                 select(WeeklyReviewFollowUpRow)
                 .where(WeeklyReviewFollowUpRow.title == title)
@@ -15341,7 +15369,7 @@ async def _seed_post_promotion_followup(model_type: str, batch_id: str) -> None:
             follow = WeeklyReviewFollowUpRow(
                 title=title,
                 scheduled_for=when,
-                measurement_type="post_promotion_win_hit_rate",
+                measurement_type=measurement_type,
                 baseline_value=baseline_hit,
                 target_below=None,
                 target_above=baseline_hit + 2.0,
@@ -15350,8 +15378,8 @@ async def _seed_post_promotion_followup(model_type: str, batch_id: str) -> None:
             )
             session.add(follow)
             await session.commit()
-            log.info("[followup-seed] Post-promotion win-model check scheduled for %s (batch #%s)",
-                     when, batch_id[:8])
+            log.info("[followup-seed] Post-promotion %s-model check scheduled for %s (batch #%s)",
+                     model_type, when, batch_id[:8])
     except Exception as e:
         log.warning("[followup-seed] post-promotion follow-up seed failed: %s", e)
 
