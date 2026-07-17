@@ -586,6 +586,14 @@ async def init_db() -> None:
         # can ignore the prefix here; SQLite uses leftmost prefix matching so the
         # ordering still benefits common workloads.
         "CREATE INDEX IF NOT EXISTS ix_hist_source_race_cancelled ON runner_prediction_history (source, race_id, cancelled)",
+        # Data-quality flag on history rows. Set to True for rows written
+        # during known-corrupted windows (pipeline chaos, odds bug, WAF
+        # outage). Retrains and backtests filter these out by default.
+        # ORM added the column on 2026-07-16; this migration ships the
+        # ALTER so DB matches. Any read of runner_prediction_history was
+        # 500'ing until this landed.
+        "ALTER TABLE runner_prediction_history ADD COLUMN IF NOT EXISTS contaminated BOOLEAN DEFAULT FALSE",
+        "CREATE INDEX IF NOT EXISTS ix_hist_contaminated ON runner_prediction_history (contaminated)",
         "CREATE INDEX IF NOT EXISTS ix_hist_results_race_winner ON historical_results (race_id, winner)",
         "CREATE INDEX IF NOT EXISTS ix_hist_results_race_placed ON historical_results (race_id, placed)",
         # Composite for common top-3/top-4 fetches: SELECT ... WHERE race_id = X AND position IN (1,2,3)
