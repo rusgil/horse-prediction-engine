@@ -2558,6 +2558,91 @@ async def _scheduled_prerace_snapshot():
         log.exception("[scheduler] Pre-race snapshot failed: %s", e)
 
 
+# Defense #3 — auto-repair contaminated snapshots once upstream returns
+# to health. Tracks how long we've been continuously healthy so we don't
+# repair inside a flapping window; requires ≥ this many minutes of solid
+# health before touching contaminated rows.
+_STABLE_HEALTHY_MIN_MINUTES = 5
+_upstream_healthy_since: Optional[datetime] = None
+
+# Cap per repair tick so a big backlog doesn't slam the newly-recovered
+# upstream. At 8 races/tick and 5-min tick cadence we clear ~96 races/hour.
+_AUTO_REPAIR_MAX_PER_TICK = 8
+
+
+async def _auto_repair_contaminated_snapshots():
+    """Every 5 min: if upstream has been healthy for ≥ _STABLE_HEALTHY_MIN_MINUTES,
+    find contaminated=True snapshot rows written in the last 24h and
+    force-reenrich the affected races. Also flips the model-unstable
+    banner OFF when the repair backlog is drained.
+
+    Provider-agnostic: uses the same _upstream_health_check the snapshot
+    defense uses. Rate-limited via _AUTO_REPAIR_MAX_PER_TICK so a big
+    backlog gets ~96 races/hour of repair, not a burst.
+    """
+    global _upstream_healthy_since
+    try:
+        client = get_tab_client()
+        healthy, reason = await _upstream_health_check(client)
+    except Exception as e:
+        healthy, reason = False, f"probe_error:{type(e).__name__}"
+    now = datetime.utcnow()
+    if not healthy:
+        if _upstream_healthy_since is not None:
+            log.info("[auto-repair] upstream unhealthy (%s) — resetting stability clock", reason)
+        _upstream_healthy_since = None
+        return
+    if _upstream_healthy_since is None:
+        _upstream_healthy_since = now
+        log.info("[auto-repair] upstream healthy — starting stability clock")
+        return
+    stable_for = (now - _upstream_healthy_since).total_seconds() / 60.0
+    if stable_for < _STABLE_HEALTHY_MIN_MINUTES:
+        return  # need more time before we touch anything
+
+    # Find contaminated races in the last 24h (covers today + late-night
+    # yesterday, without scanning the whole table).
+    cutoff = now - timedelta(hours=24)
+    async with get_session() as session:
+        rows = (await session.execute(
+            select(RunnerPredictionHistoryRow.race_id)
+            .where(RunnerPredictionHistoryRow.contaminated.is_(True))
+            .where(RunnerPredictionHistoryRow.recorded_at >= cutoff)
+            .distinct()
+            .limit(_AUTO_REPAIR_MAX_PER_TICK * 3)  # extra headroom for de-dup
+        )).all()
+    race_ids = list({r[0] for r in rows})[:_AUTO_REPAIR_MAX_PER_TICK]
+    if not race_ids:
+        # Backlog is drained. If banner is still on for an upstream/distribution
+        # reason (not a manual override), flip it off.
+        warnings = await _load_site_warnings()
+        mu = warnings.get("model_unstable", {})
+        if mu.get("active") and str(mu.get("message", "")).startswith("Model not stable — NO BETS ("):
+            await _set_model_unstable_banner_internal(False, "backlog_drained")
+        return
+
+    log.warning(
+        "[auto-repair] upstream stable %.1fm — repairing %d contaminated races (of %d)",
+        stable_for, len(race_ids), len(rows),
+    )
+    ok_count = 0
+    fail_count = 0
+    for race_id in race_ids:
+        try:
+            result = await _reenrich_race_impl(race_id, force=True)
+            top = result.get("top_pick")
+            top_prob = result.get("top_pick_win_prob")
+            log.info("[auto-repair] %s → %s @ %s", race_id, top, top_prob)
+            ok_count += 1
+        except _ReenrichError as e:
+            log.warning("[auto-repair] %s failed at %s: %s", race_id, e.stage, e.cause)
+            fail_count += 1
+        # Space calls out so we don't spike the newly-recovered upstream.
+        # 5-min tick × 8 races × ~2s each = ~16s active, plenty of quiet time.
+        await asyncio.sleep(2.0)
+    log.warning("[auto-repair] tick complete — ok=%d fail=%d", ok_count, fail_count)
+
+
 # Module-level scheduler — assigned during lifespan() startup. Lets other
 # code paths (e.g. bet-recommender) schedule per-race one-off jobs.
 _scheduler = None
@@ -2620,6 +2705,16 @@ async def lifespan(app: FastAPI):
     scheduler.add_job(_warm_edge, CronTrigger(hour=11, minute=45, timezone="Australia/Sydney"))  # post 11:30 enrich
     scheduler.add_job(_warm_edge, CronTrigger(hour=12, minute=15, timezone="Australia/Sydney"))  # pre-metro
     scheduler.add_job(_scheduled_prerace_snapshot, CronTrigger(hour=9, minute=0, timezone="Australia/Sydney"))
+    # Defense #3 — auto-repair contaminated snapshots once upstream is
+    # stable again. Every 5 min: checks health, requires 5+ min of
+    # continuous healthy state, then walks contaminated=True rows from
+    # the last 24h and force-reenriches (capped at 8 races per tick so
+    # a big backlog doesn't slam the recovered upstream). Also flips
+    # the model-unstable banner OFF once the backlog is drained.
+    scheduler.add_job(
+        _auto_repair_contaminated_snapshots,
+        CronTrigger(minute="*/5", timezone="Australia/Sydney"),
+    )
     # Results seeding — every 30 min during racing hours. Previously only
     # fired at sparse hours (14/15/17/19/23), meaning a 16:00 race would
     # wait until 17:00 to be seeded. Settlement also self-seeds, but this
@@ -11128,6 +11223,110 @@ async def admin_prediction_trace(
         raise HTTPException(500, f"trace failed at '{stage}': {type(e).__name__}: {str(e)[:500]}")
 
 
+class _ReenrichError(RuntimeError):
+    """Raised by _reenrich_race_impl on any pipeline stage failure. Carries
+    the stage name so callers can surface it in structured logs / responses."""
+    def __init__(self, stage: str, cause: Exception):
+        super().__init__(f"reenrich failed at stage '{stage}': {type(cause).__name__}: {cause}")
+        self.stage = stage
+        self.cause = cause
+
+
+async def _reenrich_race_impl(race_id: str, force: bool = False) -> dict:
+    """Pure pipeline entry point — no HTTP concerns. Runs the same enrich+
+    predict+save flow as the admin endpoint, plus busts the edge cache.
+
+    Returns a summary dict on success. Raises _ReenrichError on any stage
+    failure so callers can decide whether to translate to HTTPException
+    (admin endpoint) or just log and continue (auto-repair loop).
+    """
+    race_date, venue_code, race_num = _parse_race_id(race_id)
+    if not race_date or not venue_code or not race_num:
+        raise _ReenrichError("parse_race_id", ValueError(f"malformed race_id: {race_id}"))
+
+    client = get_tab_client()
+    slug = _meeting_slug(venue_code, race_date)
+
+    stage = "get_meetings"
+    try:
+        meetings = await client.get_meetings(race_date)
+        m = next((mm for mm in meetings if mm.get("slug") == slug), None)
+        venue_name = (m or {}).get("venue", venue_code)
+        state = (m or {}).get("state", "")
+
+        stage = "get_meeting_races"
+        # Composite wrapper drops force_fresh (only the raw RA client accepts it).
+        raw_races = await client.get_meeting_races(slug)
+        if not raw_races:
+            raise _ReenrichError("get_meeting_races", RuntimeError(f"no races for meeting {slug}"))
+
+        stage = "get_race"
+        full_event = await client.get_race(slug, race_num)
+        if not full_event:
+            raise _ReenrichError(
+                "get_race",
+                RuntimeError(f"race {race_num} not found in meeting {slug} — {len(raw_races)} available"),
+            )
+
+        stage = "parse_race"
+        race = await client.parse_race(full_event, race_date, venue_name, state)
+
+        stage = "load_models"
+        async with get_session() as session:
+            model = await _load_model(session)
+            place_model = await _load_place_model(session)
+            exotic_model = await _load_exotic_model(session)
+            stage = "inject_accumulated_stats"
+            await _inject_accumulated_stats(race, session)
+
+        stage = "load_venue_calibration"
+        venue_cal = await _load_venue_calibration()
+        stage = "load_output_calibration"
+        output_cal = await _load_output_calibration_curve()
+
+        stage = "enrich_and_predict"
+        predictions, _ = await enrich_and_predict_race(
+            race, model,
+            venue_calibration=venue_cal,
+            place_model=place_model,
+            exotic_model=exotic_model,
+            output_calibration_curve=output_cal,
+        )
+
+        stage = "save_race_predictions"
+        async with get_session() as session:
+            await save_race_predictions(
+                session,
+                race_id,
+                [_prediction_to_db_dict(p, race_id, race.scheduled_time, race=race)
+                 for p in predictions],
+                force=force,
+            )
+    except _ReenrichError:
+        raise
+    except Exception as e:
+        raise _ReenrichError(stage, e)
+
+    if force:
+        log.warning(
+            "[reenrich-race] %s FORCE-rewrote latest history snapshot "
+            "(Ground Rule 1 bypass — admin repair)", race_id,
+        )
+
+    global _edge_response_cache
+    _edge_response_cache = None
+
+    return {
+        "ok": True,
+        "race_id": race_id,
+        "force": force,
+        "runners_written": len(predictions),
+        "top_pick": predictions[0].runner.horse_name if predictions else None,
+        "top_pick_win_prob": round(predictions[0].win_prob, 4) if predictions else None,
+        "top_pick_place_prob": round(predictions[0].place_prob, 4) if predictions else None,
+    }
+
+
 @app.post("/api/admin/reenrich-race/{race_id}")
 async def admin_reenrich_race(
     race_id: str,
@@ -11150,101 +11349,15 @@ async def admin_reenrich_race(
     Ground Rule 1 (immutable history), so it must not be a default path.
     """
     _check_admin(x_cron_secret)
-    race_date, venue_code, race_num = _parse_race_id(race_id)
-    if not race_date or not venue_code or not race_num:
-        raise HTTPException(400, f"malformed race_id: {race_id}")
-
-    client = get_tab_client()
-    slug = _meeting_slug(venue_code, race_date)
-
-    stage = "get_meetings"
     try:
-        # Meeting details (venue name, state) so parse_race can populate them.
-        meetings = await client.get_meetings(race_date)
-        m = next((mm for mm in meetings if mm.get("slug") == slug), None)
-        venue_name = (m or {}).get("venue", venue_code)
-        state = (m or {}).get("state", "")
-
-        stage = "get_meeting_races"
-        # Pull via get_meeting_races first — the composite client's get_race
-        # needs _slug_to_key populated, which get_meetings alone doesn't
-        # always do (especially on a warm-cache path). get_meeting_races
-        # calls _fetch_meeting → populates _slug_to_key + returns races.
-        # CompositeClient wrapper drops force_fresh (only the raw RA client
-        # accepts it), so pass without it. See commit e898bf6.
-        raw_races = await client.get_meeting_races(slug)
-        if not raw_races:
-            raise HTTPException(404, f"No races returned for meeting {slug}")
-
-        stage = "get_race"
-        full_event = await client.get_race(slug, race_num)
-        if not full_event:
-            raise HTTPException(
-                404,
-                f"Race {race_num} not found in meeting {slug} — meeting has {len(raw_races)} race(s)",
-            )
-    except HTTPException:
-        raise
-    except Exception as e:
-        log.exception("[reenrich-race] %s failed at stage=%s: %s", race_id, stage, e)
-        raise HTTPException(500, f"reenrich failed at stage '{stage}': {type(e).__name__}: {e}")
-
-    # Wrap the pipeline stages in try/except and surface the failing
-    # stage in the 500 message. Otherwise a raw "Internal Server Error"
-    # tells us nothing about which step (parse / enrich / save) broke.
-    stage = "parse_race"
-    try:
-        race = await client.parse_race(full_event, race_date, venue_name, state)
-        stage = "load_models"
-        async with get_session() as session:
-            model = await _load_model(session)
-            place_model = await _load_place_model(session)
-            exotic_model = await _load_exotic_model(session)
-            stage = "inject_accumulated_stats"
-            await _inject_accumulated_stats(race, session)
-        stage = "load_venue_calibration"
-        venue_cal = await _load_venue_calibration()
-        stage = "load_output_calibration"
-        output_cal = await _load_output_calibration_curve()
-        stage = "enrich_and_predict"
-        predictions, _ = await enrich_and_predict_race(
-            race, model,
-            venue_calibration=venue_cal,
-            place_model=place_model,
-            exotic_model=exotic_model,
-            output_calibration_curve=output_cal,
-        )
-        stage = "save_race_predictions"
-        async with get_session() as session:
-            await save_race_predictions(
-                session,
-                race_id,
-                [_prediction_to_db_dict(p, race_id, race.scheduled_time, race=race)
-                 for p in predictions],
-                force=force,
-            )
-    except Exception as e:
-        log.exception("[reenrich-race] %s failed at stage=%s: %s", race_id, stage, e)
-        raise HTTPException(500, f"reenrich failed at stage '{stage}': {type(e).__name__}: {e}")
-
-    if force:
-        log.warning(
-            "[reenrich-race] %s FORCE-rewrote latest history snapshot "
-            "(Ground Rule 1 bypass — admin repair)", race_id,
-        )
-
-    global _edge_response_cache
-    _edge_response_cache = None
-
-    return {
-        "ok": True,
-        "race_id": race_id,
-        "force": force,
-        "runners_written": len(predictions),
-        "top_pick": predictions[0].runner.horse_name if predictions else None,
-        "top_pick_win_prob": round(predictions[0].win_prob, 4) if predictions else None,
-        "top_pick_place_prob": round(predictions[0].place_prob, 4) if predictions else None,
-    }
+        return await _reenrich_race_impl(race_id, force=force)
+    except _ReenrichError as e:
+        log.exception("[reenrich-race] %s failed at stage=%s: %s", race_id, e.stage, e.cause)
+        if e.stage == "parse_race_id":
+            raise HTTPException(400, str(e))
+        if e.stage in ("get_meeting_races", "get_race"):
+            raise HTTPException(404, str(e))
+        raise HTTPException(500, str(e))
 
 
 @app.post("/api/admin/scratch-sweep-now")
