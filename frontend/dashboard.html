@@ -656,7 +656,13 @@
       // "candidate_review_<artefact>" carries the artefact (e.g. isotonic)
       // and the title trailing "#<id>" carries the DB row id.
       let candidateActions = '';
-      if ((r.measurement_type || '').startsWith('candidate_review_') && !r.reviewed_at) {
+      // Buttons render only when the follow-up hasn't been resolved.
+      // Check measured_at (the WeeklyReviewFollowUpRow "decided" field
+      // set by _close_candidate_review_followup on promote/reject),
+      // NOT reviewed_at (which lives on the candidate row, not the
+      // follow-up row — the prior check evaluated as !undefined every
+      // time and the buttons never hid).
+      if ((r.measurement_type || '').startsWith('candidate_review_') && !r.measured_at) {
         const artefact = (r.measurement_type || '').replace('candidate_review_', '');
         // Weight candidate titles use a full UUID (#abc12345-1234-4567-89ab-...);
         // isotonic uses a numeric row id (#47). Match either.
