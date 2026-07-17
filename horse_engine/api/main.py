@@ -12276,6 +12276,61 @@ async def _measure_shortest_fav_rank1_confidence() -> float:
     return round((rows[0].win_probability or 0.0) * 100.0, 2)
 
 
+async def _measure_post_promotion_win_hit_rate() -> float:
+    """Return the win-model rank-1 hit rate on races that ran after the
+    CURRENT active batch was promoted. Baseline for comparison is the
+    active_hit_rate_pct recorded on the candidate at promotion time
+    (stored in backtest_json). Feeds the post_promotion_win_hit_rate
+    follow-up seeded automatically on every /promote call.
+
+    Returns 0.0 if no active batch has a promotion date + backtest_json,
+    or if fewer than 20 races have run since promotion (small-sample
+    noise — wait for the follow-up to fire on a bigger window)."""
+    async with get_session() as session:
+        # Load the currently-active win batch
+        active = (await session.execute(
+            select(ModelWeightCandidateRow)
+            .where(ModelWeightCandidateRow.model_type == "win")
+            .where(ModelWeightCandidateRow.status == "active")
+            .limit(1)
+        )).scalars().first()
+        if active is None or not active.reviewed_at:
+            return 0.0
+
+        promo_date = active.reviewed_at.date().isoformat()
+        # Rank-1 picks that ran AFTER promotion (race_id lex-compares OK
+        # since race_id starts with ISO date).
+        rows = (await session.execute(
+            select(RunnerPredictionHistoryRow)
+            .where(RunnerPredictionHistoryRow.race_id > promo_date)
+            .where(RunnerPredictionHistoryRow.model_rank == 1)
+            .where(RunnerPredictionHistoryRow.source == "live")
+            .where(RunnerPredictionHistoryRow.cancelled.is_(False) | RunnerPredictionHistoryRow.cancelled.is_(None))
+        )).scalars().all()
+        if not rows:
+            return 0.0
+        race_ids = {r.race_id for r in rows}
+        hr_rows = (await session.execute(
+            select(HistoricalResultRow)
+            .where(HistoricalResultRow.race_id.in_(race_ids))
+            .where(HistoricalResultRow.winner.is_(True))
+        )).scalars().all()
+
+    winners = {r.race_id: _normalize_horse(r.horse_name) for r in hr_rows}
+    scored = 0
+    hits = 0
+    for p in rows:
+        w = winners.get(p.race_id)
+        if not w:
+            continue
+        scored += 1
+        if _normalize_horse(p.horse_name) == w:
+            hits += 1
+    if scored < 20:
+        return 0.0
+    return round(hits / scored * 100, 2)
+
+
 async def _measure_clean_market_history_count() -> float:
     """Return the count of matched (history, historical_result) pairs where
     the history row was written on/after 2026-07-16 — i.e. under the
@@ -12380,6 +12435,7 @@ _FOLLOWUP_MEASURERS: dict = {
     "isotonic_raw_sample_size": _measure_isotonic_raw_sample_size,
     "shortest_fav_rank1_confidence": _measure_shortest_fav_rank1_confidence,
     "clean_market_history_count": _measure_clean_market_history_count,
+    "post_promotion_win_hit_rate": _measure_post_promotion_win_hit_rate,
 }
 
 
@@ -15206,6 +15262,72 @@ async def _backtest_weight_candidate(
     }
 
 
+async def _seed_post_promotion_followup(model_type: str, batch_id: str) -> None:
+    """Retrospective measurement — did the promoted weights actually
+    beat the pre-promotion state? Scheduled 7 days after promotion
+    (long enough for a real racing-week sample, short enough that a
+    bad promotion doesn't sit unnoticed for weeks). Compares actual
+    production hit rate against the active_hit_rate_pct baseline
+    stored on the candidate at promotion time."""
+    try:
+        async with get_session() as session:
+            row = (await session.execute(
+                select(ModelWeightCandidateRow)
+                .where(ModelWeightCandidateRow.batch_id == batch_id)
+                .limit(1)
+            )).scalars().first()
+            if row is None:
+                return
+            baseline_hit = 0.0
+            if row.backtest_json:
+                try:
+                    bt = json.loads(row.backtest_json)
+                    baseline_hit = float(bt.get("active_hit_rate_pct") or 0)
+                except Exception:
+                    baseline_hit = 0.0
+
+            when = (_today_aest() + timedelta(days=7)).isoformat()
+            title = f"Post-promotion win-model check · batch #{batch_id[:8]}"
+            existing = (await session.execute(
+                select(WeeklyReviewFollowUpRow)
+                .where(WeeklyReviewFollowUpRow.title == title)
+                .limit(1)
+            )).scalar_one_or_none()
+            if existing is not None:
+                return
+            context = (
+                f"Batch {batch_id[:8]} was promoted to production on "
+                f"{row.reviewed_at.date().isoformat() if row.reviewed_at else 'unknown'}. "
+                f"Pre-promotion active hit rate (backtest window): {baseline_hit:.2f}%. "
+                f"This follow-up measures actual production top-1 hit rate on "
+                f"racing days AFTER the promotion date and compares to the baseline."
+            )
+            action = (
+                f"If measured >= baseline + 2pp: promotion was a good call, keep going. "
+                f"If measured < baseline - 2pp: promotion may have hurt. Options: "
+                f"(a) let the model calibrate for another week and re-measure, or "
+                f"(b) promote-from-archive the prior batch (feature to be added — "
+                f"currently manual DB flip). "
+                f"If |delta| < 2pp: verdict is 'unchanged'; wait for a larger window."
+            )
+            follow = WeeklyReviewFollowUpRow(
+                title=title,
+                scheduled_for=when,
+                measurement_type="post_promotion_win_hit_rate",
+                baseline_value=baseline_hit,
+                target_below=None,
+                target_above=baseline_hit + 2.0,
+                context_md=context,
+                action_md=action,
+            )
+            session.add(follow)
+            await session.commit()
+            log.info("[followup-seed] Post-promotion win-model check scheduled for %s (batch #%s)",
+                     when, batch_id[:8])
+    except Exception as e:
+        log.warning("[followup-seed] post-promotion follow-up seed failed: %s", e)
+
+
 async def _seed_weight_candidate_review_followup(
     model_type: str,
     batch_id: str,
@@ -15340,6 +15462,11 @@ async def admin_weight_candidate_promote(
         except ValueError as e:
             raise HTTPException(status_code=404, detail=str(e))
     await _close_candidate_review_followup(batch_id, f"{model_type}_weights", "promoted", note)
+    # Retrospective measurement — 7 days out for win, 14 for place/exotic
+    # (exotic outcomes are noisier so needs a bigger window). Compares
+    # actual production hit rate against the pre-promotion baseline
+    # recorded in the candidate's backtest_json.
+    await _seed_post_promotion_followup(model_type=model_type, batch_id=batch_id)
     return {"ok": True, "promoted_batch": batch_id, "model_type": model_type, "features_copied": copied}
 
 
