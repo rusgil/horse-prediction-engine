@@ -2161,6 +2161,7 @@ async def _scheduled_exotic_retrain():
                     | RunnerPredictionHistoryRow.cancelled.is_(None)
                 )
                 .where(RunnerPredictionHistoryRow.source.in_(("live", "backfill")))
+                .where(_history_healthy_filter())
             )
             hist_rows = hist_result.scalars().all()
 
@@ -2556,6 +2557,21 @@ async def _scheduled_prerace_snapshot():
         log.info("[scheduler] Pre-race snapshot: %d races written", n)
     except Exception as e:
         log.exception("[scheduler] Pre-race snapshot failed: %s", e)
+
+
+# Standard "healthy row" filter for training / calibration / backtest reads.
+# Rows with contaminated=True were written under known-degraded upstream
+# conditions and later repaired from post-race data (see Defense #2 / #3).
+# Displaying them is fine (UX preference), but feeding them back into model
+# fits would introduce lookahead bias — the "repair" fetched post-race
+# state, so the label distribution knows the future in a subtle way.
+# NULL is treated as False for backward compat with rows written before
+# the flag existed.
+def _history_healthy_filter():
+    return (
+        RunnerPredictionHistoryRow.contaminated.is_(False)
+        | RunnerPredictionHistoryRow.contaminated.is_(None)
+    )
 
 
 # Defense #3 — auto-repair contaminated snapshots once upstream returns
@@ -15652,6 +15668,7 @@ async def _backtest_weight_candidate(
             .where(RunnerPredictionHistoryRow.source == "live")
             .where(RunnerPredictionHistoryRow.cancelled.is_(False) | RunnerPredictionHistoryRow.cancelled.is_(None))
             .where(RunnerPredictionHistoryRow.enriched_json.isnot(None))
+            .where(_history_healthy_filter())
         )).scalars().all()
 
         hr_rows = (await session.execute(
@@ -16056,6 +16073,7 @@ async def retrain_model(
                 .where(RunnerPredictionHistoryRow.enriched_json.isnot(None))
                 .where(RunnerPredictionHistoryRow.cancelled.is_(False) | RunnerPredictionHistoryRow.cancelled.is_(None))
                 .where(RunnerPredictionHistoryRow.source == "live")
+                .where(_history_healthy_filter())
             )
             if cutoff:
                 hist_query = hist_query.where(RunnerPredictionHistoryRow.race_id >= cutoff)
@@ -16238,6 +16256,7 @@ async def retrain_place_model(
                 .where(RunnerPredictionHistoryRow.enriched_json.isnot(None))
                 .where(RunnerPredictionHistoryRow.cancelled.is_(False) | RunnerPredictionHistoryRow.cancelled.is_(None))
                 .where(RunnerPredictionHistoryRow.source == "live")
+                .where(_history_healthy_filter())
             )
             if cutoff:
                 hist_query = hist_query.where(RunnerPredictionHistoryRow.race_id >= cutoff)
@@ -23479,6 +23498,7 @@ async def _compute_output_calibration_curve(days: int = 45) -> dict:
             .where(RunnerPredictionHistoryRow.cancelled.is_(False) | RunnerPredictionHistoryRow.cancelled.is_(None))
             .where(RunnerPredictionHistoryRow.source == "live")
             .where(RunnerPredictionHistoryRow.win_prob_raw.isnot(None))
+            .where(_history_healthy_filter())
         )).scalars().all()
 
     samples: list[tuple[float, int]] = []
