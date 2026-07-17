@@ -48,13 +48,16 @@ write_files:
       ${indent(6, proxy_py_content)}
 
   # /opt/ra-proxy/requirements.txt - pinned deps (see owner note above)
+  # curl_cffi replaces httpx so the outbound TLS ClientHello + HTTP/2 frame
+  # ordering matches a real Chrome browser. RA's WAF fingerprint-blocked the
+  # httpx JA3 on 2026-07-17.
   - path: /opt/ra-proxy/requirements.txt
     permissions: "0644"
     owner: root:root
     content: |
       fastapi==0.115.5
       uvicorn[standard]==0.32.1
-      httpx==0.27.2
+      curl_cffi==0.7.4
 
   # /etc/systemd/system/ra-proxy.service - systemd unit
   - path: /etc/systemd/system/ra-proxy.service

@@ -1,9 +1,10 @@
 """
 Minimal HTTPS proxy for Racing Australia.
 
-Runs on a DigitalOcean droplet (or any VPS with a public IP). The Railway
+Runs on any VPS with a public IP (DigitalOcean historically; Vultr/Linode
+Sydney or Hetzner Singapore work with a different-ASN benefit). The Railway
 backend's RacingAustraliaClient points its base URL at this proxy instead of
-racingaustralia.horse directly. Result: RA sees the droplet's IP, not Railway's
+racingaustralia.horse directly. Result: RA sees the VPS's IP, not Railway's
 WAF-blocked one.
 
 Design:
@@ -13,7 +14,12 @@ Design:
   - Auth: caller must send X-Proxy-Secret matching PROXY_SECRET env var.
   - Rate-limited at 1 req/sec per origin to prevent the proxy itself becoming a
     hammer (the hard rule about no API hammering still applies).
-  - Rotates UA + browser-realistic headers, same as the in-app RA client.
+  - Uses curl_cffi (libcurl-impersonate) so the outbound TLS handshake AND
+    HTTP/2 frame ordering matches a real Chrome browser. Plain httpx has a
+    distinctive JA3 fingerprint that WAFs like Cloudflare / Akamai use to
+    flag automated traffic — swapping to curl_cffi fixed a hard block that
+    hit us on 2026-07-17 despite low request volume (~3253/day) and browser-
+    like headers.
 
 Deploy:
   See README.md in this directory. tl;dr - Caddy in front for free TLS,
@@ -27,7 +33,8 @@ import random
 import time
 from typing import Optional
 
-import httpx
+from curl_cffi.requests import AsyncSession
+from curl_cffi.requests.errors import RequestsError
 from fastapi import FastAPI, HTTPException, Request, Response
 
 
@@ -37,14 +44,16 @@ if not PROXY_SECRET:
 
 UPSTREAM_BASE = "https://www.racingaustralia.horse"
 
-USER_AGENTS = [
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Safari/605.1.15",
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:128.0) Gecko/20100101 Firefox/128.0",
-    "Mozilla/5.0 (Macintosh; Intel Mac OS X 14.5; rv:128.0) Gecko/20100101 Firefox/128.0",
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36 Edg/131.0.0.0",
-]
+# Impersonation profile — curl_cffi routes each request through a libcurl
+# build that matches this browser's exact TLS ClientHello, HTTP/2 SETTINGS
+# frame ordering, and header order. Keep the UA string in sync with the
+# impersonate profile so the two signals agree (a Chrome131 TLS handshake
+# with a Firefox UA is itself a fingerprint).
+_IMPERSONATE_PROFILE = "chrome131"
+_UA_STRING = (
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+)
 
 # Single-flight + delay between requests - the proxy IS our single client to RA,
 # so it must not hammer. asyncio.Lock + jittered sleep between each request.
@@ -68,9 +77,14 @@ app = FastAPI(title="ra-proxy")
 
 
 def _headers(referer: Optional[str]) -> dict:
+    # These headers get merged with what curl_cffi's impersonation profile
+    # emits at the HTTP/2 layer, so the final header set matches a real
+    # Chrome navigation. Keeping the UA aligned with _IMPERSONATE_PROFILE
+    # is critical — a mismatched UA (JA3 says Chrome, UA says Firefox) is
+    # itself a bot signature.
     headers = {
-        "User-Agent": random.choice(USER_AGENTS),
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "User-Agent": _UA_STRING,
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,image/apng,*/*;q=0.8",
         "Accept-Language": "en-AU,en;q=0.9",
         "Accept-Encoding": "gzip, deflate, br",
         "Cache-Control": "max-age=0",
@@ -164,11 +178,19 @@ async def proxy(path: str, request: Request):
         elapsed = time.monotonic() - _last_request_at
         if elapsed < _MIN_INTERVAL:
             await asyncio.sleep(_MIN_INTERVAL - elapsed + random.random() * 0.5)
-        async with httpx.AsyncClient(timeout=20.0, follow_redirects=True) as client:
-            try:
-                resp = await client.get(upstream_url, headers=_headers(referer))
-            except httpx.RequestError as e:
-                raise HTTPException(status_code=502, detail=f"Upstream error: {e}")
+        # curl_cffi AsyncSession with impersonate= handles the TLS
+        # ClientHello + HTTP/2 SETTINGS ordering that WAFs fingerprint on.
+        # Same call shape as httpx (resp.status_code, resp.content, resp.headers).
+        try:
+            async with AsyncSession(impersonate=_IMPERSONATE_PROFILE) as client:
+                resp = await client.get(
+                    upstream_url,
+                    headers=_headers(referer),
+                    timeout=20.0,
+                    allow_redirects=True,
+                )
+        except RequestsError as e:
+            raise HTTPException(status_code=502, detail=f"Upstream error: {e}")
         _last_request_at = time.monotonic()
         _daily_count += 1
 
@@ -182,8 +204,9 @@ async def proxy(path: str, request: Request):
             _recent_403_count, _daily_count, upstream_url[:200],
         )
 
-    # Return upstream body unchanged. Filter hop-by-hop headers so httpx
-    # downstream doesn't get confused.
+    # Return upstream body unchanged. Filter hop-by-hop headers so downstream
+    # callers (httpx / anything else) don't get confused by re-encoded content.
+    # curl_cffi returns bytes on .content, matching httpx's shape.
     drop = {"content-encoding", "transfer-encoding", "connection", "content-length"}
     headers_out = {k: v for k, v in resp.headers.items() if k.lower() not in drop}
     return Response(content=resp.content, status_code=resp.status_code, headers=headers_out)

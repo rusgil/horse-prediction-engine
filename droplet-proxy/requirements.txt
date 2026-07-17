@@ -1,3 +1,7 @@
 fastapi==0.115.5
 uvicorn[standard]==0.32.1
-httpx==0.27.2
+# curl_cffi = libcurl-impersonate bindings. Emits TLS ClientHello + HTTP/2
+# SETTINGS frames that match Chrome/Firefox exactly, so RA's WAF cannot
+# JA3-fingerprint us as a plain httpx client. Fixes the block that hit us
+# on 2026-07-17 despite low volume (~3253/day) and browser-like headers.
+curl_cffi==0.7.4
