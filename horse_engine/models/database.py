@@ -4,8 +4,9 @@ from __future__ import annotations
 import json
 import uuid
 from datetime import datetime
+from typing import Optional
 
-from sqlalchemy import Column, Float, Integer, String, Text, Boolean, DateTime, Index, select, text
+from sqlalchemy import Column, Float, Integer, String, Text, Boolean, DateTime, Index, UniqueConstraint, select, text
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
 from sqlalchemy.orm import DeclarativeBase
 
@@ -473,6 +474,37 @@ class ResponseCacheRow(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, index=True)
 
 
+class RAVenueKeyCacheRow(Base):
+    """Persistent cache of the (date, state, clean_venue) → RA key mapping.
+
+    RA identifies each meeting by a compound string like
+    "2026Jul18,NSW,TAB Grafton" that we can't derive from our clean venue
+    name because the sponsor prefix varies per meeting. Historically the
+    RA client tries the plain name plus 6 sponsor variants until one
+    resolves, then caches the answer in RAM. That in-memory cache dies
+    on every Railway redeploy, so the sponsor-variant fanout burns ~1500
+    extra RA requests per day — the exact pattern that got us WAF-flagged.
+
+    Persisting to this table makes every resolved (date, state, venue)
+    mapping survive redeploys. First lookup fans out once; subsequent
+    lookups (and all future process starts) hit the DB directly.
+
+    Row TTL: implicit — dates roll off naturally, we keep everything.
+    """
+    __tablename__ = "ra_venue_key_cache"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    race_date = Column(String, nullable=False, index=True)   # "2026-07-18"
+    state = Column(String, nullable=False)                    # "NSW"
+    clean_venue = Column(String, nullable=False)              # "Grafton"
+    ra_key = Column(String, nullable=False)                   # "2026Jul18,NSW,TAB Grafton"
+    resolved_at = Column(DateTime, default=datetime.utcnow, index=True)
+
+    __table_args__ = (
+        UniqueConstraint("race_date", "state", "clean_venue", name="uq_ra_venue_key"),
+    )
+
+
 class BetRecommendationRow(Base):
     """One row per recommended trifecta box bet. Paper-trading ledger —
     no real money. Settled after the race using the trifecta dividend
@@ -594,6 +626,13 @@ async def init_db() -> None:
         # 500'ing until this landed.
         "ALTER TABLE runner_prediction_history ADD COLUMN IF NOT EXISTS contaminated BOOLEAN DEFAULT FALSE",
         "CREATE INDEX IF NOT EXISTS ix_hist_contaminated ON runner_prediction_history (contaminated)",
+        # RA venue-key cache (2026-07-18). Table itself is auto-created by
+        # Base.metadata.create_all above. This index speeds up the very hot
+        # "have I resolved this (date, state, venue) already?" lookup that
+        # every find_results call now performs to skip the sponsor-variant
+        # fanout. The uq_ra_venue_key unique constraint doubles as the
+        # index for the equality lookup.
+        "CREATE INDEX IF NOT EXISTS ix_ra_venue_key_date ON ra_venue_key_cache (race_date)",
         "CREATE INDEX IF NOT EXISTS ix_hist_results_race_winner ON historical_results (race_id, winner)",
         "CREATE INDEX IF NOT EXISTS ix_hist_results_race_placed ON historical_results (race_id, placed)",
         # Composite for common top-3/top-4 fetches: SELECT ... WHERE race_id = X AND position IN (1,2,3)
@@ -1045,6 +1084,55 @@ async def load_race_predictions(session: AsyncSession, race_id: str) -> list[Run
         .order_by(RunnerPredictionRow.model_rank)
     )
     return list(result.scalars().all())
+
+
+async def load_ra_venue_key(
+    session: AsyncSession, race_date: str, state: str, clean_venue: str
+) -> Optional[str]:
+    """Return the cached RA key for a (date, state, venue) triple, or None
+    if we've never resolved it. Survives Railway redeploys — the RAM cache
+    in the RA client does not.
+    """
+    row = (await session.execute(
+        select(RAVenueKeyCacheRow.ra_key)
+        .where(RAVenueKeyCacheRow.race_date == race_date)
+        .where(RAVenueKeyCacheRow.state == state)
+        .where(RAVenueKeyCacheRow.clean_venue == clean_venue)
+        .limit(1)
+    )).scalar_one_or_none()
+    return row
+
+
+async def save_ra_venue_key(
+    session: AsyncSession, race_date: str, state: str, clean_venue: str, ra_key: str
+) -> None:
+    """Persist a resolved (date, state, venue) → RA key mapping. Idempotent
+    via the uq_ra_venue_key unique constraint — concurrent writers race
+    without corrupting the cache."""
+    from sqlalchemy import insert
+    from sqlalchemy.dialects.postgresql import insert as pg_insert
+    try:
+        stmt = pg_insert(RAVenueKeyCacheRow).values(
+            race_date=race_date,
+            state=state,
+            clean_venue=clean_venue,
+            ra_key=ra_key,
+        ).on_conflict_do_nothing(index_elements=["race_date", "state", "clean_venue"])
+        await session.execute(stmt)
+        await session.commit()
+    except Exception:
+        # SQLite fallback path — no ON CONFLICT support, just try/except
+        await session.rollback()
+        try:
+            session.add(RAVenueKeyCacheRow(
+                race_date=race_date,
+                state=state,
+                clean_venue=clean_venue,
+                ra_key=ra_key,
+            ))
+            await session.commit()
+        except Exception:
+            await session.rollback()
 
 
 async def load_model_weights(session: AsyncSession) -> dict[str, float]:

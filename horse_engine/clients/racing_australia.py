@@ -1298,36 +1298,84 @@ class RacingAustraliaClient:
     async def find_results(self, race_date: str, state: str, clean_venue: str) -> tuple[str, dict[int, dict]]:
         """
         Try to find RA results for a venue whose stored name has had the sponsor prefix stripped.
-        Checks the Calendar.aspx-derived slug→key cache first, then tries common sponsor prefixes.
+
+        Lookup order (each layer skipped if empty):
+          1. DB-persisted ra_venue_key_cache — the answer from any previous
+             session for this exact (date, state, venue). Survives Railway
+             redeploys, which the RAM cache below does not.
+          2. In-process RAM cache populated by Calendar.aspx during startup
+             (fresh Railway container).
+          3. Plain unprefixed key (works for a minority of venues).
+          4. Sponsor-prefixed variants — the fallback fanout. Costs one RA
+             fetch per attempt, so limit to what's actually common in AU.
+
+        On a successful resolution (layers 3–4), the result is persisted to
+        the DB cache so future lookups skip straight to layer 1. This
+        eliminates the ~1500-request/day sponsor-variant fanout that was
+        contributing to the JA3-fingerprinted traffic pattern.
+
         Returns (ra_key_used, results_dict) — ra_key_used is "" if nothing found.
         """
         ra_date_str = _ra_date(race_date)
-        # 1. Check if Calendar.aspx already populated a key for this venue
+
+        # 1. DB-persisted cache. Survives redeploys.
+        try:
+            from horse_engine.models.database import get_session, load_ra_venue_key
+            async with get_session() as _session:
+                cached_key = await load_ra_venue_key(_session, race_date, state, clean_venue)
+            if cached_key:
+                results = await self.get_results(cached_key)
+                if results:
+                    return cached_key, results
+                # DB had a key but RA returned nothing — the meeting may be
+                # abandoned today. Fall through to the fanout in case this
+                # date's venue key genuinely differs from what we cached.
+        except Exception as e:
+            log.debug("[find_results] DB cache read failed, continuing: %s", e)
+
+        # 2. In-RAM cache from Calendar.aspx (RA client startup path).
         cache_key = f"{race_date}:{state}:{clean_venue}"
         if cache_key in self._slug_to_key:
             ra_key = self._slug_to_key[cache_key]
             results = await self.get_results(ra_key)
             if results:
+                await self._persist_venue_key(race_date, state, clean_venue, ra_key)
                 return ra_key, results
 
-        # 2. Try cleaned name directly (may work if RA has no sponsor prefix)
+        # 3. Try cleaned name directly (may work if RA has no sponsor prefix).
         base_key = f"{ra_date_str},{state},{clean_venue}"
         results = await self.get_results(base_key)
         if results:
+            await self._persist_venue_key(race_date, state, clean_venue, base_key)
             return base_key, results
 
-        # 3. Try common sponsor-prefixed variations
+        # 4. Sponsor-prefix fanout — last resort.
         for prefix in self._SPONSOR_PREFIXES:
             ra_key = f"{ra_date_str},{state},{prefix}{clean_venue}"
             results = await self.get_results(ra_key)
             if results:
                 log.info("RA results found with prefix '%s' for %s/%s", prefix, state, clean_venue)
-                self._slug_to_key[cache_key] = ra_key  # cache for future calls
+                self._slug_to_key[cache_key] = ra_key  # cache for future calls in this process
+                await self._persist_venue_key(race_date, state, clean_venue, ra_key)
                 return ra_key, results
 
         log.warning("RA results not found for %s/%s/%s (tried %d key variants)",
                     race_date, state, clean_venue, 2 + len(self._SPONSOR_PREFIXES))
         return "", {}
+
+    async def _persist_venue_key(
+        self, race_date: str, state: str, clean_venue: str, ra_key: str
+    ) -> None:
+        """Write a successful (date, state, venue) → RA key mapping to the
+        DB cache. Best-effort — a DB failure here is not worth failing the
+        parent request, since the RAM cache still holds the answer for
+        this process."""
+        try:
+            from horse_engine.models.database import get_session, save_ra_venue_key
+            async with get_session() as _session:
+                await save_ra_venue_key(_session, race_date, state, clean_venue, ra_key)
+        except Exception as e:
+            log.debug("[find_results] DB cache write failed, ignoring: %s", e)
 
     async def parse_race(self, raw_event: dict, race_date: str, venue: str, state: str) -> Race:
         meeting = raw_event.get("_meeting") or {}
