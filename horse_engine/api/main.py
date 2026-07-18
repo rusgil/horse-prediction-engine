@@ -3125,6 +3125,12 @@ _NOT_ON_SPORTSBET_VENUES: frozenset = frozenset({
     "ingham",           # QLD, North Queensland
     "roma",             # QLD, Maranoa
     "wean-picnic",      # NSW/QLD picnic — Sportsbet doesn't cover
+    # Added 2026-07-18 — user confirmed TAB and Sportsbet don't carry
+    # markets on these; scraping RA form pages for them wastes upstream
+    # requests without yielding an actionable pick.
+    "gympie",           # QLD, Wide Bay
+    "thangool",         # QLD, Banana Shire — bush meeting
+    "carinda",          # NSW, Walgett Shire — picnic
 })
 
 
