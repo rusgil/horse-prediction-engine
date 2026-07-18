@@ -13375,6 +13375,44 @@ async def admin_benchmark_historical_results(
     }
 
 
+@app.post("/api/admin/reindex-tables")
+async def admin_reindex_tables(x_cron_secret: Optional[str] = Header(None)):
+    """
+    Rebuild indexes on the tables that seed/enrich/settle hit heaviest.
+    Ships after 2026-07-19 postmortem: Postgres was restarted twice via
+    crash-recovery on 2026-07-18, and subsequent large-scan queries
+    (e.g. `SELECT ... FROM historical_results WHERE race_id >= '2026-05-19'`)
+    started dropping asyncpg connections mid-operation — the classic
+    corrupted-index-after-uncleen-shutdown symptom.
+
+    Each REINDEX takes an ACCESS EXCLUSIVE lock briefly, so run outside
+    active enrich/seed windows if possible. Returns a per-table timing
+    breakdown.
+    """
+    _check_admin(x_cron_secret)
+    from sqlalchemy import text as _text
+    import time as _time
+    tables = [
+        "historical_results",
+        "runner_prediction_history",
+        "runner_predictions",
+        "ra_venue_key_cache",
+        "ra_form_cache",
+    ]
+    result: dict = {}
+    async with get_session() as session:
+        for tbl in tables:
+            t0 = _time.monotonic()
+            try:
+                await session.execute(_text(f"REINDEX TABLE {tbl}"))
+                await session.commit()
+                result[tbl] = {"ok": True, "seconds": round(_time.monotonic() - t0, 2)}
+            except Exception as e:
+                await session.rollback()
+                result[tbl] = {"ok": False, "error": f"{type(e).__name__}: {e}", "seconds": round(_time.monotonic() - t0, 2)}
+    return {"ok": True, "reindexed": result}
+
+
 @app.post("/api/admin/dedupe-historical-results")
 async def admin_dedupe_historical_results(
     apply: bool = Query(False, description="False = preview counts only; True = actually delete"),
