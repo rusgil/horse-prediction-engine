@@ -3550,6 +3550,14 @@ async def get_edge_picks():
             rows = hist_rows + mut_rows
             # Exclude trial/trackwork venues
             rows = [r for r in rows if not re.search(r"-(trial|trail|jumpout)s?[_-]", r.race_id, re.IGNORECASE)]
+            # Exclude blocklisted venues (venues without TAB/Sportsbet markets —
+            # can't be backed, so surfacing them as picks — and especially as
+            # Sharp picks — is actively misleading. The blocklist covers
+            # gympie / thangool / carinda plus the older bush picnics.)
+            def _rid_venue(rid: str) -> str:
+                _, vc, _ = _parse_race_id(rid)
+                return vc.lower() if vc else ""
+            rows = [r for r in rows if _rid_venue(r.race_id) not in _SKIP_ENRICHMENT_VENUES]
 
             if not rows:
                 continue
