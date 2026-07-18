@@ -2261,10 +2261,9 @@
         if (pay) {
           payoutHtml = `
             <div class="payout-box">
-              <div class="payout-profit-label">$${stake} profit</div>
+              <div class="payout-profit-label">$${stake} stake</div>
               <div class="payout-profit">+$${pay.profit.toFixed(2)}</div>
               <div class="payout-return">Return: <span class="return-amt">$${pay.gross.toFixed(2)}</span></div>
-              <div class="payout-stake">Stake: $${stake}</div>
             </div>`;
         } else {
           payoutHtml = `<div class="payout-box"><div class="payout-profit-label">Won</div><div class="payout-profit" style="color:var(--green)">SP not captured</div></div>`;
@@ -2276,7 +2275,6 @@
           <div class="payout-box" style="background:rgba(239,68,68,0.08);border-color:rgba(239,68,68,0.2);">
             <div class="payout-profit-label" style="color:var(--text-dim)">$${stake} loss</div>
             <div class="payout-profit" style="color:#f87171;">-$${(+stake).toFixed(2)}</div>
-            <div class="payout-stake">Stake: $${stake}</div>
           </div>`;
       } else {
         // No position, not a winner, not marked scratched or no_result —
@@ -2288,10 +2286,9 @@
     } else if (pay) {
       payoutHtml = `
         <div class="payout-box">
-          <div class="payout-profit-label">$${stake} profit</div>
+          <div class="payout-profit-label">$${stake} stake</div>
           <div class="payout-profit">+$${pay.profit.toFixed(2)}</div>
           <div class="payout-return">Return: <span class="return-amt">$${pay.gross.toFixed(2)}</span></div>
-          <div class="payout-stake">Stake: $${stake}</div>
         </div>`;
     } else {
       payoutHtml = `<div class="no-odds">Odds not yet available</div>`;
@@ -2806,12 +2803,10 @@
       if (!pay) return;
       const profitEl = card.querySelector('.payout-profit');
       const returnEl = card.querySelector('.payout-return .return-amt');
-      const stakeEl = card.querySelector('.payout-stake');
       const labelEl = card.querySelector('.payout-profit-label');
       if (profitEl) profitEl.textContent = `+$${pay.profit.toFixed(2)}`;
       if (returnEl) returnEl.textContent = `$${pay.gross.toFixed(2)}`;
-      if (stakeEl) stakeEl.textContent = `Stake: $${stake}`;
-      if (labelEl) labelEl.textContent = `$${stake} profit`;
+      if (labelEl) labelEl.textContent = `$${stake} stake`;
     });
   }
 
@@ -3376,10 +3371,9 @@
     } else if (isWin && p.sp) {
       payoutHtml = `
         <div class="payout-box">
-          <div class="payout-profit-label">$${stake} profit</div>
+          <div class="payout-profit-label">$${stake} stake</div>
           <div class="payout-profit">+$${profit.toFixed(2)}</div>
           <div class="payout-return">Return: <span class="return-amt">$${gross.toFixed(2)}</span></div>
-          <div class="payout-stake">Stake: $${stake}</div>
         </div>`;
     } else if (isPlaced) {
       payoutHtml = `
@@ -3387,7 +3381,6 @@
           <div class="payout-profit-label" style="color:var(--text-dim)">$${stake} loss (placed)</div>
           <div class="payout-profit" style="color:#f59e0b;">-$${(+stake).toFixed(2)}</div>
           ${p.position ? `<div class="payout-return" style="color:#f59e0b">Finished ${ordinal(p.position)}</div>` : ''}
-          <div class="payout-stake">Stake: $${stake}</div>
         </div>`;
     } else {
       payoutHtml = `
@@ -3395,7 +3388,6 @@
           <div class="payout-profit-label" style="color:var(--text-dim)">$${stake} loss</div>
           <div class="payout-profit" style="color:#f87171;">-$${(+stake).toFixed(2)}</div>
           ${p.position ? `<div class="payout-return" style="color:var(--text-dim)">Finished ${ordinal(p.position)}</div>` : ''}
-          <div class="payout-stake">Stake: $${stake}</div>
         </div>`;
     }
 
