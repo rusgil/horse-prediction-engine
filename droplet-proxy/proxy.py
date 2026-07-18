@@ -47,12 +47,14 @@ UPSTREAM_BASE = "https://www.racingaustralia.horse"
 # Impersonation profile — curl_cffi routes each request through a libcurl
 # build that matches this browser's exact TLS ClientHello, HTTP/2 SETTINGS
 # frame ordering, and header order. Keep the UA string in sync with the
-# impersonate profile so the two signals agree (a Chrome131 TLS handshake
+# impersonate profile so the two signals agree (a Chrome124 TLS handshake
 # with a Firefox UA is itself a fingerprint).
-_IMPERSONATE_PROFILE = "chrome131"
+# chrome124 is the highest available in curl_cffi 0.7.x — chrome131 needs
+# 0.8.x which isn't yet on PyPI (verified 2026-07-18 against 0.7.4).
+_IMPERSONATE_PROFILE = "chrome124"
 _UA_STRING = (
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-    "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+    "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
 )
 
 # Single-flight + delay between requests - the proxy IS our single client to RA,
