@@ -505,6 +505,34 @@ class RAVenueKeyCacheRow(Base):
     )
 
 
+class RAFormCacheRow(Base):
+    """Persistent cache of parsed HorseFullForm / JockeyLastRuns /
+    TrainerLastRuns responses. Same structural fix as ra_venue_key_cache:
+    the RA client had per-code RAM caches with 1h TTL, which the enrichment
+    schedule (8:30 + 10:30 + 11:30 AEST) blows through and every Railway
+    redeploy wipes.
+
+    kind identifies the source page: 'h' HorseFullForm, 'j' JockeyLastRuns,
+    't' TrainerLastRuns. Cache reads apply a per-kind TTL (see the RA
+    client) — horse form is safe to cache longer since horses only race
+    every 2-4 weeks; jockey/trainer stats update daily as they ride/train.
+
+    payload_json holds the already-parsed dict, so hits skip both the RA
+    fetch AND the BeautifulSoup parse.
+    """
+    __tablename__ = "ra_form_cache"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    kind = Column(String(1), nullable=False)      # 'h' | 'j' | 't'
+    code = Column(String, nullable=False)          # horsecode / jockeycode / trainercode
+    payload_json = Column(Text, nullable=False)    # serialized parsed form dict
+    cached_at = Column(DateTime, default=datetime.utcnow, index=True)
+
+    __table_args__ = (
+        UniqueConstraint("kind", "code", name="uq_ra_form_kind_code"),
+    )
+
+
 class BetRecommendationRow(Base):
     """One row per recommended trifecta box bet. Paper-trading ledger —
     no real money. Settled after the race using the trifecta dividend
@@ -633,6 +661,11 @@ async def init_db() -> None:
         # fanout. The uq_ra_venue_key unique constraint doubles as the
         # index for the equality lookup.
         "CREATE INDEX IF NOT EXISTS ix_ra_venue_key_date ON ra_venue_key_cache (race_date)",
+        # RA form cache (2026-07-18) — persist horse/jockey/trainer form
+        # parses across process restarts to skip repeated RA fetches. The
+        # uq_ra_form_kind_code unique constraint provides the equality
+        # lookup index; the cached_at index supports TTL / cleanup queries.
+        "CREATE INDEX IF NOT EXISTS ix_ra_form_cached_at ON ra_form_cache (cached_at)",
         "CREATE INDEX IF NOT EXISTS ix_hist_results_race_winner ON historical_results (race_id, winner)",
         "CREATE INDEX IF NOT EXISTS ix_hist_results_race_placed ON historical_results (race_id, placed)",
         # Composite for common top-3/top-4 fetches: SELECT ... WHERE race_id = X AND position IN (1,2,3)
@@ -1130,6 +1163,69 @@ async def save_ra_venue_key(
                 clean_venue=clean_venue,
                 ra_key=ra_key,
             ))
+            await session.commit()
+        except Exception:
+            await session.rollback()
+
+
+async def load_ra_form(
+    session: AsyncSession, kind: str, code: str, max_age_seconds: int
+) -> Optional[dict]:
+    """Return a cached form payload if we have one for (kind, code) that's
+    younger than max_age_seconds. Returns None if no row exists or the row
+    is too old — caller falls back to a fresh RA fetch.
+
+    Kind is 'h' (horse), 'j' (jockey), or 't' (trainer). Same one-letter
+    tags used by the RA client for its RAM caches.
+    """
+    row = (await session.execute(
+        select(RAFormCacheRow.payload_json, RAFormCacheRow.cached_at)
+        .where(RAFormCacheRow.kind == kind)
+        .where(RAFormCacheRow.code == code)
+        .limit(1)
+    )).first()
+    if row is None:
+        return None
+    payload_json, cached_at = row
+    age = (datetime.utcnow() - cached_at).total_seconds()
+    if age > max_age_seconds:
+        return None
+    try:
+        return json.loads(payload_json)
+    except Exception:
+        return None
+
+
+async def save_ra_form(
+    session: AsyncSession, kind: str, code: str, payload: dict
+) -> None:
+    """Persist a parsed form payload. UPSERT on (kind, code) so a re-fetch
+    refreshes cached_at rather than piling up rows. Idempotent under
+    concurrent writers via ON CONFLICT."""
+    from sqlalchemy.dialects.postgresql import insert as pg_insert
+    payload_json = json.dumps(payload or {})
+    now = datetime.utcnow()
+    try:
+        stmt = pg_insert(RAFormCacheRow).values(
+            kind=kind, code=code, payload_json=payload_json, cached_at=now,
+        ).on_conflict_do_update(
+            index_elements=["kind", "code"],
+            set_=dict(payload_json=payload_json, cached_at=now),
+        )
+        await session.execute(stmt)
+        await session.commit()
+    except Exception:
+        # SQLite fallback — no ON CONFLICT DO UPDATE, so do it manually.
+        await session.rollback()
+        try:
+            existing = (await session.execute(
+                select(RAFormCacheRow).where(RAFormCacheRow.kind == kind).where(RAFormCacheRow.code == code)
+            )).scalars().first()
+            if existing:
+                existing.payload_json = payload_json
+                existing.cached_at = now
+            else:
+                session.add(RAFormCacheRow(kind=kind, code=code, payload_json=payload_json, cached_at=now))
             await session.commit()
         except Exception:
             await session.rollback()

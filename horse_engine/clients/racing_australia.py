@@ -928,12 +928,33 @@ class RacingAustraliaClient:
 
     # ── InteractiveForm fetchers ──────────────────────────────────────────────
 
+    # Per-kind DB cache TTL. Horse form updates only when the horse
+    # actually races (typically every 2-4 weeks), so 48h keeps almost all
+    # relevant data fresh while surviving several process restarts.
+    # Jockey / trainer stats update every riding day, so 24h.
+    _FORM_TTL_HORSE_S = 48 * 3600
+    _FORM_TTL_PERSON_S = 24 * 3600
+
     async def _fetch_horse_form(self, horsecode: str, raceentry: str) -> dict:
         if not horsecode:
             return {}
+        # 1. Per-process RAM cache — cheapest, 1h TTL keeps within-tick
+        #    consistency without paying DB round-trip cost on hot codes.
         cached = self._horse_form_cache.get(horsecode)
         if cached and (datetime.utcnow() - cached[0]).total_seconds() < 3600:
             return cached[1]
+        # 2. DB cache — survives Railway redeploys AND the RAM TTL. Skips
+        #    the RA fetch + BeautifulSoup parse on hit.
+        try:
+            from horse_engine.models.database import get_session, load_ra_form
+            async with get_session() as _s:
+                cached_db = await load_ra_form(_s, "h", horsecode, self._FORM_TTL_HORSE_S)
+            if cached_db is not None:
+                self._horse_form_cache[horsecode] = (datetime.utcnow(), cached_db)
+                return cached_db
+        except Exception as e:
+            log.debug("[form-cache] DB read failed for horse %s: %s", horsecode, e)
+        # 3. Cold path — fetch from RA and persist to both layers.
         url = f"{_IF_BASE}/HorseFullForm.aspx?horsecode={horsecode}&src=horseform&raceentry={raceentry}"
         try:
             html = await self._get_form(url)
@@ -942,15 +963,35 @@ class RacingAustraliaClient:
             log.debug("Horse form fetch failed %s: %s", horsecode, e)
             data = {}
         self._horse_form_cache[horsecode] = (datetime.utcnow(), data)
+        if data:
+            try:
+                from horse_engine.models.database import get_session, save_ra_form
+                async with get_session() as _s:
+                    await save_ra_form(_s, "h", horsecode, data)
+            except Exception as e:
+                log.debug("[form-cache] DB write failed for horse %s: %s", horsecode, e)
         return data
 
     async def _fetch_person_form(self, code: str, kind: str) -> dict:
         if not code:
             return {}
         cache = self._jockey_form_cache if kind == "jockey" else self._trainer_form_cache
+        kind_char = "j" if kind == "jockey" else "t"
+        # 1. RAM cache.
         cached = cache.get(code)
         if cached and (datetime.utcnow() - cached[0]).total_seconds() < 3600:
             return cached[1]
+        # 2. DB cache.
+        try:
+            from horse_engine.models.database import get_session, load_ra_form
+            async with get_session() as _s:
+                cached_db = await load_ra_form(_s, kind_char, code, self._FORM_TTL_PERSON_S)
+            if cached_db is not None:
+                cache[code] = (datetime.utcnow(), cached_db)
+                return cached_db
+        except Exception as e:
+            log.debug("[form-cache] DB read failed for %s %s: %s", kind, code, e)
+        # 3. Cold path.
         if kind == "jockey":
             url = f"{_IF_BASE}/JockeyLastRuns.aspx?jockeycode={code}"
         else:
@@ -962,6 +1003,13 @@ class RacingAustraliaClient:
             log.debug("Person form fetch failed %s %s: %s", kind, code, e)
             data = {}
         cache[code] = (datetime.utcnow(), data)
+        if data:
+            try:
+                from horse_engine.models.database import get_session, save_ra_form
+                async with get_session() as _s:
+                    await save_ra_form(_s, kind_char, code, data)
+            except Exception as e:
+                log.debug("[form-cache] DB write failed for %s %s: %s", kind, code, e)
         return data
 
     async def _batch_fetch_runner_forms(self, selections: list[dict]) -> dict:
