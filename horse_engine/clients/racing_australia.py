@@ -856,6 +856,14 @@ class RacingAustraliaClient:
         # Hard rule: this program can not HAMMER apis.
         self._blocked_until: datetime | None = None
         self._block_count: int = 0  # tracks consecutive 403s for backoff growth
+        # DB-hydration flag for the venue-key cache. On first find_results
+        # call, we do ONE bulk read from ra_venue_key_cache to populate
+        # _slug_to_key. All subsequent lookups hit RAM only. Prevents the
+        # per-request DB session opens that crashed asyncpg pool on
+        # 2026-07-18. Successful new resolutions write back via a fire-
+        # and-forget task (see _persist_venue_key_bg).
+        self._db_hydrated: bool = False
+        self._hydrate_lock = asyncio.Lock()
 
     def _get_sem(self) -> asyncio.Semaphore:
         if self._sem is None:
@@ -1303,21 +1311,86 @@ class RacingAustraliaClient:
 
     _SPONSOR_PREFIXES = ["TAB ", "Sportsbet ", "Ladbrokes ", "Palmerbet ", "Neds ", "Ubet "]
 
+    async def _ensure_hydrated(self) -> None:
+        """Populate _slug_to_key from the DB once per process lifetime.
+
+        Structure chosen after 2026-07-18 postmortem:
+          - ONE bulk read at first use — cheap on a table of ~10k rows/yr
+            (venue-key mapping is (date, state, venue) tuple, ~30 venues/day)
+          - Lock-protected so concurrent first callers don't stampede
+          - Failure is non-fatal — hot path falls back to sponsor fanout
+
+        Contrast the previous per-request DB read (commit 7c1fce9) which
+        opened a fresh session inside every find_results and, under seed-
+        cron's parallel-venue fanout, exhausted the asyncpg pool.
+        """
+        if self._db_hydrated:
+            return
+        async with self._hydrate_lock:
+            if self._db_hydrated:  # re-check inside lock
+                return
+            try:
+                from horse_engine.models.database import (
+                    get_session, RAVenueKeyCacheRow,
+                )
+                from sqlalchemy import select as _select
+                async with get_session() as _s:
+                    rows = (await _s.execute(_select(RAVenueKeyCacheRow))).scalars().all()
+                for r in rows:
+                    ck = f"{r.race_date}:{r.state}:{r.clean_venue}"
+                    self._slug_to_key[ck] = r.ra_key
+                log.info("[RA] Hydrated %d venue keys from DB", len(rows))
+            except Exception as e:
+                log.warning("[RA] DB hydrate skipped: %s", e)
+            finally:
+                # Mark hydrated even on failure — one failed attempt is
+                # enough; retrying on every call would defeat the point.
+                self._db_hydrated = True
+
+    def _schedule_persist_venue_key(
+        self, race_date: str, state: str, clean_venue: str, ra_key: str
+    ) -> None:
+        """Fire-and-forget write to ra_venue_key_cache. Uses asyncio.create_task
+        so the DB round-trip does NOT block the caller (find_results returns
+        immediately with results from RA). Writes are rare — only when a new
+        (date, state, venue) resolves — so the task queue never piles up.
+        """
+        async def _bg():
+            try:
+                from horse_engine.models.database import (
+                    get_session, save_ra_venue_key,
+                )
+                async with get_session() as _s:
+                    await save_ra_venue_key(_s, race_date, state, clean_venue, ra_key)
+            except Exception as e:
+                log.debug("[RA] bg venue-key persist skipped: %s", e)
+        try:
+            asyncio.create_task(_bg())
+        except Exception:
+            # No running loop — quietly skip. Should never happen in the
+            # async server context but guard is cheap.
+            pass
+
     async def find_results(self, race_date: str, state: str, clean_venue: str) -> tuple[str, dict[int, dict]]:
         """
         Try to find RA results for a venue whose stored name has had the sponsor prefix stripped.
-        Checks the Calendar.aspx-derived slug→key cache first, then tries common sponsor prefixes.
-        Returns (ra_key_used, results_dict) — ra_key_used is "" if nothing found.
 
-        NOTE (2026-07-18): DB-persisted layer removed — every find_results
-        call opened a fresh session, and find_results runs in parallel
-        across ~30 venues per seed-cron tick, spiking asyncpg pool usage
-        to the point Railway killed the DB. Re-add via a batched preload
-        at the seed-cron entry point instead.
+        Lookup order:
+          1. DB-hydrated RAM cache (_slug_to_key), populated once per process
+             from ra_venue_key_cache. Survives Railway redeploys.
+          2. RAM cache populated by Calendar.aspx during this process's
+             enrichment cycle (same dict, different source).
+          3. Plain unprefixed key.
+          4. Sponsor-prefix fanout.
+
+        Successful resolutions from 3+4 are written back to the DB via a
+        fire-and-forget task so a future container's step-1 hydrate picks
+        them up.
         """
+        await self._ensure_hydrated()
         ra_date_str = _ra_date(race_date)
 
-        # 1. In-RAM cache from Calendar.aspx.
+        # Layers 1 + 2 — DB-hydrated + Calendar.aspx RAM cache share the dict.
         cache_key = f"{race_date}:{state}:{clean_venue}"
         if cache_key in self._slug_to_key:
             ra_key = self._slug_to_key[cache_key]
@@ -1325,11 +1398,12 @@ class RacingAustraliaClient:
             if results:
                 return ra_key, results
 
-        # 2. Try cleaned name directly (may work if RA has no sponsor prefix).
+        # 3. Try cleaned name directly.
         base_key = f"{ra_date_str},{state},{clean_venue}"
         results = await self.get_results(base_key)
         if results:
-            await self._persist_venue_key(race_date, state, clean_venue, base_key)
+            self._slug_to_key[cache_key] = base_key
+            self._schedule_persist_venue_key(race_date, state, clean_venue, base_key)
             return base_key, results
 
         # 4. Sponsor-prefix fanout — last resort.
@@ -1338,27 +1412,13 @@ class RacingAustraliaClient:
             results = await self.get_results(ra_key)
             if results:
                 log.info("RA results found with prefix '%s' for %s/%s", prefix, state, clean_venue)
-                self._slug_to_key[cache_key] = ra_key  # cache for future calls in this process
-                await self._persist_venue_key(race_date, state, clean_venue, ra_key)
+                self._slug_to_key[cache_key] = ra_key
+                self._schedule_persist_venue_key(race_date, state, clean_venue, ra_key)
                 return ra_key, results
 
         log.warning("RA results not found for %s/%s/%s (tried %d key variants)",
                     race_date, state, clean_venue, 2 + len(self._SPONSOR_PREFIXES))
         return "", {}
-
-    async def _persist_venue_key(
-        self, race_date: str, state: str, clean_venue: str, ra_key: str
-    ) -> None:
-        """Write a successful (date, state, venue) → RA key mapping to the
-        DB cache. Best-effort — a DB failure here is not worth failing the
-        parent request, since the RAM cache still holds the answer for
-        this process."""
-        try:
-            from horse_engine.models.database import get_session, save_ra_venue_key
-            async with get_session() as _session:
-                await save_ra_venue_key(_session, race_date, state, clean_venue, ra_key)
-        except Exception as e:
-            log.debug("[find_results] DB cache write failed, ignoring: %s", e)
 
     async def parse_race(self, raw_event: dict, race_date: str, venue: str, state: str) -> Race:
         meeting = raw_event.get("_meeting") or {}
