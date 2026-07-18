@@ -928,33 +928,12 @@ class RacingAustraliaClient:
 
     # ── InteractiveForm fetchers ──────────────────────────────────────────────
 
-    # Per-kind DB cache TTL. Horse form updates only when the horse
-    # actually races (typically every 2-4 weeks), so 48h keeps almost all
-    # relevant data fresh while surviving several process restarts.
-    # Jockey / trainer stats update every riding day, so 24h.
-    _FORM_TTL_HORSE_S = 48 * 3600
-    _FORM_TTL_PERSON_S = 24 * 3600
-
     async def _fetch_horse_form(self, horsecode: str, raceentry: str) -> dict:
         if not horsecode:
             return {}
-        # 1. Per-process RAM cache — cheapest, 1h TTL keeps within-tick
-        #    consistency without paying DB round-trip cost on hot codes.
         cached = self._horse_form_cache.get(horsecode)
         if cached and (datetime.utcnow() - cached[0]).total_seconds() < 3600:
             return cached[1]
-        # 2. DB cache — survives Railway redeploys AND the RAM TTL. Skips
-        #    the RA fetch + BeautifulSoup parse on hit.
-        try:
-            from horse_engine.models.database import get_session, load_ra_form
-            async with get_session() as _s:
-                cached_db = await load_ra_form(_s, "h", horsecode, self._FORM_TTL_HORSE_S)
-            if cached_db is not None:
-                self._horse_form_cache[horsecode] = (datetime.utcnow(), cached_db)
-                return cached_db
-        except Exception as e:
-            log.debug("[form-cache] DB read failed for horse %s: %s", horsecode, e)
-        # 3. Cold path — fetch from RA and persist to both layers.
         url = f"{_IF_BASE}/HorseFullForm.aspx?horsecode={horsecode}&src=horseform&raceentry={raceentry}"
         try:
             html = await self._get_form(url)
@@ -963,35 +942,15 @@ class RacingAustraliaClient:
             log.debug("Horse form fetch failed %s: %s", horsecode, e)
             data = {}
         self._horse_form_cache[horsecode] = (datetime.utcnow(), data)
-        if data:
-            try:
-                from horse_engine.models.database import get_session, save_ra_form
-                async with get_session() as _s:
-                    await save_ra_form(_s, "h", horsecode, data)
-            except Exception as e:
-                log.debug("[form-cache] DB write failed for horse %s: %s", horsecode, e)
         return data
 
     async def _fetch_person_form(self, code: str, kind: str) -> dict:
         if not code:
             return {}
         cache = self._jockey_form_cache if kind == "jockey" else self._trainer_form_cache
-        kind_char = "j" if kind == "jockey" else "t"
-        # 1. RAM cache.
         cached = cache.get(code)
         if cached and (datetime.utcnow() - cached[0]).total_seconds() < 3600:
             return cached[1]
-        # 2. DB cache.
-        try:
-            from horse_engine.models.database import get_session, load_ra_form
-            async with get_session() as _s:
-                cached_db = await load_ra_form(_s, kind_char, code, self._FORM_TTL_PERSON_S)
-            if cached_db is not None:
-                cache[code] = (datetime.utcnow(), cached_db)
-                return cached_db
-        except Exception as e:
-            log.debug("[form-cache] DB read failed for %s %s: %s", kind, code, e)
-        # 3. Cold path.
         if kind == "jockey":
             url = f"{_IF_BASE}/JockeyLastRuns.aspx?jockeycode={code}"
         else:
@@ -1003,14 +962,15 @@ class RacingAustraliaClient:
             log.debug("Person form fetch failed %s %s: %s", kind, code, e)
             data = {}
         cache[code] = (datetime.utcnow(), data)
-        if data:
-            try:
-                from horse_engine.models.database import get_session, save_ra_form
-                async with get_session() as _s:
-                    await save_ra_form(_s, kind_char, code, data)
-            except Exception as e:
-                log.debug("[form-cache] DB write failed for %s %s: %s", kind, code, e)
         return data
+
+    # NOTE (2026-07-18): the DB-persistence variant of _fetch_horse_form /
+    # _fetch_person_form (commit 2982a72) was reverted here because opening
+    # a fresh get_session() per fetch exhausted the asyncpg pool during
+    # _batch_fetch_runner_forms bursts (30+ concurrent form fetches × 2
+    # sessions each = 60 concurrent connects, TimeoutError). Re-add later
+    # via a single batched session opened at the _batch_fetch level so we
+    # do 1 session for N codes instead of 2N sessions.
 
     async def _batch_fetch_runner_forms(self, selections: list[dict]) -> dict:
         """Fetch horse/jockey/trainer forms for all selections in parallel."""
@@ -1346,51 +1306,26 @@ class RacingAustraliaClient:
     async def find_results(self, race_date: str, state: str, clean_venue: str) -> tuple[str, dict[int, dict]]:
         """
         Try to find RA results for a venue whose stored name has had the sponsor prefix stripped.
-
-        Lookup order (each layer skipped if empty):
-          1. DB-persisted ra_venue_key_cache — the answer from any previous
-             session for this exact (date, state, venue). Survives Railway
-             redeploys, which the RAM cache below does not.
-          2. In-process RAM cache populated by Calendar.aspx during startup
-             (fresh Railway container).
-          3. Plain unprefixed key (works for a minority of venues).
-          4. Sponsor-prefixed variants — the fallback fanout. Costs one RA
-             fetch per attempt, so limit to what's actually common in AU.
-
-        On a successful resolution (layers 3–4), the result is persisted to
-        the DB cache so future lookups skip straight to layer 1. This
-        eliminates the ~1500-request/day sponsor-variant fanout that was
-        contributing to the JA3-fingerprinted traffic pattern.
-
+        Checks the Calendar.aspx-derived slug→key cache first, then tries common sponsor prefixes.
         Returns (ra_key_used, results_dict) — ra_key_used is "" if nothing found.
+
+        NOTE (2026-07-18): DB-persisted layer removed — every find_results
+        call opened a fresh session, and find_results runs in parallel
+        across ~30 venues per seed-cron tick, spiking asyncpg pool usage
+        to the point Railway killed the DB. Re-add via a batched preload
+        at the seed-cron entry point instead.
         """
         ra_date_str = _ra_date(race_date)
 
-        # 1. DB-persisted cache. Survives redeploys.
-        try:
-            from horse_engine.models.database import get_session, load_ra_venue_key
-            async with get_session() as _session:
-                cached_key = await load_ra_venue_key(_session, race_date, state, clean_venue)
-            if cached_key:
-                results = await self.get_results(cached_key)
-                if results:
-                    return cached_key, results
-                # DB had a key but RA returned nothing — the meeting may be
-                # abandoned today. Fall through to the fanout in case this
-                # date's venue key genuinely differs from what we cached.
-        except Exception as e:
-            log.debug("[find_results] DB cache read failed, continuing: %s", e)
-
-        # 2. In-RAM cache from Calendar.aspx (RA client startup path).
+        # 1. In-RAM cache from Calendar.aspx.
         cache_key = f"{race_date}:{state}:{clean_venue}"
         if cache_key in self._slug_to_key:
             ra_key = self._slug_to_key[cache_key]
             results = await self.get_results(ra_key)
             if results:
-                await self._persist_venue_key(race_date, state, clean_venue, ra_key)
                 return ra_key, results
 
-        # 3. Try cleaned name directly (may work if RA has no sponsor prefix).
+        # 2. Try cleaned name directly (may work if RA has no sponsor prefix).
         base_key = f"{ra_date_str},{state},{clean_venue}"
         results = await self.get_results(base_key)
         if results:

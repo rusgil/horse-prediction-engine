@@ -637,6 +637,25 @@ async def init_db() -> None:
         "CREATE INDEX IF NOT EXISTS ix_mwcand_batch ON model_weight_candidates (batch_id)",
         "CREATE INDEX IF NOT EXISTS ix_mwcand_type_status ON model_weight_candidates (model_type, status)",
         "CREATE INDEX IF NOT EXISTS ix_hist_batch_id ON runner_prediction_history (batch_id)",
+        # UNIQUE index creation must be robust to pre-existing duplicates.
+        # The 2026-07-18 incident: this CREATE UNIQUE INDEX ran on a table
+        # that had duplicate (race_id, horse_name) rows from a prior settle
+        # sweep, threw a duplicate-key error, and Railway kept trying to
+        # restart the app until Postgres itself was killed. Dedupe first
+        # (keep the lowest id, drop the rest) then attempt the index.
+        # DELETE runs unconditionally — a no-op on a clean table.
+        """
+        DELETE FROM runner_prediction_history
+        WHERE id IN (
+            SELECT id FROM (
+                SELECT id, ROW_NUMBER() OVER (
+                    PARTITION BY race_id, horse_name
+                    ORDER BY id
+                ) AS rn
+                FROM runner_prediction_history
+            ) t WHERE rn > 1
+        )
+        """,
         "CREATE UNIQUE INDEX IF NOT EXISTS uq_history_race_horse ON runner_prediction_history (race_id, horse_name)",
         "CREATE INDEX IF NOT EXISTS ix_runner_pred_race_rank ON runner_predictions (race_id, model_rank)",
         "CREATE INDEX IF NOT EXISTS ix_runner_pred_hist_race_rank ON runner_prediction_history (race_id, model_rank)",
