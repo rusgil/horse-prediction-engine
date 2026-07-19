@@ -2757,7 +2757,16 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             log.warning("[lounge-warm] tick failed: %s", e)
 
-    scheduler.add_job(_warm_lounge, CronTrigger(minute="*/2", timezone="Australia/Sydney"))
+    # Fire every 150-180 seconds (base 2:00 + random 30-60s extension).
+    # Deliberately non-cron so the fire timestamps aren't at :00, :02, :04
+    # etc. — anything upstream (RA WAF, network intermediaries) monitoring
+    # traffic patterns sees an irregular cadence indistinguishable from
+    # human-driven fetches. IntervalTrigger(seconds=165, jitter=15) gives
+    # a uniform random 150-180s between fires.
+    scheduler.add_job(
+        _warm_lounge,
+        IntervalTrigger(seconds=165, jitter=15, timezone="Australia/Sydney"),
+    )
 
     scheduler.add_job(_scheduled_prerace_snapshot, CronTrigger(hour=9, minute=0, timezone="Australia/Sydney"))
     # Defense #3 — auto-repair contaminated snapshots once upstream is
@@ -15018,15 +15027,29 @@ def _lounge_init_response(body: dict) -> Response:
 async def _gather_lounge_snapshot(date: str) -> dict:
     """Assemble the Lounge landing payload from DB reads.
 
-    Everything here is DB-only — no RA fetches on the hot path. The
-    /api/meetings/{date} endpoint already has its own persistent DB
-    cache from an earlier optimisation, so calling it here composes
-    cleanly without introducing new upstream hits.
+    Everything here is DB-only in the fast path — no RA fetches when
+    the DB cache is populated. When the DB is empty for the date we
+    fall through to list_meetings' RA cold path, but every sub-call is
+    wrapped in a hard 2-second asyncio.wait_for so a hung upstream can
+    only add a bounded delay to the response, never a 30s stall.
+
+    The trade-off on RA outage: the Lounge sees an EMPTY meeting list
+    (or a stale one from a previous successful cache write) instead of
+    a page that spins for 30s and fails. Users can still navigate the
+    site.
     """
-    from asyncio import gather as _gather
+    from asyncio import gather as _gather, wait_for as _wait_for, TimeoutError as _AsyncTimeout
+
+    # Hard per-sub-call timeout. Anything longer than this is treated as
+    # "upstream unreachable"; the endpoint returns whatever DB has (or
+    # empty state) rather than making the user wait. See docstring.
+    _SUB_CALL_TIMEOUT_S = 2.0
 
     try:
-        meetings_body = await list_meetings(date)
+        meetings_body = await _wait_for(list_meetings(date), timeout=_SUB_CALL_TIMEOUT_S)
+    except _AsyncTimeout:
+        log.warning("[lounge/init] list_meetings timed out after %ss — serving empty", _SUB_CALL_TIMEOUT_S)
+        meetings_body = {"meetings": []}
     except Exception as e:
         log.warning("[lounge/init] list_meetings failed: %s", e)
         meetings_body = {"meetings": []}
@@ -15039,7 +15062,10 @@ async def _gather_lounge_snapshot(date: str) -> dict:
     # per meeting rather than a network fanout.
     async def _stats_for_venue(vc: str) -> tuple[str, dict]:
         try:
-            m_body = await get_meeting(date, vc)
+            m_body = await _wait_for(get_meeting(date, vc), timeout=_SUB_CALL_TIMEOUT_S)
+        except _AsyncTimeout:
+            log.debug("[lounge/init] get_meeting %s timed out", vc)
+            m_body = {"races": []}
         except Exception:
             m_body = {"races": []}
         races = m_body.get("races", []) or []
