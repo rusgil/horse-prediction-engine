@@ -696,7 +696,7 @@
       return `
         <div style="background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius);padding:16px;margin-bottom:14px">
           <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;margin-bottom:8px;flex-wrap:wrap">
-            <div style="font-weight:700;font-size:1rem">${escHtml(r.title || '(untitled)')}</div>
+            <div style="font-weight:700;font-size:1rem"><span style="color:var(--text-dim);font-family:'JetBrains Mono',ui-monospace,SFMono-Regular,Menlo,monospace;font-weight:600;margin-right:6px">#${r.id}</span>${escHtml(r.title || '(untitled)')}</div>
             ${statusChip}
           </div>
           <div style="font-size:0.83rem;color:var(--text-secondary);margin-bottom:6px"><strong>Context:</strong> ${escHtml(r.context_md || '')}</div>
