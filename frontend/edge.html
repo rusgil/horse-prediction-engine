@@ -577,6 +577,20 @@
       text-align: center;
       min-width: 80px;
     }
+    /* Odds thresholds — visual only. Odds already carry the payoff math;
+       colour codes the "worth-a-look" band without any dollar-amount
+       clutter. green ≥ $2.50, purple ≥ $3.00, purple always wins the
+       cascade because it's the higher threshold. */
+    .odds-badge.odds-good {
+      color: var(--green);
+      border-color: rgba(16, 185, 129, 0.5);
+      background: rgba(16, 185, 129, 0.08);
+    }
+    .odds-badge.odds-great {
+      color: var(--purple);
+      border-color: rgba(168, 85, 247, 0.5);
+      background: rgba(168, 85, 247, 0.08);
+    }
     .odds-badge .odds-label {
       display: block;
       font-size: 0.6rem; font-weight: 700;
@@ -1854,18 +1868,10 @@
   </div>
 
   <div id="panelUpcoming">
-    <div class="stake-bar">
-      <span class="stake-label">Stake per bet:</span>
-      <div class="stake-input-wrap">
-        <span class="stake-currency">$</span>
-        <input type="number" class="stake-input" id="stakeInput" value="10" min="1" max="500" />
-      </div>
-      <span class="stake-note">For best results, focus on picks where <strong>the model beats the market</strong> and odds are <strong>$3.00 or better</strong>.</span>
-      <div class="stake-slider-wrap">
-        <input type="range" class="stake-slider" id="stakeSlider" min="5" max="500" step="5" value="10" />
-        <div class="stake-slider-labels"><span>$5</span><span>$100</span><span>$250</span><span>$500</span></div>
-      </div>
-    </div>
+    <!-- Stake-per-bet input removed 2026-07-20 — odds already tell you the
+         payoff (decimal odds × stake = return); the input added visual
+         noise without adding information. Odds are now colour-coded:
+         green ≥ $2.50, purple ≥ $3.00. See .odds-badge in the head. -->
     <div class="sort-bar">
       <span>Sort:</span>
       <button class="sort-btn active" id="sortBestPick" onclick="setSortMode('best')">Best Pick</button>
@@ -1894,18 +1900,8 @@
   </div>
 
   <div id="panelYesterday" style="display:none">
-    <div class="stake-bar">
-      <span class="stake-label">Stake per bet:</span>
-      <div class="stake-input-wrap">
-        <span class="stake-currency">$</span>
-        <input type="number" class="stake-input" id="stakeInputYesterday" value="10" min="1" max="500" />
-      </div>
-      <span class="stake-note">Change stake to see what you would have won or lost.</span>
-      <div class="stake-slider-wrap">
-        <input type="range" class="stake-slider" id="stakeSliderYesterday" min="5" max="500" step="5" value="10" />
-        <div class="stake-slider-labels"><span>$5</span><span>$100</span><span>$250</span><span>$500</span></div>
-      </div>
-    </div>
+    <!-- Stake-per-bet input removed 2026-07-20 (see panelUpcoming above). -->
+
     <div style="display:flex;align-items:center;gap:10px;padding:0 0 12px">
       <button id="ystPrev" onclick="shiftYesterdayDate(-1)" style="background:var(--bg-elevated);border:1px solid var(--border);color:var(--text-secondary);border-radius:6px;padding:5px 12px;cursor:pointer;font-size:0.85rem">← Prev</button>
       <span id="ystDateLabel" style="font-size:0.82rem;color:var(--text-dim);flex:1;text-align:center"></span>
@@ -2239,8 +2235,13 @@
     const oddsLabel   = (result && result.sp) ? 'Starting Price' : 'Best Odds';
     const pay = calcPayout(displayOdds, stake);
 
+    // Odds threshold colouring: green ≥ $2.50, purple ≥ $3.00. Cascade so
+    // purple wins on the higher band. Applies to both live BAO and SP.
+    let oddsClass = '';
+    if (displayOdds && displayOdds >= 3.0) oddsClass = ' odds-great';
+    else if (displayOdds && displayOdds >= 2.5) oddsClass = ' odds-good';
     const oddsHtml = displayOdds
-      ? `<div class="odds-badge"><span class="odds-label">${oddsLabel}</span>$${displayOdds.toFixed(2)}</div>`
+      ? `<div class="odds-badge${oddsClass}"><span class="odds-label">${oddsLabel}</span>$${displayOdds.toFixed(2)}</div>`
       : `<div class="odds-badge" style="color:var(--text-dim)"><span class="odds-label">Odds</span>TBA</div>`;
 
     let payoutHtml;
@@ -2258,23 +2259,13 @@
       } else if (result.no_result === true) {
         payoutHtml = `<div class="no-odds">Result pending</div>`;
       } else if (result.winner) {
-        if (pay) {
-          payoutHtml = `
-            <div class="payout-box">
-              <div class="payout-profit-label">$${stake} stake</div>
-              <div class="payout-profit">+$${pay.profit.toFixed(2)}</div>
-              <div class="payout-return">Return: <span class="return-amt">$${pay.gross.toFixed(2)}</span></div>
-            </div>`;
-        } else {
-          payoutHtml = `<div class="payout-box"><div class="payout-profit-label">Won</div><div class="payout-profit" style="color:var(--green)">SP not captured</div></div>`;
-        }
+        // Winner — coloured chip only. Odds badge already shows the price.
+        payoutHtml = `<div class="payout-box"><div class="payout-profit-label" style="color:var(--green);font-size:1rem">✓ Won</div></div>`;
       } else if (result.position && result.position > 3) {
-        // Confirmed miss — we have an actual finishing position out of
-        // the placings. Only path to the red $10 loss panel.
+        // Confirmed miss — coloured chip only.
         payoutHtml = `
           <div class="payout-box" style="background:rgba(239,68,68,0.08);border-color:rgba(239,68,68,0.2);">
-            <div class="payout-profit-label" style="color:var(--text-dim)">$${stake} loss</div>
-            <div class="payout-profit" style="color:#f87171;">-$${(+stake).toFixed(2)}</div>
+            <div class="payout-profit-label" style="color:#f87171;font-size:1rem">✗ Lost</div>
           </div>`;
       } else {
         // No position, not a winner, not marked scratched or no_result —
@@ -2283,15 +2274,11 @@
       }
     } else if (isPast) {
       payoutHtml = `<div class="no-odds">Result pending</div>`;
-    } else if (pay) {
-      payoutHtml = `
-        <div class="payout-box">
-          <div class="payout-profit-label">$${stake} stake</div>
-          <div class="payout-profit">+$${pay.profit.toFixed(2)}</div>
-          <div class="payout-return">Return: <span class="return-amt">$${pay.gross.toFixed(2)}</span></div>
-        </div>`;
     } else {
-      payoutHtml = `<div class="no-odds">Odds not yet available</div>`;
+      // Live / upcoming: no payout math shown. The odds badge (colour
+      // coded by threshold — green ≥ $2.50, purple ≥ $3.00) carries all
+      // the value users need.
+      payoutHtml = '';
     }
 
     const edgeHtml = (!isPast && pick.edge_pct != null && displayOdds)
@@ -2831,7 +2818,7 @@
     document.getElementById('sortBestPick').classList.toggle('active', mode === 'best');
     document.getElementById('sortNextRace').classList.toggle('active', mode === 'next');
     if (picksData) {
-      const stake = parseFloat(document.getElementById('stakeInput').value) || 10;
+      const stake = 10;  // input removed 2026-07-20
       renderContent(picksData, stake, resultsMap);
     }
   }
@@ -2845,7 +2832,7 @@
     if (sharpBtn) sharpBtn.classList.toggle('active', mode === 'sharp');
     if (allBtn) allBtn.classList.toggle('active', mode === 'all');
     if (picksData) {
-      const stake = parseFloat(document.getElementById('stakeInput').value) || 10;
+      const stake = 10;  // input removed 2026-07-20
       renderContent(picksData, stake, resultsMap);
     }
   }
@@ -3355,7 +3342,12 @@
 
     // Odds panel (SP in place of Best Odds)
     const oddsHtml = p.sp
-      ? `<div class="odds-badge"><span class="odds-label">Starting Price</span>$${p.sp.toFixed(2)}</div>`
+      ? (() => {
+          let cls = '';
+          if (p.sp >= 3.0) cls = ' odds-great';
+          else if (p.sp >= 2.5) cls = ' odds-good';
+          return `<div class="odds-badge${cls}"><span class="odds-label">Starting Price</span>$${p.sp.toFixed(2)}</div>`;
+        })()
       : `<div class="odds-badge" style="color:var(--text-dim)"><span class="odds-label">Starting Price</span>N/A</div>`;
 
     // Payout panel — computed from SP and user stake
@@ -3717,7 +3709,7 @@
       const res = await fetch(`${API}/api/edge/yesterday?date=${dateStr}`);
       if (!res.ok) throw new Error(res.statusText);
       yesterdayData = await res.json();
-      const stake = parseFloat(document.getElementById('stakeInputYesterday').value) || 10;
+      const stake = 10;  // input removed 2026-07-20
       renderYesterdayContent(yesterdayData, stake);
     } catch (e) {
       document.getElementById('yesterdayContent').innerHTML = `
@@ -3831,7 +3823,7 @@
         } catch (e) { /* best-effort */ }
       }
 
-      const stake = parseFloat(document.getElementById('stakeInput').value) || 10;
+      const stake = 10;  // input removed 2026-07-20
 
       // If any picks have already jumped, fetch today's results to show outcomes
       const now = Date.now();
@@ -3919,7 +3911,7 @@
       if (!res2.ok) return;
       picksData = await res2.json();
       _seedResultsMapFromPicks(picksData.picks);
-      const stake = parseFloat(document.getElementById('stakeInput').value) || 10;
+      const stake = 10;  // input removed 2026-07-20
       renderContent(picksData, stake, resultsMap);
     } catch (e) { /* silent — odds refresh is best-effort */ }
   }
@@ -3937,7 +3929,7 @@
         for (const r of rd.picks) resultsMap[r.race_id] = r;
       }
       if (picksData) {
-        const stake = parseFloat(document.getElementById('stakeInput').value) || 10;
+        const stake = 10;  // input removed 2026-07-20
         renderContent(picksData, stake, resultsMap);
       }
     } catch (e) { /* silent */ }
@@ -3986,7 +3978,7 @@
         for (const r of rd.picks) resultsMap[r.race_id] = r;
       }
       if (picksData) {
-        const stake = parseFloat(document.getElementById('stakeInput').value) || 10;
+        const stake = 10;  // input removed 2026-07-20
         renderContent(picksData, stake, resultsMap);
       }
     } catch (e) { /* silent — results refresh is best-effort */ }
@@ -3998,29 +3990,9 @@
   setInterval(refreshOdds, 20 * 60 * 1000 + Math.random() * 2 * 60 * 1000); // 20-22 min
   setInterval(refreshResults, 90 * 1000 + Math.random() * 20 * 1000);       // 90-110s
 
-  document.getElementById('stakeInput').addEventListener('input', function() {
-    const stake = parseFloat(this.value) || 10;
-    document.getElementById('stakeSlider').value = Math.min(500, Math.max(5, stake));
-    if (picksData) updatePayouts(stake);
-  });
-
-  document.getElementById('stakeSlider').addEventListener('input', function() {
-    const stake = parseFloat(this.value) || 10;
-    document.getElementById('stakeInput').value = stake;
-    if (picksData) updatePayouts(stake);
-  });
-
-  document.getElementById('stakeInputYesterday').addEventListener('input', function() {
-    const stake = parseFloat(this.value) || 10;
-    document.getElementById('stakeSliderYesterday').value = Math.min(500, Math.max(5, stake));
-    if (yesterdayData) renderYesterdayContent(yesterdayData, stake);
-  });
-
-  document.getElementById('stakeSliderYesterday').addEventListener('input', function() {
-    const stake = parseFloat(this.value) || 10;
-    document.getElementById('stakeInputYesterday').value = stake;
-    if (yesterdayData) renderYesterdayContent(yesterdayData, stake);
-  });
+  // Stake input widgets removed 2026-07-20 — no user-facing payout
+  // amounts to update on stake change. Any remaining internal payout math
+  // now runs against the hardcoded default (10) via _DEFAULT_STAKE.
 
   // Field-expansion toggle on pick cards — delegated so it survives re-renders.
   document.body.addEventListener('click', (e) => {
@@ -4031,7 +4003,7 @@
     if (_expandedFields.has(raceId)) _expandedFields.delete(raceId);
     else _expandedFields.add(raceId);
     if (picksData) {
-      const stake = parseFloat(document.getElementById('stakeInput').value) || 10;
+      const stake = 10;  // input removed 2026-07-20
       renderContent(picksData, stake, resultsMap);
     }
   });
