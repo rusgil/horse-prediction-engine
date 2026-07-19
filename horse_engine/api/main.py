@@ -2720,6 +2720,45 @@ async def lifespan(app: FastAPI):
     scheduler.add_job(_warm_edge, CronTrigger(hour=10, minute=45, timezone="Australia/Sydney"))  # post 10:30 enrich
     scheduler.add_job(_warm_edge, CronTrigger(hour=11, minute=45, timezone="Australia/Sydney"))  # post 11:30 enrich
     scheduler.add_job(_warm_edge, CronTrigger(hour=12, minute=15, timezone="Australia/Sydney"))  # pre-metro
+
+    # Lounge landing-page pre-warm. The /api/lounge/init endpoint bundles
+    # ~60 discrete fetches worth of data into one payload. If nobody visits
+    # for 3 min the cache goes stale; when the next user shows up they eat
+    # the cold-fill cost. Tick every 2 min (inside the 3-min TTL) so the
+    # cache is always warm and every user gets a sub-100ms edge-cached
+    # response. Cheap — the whole gather is DB-only.
+    async def _warm_lounge():
+        try:
+            today = _today_aest().isoformat()
+            body = await _gather_lounge_snapshot(today)
+            # Write directly to cache — mirrors get_lounge_init's persist path.
+            payload = json.dumps(body)
+            now = datetime.utcnow()
+            async with get_session() as session:
+                existing = (await session.execute(
+                    select(ResponseCacheRow).where(
+                        ResponseCacheRow.cache_key == f"lounge:init:{today}"
+                    )
+                )).scalars().first()
+                if existing:
+                    existing.payload_json = payload
+                    existing.updated_at = now
+                    existing.cache_version = (existing.cache_version or 0) + 1
+                else:
+                    session.add(ResponseCacheRow(
+                        cache_key=f"lounge:init:{today}",
+                        payload_json=payload,
+                        cache_version=1,
+                        updated_at=now,
+                    ))
+                await session.commit()
+            log.info("[lounge-warm] tick complete for %s (%d meetings)",
+                     today, len(body.get("meetings") or []))
+        except Exception as e:
+            log.warning("[lounge-warm] tick failed: %s", e)
+
+    scheduler.add_job(_warm_lounge, CronTrigger(minute="*/2", timezone="Australia/Sydney"))
+
     scheduler.add_job(_scheduled_prerace_snapshot, CronTrigger(hour=9, minute=0, timezone="Australia/Sydney"))
     # Defense #3 — auto-repair contaminated snapshots once upstream is
     # stable again. Every 5 min: checks health, requires 5+ min of
@@ -14879,6 +14918,168 @@ async def list_meetings(race_date: str = _today()):
     except Exception as e:
         log.debug("[list_meetings] DB cache write skipped: %s", e)
     return result
+
+
+_LOUNGE_INIT_TTL_SECONDS = 180  # 3 min server-side cache
+
+
+@app.get("/api/lounge/init")
+async def get_lounge_init(date: Optional[str] = None):
+    """Composite payload for the Lounge landing page — everything needed to
+    render the page's initial state in one HTTP call.
+
+    Purpose: eliminate the ~60 sequential fetches (~one per meeting × several
+    endpoints) that made the Lounge feel sluggish. This endpoint returns:
+
+      - meetings:        [{venue_code, venue_name, state, cancelled, ...}]
+      - meeting_stats:   {venue_code → {races_count, max_conf, sharp_any,
+                                        wins, placed, settled_total}}
+      - performance:     10-day rolling stats for the perf strip
+      - date, generated_at
+
+    Caching stack:
+      1. Server-side ResponseCacheRow row keyed 'lounge:init:{date}'
+         with _LOUNGE_INIT_TTL_SECONDS TTL — first user of each TTL
+         window pays the cost, everyone else hits cache in <50ms.
+      2. Cache-Control response header for CDN edge caching (Vercel /
+         Cloudflare will serve stale cached copies while a background
+         revalidation refreshes the origin).
+
+    Live-updating data (odds, scratches) STAYS on the small per-race
+    endpoints — no attempt to bundle those here. This is a one-shot
+    landing payload, not a real-time subscription.
+    """
+    if not date:
+        date = _today_aest().isoformat()
+    _validate_date(date)
+
+    cache_key = f"lounge:init:{date}"
+    # Layer 1: DB cache. Also survives Railway redeploys.
+    try:
+        async with get_session() as session:
+            row = (await session.execute(
+                select(ResponseCacheRow).where(ResponseCacheRow.cache_key == cache_key)
+            )).scalar_one_or_none()
+        if row:
+            age = (datetime.utcnow() - row.updated_at).total_seconds()
+            if age < _LOUNGE_INIT_TTL_SECONDS:
+                body = json.loads(row.payload_json)
+                body["from_cache"] = True
+                body["cache_age_seconds"] = round(age, 1)
+                return _lounge_init_response(body)
+    except Exception as e:
+        log.debug("[lounge/init] cache read skipped: %s", e)
+
+    # Cold path — gather everything in parallel.
+    body = await _gather_lounge_snapshot(date)
+
+    # Persist for the next N minutes of visitors.
+    try:
+        payload = json.dumps(body)
+        now = datetime.utcnow()
+        async with get_session() as session:
+            existing = (await session.execute(
+                select(ResponseCacheRow).where(ResponseCacheRow.cache_key == cache_key)
+            )).scalars().first()
+            if existing:
+                existing.payload_json = payload
+                existing.updated_at = now
+                existing.cache_version = (existing.cache_version or 0) + 1
+            else:
+                session.add(ResponseCacheRow(
+                    cache_key=cache_key,
+                    payload_json=payload,
+                    cache_version=1,
+                    updated_at=now,
+                ))
+            await session.commit()
+    except Exception as e:
+        log.debug("[lounge/init] cache write skipped: %s", e)
+
+    return _lounge_init_response(body)
+
+
+def _lounge_init_response(body: dict) -> Response:
+    """Wrap the lounge-init payload with CDN-friendly cache headers so a
+    Cloudflare / Vercel edge can absorb repeat visits without hitting
+    Railway. stale-while-revalidate lets the edge keep serving the old
+    payload while it fetches the fresh one asynchronously."""
+    headers = {
+        "Cache-Control": f"public, s-maxage={_LOUNGE_INIT_TTL_SECONDS}, "
+                          f"stale-while-revalidate=60",
+    }
+    return Response(
+        content=json.dumps(body),
+        media_type="application/json",
+        headers=headers,
+    )
+
+
+async def _gather_lounge_snapshot(date: str) -> dict:
+    """Assemble the Lounge landing payload from DB reads.
+
+    Everything here is DB-only — no RA fetches on the hot path. The
+    /api/meetings/{date} endpoint already has its own persistent DB
+    cache from an earlier optimisation, so calling it here composes
+    cleanly without introducing new upstream hits.
+    """
+    from asyncio import gather as _gather
+
+    try:
+        meetings_body = await list_meetings(date)
+    except Exception as e:
+        log.warning("[lounge/init] list_meetings failed: %s", e)
+        meetings_body = {"meetings": []}
+    meetings = meetings_body.get("meetings", [])
+    venue_codes = [m.get("venue_code") for m in meetings if m.get("venue_code")]
+
+    # Fetch per-meeting details AND per-meeting results in parallel. Each
+    # of these is DB-only for a past date (skips RA entirely) and hits the
+    # 30s RAM cache on a live day, so this fan-out is O(1) DB round-trips
+    # per meeting rather than a network fanout.
+    async def _stats_for_venue(vc: str) -> tuple[str, dict]:
+        try:
+            m_body = await get_meeting(date, vc)
+        except Exception:
+            m_body = {"races": []}
+        races = m_body.get("races", []) or []
+        enriched = [r for r in races if r.get("enriched_at")]
+        settled_win = [r for r in races if r.get("model_correct") is not None]
+        settled_place = [r for r in races if r.get("model_placed") is not None]
+        sharp_any = [r for r in races if r.get("is_sharp")]
+        max_conf = 0.0
+        for r in enriched:
+            twp = r.get("top_win_probability") or 0
+            max_conf = max(max_conf, twp * 100)
+        stats = {
+            "races_count": len(races),
+            "enriched_count": len(enriched),
+            "max_conf": round(max_conf, 1),
+            "sharp_any": len(sharp_any),
+            "wins": sum(1 for r in settled_win if r.get("model_correct")),
+            "placed": sum(1 for r in settled_place if r.get("model_placed")),
+            "settled_total": len(settled_win),
+        }
+        return vc, stats
+
+    stats_pairs = await _gather(*(_stats_for_venue(vc) for vc in venue_codes))
+    meeting_stats = {vc: s for vc, s in stats_pairs}
+
+    # Perf strip — cheap DB read, keep in the same fetch.
+    try:
+        perf_body = await performance_summary(days=10, sharp=False)
+    except Exception as e:
+        log.debug("[lounge/init] performance fetch skipped: %s", e)
+        perf_body = None
+
+    return {
+        "date": date,
+        "generated_at": datetime.utcnow().isoformat(),
+        "from_cache": False,
+        "meetings": meetings,
+        "meeting_stats": meeting_stats,
+        "performance": perf_body,
+    }
 
 
 @app.get("/api/meetings/{race_date}/{venue_code}")
