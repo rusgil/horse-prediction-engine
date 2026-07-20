@@ -500,6 +500,9 @@ class UserRow(Base):
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     email = Column(String, nullable=False, unique=True, index=True)
+    # Display name — collected later (Stripe checkout, profile edit).
+    # Kept nullable so passwordless signup doesn't demand it up front.
+    name = Column(String, nullable=True)
     role = Column(String, nullable=False, default="member", index=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
@@ -518,6 +521,15 @@ class UserRow(Base):
     # Format: comma-separated plan tags, e.g. "punter_pro,labs,founding".
     # Auth middleware reads this in place of Stripe subscription state.
     test_plan_override = Column(String, nullable=True)
+
+    # Remaining invites this member can issue. Defaults to 20 per the
+    # Phase 2 spec ("same 20 invites for anyone"). Admins can bulk-mint
+    # via /api/admin/invites/mint without touching this counter, so the
+    # column reflects member-facing invite capacity only. Decremented
+    # atomically on POST /api/invites/create; NOT refunded on revoke —
+    # the invite existed and the seat may already have been claimed by
+    # a different flow. Refill via admin adjustment if genuinely needed.
+    invites_remaining = Column(Integer, nullable=False, default=20)
 
 
 class MagicLinkRow(Base):
@@ -559,6 +571,60 @@ class SessionRow(Base):
     last_seen_at = Column(DateTime, default=datetime.utcnow)   # touched on every authed request; helps identify stale devices
     user_agent = Column(String, nullable=True)                 # useful for account-security review
     ip_address = Column(String, nullable=True)
+
+
+class InviteRow(Base):
+    """One invite code — either issued by a member to a specific friend
+    or bulk-minted by an admin without a target email. Consumed on the
+    verify path when the recipient completes their magic-link flow.
+
+    We store SHA-256(code) — never the raw code — so a DB leak can't be
+    replayed as a valid invite. The raw code lives only in the URL the
+    member shared and in the recipient's inbox / clipboard.
+
+    Lifecycle:
+      created → (optionally) revoked_at set by issuer  →  consumed_at
+                                                          set on verify.
+    A revoked or consumed invite fails resolve_invite() from that point
+    forward. expires_at defaults to 30 days; adjust when minting bulk.
+    """
+    __tablename__ = "invites"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    code_hash = Column(String, nullable=False, unique=True, index=True)
+    # Nullable — bulk admin invites don't target a specific email.
+    # When set, request-code enforces that the recipient email matches
+    # (case-insensitive) before consuming.
+    issued_to_email = Column(String, nullable=True, index=True)
+    # Nullable — bulk admin invites may not attribute to a specific
+    # admin (e.g., minted by cron for a promo campaign).
+    issued_by_user_id = Column(Integer, nullable=True, index=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    expires_at = Column(DateTime, nullable=False, index=True)
+    consumed_at = Column(DateTime, nullable=True)
+    consumed_by_user_id = Column(Integer, nullable=True, index=True)
+    revoked_at = Column(DateTime, nullable=True)
+
+
+class WaitlistRow(Base):
+    """People who tried to sign in without an invite. They land here so
+    an admin can either promote them (mint an invite → email it) or
+    surface them in a 'people waiting for a seat' view. Distinct from
+    'people with valid invites who hit the member_cap' — that path
+    creates a UserRow but leaves seat_active=False.
+    """
+    __tablename__ = "waitlist"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    email = Column(String, nullable=False, unique=True, index=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+    # e.g. 'public_landing', 'invite_landing_no_code', 'cap_hit'.
+    # Lets us slice conversion later.
+    source = Column(String, nullable=True)
+    # Optional free-text — user's own reason if we ever offer a textbox,
+    # or admin notes attached during outreach.
+    notes = Column(String, nullable=True)
+    invited_at = Column(DateTime, nullable=True)  # set when admin mints an invite for this waitlister
 
 
 class RAVenueKeyCacheRow(Base):
@@ -780,6 +846,25 @@ async def init_db() -> None:
         "CREATE INDEX IF NOT EXISTS ix_users_role_seat ON users (role, seat_active)",
         "CREATE INDEX IF NOT EXISTS ix_magic_links_email_created ON magic_links (email, created_at)",
         "CREATE INDEX IF NOT EXISTS ix_sessions_user_expires ON sessions (user_id, expires_at)",
+        # ── Membership + auth (Phase 2 — invites + waitlist) ─────────
+        # invites_remaining lands on users; new tables invites + waitlist
+        # are created by Base.metadata.create_all above. Backfill sets
+        # any pre-Phase-2 users to the default cap so existing accounts
+        # (right now: just the bootstrap admin) can start issuing.
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS name TEXT",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS invites_remaining INTEGER NOT NULL DEFAULT 20",
+        "UPDATE users SET invites_remaining = 20 WHERE invites_remaining IS NULL",
+        # Give the first admin a much larger pool so bootstrap invites
+        # for the initial cohort don't chew through the default 20. Only
+        # bumps admins whose pool is still at the default — hand-adjusted
+        # values won't be clobbered.
+        "UPDATE users SET invites_remaining = 500 WHERE role = 'admin' AND invites_remaining = 20",
+        # Composite so 'issuer's active invites' listing (dashboard) hits
+        # an index — the exact filter is (issued_by_user_id, revoked_at
+        # IS NULL, consumed_at IS NULL). Postgres can use this prefix.
+        "CREATE INDEX IF NOT EXISTS ix_invites_issuer_active ON invites (issued_by_user_id, consumed_at, revoked_at)",
+        "CREATE INDEX IF NOT EXISTS ix_invites_expires ON invites (expires_at)",
+        "CREATE INDEX IF NOT EXISTS ix_waitlist_created ON waitlist (created_at)",
         "CREATE INDEX IF NOT EXISTS ix_hist_results_race_winner ON historical_results (race_id, winner)",
         "CREATE INDEX IF NOT EXISTS ix_hist_results_race_placed ON historical_results (race_id, placed)",
         # Composite for common top-3/top-4 fetches: SELECT ... WHERE race_id = X AND position IN (1,2,3)

@@ -1,0 +1,308 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>FunkyIQ — You're Invited</title>
+  <meta name="robots" content="noindex, nofollow" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@400;600;700;800;900&family=Outfit:wght@300;400;500;600&display=swap" rel="stylesheet" />
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: 'Outfit', sans-serif;
+      background: #07090f;
+      color: #f0f4ff;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+      background-image:
+        radial-gradient(ellipse 80% 50% at 50% -20%, rgba(34,197,94,0.06), transparent),
+        radial-gradient(ellipse 60% 40% at 90% 90%, rgba(232,160,32,0.04), transparent);
+      -webkit-font-smoothing: antialiased;
+    }
+    .card {
+      background: #0e1220;
+      border: 1px solid #1e2840;
+      border-radius: 20px;
+      padding: 40px 36px;
+      width: 100%;
+      max-width: 420px;
+      box-shadow: 0 8px 40px rgba(0,0,0,0.6);
+    }
+    .brand { display: flex; align-items: center; gap: 10px; margin-bottom: 28px; }
+    .brand-dot { width: 10px; height: 10px; border-radius: 50%; background: #22c55e; box-shadow: 0 0 10px #22c55e; }
+    .brand-name {
+      font-family: 'Barlow Condensed', sans-serif;
+      font-size: 1.3rem; font-weight: 900;
+      letter-spacing: 0.08em; text-transform: uppercase;
+    }
+    h1 {
+      font-family: 'Barlow Condensed', sans-serif;
+      font-size: 1.7rem; font-weight: 800;
+      text-transform: uppercase; letter-spacing: 0.04em;
+      margin-bottom: 6px; line-height: 1;
+    }
+    .sub { font-size: 0.9rem; color: #8a9bc4; margin-bottom: 24px; line-height: 1.5; }
+    .invite-badge {
+      background: rgba(34,197,94,0.08);
+      border: 1px solid rgba(34,197,94,0.3);
+      border-radius: 10px;
+      padding: 12px 14px;
+      margin-bottom: 24px;
+      font-size: 0.85rem;
+      color: #7ed99b;
+      line-height: 1.5;
+      display: none;
+    }
+    .invite-badge.show { display: block; }
+    .invite-badge strong { color: #22c55e; }
+
+    label {
+      display: block; font-size: 0.72rem; font-weight: 600;
+      color: #8a9bc4; text-transform: uppercase;
+      letter-spacing: 0.1em; margin-bottom: 8px;
+    }
+    input[type="email"] {
+      width: 100%;
+      background: #1a2035;
+      border: 1px solid #1e2840;
+      border-radius: 10px;
+      color: #f0f4ff;
+      font-family: 'Outfit', sans-serif;
+      font-size: 1rem;
+      padding: 13px 16px;
+      outline: none;
+      transition: border-color 0.15s, box-shadow 0.15s;
+      margin-bottom: 20px;
+    }
+    input[type="email"]:focus {
+      border-color: #22c55e;
+      box-shadow: 0 0 0 3px rgba(34,197,94,0.12);
+    }
+    input[type="email"]::placeholder { color: #4a5a7a; }
+    input[type="email"]:disabled { opacity: 0.6; cursor: not-allowed; }
+    .btn {
+      width: 100%; background: #22c55e; color: #07090f;
+      border: none; border-radius: 10px;
+      font-family: 'Barlow Condensed', sans-serif;
+      font-size: 1.05rem; font-weight: 800;
+      letter-spacing: 0.1em; text-transform: uppercase;
+      padding: 14px; cursor: pointer;
+      transition: background 0.15s, transform 0.1s;
+    }
+    .btn:hover { background: #4ade80; }
+    .btn:active { transform: scale(0.98); }
+    .btn:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
+
+    .error {
+      background: rgba(239,68,68,0.1);
+      border: 1px solid rgba(239,68,68,0.25);
+      border-radius: 8px;
+      color: #f87171;
+      font-size: 0.85rem;
+      padding: 12px 14px;
+      margin-bottom: 18px;
+      line-height: 1.5;
+      display: none;
+    }
+    .error.show { display: block; }
+    .error a { color: #22c55e; text-decoration: none; font-weight: 600; }
+    .error a:hover { text-decoration: underline; }
+
+    /* Loading + terminal states */
+    .state { display: none; }
+    .state.show { display: block; }
+    .loader { text-align: center; padding: 40px 0; color: #8a9bc4; font-size: 0.9rem; }
+
+    .success { text-align: center; padding: 20px 0; }
+    .success-icon { font-size: 2.5rem; margin-bottom: 12px; }
+    .success-title {
+      font-family: 'Barlow Condensed', sans-serif;
+      font-size: 1.4rem; font-weight: 800;
+      text-transform: uppercase; letter-spacing: 0.04em;
+      color: #22c55e; margin-bottom: 8px;
+    }
+    .success-body {
+      font-size: 0.9rem; color: #c8d0e0;
+      line-height: 1.6; margin-bottom: 8px;
+    }
+    .success-hint {
+      font-size: 0.75rem; color: #8a9bc4;
+      line-height: 1.5; padding-top: 16px;
+      border-top: 1px solid #1e2840; margin-top: 20px;
+    }
+    .foot {
+      margin-top: 18px; padding-top: 18px;
+      border-top: 1px solid #1e2840;
+      text-align: center; font-size: 0.78rem; color: #8a9bc4;
+    }
+    .foot a { color: #22c55e; text-decoration: none; }
+    .foot a:hover { text-decoration: underline; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="brand">
+      <div class="brand-dot"></div>
+      <span class="brand-name">FunkyIQ</span>
+    </div>
+
+    <div class="state loader show" id="loadingState">
+      <div class="loader">Checking your invite…</div>
+    </div>
+
+    <div class="state" id="invalidState">
+      <h1>Invite Not Valid</h1>
+      <div class="error show" id="invalidReason"></div>
+      <a href="/waitlist" class="btn" style="display:block; text-align:center; text-decoration:none; margin-top:6px;">Join the Waitlist</a>
+    </div>
+
+    <div class="state" id="validState">
+      <h1>You're Invited</h1>
+      <p class="sub">Sign in to claim your seat. We'll email you a magic link — no password.</p>
+      <div class="invite-badge" id="inviteBadge"></div>
+      <div class="error" id="errMsg"></div>
+      <form id="inviteForm" autocomplete="on">
+        <label for="email">Email</label>
+        <input type="email" id="email" name="email"
+               placeholder="you@example.com" autocomplete="email" required autofocus />
+        <button class="btn" type="submit" id="submitBtn">Send Sign-in Link</button>
+      </form>
+    </div>
+
+    <div class="state" id="sentState">
+      <div class="success">
+        <div class="success-icon">📬</div>
+        <div class="success-title">Check your email</div>
+        <div class="success-body">
+          We just emailed a sign-in link to <strong id="sentTo"></strong>.<br>
+          Click it to finish signing in. The link expires in 15 minutes.
+        </div>
+        <div class="success-hint">
+          Didn't get it? Check spam, or come back and try again.
+        </div>
+      </div>
+    </div>
+
+    <div class="foot">
+      Already a member? <a href="/login">Sign in</a>
+    </div>
+  </div>
+
+  <script>
+    const API = 'https://web-production-dec62.up.railway.app';
+
+    function qs(k) {
+      const p = new URLSearchParams(location.search);
+      return (p.get(k) || '').trim();
+    }
+    function show(id) {
+      document.querySelectorAll('.state').forEach(el => el.classList.remove('show'));
+      document.getElementById(id).classList.add('show');
+    }
+    function escHtml(s) {
+      return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;')
+        .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+    }
+
+    const code = qs('c');
+    if (!code) {
+      show('invalidState');
+      document.getElementById('invalidReason').innerHTML =
+        'Missing invite code. If a friend sent you a link, make sure you opened it fully.';
+    } else {
+      // Resolve the invite — determines whether we show the sign-in form
+      // or a friendly error.
+      fetch(`${API}/api/invites/${encodeURIComponent(code)}`)
+        .then(async res => {
+          if (res.status === 404) {
+            show('invalidState');
+            document.getElementById('invalidReason').innerHTML =
+              "This invite link is not recognised. It may have been mistyped. " +
+              "You can <a href='/waitlist'>join the waitlist</a> instead.";
+            return;
+          }
+          const data = await res.json();
+          if (data.status !== 'valid') {
+            show('invalidState');
+            const msg = {
+              used: 'This invite has already been redeemed.',
+              expired: 'This invite has expired.',
+              revoked: 'This invite is no longer active.',
+            }[data.status] || 'This invite is not valid.';
+            document.getElementById('invalidReason').innerHTML =
+              msg + " You can <a href='/waitlist'>join the waitlist</a> instead.";
+            return;
+          }
+          // Valid — populate form
+          show('validState');
+          const badge = document.getElementById('inviteBadge');
+          const hint = data.issuer_hint
+            ? `<strong>${escHtml(data.issuer_hint)}</strong> invited you.`
+            : `You have a valid invite.`;
+          badge.innerHTML = hint + " Enter your email to receive a sign-in link.";
+          badge.classList.add('show');
+          if (data.issued_to_email) {
+            const inp = document.getElementById('email');
+            inp.value = data.issued_to_email;
+            // Not readonly — user might have a typo in the invite email — but the
+            // API will reject a mismatched submission if the invite is targeted.
+          }
+        })
+        .catch(() => {
+          show('invalidState');
+          document.getElementById('invalidReason').textContent =
+            'Could not reach the server. Please try again shortly.';
+        });
+    }
+
+    document.getElementById('inviteForm').addEventListener('submit', async function(e) {
+      e.preventDefault();
+      const btn = document.getElementById('submitBtn');
+      const errEl = document.getElementById('errMsg');
+      const email = document.getElementById('email').value.trim();
+      btn.disabled = true;
+      btn.textContent = 'Sending…';
+      errEl.classList.remove('show');
+
+      try {
+        const res = await fetch(`${API}/api/auth/request-code`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email, invite_code: code }),
+          credentials: 'include',
+        });
+        if (res.ok) {
+          document.getElementById('sentTo').textContent = email;
+          show('sentState');
+        } else if (res.status === 429) {
+          const data = await res.json().catch(() => ({}));
+          errEl.textContent = data.detail || 'Too many attempts — try again in a bit.';
+          errEl.classList.add('show');
+        } else if (res.status === 403) {
+          const data = await res.json().catch(() => ({}));
+          errEl.innerHTML = escHtml(data.detail || 'This invite is not usable.') +
+            " <a href='/waitlist'>Join the waitlist →</a>";
+          errEl.classList.add('show');
+        } else if (res.status === 400) {
+          errEl.textContent = 'Please enter a valid email address.';
+          errEl.classList.add('show');
+        } else {
+          errEl.textContent = 'Something went wrong. Try again in a moment.';
+          errEl.classList.add('show');
+        }
+      } catch (_) {
+        errEl.textContent = 'Could not reach the server. Check your connection.';
+        errEl.classList.add('show');
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'Send Sign-in Link';
+      }
+    });
+  </script>
+</body>
+</html>

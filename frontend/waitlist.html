@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>FunkyIQ — Waitlist</title>
+  <meta name="robots" content="noindex, nofollow" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@400;600;700;800;900&family=Outfit:wght@300;400;500;600&display=swap" rel="stylesheet" />
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: 'Outfit', sans-serif;
+      background: #07090f;
+      color: #f0f4ff;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+      background-image:
+        radial-gradient(ellipse 80% 50% at 50% -20%, rgba(232,160,32,0.06), transparent),
+        radial-gradient(ellipse 60% 40% at 90% 90%, rgba(34,197,94,0.04), transparent);
+      -webkit-font-smoothing: antialiased;
+    }
+    .card {
+      background: #0e1220;
+      border: 1px solid #1e2840;
+      border-radius: 20px;
+      padding: 40px 36px;
+      width: 100%; max-width: 420px;
+      box-shadow: 0 8px 40px rgba(0,0,0,0.6);
+    }
+    .brand { display: flex; align-items: center; gap: 10px; margin-bottom: 28px; }
+    .brand-dot { width: 10px; height: 10px; border-radius: 50%; background: #e8a020; box-shadow: 0 0 10px #e8a020; }
+    .brand-name {
+      font-family: 'Barlow Condensed', sans-serif;
+      font-size: 1.3rem; font-weight: 900;
+      letter-spacing: 0.08em; text-transform: uppercase;
+    }
+    h1 {
+      font-family: 'Barlow Condensed', sans-serif;
+      font-size: 1.7rem; font-weight: 800;
+      text-transform: uppercase; letter-spacing: 0.04em;
+      margin-bottom: 6px; line-height: 1;
+    }
+    .sub { font-size: 0.9rem; color: #8a9bc4; margin-bottom: 24px; line-height: 1.5; }
+    label {
+      display: block; font-size: 0.72rem; font-weight: 600;
+      color: #8a9bc4; text-transform: uppercase;
+      letter-spacing: 0.1em; margin-bottom: 8px;
+    }
+    input[type="email"] {
+      width: 100%;
+      background: #1a2035;
+      border: 1px solid #1e2840;
+      border-radius: 10px;
+      color: #f0f4ff;
+      font-family: 'Outfit', sans-serif;
+      font-size: 1rem;
+      padding: 13px 16px;
+      outline: none;
+      transition: border-color 0.15s, box-shadow 0.15s;
+      margin-bottom: 20px;
+    }
+    input[type="email"]:focus {
+      border-color: #e8a020;
+      box-shadow: 0 0 0 3px rgba(232,160,32,0.15);
+    }
+    input[type="email"]::placeholder { color: #4a5a7a; }
+    .btn {
+      width: 100%; background: #e8a020; color: #07090f;
+      border: none; border-radius: 10px;
+      font-family: 'Barlow Condensed', sans-serif;
+      font-size: 1.05rem; font-weight: 800;
+      letter-spacing: 0.1em; text-transform: uppercase;
+      padding: 14px; cursor: pointer;
+      transition: background 0.15s, transform 0.1s;
+    }
+    .btn:hover { background: #f4b53c; }
+    .btn:active { transform: scale(0.98); }
+    .btn:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
+
+    .error {
+      background: rgba(239,68,68,0.1);
+      border: 1px solid rgba(239,68,68,0.25);
+      border-radius: 8px;
+      color: #f87171;
+      font-size: 0.85rem;
+      padding: 12px 14px;
+      margin-bottom: 18px;
+      display: none;
+    }
+    .error.show { display: block; }
+
+    .success { display: none; text-align: center; padding: 20px 0; }
+    .success.show { display: block; }
+    .success-icon { font-size: 2.5rem; margin-bottom: 12px; }
+    .success-title {
+      font-family: 'Barlow Condensed', sans-serif;
+      font-size: 1.4rem; font-weight: 800;
+      text-transform: uppercase; letter-spacing: 0.04em;
+      color: #e8a020; margin-bottom: 8px;
+    }
+    .success-body { font-size: 0.9rem; color: #c8d0e0; line-height: 1.6; }
+
+    .foot {
+      margin-top: 18px; padding-top: 18px;
+      border-top: 1px solid #1e2840;
+      text-align: center; font-size: 0.78rem; color: #8a9bc4;
+    }
+    .foot a { color: #22c55e; text-decoration: none; }
+    .foot a:hover { text-decoration: underline; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="brand">
+      <div class="brand-dot"></div>
+      <span class="brand-name">FunkyIQ</span>
+    </div>
+
+    <div id="formSection">
+      <h1>Join the Waitlist</h1>
+      <p class="sub">
+        FunkyIQ is invite-only right now. Drop your email and we'll reach out
+        as seats open up.
+      </p>
+      <div class="error" id="errMsg"></div>
+      <form id="waitlistForm" autocomplete="on">
+        <label for="email">Email</label>
+        <input type="email" id="email" name="email"
+               placeholder="you@example.com" autocomplete="email" required autofocus />
+        <button class="btn" type="submit" id="submitBtn">Add Me to the Waitlist</button>
+      </form>
+    </div>
+
+    <div class="success" id="successSection">
+      <div class="success-icon">✓</div>
+      <div class="success-title">You're on the list</div>
+      <div class="success-body">
+        We've got your email. When a seat opens up we'll send an invite —
+        no login needed on your end until then.
+      </div>
+    </div>
+
+    <div class="foot">
+      Have an invite code? <a href="/login">Sign in</a>
+    </div>
+  </div>
+
+  <script>
+    const API = 'https://web-production-dec62.up.railway.app';
+    document.getElementById('waitlistForm').addEventListener('submit', async function(e) {
+      e.preventDefault();
+      const btn = document.getElementById('submitBtn');
+      const errEl = document.getElementById('errMsg');
+      const email = document.getElementById('email').value.trim();
+      btn.disabled = true;
+      btn.textContent = 'Adding…';
+      errEl.classList.remove('show');
+      try {
+        const res = await fetch(`${API}/api/waitlist`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email, source: 'public_waitlist_page' }),
+        });
+        if (res.ok) {
+          document.getElementById('formSection').style.display = 'none';
+          document.getElementById('successSection').classList.add('show');
+        } else if (res.status === 429) {
+          const data = await res.json().catch(() => ({}));
+          errEl.textContent = data.detail || 'Too many attempts — try again in a bit.';
+          errEl.classList.add('show');
+        } else if (res.status === 400) {
+          errEl.textContent = 'Please enter a valid email address.';
+          errEl.classList.add('show');
+        } else {
+          errEl.textContent = 'Something went wrong. Try again in a moment.';
+          errEl.classList.add('show');
+        }
+      } catch (_) {
+        errEl.textContent = 'Could not reach the server. Check your connection.';
+        errEl.classList.add('show');
+      } finally {
+        btn.disabled = false;
+        btn.textContent = 'Add Me to the Waitlist';
+      }
+    });
+  </script>
+</body>
+</html>

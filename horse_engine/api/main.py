@@ -80,6 +80,8 @@ from horse_engine.models.database import (
     UserRow,
     MagicLinkRow,
     SessionRow,
+    InviteRow,
+    WaitlistRow,
 )
 from horse_engine.analysis.nightly_review import (
     generate_review as _generate_nightly_review,
@@ -3229,12 +3231,13 @@ def _enforce_email_rate(email: str) -> None:
 
 @app.post("/api/auth/request-code")
 async def auth_request_code(request: Request, response: Response):
-    """Public — kicks off passwordless auth. Body: {"email": "user@..."}.
+    """Public — kicks off passwordless auth.
+    Body: {"email": "user@...", "invite_code": "opt-16chars"}.
 
-    Emits a magic-link email valid for 15 minutes. Always returns 200
-    with a generic body regardless of whether the email is registered,
-    to avoid leaking membership state. If the email is unknown, the
-    magic link they receive on verify will land them on onboarding.
+    Existing members: invite_code is ignored — they can always log in.
+    New signups: invite_code is REQUIRED. Without one, we drop them on
+    the waitlist and return a 403 with a friendly message pointing to
+    the waitlist confirmation. This is the Phase 2 gate.
 
     Rate-limited: 5 per IP per 60s (existing global limiter) and
     3 per email per hour (see _enforce_email_rate above).
@@ -3242,20 +3245,55 @@ async def auth_request_code(request: Request, response: Response):
     _enforce_caller_rate(request, "auth_request_code")
     body = await request.json()
     email = (body.get("email") or "").strip().lower()
+    invite_code = (body.get("invite_code") or "").strip() or None
     if not email or "@" not in email or len(email) > 254:
         raise HTTPException(status_code=400, detail="Invalid email address")
     _enforce_email_rate(email)
 
-    # Existing user? Determines intent (affects email copy).
+    # Existing user? Determines intent + skips the invite gate.
     async with get_session() as _sess:
         row = (await _sess.execute(
             select(UserRow).where(UserRow.email == email).limit(1)
         )).scalars().first()
-    intent = "login" if row is not None else "signup"
+    is_existing = row is not None
+    intent = "login" if is_existing else "signup"
+
+    # Invite gate — only enforced for new signups. Existing members can
+    # always log in even if the invite they came from later expired.
+    invite_hash: Optional[str] = None
+    if not is_existing:
+        if not invite_code:
+            # No invite → drop them on the waitlist so we can promote later.
+            await _inv_add_to_waitlist(email, source="request_code_no_invite")
+            raise HTTPException(
+                status_code=403,
+                detail="This site is invite-only. We've added you to the waitlist — we'll email when a seat opens.",
+            )
+        inv_row, inv_status = await _inv_resolve(invite_code)
+        if inv_status != "valid":
+            # Waitlist them anyway so a well-intentioned recipient with a
+            # stale code isn't a dead end.
+            await _inv_add_to_waitlist(email, source=f"invalid_invite:{inv_status}")
+            reason = {
+                "used": "This invite has already been redeemed. We've added you to the waitlist.",
+                "expired": "This invite has expired. We've added you to the waitlist.",
+                "revoked": "This invite is no longer active. We've added you to the waitlist.",
+                "unknown": "This invite link is not recognised. We've added you to the waitlist.",
+            }.get(inv_status, "This invite is not valid.")
+            raise HTTPException(status_code=403, detail=reason)
+        # Targeted invite: verify email matches (case-insensitive).
+        if inv_row.issued_to_email and inv_row.issued_to_email != email:
+            raise HTTPException(
+                status_code=403,
+                detail="This invite was issued to a different email address.",
+            )
+        invite_hash = _inv_hash_code(invite_code)
 
     # Generate + email the link. Best-effort — Resend failures don't
     # crash the endpoint. User can retry request-code if nothing arrives.
-    token = await _auth_issue_magic_link(email, intent=intent)
+    token = await _auth_issue_magic_link(
+        email, intent=intent, invite_token_hash=invite_hash,
+    )
     verify_url = f"{settings.app_base_url.rstrip('/')}/verify?t={token}"
     delivered = await _mail_send_magic_link(email, verify_url, intent=intent)
     if not delivered:
@@ -3271,6 +3309,13 @@ async def auth_verify(t: str, response: Response):
     returns a redirect payload the frontend uses to route the user to
     the appropriate next page.
 
+    Invite lineage: if the magic link carried an invite hash (Phase 2),
+    we consume it atomically here and stamp invited_by_user_id on the
+    new user. A late-arriving verify whose invite was already consumed
+    by a racing tab still creates the user (no lineage) — the invite
+    gate at request-code time was the primary check; verify is best-
+    effort attribution.
+
     Note: this is intentionally a GET (users clicking from email
     clients), not a POST. The one-time-use guarantee + short expiry
     protect against email-forwarding replay.
@@ -3280,6 +3325,27 @@ async def auth_verify(t: str, response: Response):
         raise HTTPException(status_code=400, detail="This link has expired or already been used. Request a new one.")
 
     user = await _auth_get_or_create_user(row.email)
+
+    # Attribute invite lineage. Only fires for new users (existing users
+    # keep their original invited_by_user_id) and only if the magic link
+    # actually carried an invite hash (login-only links from Phase 1
+    # won't have one).
+    if row.invite_token_hash and not user.invited_by_user_id:
+        inv = await _inv_consume_by_hash(row.invite_token_hash, user.id)
+        if inv and inv.issued_by_user_id:
+            from sqlalchemy import update as sa_update
+            async with get_session() as _sess:
+                await _sess.execute(
+                    sa_update(UserRow)
+                    .where(UserRow.id == user.id)
+                    .values(invited_by_user_id=inv.issued_by_user_id)
+                )
+                await _sess.commit()
+            # Refresh so response reports the current row state.
+            user = await _auth_get_or_create_user(row.email)
+        elif inv is None:
+            log.info("[auth] invite hash on magic link no longer consumable for %s", row.email)
+
     cookie_token = await _auth_create_session(user.id)
     _auth_set_session_cookie(response, cookie_token)
 
@@ -3320,7 +3386,415 @@ async def auth_me(user=Depends(_auth_current_user_optional)):
         "member_number": user.member_number,
         "seat_active": bool(user.seat_active),
         "founding": bool(user.founding),
+        "invites_remaining": int(user.invites_remaining or 0),
         "created_at": user.created_at.isoformat() if user.created_at else None,
+    }
+
+
+# ── Invite + waitlist endpoints (Phase 2 — 2026-07-20) ───────────────────
+# Invite flow: member creates code → shares URL → recipient hits landing
+# page → resolves code → hits request-code with invite_code → verifies
+# → account created with invited_by_user_id set. See invites.py for the
+# atomic consume + counter helpers.
+
+from horse_engine.api.invites import (
+    add_to_waitlist as _inv_add_to_waitlist,
+    count_seats_taken as _inv_count_seats_taken,
+    decrement_invites_remaining as _inv_dec_remaining,
+    hash_code as _inv_hash_code,
+    list_invites_by_issuer as _inv_list_by_issuer,
+    list_waitlist as _inv_list_waitlist,
+    mint_invite as _inv_mint,
+    resolve_invite as _inv_resolve,
+    revoke_invite as _inv_revoke,
+    consume_invite_by_hash as _inv_consume_by_hash,
+    INVITE_TTL as _INVITE_TTL,
+)
+from horse_engine.api.auth import current_user as _auth_current_user
+from horse_engine.api.auth import current_admin as _auth_current_admin
+
+
+def _invite_url(code: str) -> str:
+    """Public URL the issuer shares with their friend. Points at the
+    invite landing page which resolves the code + hands off to the
+    passwordless flow."""
+    return f"{settings.app_base_url.rstrip('/')}/invite?c={code}"
+
+
+@app.post("/api/invites/create")
+async def invites_create(
+    request: Request,
+    user=Depends(_auth_current_user),
+):
+    """Signed-in members mint an invite for a specific friend or a bare
+    shareable code. Body: {"email": "friend@..."} (optional). Returns
+    the raw code + shareable URL — this is the ONLY moment the code
+    exists in plaintext; the DB only stores the hash. Frontend should
+    show + copy the URL immediately.
+
+    Enforces the 20-invite-per-member cap via atomic decrement. Admins
+    should use POST /api/admin/invites/mint instead, which bypasses the
+    counter.
+    """
+    body = await request.json() if request.headers.get("content-type", "").startswith("application/json") else {}
+    invited_email = (body.get("email") or "").strip().lower() or None
+    if invited_email and ("@" not in invited_email or len(invited_email) > 254):
+        raise HTTPException(status_code=400, detail="Invalid recipient email")
+
+    # Members go through the counter; admins can use this endpoint too
+    # but skip the counter since they have a much larger operational pool
+    # anyway (the migration sets admins to 500).
+    if user.role != "admin":
+        ok = await _inv_dec_remaining(user.id)
+        if not ok:
+            raise HTTPException(
+                status_code=403,
+                detail="You have no invites remaining.",
+            )
+
+    code, row = await _inv_mint(
+        issued_by_user_id=user.id,
+        invited_email=invited_email,
+    )
+    log.info("[invites] user %s issued invite %d (to=%s)", user.id, row.id, invited_email or "-")
+    return {
+        "ok": True,
+        "invite": {
+            "id": row.id,
+            "code": code,               # raw — only returned here, never again
+            "url": _invite_url(code),
+            "invited_email": row.issued_to_email,
+            "expires_at": row.expires_at.isoformat(),
+        },
+    }
+
+
+@app.get("/api/invites/mine")
+async def invites_mine(user=Depends(_auth_current_user)):
+    """Newest first, up to 50. Powers the 'my invites' panel on the
+    dashboard so the member sees who they invited and whether the
+    invite was consumed."""
+    rows = await _inv_list_by_issuer(user.id, limit=50)
+    return {
+        "invites_remaining": int(user.invites_remaining or 0),
+        "invites": [
+            {
+                "id": r.id,
+                "invited_email": r.issued_to_email,
+                "created_at": r.created_at.isoformat(),
+                "expires_at": r.expires_at.isoformat(),
+                "consumed_at": r.consumed_at.isoformat() if r.consumed_at else None,
+                "revoked_at": r.revoked_at.isoformat() if r.revoked_at else None,
+                "status": (
+                    "revoked" if r.revoked_at else
+                    "used" if r.consumed_at else
+                    "expired" if r.expires_at < datetime.utcnow() else
+                    "valid"
+                ),
+            } for r in rows
+        ],
+    }
+
+
+@app.get("/api/invites/{code}")
+async def invites_get(code: str):
+    """Public — resolves a raw invite code to its status so the landing
+    page can show 'Welcome, you were invited by X' or 'This invite has
+    already been used'. Returns issuer *email* (not id) intentionally
+    truncated to a display hint, so we don't leak the full member list
+    via probes. Never returns the invite row itself.
+    """
+    if not code or len(code) < 4 or len(code) > 128:
+        raise HTTPException(status_code=400, detail="Malformed invite code")
+    row, status = await _inv_resolve(code)
+    if row is None:
+        # 'unknown' path — deliberately vague message so probes can't
+        # distinguish 'expired' from 'never existed'.
+        raise HTTPException(status_code=404, detail="This invite link is not recognised")
+    issuer_hint = None
+    if row.issued_by_user_id:
+        async with get_session() as _sess:
+            issuer = (await _sess.execute(
+                select(UserRow.email).where(UserRow.id == row.issued_by_user_id).limit(1)
+            )).scalar()
+            if issuer:
+                # Mask the local part: 'friend@gmail.com' -> 'f****@gmail.com'
+                local, _, domain = issuer.partition("@")
+                issuer_hint = (local[:1] + "***@" + domain) if local and domain else None
+    return {
+        "status": status,
+        "issued_to_email": row.issued_to_email,       # None if bulk / open code
+        "issuer_hint": issuer_hint,
+        "expires_at": row.expires_at.isoformat(),
+    }
+
+
+@app.delete("/api/invites/{invite_id}")
+async def invites_revoke(invite_id: int, user=Depends(_auth_current_user)):
+    """Members can revoke their own unconsumed invites; admins can
+    revoke any. No refund to invites_remaining (see model comment)."""
+    ok = await _inv_revoke(invite_id, user.id, is_admin=(user.role == "admin"))
+    if not ok:
+        raise HTTPException(status_code=404, detail="Invite not found, or already used/revoked")
+    return {"ok": True}
+
+
+@app.post("/api/waitlist")
+async def waitlist_join(request: Request):
+    """Public — captures interest from people without an invite. Returns
+    200 whether the email is new or already-on-list (so probes can't
+    distinguish). Rate-limited per-IP via the same limiter as auth."""
+    _enforce_caller_rate(request, "waitlist_join")
+    body = await request.json() if request.headers.get("content-type", "").startswith("application/json") else {}
+    email = (body.get("email") or "").strip().lower()
+    source = (body.get("source") or "public_landing")[:64]
+    if not email or "@" not in email or len(email) > 254:
+        raise HTTPException(status_code=400, detail="Invalid email address")
+    await _inv_add_to_waitlist(email, source=source)
+    return {"ok": True, "message": "We'll email you when a seat opens up."}
+
+
+# ── Admin invite/waitlist endpoints ──────────────────────────────────────
+
+@app.post("/api/admin/invites/mint")
+async def admin_invites_mint(
+    request: Request,
+    admin=Depends(_auth_current_admin),
+):
+    """Admin bulk mint. Body may include:
+      - email (optional): tie the code to a specific recipient
+      - count (default 1, max 100): mint N codes in one call
+      - ttl_days (default 30): expiry
+    Returns all raw codes — the only moment they exist in plaintext.
+    Does NOT touch invites_remaining. Useful for the initial cohort:
+    mint 100 codes, hand-email them.
+    """
+    body = await request.json() if request.headers.get("content-type", "").startswith("application/json") else {}
+    email = (body.get("email") or "").strip().lower() or None
+    count = int(body.get("count") or 1)
+    ttl_days = int(body.get("ttl_days") or 30)
+    if not (1 <= count <= 100):
+        raise HTTPException(status_code=400, detail="count must be 1..100")
+    if not (1 <= ttl_days <= 365):
+        raise HTTPException(status_code=400, detail="ttl_days must be 1..365")
+    if email and (count > 1 or "@" not in email):
+        # A specific email + count > 1 doesn't make sense — one recipient,
+        # one code. Force count=1 when an email is attached.
+        raise HTTPException(status_code=400, detail="Specify count OR email, not both (count is for bulk open codes)")
+
+    codes = []
+    for _ in range(count):
+        code, row = await _inv_mint(
+            issued_by_user_id=admin.id,
+            invited_email=email,
+            ttl=timedelta(days=ttl_days),
+        )
+        codes.append({
+            "id": row.id,
+            "code": code,
+            "url": _invite_url(code),
+            "invited_email": row.issued_to_email,
+            "expires_at": row.expires_at.isoformat(),
+        })
+    log.info("[invites] admin %s bulk-minted %d invites (email=%s, ttl=%dd)",
+             admin.email, count, email or "-", ttl_days)
+    return {"ok": True, "minted": codes}
+
+
+@app.get("/api/admin/waitlist")
+async def admin_waitlist(admin=Depends(_auth_current_admin), limit: int = 200):
+    """Newest first. Frontend renders a table with a 'Mint invite' button
+    per row that calls /api/admin/invites/mint with the row's email."""
+    if not (1 <= limit <= 1000):
+        raise HTTPException(status_code=400, detail="limit must be 1..1000")
+    rows = await _inv_list_waitlist(limit=limit)
+    return {
+        "total": len(rows),
+        "waitlist": [
+            {
+                "id": r.id,
+                "email": r.email,
+                "source": r.source,
+                "notes": r.notes,
+                "created_at": r.created_at.isoformat(),
+                "invited_at": r.invited_at.isoformat() if r.invited_at else None,
+            } for r in rows
+        ],
+    }
+
+
+@app.get("/api/admin/invites")
+async def admin_invites_list(admin=Depends(_auth_current_admin), limit: int = 200):
+    """Admin view of all invites (any issuer). Newest first."""
+    if not (1 <= limit <= 1000):
+        raise HTTPException(status_code=400, detail="limit must be 1..1000")
+    async with get_session() as _sess:
+        rows = (await _sess.execute(
+            select(InviteRow).order_by(InviteRow.created_at.desc()).limit(limit)
+        )).scalars().all()
+        # Batch-fetch issuer emails + consumer emails for display
+        user_ids = {r.issued_by_user_id for r in rows if r.issued_by_user_id}
+        user_ids |= {r.consumed_by_user_id for r in rows if r.consumed_by_user_id}
+        emails: dict[int, str] = {}
+        if user_ids:
+            u = (await _sess.execute(
+                select(UserRow.id, UserRow.email).where(UserRow.id.in_(user_ids))
+            )).all()
+            emails = {uid: em for (uid, em) in u}
+    return {
+        "total": len(rows),
+        "invites": [
+            {
+                "id": r.id,
+                "invited_email": r.issued_to_email,
+                "issued_by_email": emails.get(r.issued_by_user_id) if r.issued_by_user_id else None,
+                "consumed_by_email": emails.get(r.consumed_by_user_id) if r.consumed_by_user_id else None,
+                "created_at": r.created_at.isoformat(),
+                "expires_at": r.expires_at.isoformat(),
+                "consumed_at": r.consumed_at.isoformat() if r.consumed_at else None,
+                "revoked_at": r.revoked_at.isoformat() if r.revoked_at else None,
+                "status": (
+                    "revoked" if r.revoked_at else
+                    "used" if r.consumed_at else
+                    "expired" if r.expires_at < datetime.utcnow() else
+                    "valid"
+                ),
+            } for r in rows
+        ],
+    }
+
+
+@app.get("/api/admin/users")
+async def admin_users_list(
+    admin=Depends(_auth_current_admin),
+    limit: int = 500,
+    sort: str = "recent",
+):
+    """Full user directory for admin. `sort=recent` = newest signups first;
+    `sort=active` = most-recently-seen first (via sessions.last_seen_at).
+
+    For every user we join their latest SessionRow to derive last_seen_at.
+    Also joins invited_by_user_id → the inviter's email for lineage
+    display. Both joins are best-effort — users with no sessions get
+    last_seen_at=null; users with no attribution get invited_by_email=null.
+    """
+    if not (1 <= limit <= 5000):
+        raise HTTPException(status_code=400, detail="limit must be 1..5000")
+    async with get_session() as _sess:
+        # Latest session per user — Postgres/SQLite-compatible subquery.
+        # MAX(last_seen_at) is fine because we only display the timestamp;
+        # we don't need the row's UA/IP here.
+        last_seen_sub = (
+            select(
+                SessionRow.user_id.label("uid"),
+                func.max(SessionRow.last_seen_at).label("ls"),
+            )
+            .group_by(SessionRow.user_id)
+            .subquery()
+        )
+        base_query = (
+            select(UserRow, last_seen_sub.c.ls)
+            .join(last_seen_sub, last_seen_sub.c.uid == UserRow.id, isouter=True)
+        )
+        if sort == "active":
+            # NULLs sort last so users who never signed in fall to the bottom.
+            base_query = base_query.order_by(last_seen_sub.c.ls.desc().nullslast())
+        else:
+            base_query = base_query.order_by(UserRow.created_at.desc())
+        rows = (await _sess.execute(base_query.limit(limit))).all()
+
+        # Batch-fetch inviter emails so we don't fire one query per row.
+        inviter_ids = {r[0].invited_by_user_id for r in rows if r[0].invited_by_user_id}
+        inviter_emails: dict[int, str] = {}
+        if inviter_ids:
+            u = (await _sess.execute(
+                select(UserRow.id, UserRow.email).where(UserRow.id.in_(inviter_ids))
+            )).all()
+            inviter_emails = {uid: em for (uid, em) in u}
+
+        # Per-user issued invites — count sent + count converted + top N recipients.
+        # One query fans out to all rows we're returning.
+        user_ids = [r[0].id for r in rows]
+        invite_rows_by_user: dict[int, list] = {uid: [] for uid in user_ids}
+        if user_ids:
+            inv_rows = (await _sess.execute(
+                select(
+                    InviteRow.issued_by_user_id,
+                    InviteRow.issued_to_email,
+                    InviteRow.consumed_at,
+                    InviteRow.revoked_at,
+                    InviteRow.expires_at,
+                    InviteRow.created_at,
+                )
+                .where(InviteRow.issued_by_user_id.in_(user_ids))
+                .order_by(InviteRow.created_at.desc())
+            )).all()
+            _now = datetime.utcnow()
+            for issuer_id, to_email, consumed_at, revoked_at, expires_at, _created in inv_rows:
+                if issuer_id not in invite_rows_by_user:
+                    continue
+                if revoked_at is not None:
+                    status = "revoked"
+                elif consumed_at is not None:
+                    status = "converted"
+                elif expires_at < _now:
+                    status = "expired"
+                else:
+                    status = "pending"
+                invite_rows_by_user[issuer_id].append({
+                    "invited_email": to_email,   # None for open codes
+                    "status": status,
+                })
+
+    users_out = []
+    for (u, last_seen) in rows:
+        my_invites = invite_rows_by_user.get(u.id, [])
+        converted = sum(1 for i in my_invites if i["status"] == "converted")
+        users_out.append({
+            "id": u.id,
+            "email": u.email,
+            "name": u.name,
+            "role": u.role,
+            "member_number": u.member_number,
+            "seat_active": bool(u.seat_active),
+            "founding": bool(u.founding),
+            "invites_remaining": int(u.invites_remaining or 0),
+            "invites_sent": len(my_invites),
+            "invites_converted": converted,
+            # Top 10 most-recent recipients so the payload stays bounded
+            # for admins who issued huge numbers.
+            "invites_recipients": my_invites[:10],
+            "invited_by_email": inviter_emails.get(u.invited_by_user_id) if u.invited_by_user_id else None,
+            "created_at": u.created_at.isoformat() if u.created_at else None,
+            "last_seen_at": last_seen.isoformat() if last_seen else None,
+        })
+    return {"total": len(users_out), "users": users_out, "sort": sort}
+
+
+@app.get("/api/admin/membership/stats")
+async def admin_membership_stats(admin=Depends(_auth_current_admin)):
+    """Snapshot for the admin dashboard: how many seats are taken vs cap,
+    how many people are on the waitlist. Used to decide when to lift
+    the cap."""
+    seats = await _inv_count_seats_taken()
+    async with get_session() as _sess:
+        total_users = (await _sess.execute(
+            select(func.count()).select_from(UserRow)
+        )).scalar()
+        waitlist = (await _sess.execute(
+            select(func.count()).select_from(WaitlistRow)
+        )).scalar()
+        founding_used = (await _sess.execute(
+            select(func.count()).select_from(UserRow).where(UserRow.founding.is_(True))
+        )).scalar()
+    return {
+        "seats_taken": int(seats or 0),
+        "member_cap": int(settings.member_cap),
+        "seats_available": max(0, int(settings.member_cap) - int(seats or 0)),
+        "founding_used": int(founding_used or 0),
+        "founding_cap": 100,
+        "waitlist_size": int(waitlist or 0),
+        "total_users": int(total_users or 0),
     }
 
 

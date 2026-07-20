@@ -9,6 +9,9 @@
     { "source": "/about",      "destination": "/about.html" },
     { "source": "/login",      "destination": "/login.html" },
     { "source": "/verify",     "destination": "/verify.html" },
-    { "source": "/dashboard",  "destination": "/dashboard.html" }
+    { "source": "/dashboard",  "destination": "/dashboard.html" },
+    { "source": "/invite",     "destination": "/invite.html" },
+    { "source": "/waitlist",   "destination": "/waitlist.html" },
+    { "source": "/members",    "destination": "/members.html" }
   ]
 }

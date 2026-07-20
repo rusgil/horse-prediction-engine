@@ -1,0 +1,550 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>FunkyIQ — Members Admin</title>
+  <meta name="robots" content="noindex, nofollow" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@400;600;700;800;900&family=Outfit:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --bg: #07090f;
+      --card: #0e1220;
+      --edge: #1e2840;
+      --text: #f0f4ff;
+      --muted: #8a9bc4;
+      --green: #22c55e;
+      --gold: #e8a020;
+      --red: #ef4444;
+      --blue: #60a5fa;
+    }
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: 'Outfit', sans-serif;
+      background: var(--bg); color: var(--text);
+      min-height: 100vh; padding: 24px;
+      -webkit-font-smoothing: antialiased;
+    }
+    .wrap { max-width: 1200px; margin: 0 auto; }
+    header {
+      display: flex; align-items: center; gap: 12px;
+      padding-bottom: 20px; border-bottom: 1px solid var(--edge);
+      margin-bottom: 24px;
+    }
+    .brand-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--green); box-shadow: 0 0 10px var(--green); }
+    .brand-name {
+      font-family: 'Barlow Condensed', sans-serif;
+      font-size: 1.3rem; font-weight: 900;
+      letter-spacing: 0.08em; text-transform: uppercase;
+    }
+    .subtitle {
+      font-family: 'Barlow Condensed', sans-serif;
+      font-size: 1rem; font-weight: 600;
+      color: var(--muted); text-transform: uppercase;
+      letter-spacing: 0.15em; margin-left: 8px;
+    }
+    .whoami {
+      margin-left: auto; font-size: 0.8rem; color: var(--muted);
+    }
+    .whoami a { color: var(--green); text-decoration: none; margin-left: 12px; }
+
+    .stats {
+      display: grid; grid-template-columns: repeat(4, 1fr);
+      gap: 16px; margin-bottom: 32px;
+    }
+    .stat {
+      background: var(--card);
+      border: 1px solid var(--edge);
+      border-radius: 12px; padding: 18px 20px;
+    }
+    .stat-label {
+      font-size: 0.68rem; color: var(--muted);
+      text-transform: uppercase; letter-spacing: 0.12em;
+      margin-bottom: 6px;
+    }
+    .stat-value {
+      font-family: 'Barlow Condensed', sans-serif;
+      font-size: 2rem; font-weight: 800; line-height: 1;
+    }
+    .stat-sub { font-size: 0.72rem; color: var(--muted); margin-top: 4px; }
+    .stat.green .stat-value { color: var(--green); }
+    .stat.gold .stat-value { color: var(--gold); }
+    .stat.blue .stat-value { color: var(--blue); }
+
+    section {
+      background: var(--card);
+      border: 1px solid var(--edge);
+      border-radius: 12px;
+      padding: 24px;
+      margin-bottom: 24px;
+    }
+    h2 {
+      font-family: 'Barlow Condensed', sans-serif;
+      font-size: 1.15rem; font-weight: 800;
+      text-transform: uppercase; letter-spacing: 0.05em;
+      margin-bottom: 16px;
+    }
+    .row { display: flex; gap: 12px; flex-wrap: wrap; align-items: end; }
+    .row .field { flex: 1; min-width: 140px; }
+    label {
+      display: block; font-size: 0.7rem; font-weight: 600;
+      color: var(--muted); text-transform: uppercase;
+      letter-spacing: 0.1em; margin-bottom: 6px;
+    }
+    input, select {
+      width: 100%;
+      background: #1a2035;
+      border: 1px solid var(--edge);
+      border-radius: 8px;
+      color: var(--text);
+      font-family: 'Outfit', sans-serif; font-size: 0.95rem;
+      padding: 10px 12px; outline: none;
+    }
+    input:focus { border-color: var(--green); }
+    .btn {
+      background: var(--green); color: var(--bg);
+      border: none; border-radius: 8px;
+      font-family: 'Barlow Condensed', sans-serif;
+      font-size: 0.95rem; font-weight: 800;
+      letter-spacing: 0.08em; text-transform: uppercase;
+      padding: 11px 20px; cursor: pointer;
+      transition: background 0.15s;
+    }
+    .btn:hover { background: #4ade80; }
+    .btn.small { font-size: 0.75rem; padding: 6px 12px; }
+    .btn.ghost { background: transparent; border: 1px solid var(--edge); color: var(--muted); }
+    .btn.ghost:hover { border-color: var(--green); color: var(--green); background: transparent; }
+    .btn.danger { background: var(--red); color: var(--text); }
+
+    table {
+      width: 100%; border-collapse: collapse;
+      font-size: 0.85rem;
+    }
+    th, td {
+      text-align: left; padding: 10px 12px;
+      border-bottom: 1px solid var(--edge);
+    }
+    th {
+      font-size: 0.68rem; color: var(--muted);
+      text-transform: uppercase; letter-spacing: 0.1em;
+      font-weight: 600;
+    }
+    td.mono, code {
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.78rem;
+    }
+    .status-chip {
+      display: inline-block; padding: 2px 8px; border-radius: 6px;
+      font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.06em;
+      font-weight: 600;
+    }
+    .status-valid { background: rgba(34,197,94,0.15); color: var(--green); }
+    .status-used  { background: rgba(96,165,250,0.15); color: var(--blue); }
+    .status-expired { background: rgba(232,160,32,0.15); color: var(--gold); }
+    .status-revoked { background: rgba(239,68,68,0.15); color: var(--red); }
+
+    .mint-output {
+      margin-top: 18px; padding: 16px;
+      background: #1a2035; border: 1px solid var(--edge);
+      border-radius: 8px;
+      max-height: 260px; overflow-y: auto;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.8rem; line-height: 1.6;
+      display: none;
+    }
+    .mint-output.show { display: block; }
+    .mint-output .url {
+      display: block; word-break: break-all;
+      color: var(--green); text-decoration: none;
+    }
+    .mint-output .url:hover { text-decoration: underline; }
+
+    .empty { color: var(--muted); font-size: 0.85rem; padding: 12px 0; }
+    .toast {
+      position: fixed; top: 20px; right: 20px;
+      background: var(--card); border: 1px solid var(--green);
+      color: var(--green); padding: 12px 18px; border-radius: 8px;
+      font-size: 0.85rem; display: none; z-index: 100;
+      box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+    }
+    .toast.show { display: block; }
+
+    @media (max-width: 720px) {
+      .stats { grid-template-columns: repeat(2, 1fr); }
+      table { font-size: 0.75rem; }
+      th, td { padding: 8px 6px; }
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <div class="brand-dot"></div>
+      <span class="brand-name">FunkyIQ</span>
+      <span class="subtitle">Members</span>
+      <div class="whoami" id="whoami"></div>
+    </header>
+
+    <div id="content" style="display:none">
+      <div class="stats" id="statsGrid"></div>
+
+      <section>
+        <h2 style="display:flex; align-items:center; gap:12px;">
+          Users <span style="font-size:0.7rem; color:var(--muted); font-weight:400" id="usersCount"></span>
+          <span style="margin-left:auto; display:flex; gap:6px;">
+            <button class="btn small ghost" data-sort="recent" id="sortRecent">Newest</button>
+            <button class="btn small ghost" data-sort="active" id="sortActive">Recently active</button>
+          </span>
+        </h2>
+        <div style="overflow-x:auto">
+          <table id="usersTable">
+            <thead>
+              <tr>
+                <th>Email</th><th>Name</th><th>Role</th><th>#</th>
+                <th>Seat</th><th>Left</th><th>Sent</th><th>Converted</th>
+                <th>Invited by</th><th>Signed up</th><th>Last active</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section>
+        <h2 style="display:flex; align-items:center; gap:12px;">
+          Lineage tree
+          <span style="font-size:0.7rem; color:var(--muted); font-weight:400">
+            who invited whom (based on invited_by attribution)
+          </span>
+        </h2>
+        <div id="lineageTree" style="font-family:'JetBrains Mono', monospace; font-size:0.82rem; line-height:1.7"></div>
+      </section>
+
+      <section>
+        <h2>Mint invites</h2>
+        <form id="mintForm" class="row">
+          <div class="field">
+            <label for="mintEmail">Recipient email (optional)</label>
+            <input type="email" id="mintEmail" placeholder="friend@example.com — blank = open code" />
+          </div>
+          <div class="field" style="max-width:120px">
+            <label for="mintCount">Count</label>
+            <input type="number" id="mintCount" min="1" max="100" value="1" />
+          </div>
+          <div class="field" style="max-width:120px">
+            <label for="mintTtl">TTL (days)</label>
+            <input type="number" id="mintTtl" min="1" max="365" value="30" />
+          </div>
+          <div>
+            <button class="btn" type="submit" id="mintBtn">Mint</button>
+          </div>
+        </form>
+        <div class="mint-output" id="mintOutput"></div>
+      </section>
+
+      <section>
+        <h2>Waitlist <span style="font-size:0.7rem; color:var(--muted); font-weight:400" id="waitlistCount"></span></h2>
+        <table id="waitlistTable">
+          <thead>
+            <tr><th>Email</th><th>Source</th><th>Joined</th><th>Invited?</th><th></th></tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </section>
+
+      <section>
+        <h2>Invites <span style="font-size:0.7rem; color:var(--muted); font-weight:400" id="invitesCount"></span></h2>
+        <table id="invitesTable">
+          <thead>
+            <tr><th>Recipient</th><th>Status</th><th>Issued by</th><th>Consumed by</th><th>Expires</th><th>Created</th><th></th></tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </section>
+    </div>
+
+    <div id="unauth" style="display:none; text-align:center; padding:60px 20px; color:var(--muted)">
+      <h1 style="font-family:'Barlow Condensed',sans-serif; font-size:1.5rem; margin-bottom:12px; color:var(--text)">Admin only</h1>
+      <p style="margin-bottom:20px; font-size:0.9rem">This page is restricted to admin accounts.</p>
+      <a href="/login" class="btn" style="text-decoration:none">Sign In</a>
+    </div>
+  </div>
+
+  <div class="toast" id="toast"></div>
+
+  <script>
+    const API = 'https://web-production-dec62.up.railway.app';
+
+    function esc(s) {
+      return String(s == null ? '' : s)
+        .replace(/&/g,'&amp;').replace(/</g,'&lt;')
+        .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+    }
+    function fmtDate(iso) {
+      if (!iso) return '—';
+      try { return new Date(iso).toLocaleString('en-AU', { day:'2-digit', month:'short', hour:'2-digit', minute:'2-digit' }); }
+      catch { return iso; }
+    }
+    function toast(msg, ok=true) {
+      const el = document.getElementById('toast');
+      el.textContent = msg;
+      el.style.borderColor = ok ? 'var(--green)' : 'var(--red)';
+      el.style.color = ok ? 'var(--green)' : 'var(--red)';
+      el.classList.add('show');
+      setTimeout(() => el.classList.remove('show'), 2500);
+    }
+    async function api(path, opts = {}) {
+      opts.credentials = 'include';
+      opts.headers = { 'Content-Type': 'application/json', ...(opts.headers || {}) };
+      const res = await fetch(API + path, opts);
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.detail || `HTTP ${res.status}`);
+      }
+      return res.json();
+    }
+
+    // ── Boot ─────────────────────────────────────────────────────────
+    async function boot() {
+      try {
+        const me = await api('/api/auth/me');
+        if (me.role !== 'admin') {
+          document.getElementById('unauth').style.display = 'block';
+          return;
+        }
+        document.getElementById('whoami').innerHTML =
+          esc(me.email) + " <a href='#' id='logoutLink'>Sign out</a>";
+        document.getElementById('logoutLink').addEventListener('click', async (e) => {
+          e.preventDefault();
+          await fetch(API + '/api/auth/logout', { method:'POST', credentials:'include' });
+          location.href = '/login';
+        });
+        document.getElementById('content').style.display = 'block';
+        await Promise.all([loadStats(), loadUsers('recent'), loadWaitlist(), loadInvites()]);
+      } catch (e) {
+        document.getElementById('unauth').style.display = 'block';
+      }
+    }
+
+    async function loadStats() {
+      const s = await api('/api/admin/membership/stats');
+      const cards = [
+        { label: 'Seats taken', value: s.seats_taken, sub: `of ${s.member_cap} cap`, cls: 'green' },
+        { label: 'Seats available', value: s.seats_available, sub: `${s.member_cap - s.seats_taken} left`, cls: '' },
+        { label: 'Founding', value: `${s.founding_used}/${s.founding_cap}`, sub: 'first 100 = anniversary coupon', cls: 'gold' },
+        { label: 'Waitlist', value: s.waitlist_size, sub: `${s.total_users} total accounts`, cls: 'blue' },
+      ];
+      document.getElementById('statsGrid').innerHTML =
+        cards.map(c => `<div class="stat ${c.cls}"><div class="stat-label">${esc(c.label)}</div><div class="stat-value">${esc(c.value)}</div><div class="stat-sub">${esc(c.sub)}</div></div>`).join('');
+    }
+
+    async function loadUsers(sort='recent') {
+      const d = await api(`/api/admin/users?sort=${encodeURIComponent(sort)}`);
+      // Update sort-toggle active state
+      ['recent','active'].forEach(k => {
+        const btn = document.getElementById(k === 'recent' ? 'sortRecent' : 'sortActive');
+        if (btn) btn.style.borderColor = (k === sort) ? 'var(--green)' : '';
+      });
+      document.getElementById('usersCount').textContent = `(${d.total})`;
+      const tbody = document.querySelector('#usersTable tbody');
+      if (!d.users.length) {
+        tbody.innerHTML = '<tr><td colspan="11" class="empty">No users yet.</td></tr>';
+      } else {
+        tbody.innerHTML = d.users.map(u => {
+          // Recipient tooltip: list of "email (status)" pairs so the admin
+          // can hover over a "Sent" cell to see individual invite outcomes.
+          const recTitle = (u.invites_recipients || []).map(r =>
+            `${r.invited_email || 'open code'} — ${r.status}`
+          ).join('\n');
+          const roleChip = u.role === 'admin' ? 'status-revoked' :
+                           u.role === 'power_user' ? 'status-used' :
+                           'status-valid';
+          const seatChip = u.seat_active ? 'status-valid' : 'status-expired';
+          const foundingBadge = u.founding
+            ? ' <span class="status-chip status-used" title="Founding (first 100)">F</span>' : '';
+          const sentCell = u.invites_sent > 0
+            ? `<span title="${esc(recTitle)}" style="cursor:help; text-decoration:underline dotted var(--muted)">${u.invites_sent}</span>`
+            : '<span class="empty" style="padding:0">0</span>';
+          const convCell = u.invites_converted > 0
+            ? `<span style="color:var(--green); font-weight:600">${u.invites_converted}</span>`
+            : '<span class="empty" style="padding:0">0</span>';
+          return `<tr>
+            <td class="mono">${esc(u.email)}${foundingBadge}</td>
+            <td>${esc(u.name || '—')}</td>
+            <td><span class="status-chip ${roleChip}">${esc(u.role)}</span></td>
+            <td>${u.member_number || '—'}</td>
+            <td><span class="status-chip ${seatChip}">${u.seat_active ? 'active' : 'idle'}</span></td>
+            <td>${u.invites_remaining}</td>
+            <td>${sentCell}</td>
+            <td>${convCell}</td>
+            <td class="mono">${esc(u.invited_by_email || '—')}</td>
+            <td>${fmtDate(u.created_at)}</td>
+            <td>${fmtDate(u.last_seen_at)}</td>
+          </tr>`;
+        }).join('');
+      }
+      renderLineageTree(d.users);
+    }
+
+    function renderLineageTree(users) {
+      // Build parent→children map by email. Roots are users without
+      // an invited_by_email (admins, seed users, and orphans whose
+      // inviter was deleted). Everyone else nests under whoever invited
+      // them. Sort each level alphabetically for stable rendering.
+      const byInviter = new Map();     // email -> [child user]
+      const roots = [];
+      for (const u of users) {
+        if (u.invited_by_email) {
+          if (!byInviter.has(u.invited_by_email)) byInviter.set(u.invited_by_email, []);
+          byInviter.get(u.invited_by_email).push(u);
+        } else {
+          roots.push(u);
+        }
+      }
+      // Sort children alphabetically at each level.
+      for (const list of byInviter.values()) list.sort((a,b) => a.email.localeCompare(b.email));
+      roots.sort((a,b) => a.email.localeCompare(b.email));
+
+      // If an inviter email isn't in the users list (rare — the user was
+      // deleted but their invites remained), the tree omits it silently.
+      function render(u, depth, prefix, isLast) {
+        const branch = depth === 0 ? '' : (isLast ? '└─ ' : '├─ ');
+        const seatDot = u.seat_active
+          ? '<span style="color:var(--green)">●</span> '
+          : '<span style="color:var(--muted)">○</span> ';
+        const founding = u.founding ? ' <span style="color:var(--gold)">★</span>' : '';
+        const meta = `<span style="color:var(--muted); font-size:0.75rem">` +
+          `sent ${u.invites_sent}, converted ${u.invites_converted}</span>`;
+        let line = `<div>${prefix}${branch}${seatDot}${esc(u.email)}${founding} &nbsp;${meta}</div>`;
+        const kids = byInviter.get(u.email) || [];
+        const childPrefix = depth === 0 ? '' : prefix + (isLast ? '   ' : '│  ');
+        kids.forEach((k, i) => {
+          line += render(k, depth + 1, childPrefix, i === kids.length - 1);
+        });
+        return line;
+      }
+      const container = document.getElementById('lineageTree');
+      if (!roots.length) {
+        container.innerHTML = '<div class="empty">No users yet.</div>';
+        return;
+      }
+      container.innerHTML = roots.map(r => render(r, 0, '', true)).join('');
+    }
+
+    // Sort toggles for the users section
+    document.getElementById('sortRecent').addEventListener('click', () => loadUsers('recent'));
+    document.getElementById('sortActive').addEventListener('click', () => loadUsers('active'));
+
+    async function loadWaitlist() {
+      const d = await api('/api/admin/waitlist');
+      const tbody = document.querySelector('#waitlistTable tbody');
+      document.getElementById('waitlistCount').textContent = `(${d.total})`;
+      if (!d.waitlist.length) {
+        tbody.innerHTML = '<tr><td colspan="5" class="empty">No one on the waitlist yet.</td></tr>';
+        return;
+      }
+      tbody.innerHTML = d.waitlist.map(r => `
+        <tr>
+          <td class="mono">${esc(r.email)}</td>
+          <td>${esc(r.source || '—')}</td>
+          <td>${fmtDate(r.created_at)}</td>
+          <td>${r.invited_at ? fmtDate(r.invited_at) : '<span class="empty" style="padding:0">—</span>'}</td>
+          <td><button class="btn small" data-mint="${esc(r.email)}">Mint invite</button></td>
+        </tr>`).join('');
+      tbody.querySelectorAll('[data-mint]').forEach(btn => {
+        btn.addEventListener('click', async () => {
+          const email = btn.getAttribute('data-mint');
+          btn.disabled = true;
+          try {
+            const r = await api('/api/admin/invites/mint', {
+              method: 'POST',
+              body: JSON.stringify({ email, count: 1, ttl_days: 30 }),
+            });
+            renderMintOutput(r.minted);
+            toast(`Minted invite for ${email}`);
+            loadInvites(); loadUsers();
+          } catch (e) {
+            toast(String(e.message || e), false);
+          } finally {
+            btn.disabled = false;
+          }
+        });
+      });
+    }
+
+    async function loadInvites() {
+      const d = await api('/api/admin/invites');
+      const tbody = document.querySelector('#invitesTable tbody');
+      document.getElementById('invitesCount').textContent = `(${d.total})`;
+      if (!d.invites.length) {
+        tbody.innerHTML = '<tr><td colspan="7" class="empty">No invites yet.</td></tr>';
+        return;
+      }
+      tbody.innerHTML = d.invites.map(r => `
+        <tr>
+          <td class="mono">${esc(r.invited_email || '— open code —')}</td>
+          <td><span class="status-chip status-${esc(r.status)}">${esc(r.status)}</span></td>
+          <td class="mono">${esc(r.issued_by_email || '—')}</td>
+          <td class="mono">${esc(r.consumed_by_email || '—')}</td>
+          <td>${fmtDate(r.expires_at)}</td>
+          <td>${fmtDate(r.created_at)}</td>
+          <td>${r.status === 'valid' ? `<button class="btn small ghost" data-revoke="${r.id}">Revoke</button>` : ''}</td>
+        </tr>`).join('');
+      tbody.querySelectorAll('[data-revoke]').forEach(btn => {
+        btn.addEventListener('click', async () => {
+          if (!confirm('Revoke this invite? This cannot be undone.')) return;
+          const id = btn.getAttribute('data-revoke');
+          btn.disabled = true;
+          try {
+            await fetch(API + `/api/invites/${id}`, { method: 'DELETE', credentials: 'include' });
+            toast('Invite revoked');
+            loadInvites();
+          } catch (e) {
+            toast(String(e.message || e), false);
+          } finally {
+            btn.disabled = false;
+          }
+        });
+      });
+    }
+
+    function renderMintOutput(minted) {
+      const el = document.getElementById('mintOutput');
+      el.classList.add('show');
+      el.innerHTML = minted.map(m => `
+        <div style="margin-bottom:8px;">
+          <span style="color:var(--muted)">${esc(m.invited_email || 'open code')}</span> →
+          <a class="url" href="${esc(m.url)}" target="_blank">${esc(m.url)}</a>
+        </div>`).join('');
+    }
+
+    document.getElementById('mintForm').addEventListener('submit', async e => {
+      e.preventDefault();
+      const email = document.getElementById('mintEmail').value.trim() || undefined;
+      const count = parseInt(document.getElementById('mintCount').value, 10);
+      const ttl_days = parseInt(document.getElementById('mintTtl').value, 10);
+      const btn = document.getElementById('mintBtn');
+      btn.disabled = true; btn.textContent = 'Minting…';
+      try {
+        const body = { count, ttl_days };
+        if (email) { body.email = email; body.count = 1; }
+        const r = await api('/api/admin/invites/mint', {
+          method: 'POST',
+          body: JSON.stringify(body),
+        });
+        renderMintOutput(r.minted);
+        toast(`Minted ${r.minted.length} invite${r.minted.length === 1 ? '' : 's'}`);
+        loadStats(); loadInvites(); loadUsers();
+      } catch (err) {
+        toast(String(err.message || err), false);
+      } finally {
+        btn.disabled = false; btn.textContent = 'Mint';
+      }
+    });
+
+    boot();
+  </script>
+</body>
+</html>
