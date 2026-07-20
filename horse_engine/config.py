@@ -24,10 +24,26 @@ class Settings(BaseSettings):
     #                          Raise this later via env var, no code change.
     resend_api_key: str = ""
     sender_email: str = "no-reply@funkyiq.com"
+    # Cloudflare Turnstile (human check on /login, /waitlist, /invite).
+    # Both blank → guard no-ops silently, endpoints still accept requests.
+    # Once both are set (via Railway env vars) the guard activates:
+    #   TURNSTILE_SITE_KEY   — public, returned by /api/config/public
+    #                          so the frontend can render the widget.
+    #   TURNSTILE_SECRET_KEY — private, used to verify the token
+    #                          server-side against Cloudflare's siteverify.
+    turnstile_site_key: str = ""
+    turnstile_secret_key: str = ""
     # funkyiq.com is the parent brand. Horse-prediction lives on a
     # subdomain so future products (NRL predictions, etc.) get their
     # own subdomain under the same brand.
     app_base_url: str = "https://horse-racing-predictions.funkyiq.com"
+    # Public API URL used in magic-link emails so the click lands as a
+    # TOP-LEVEL navigation on the API host (Set-Cookie always works),
+    # then the backend redirects the browser back to app_base_url. This
+    # is the OAuth-style pattern — sidesteps iOS Safari's ITP handling
+    # of Set-Cookie inside cross-origin fetch responses, which was the
+    # root cause of the mobile "You're in → back to login" loop.
+    api_base_url: str = "https://api.funkyiq.com"
     first_admin_email: str = "rusgil@gmail.com"
     member_cap: int = 1000
 

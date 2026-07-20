@@ -3141,9 +3141,15 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         response.headers["X-Frame-Options"] = "DENY"
         response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
         response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+        # NB: the CSP below is emitted by the API. The frontend is served
+        # by Vercel and has its own CSP surface — API-side CSP mostly
+        # protects any docs/errors served directly from Railway. Turnstile
+        # needs script-src + frame-src for its widget host; we allow it
+        # here so if we ever serve HTML from the API itself the widget works.
         response.headers["Content-Security-Policy"] = (
             "default-src 'self'; "
-            "script-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
+            "script-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://challenges.cloudflare.com; "
+            "frame-src https://challenges.cloudflare.com; "
             "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com https://fonts.gstatic.com; "
             "font-src https://fonts.gstatic.com; "
             "connect-src 'self'; "
@@ -3227,6 +3233,7 @@ from horse_engine.api.auth import (
     clear_session_cookie as _auth_clear_session_cookie,
 )
 from horse_engine.api.mailer import send_magic_link as _mail_send_magic_link
+from horse_engine.api.turnstile import verify as _turnstile_verify, is_enabled as _turnstile_enabled
 
 # Per-email rate limit for /api/auth/request-code — max N codes per
 # email per rolling window. Independent of the per-IP rate limit above
@@ -3237,6 +3244,17 @@ from horse_engine.api.mailer import send_magic_link as _mail_send_magic_link
 _AUTH_EMAIL_HITS: dict[str, list[float]] = {}
 _AUTH_EMAIL_LIMIT = 30
 _AUTH_EMAIL_WINDOW = 900.0
+
+async def _enforce_turnstile(request: Request, token: Optional[str]) -> None:
+    """Fail-open when Turnstile unconfigured (see turnstile.verify()).
+    When configured, raises 403 if the widget token is missing/invalid."""
+    ok = await _turnstile_verify(token, remote_ip=_caller_origin(request))
+    if not ok:
+        raise HTTPException(
+            status_code=403,
+            detail="Human check failed — please refresh and try again.",
+        )
+
 
 def _enforce_email_rate(email: str) -> None:
     now = time.time()
@@ -3269,8 +3287,10 @@ async def auth_request_code(request: Request, response: Response):
     body = await request.json()
     email = (body.get("email") or "").strip().lower()
     invite_code = (body.get("invite_code") or "").strip() or None
+    turnstile_token = (body.get("turnstile_token") or "").strip() or None
     if not email or "@" not in email or len(email) > 254:
         raise HTTPException(status_code=400, detail="Invalid email address")
+    await _enforce_turnstile(request, turnstile_token)
     _enforce_email_rate(email)
 
     # Existing user? Determines intent + skips the invite gate.
@@ -3317,7 +3337,11 @@ async def auth_request_code(request: Request, response: Response):
     token = await _auth_issue_magic_link(
         email, intent=intent, invite_token_hash=invite_hash,
     )
-    verify_url = f"{settings.app_base_url.rstrip('/')}/verify?t={token}"
+    # Point the click at the API host — top-level navigation to a same-
+    # host response is the only cookie-set path that survives iOS Safari
+    # ITP. Backend consumes the token, sets the session cookie on
+    # api.funkyiq.com, then redirects the browser to app_base_url.
+    verify_url = f"{settings.api_base_url.rstrip('/')}/api/auth/verify?t={token}"
     delivered = await _mail_send_magic_link(email, verify_url, intent=intent)
     if not delivered:
         log.warning("[auth] magic-link email delivery to %s did not succeed", email)
@@ -3326,26 +3350,30 @@ async def auth_request_code(request: Request, response: Response):
 
 
 @app.get("/api/auth/verify")
-async def auth_verify(t: str, response: Response):
-    """Public — clicked from the magic-link email. Consumes the token,
-    creates or finds the user, issues a 7-day session cookie, and
-    returns a redirect payload the frontend uses to route the user to
-    the appropriate next page.
+async def auth_verify(t: str):
+    """Magic-link click target — the URL is api.funkyiq.com/api/auth/verify
+    (embedded in the email), so the click is a TOP-LEVEL navigation to
+    the same host that owns the cookie. Set-Cookie in a redirect response
+    is unconditionally accepted by every browser (unlike Set-Cookie inside
+    a cross-origin fetch response, which iOS Safari's ITP silently drops —
+    the root cause of the July 2026 "you're in → back to login" loop).
 
-    Invite lineage: if the magic link carried an invite hash (Phase 2),
-    we consume it atomically here and stamp invited_by_user_id on the
-    new user. A late-arriving verify whose invite was already consumed
-    by a racing tab still creates the user (no lineage) — the invite
-    gate at request-code time was the primary check; verify is best-
-    effort attribution.
+    Flow:
+      1. Consume the magic-link token (idempotent, one-shot).
+      2. Get-or-create the user, stamp invite lineage if applicable.
+      3. Create a 7-day session, set the cookie on api.funkyiq.com.
+      4. 302 redirect to app_base_url with an auth=ok query flag so
+         the app can show a welcome toast if it wants.
 
-    Note: this is intentionally a GET (users clicking from email
-    clients), not a POST. The one-time-use guarantee + short expiry
-    protect against email-forwarding replay.
+    A failed/expired token redirects to /login?err=link_expired so the
+    user sees a friendly explanation instead of a raw 400 page.
     """
+    from fastapi.responses import RedirectResponse
+
+    app_url = settings.app_base_url.rstrip("/")
     row = await _auth_consume_magic_link(t)
     if row is None:
-        raise HTTPException(status_code=400, detail="This link has expired or already been used. Request a new one.")
+        return RedirectResponse(url=f"{app_url}/login?err=link_expired", status_code=302)
 
     user = await _auth_get_or_create_user(row.email)
 
@@ -3364,25 +3392,19 @@ async def auth_verify(t: str, response: Response):
                     .values(invited_by_user_id=inv.issued_by_user_id)
                 )
                 await _sess.commit()
-            # Refresh so response reports the current row state.
-            user = await _auth_get_or_create_user(row.email)
         elif inv is None:
             log.info("[auth] invite hash on magic link no longer consumable for %s", row.email)
 
     cookie_token = await _auth_create_session(user.id)
-    _auth_set_session_cookie(response, cookie_token)
 
-    return {
-        "ok": True,
-        "user_id": user.id,
-        "email": user.email,
-        "role": user.role,
-        "intent": row.intent,
-        # Frontend consumes 'next' to decide where to send the user
-        # post-verify. signup -> /pricing (or /join/{invite} if invite
-        # was attached), login -> /
-        "next": "/pricing" if row.intent == "signup" else "/",
-    }
+    # Landing path: existing users go to Lounge; signup intent goes to
+    # /account so the new member sees their profile + invite widget.
+    # /pricing is not routed yet — send signup to /account until Stripe
+    # ships, otherwise the user hits a Vercel 404.
+    landing = "/account" if row.intent == "signup" else "/"
+    resp = RedirectResponse(url=f"{app_url}{landing}?auth=ok", status_code=302)
+    _auth_set_session_cookie(resp, cookie_token)
+    return resp
 
 
 @app.post("/api/auth/logout")
@@ -3599,10 +3621,24 @@ async def waitlist_join(request: Request):
     body = await request.json() if request.headers.get("content-type", "").startswith("application/json") else {}
     email = (body.get("email") or "").strip().lower()
     source = (body.get("source") or "public_landing")[:64]
+    turnstile_token = (body.get("turnstile_token") or "").strip() or None
     if not email or "@" not in email or len(email) > 254:
         raise HTTPException(status_code=400, detail="Invalid email address")
+    await _enforce_turnstile(request, turnstile_token)
     await _inv_add_to_waitlist(email, source=source)
     return {"ok": True, "message": "We'll email you when a seat opens up."}
+
+
+@app.get("/api/config/public")
+async def public_config():
+    """Non-secret config the frontend needs at load time.
+    Currently: the Turnstile site key so the widget can render.
+    Add other non-secret settings here in the future (feature flags,
+    build version, etc.) instead of hardcoding them per page."""
+    return {
+        "turnstile_site_key": settings.turnstile_site_key or None,
+        "turnstile_enabled": _turnstile_enabled(),
+    }
 
 
 # ── Admin invite/waitlist endpoints ──────────────────────────────────────
