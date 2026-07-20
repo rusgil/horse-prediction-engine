@@ -250,11 +250,19 @@ async def current_user_optional(
 
 
 async def current_user(
-    user: Optional[UserRow] = None,
     fiq_session: Optional[str] = Cookie(default=None, alias=COOKIE_NAME),
 ) -> UserRow:
     """Strict — 401 if unauthenticated. Use on any protected endpoint
-    that shouldn't be reached by anon users."""
+    that shouldn't be reached by anon users.
+
+    The parameter list intentionally contains only Cookie/Header/Query
+    typed params — never a bare `user: Optional[UserRow]` default. Any
+    typed-with-a-non-Pydantic-class-and-a-default parameter is treated
+    by FastAPI as a query/body field, which crashes app startup with
+    "Invalid args for response field" because UserRow is a SQLAlchemy
+    DeclarativeBase, not a Pydantic model. Do not add a `user=None`
+    param to any Depends() function.
+    """
     user = await current_user_optional(fiq_session)
     if user is None:
         raise HTTPException(status_code=401, detail="Authentication required")
@@ -262,10 +270,10 @@ async def current_user(
 
 
 async def current_admin(
-    user: Optional[UserRow] = None,
     fiq_session: Optional[str] = Cookie(default=None, alias=COOKIE_NAME),
 ) -> UserRow:
-    """Strict — 401 if unauthenticated, 403 if not admin."""
+    """Strict — 401 if unauthenticated, 403 if not admin. See
+    current_user() docstring for why there's no `user=None` param."""
     user = await current_user_optional(fiq_session)
     if user is None:
         raise HTTPException(status_code=401, detail="Authentication required")
