@@ -3430,6 +3430,7 @@ from horse_engine.api.invites import (
     consume_invite_by_hash as _inv_consume_by_hash,
     INVITE_TTL as _INVITE_TTL,
 )
+from horse_engine.api.mailer import send_invite_email as _mail_send_invite
 from horse_engine.api.auth import current_user as _auth_current_user
 from horse_engine.api.auth import current_admin as _auth_current_admin
 
@@ -3446,20 +3447,35 @@ async def invites_create(
     request: Request,
     user=Depends(_auth_current_user),
 ):
-    """Signed-in members mint an invite for a specific friend or a bare
-    shareable code. Body: {"email": "friend@..."} (optional). Returns
-    the raw code + shareable URL — this is the ONLY moment the code
-    exists in plaintext; the DB only stores the hash. Frontend should
-    show + copy the URL immediately.
+    """Signed-in members mint an invite. Body shape:
+      { "email": "friend@..." (optional),
+        "send_email": bool (default false) }
 
-    Enforces the 20-invite-per-member cap via atomic decrement. Admins
-    should use POST /api/admin/invites/mint instead, which bypasses the
-    counter.
+    Two flows, controlled by whether `email` is provided:
+      - No email → open code (any recipient can redeem). Returns URL
+        for the member to share manually.
+      - Email set + send_email=true → targeted invite emailed via
+        Resend, so the recipient gets a "You're invited" email with
+        the link.
+      - Email set + send_email=false → targeted invite, URL returned
+        for the member to send themselves (Slack DM, SMS, etc.).
+
+    Returns the raw code + shareable URL either way. Enforces the
+    20-invite-per-member cap via atomic decrement. Admins skip the
+    counter (they have a much larger operational pool per the
+    migration bump). email_sent in the response tells the frontend
+    whether the Resend call actually succeeded.
     """
     body = await request.json() if request.headers.get("content-type", "").startswith("application/json") else {}
     invited_email = (body.get("email") or "").strip().lower() or None
+    send_email_flag = bool(body.get("send_email"))
     if invited_email and ("@" not in invited_email or len(invited_email) > 254):
         raise HTTPException(status_code=400, detail="Invalid recipient email")
+    if send_email_flag and not invited_email:
+        raise HTTPException(
+            status_code=400,
+            detail="send_email requires a recipient email — leave email blank if you want a shareable link.",
+        )
 
     # Members go through the counter; admins can use this endpoint too
     # but skip the counter since they have a much larger operational pool
@@ -3476,16 +3492,28 @@ async def invites_create(
         issued_by_user_id=user.id,
         invited_email=invited_email,
     )
-    log.info("[invites] user %s issued invite %d (to=%s)", user.id, row.id, invited_email or "-")
+    url = _invite_url(code)
+    email_sent = False
+    if send_email_flag:
+        # Best-effort: Resend outage doesn't crash the endpoint. The
+        # invite row is still in the DB; the caller can copy the URL
+        # and email it manually if the delivery flag comes back False.
+        try:
+            email_sent = await _mail_send_invite(invited_email, url, inviter_email=user.email)
+        except Exception as e:
+            log.warning("[invites] send-email failed for user %s → %s: %s", user.id, invited_email, e)
+    log.info("[invites] user %s issued invite %d (to=%s, emailed=%s)",
+             user.id, row.id, invited_email or "-", email_sent)
     return {
         "ok": True,
         "invite": {
             "id": row.id,
             "code": code,               # raw — only returned here, never again
-            "url": _invite_url(code),
+            "url": url,
             "invited_email": row.issued_to_email,
             "expires_at": row.expires_at.isoformat(),
         },
+        "email_sent": email_sent,
     }
 
 

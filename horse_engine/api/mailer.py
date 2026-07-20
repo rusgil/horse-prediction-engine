@@ -63,6 +63,48 @@ async def _send(to_email: str, subject: str, html_body: str, text_body: Optional
         return False
 
 
+async def send_invite_email(
+    to_email: str,
+    invite_url: str,
+    inviter_email: Optional[str] = None,
+) -> bool:
+    """Send an invite link to a friend. Called from POST /api/invites/create
+    when the caller opts in to `send_email=true`. `inviter_email` is used
+    to personalise the subject / greeting when known.
+
+    Same fail-closed semantics as send_magic_link — a Resend outage
+    returns False, doesn't crash the endpoint. The invite row is still
+    in the DB either way, so the caller can retry or copy the URL by
+    hand.
+    """
+    inviter_label = inviter_email or "A Funky IQ member"
+    subject = f"{inviter_label} invited you to Funky IQ"
+    html = f"""
+    <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;max-width:520px;margin:0 auto;padding:32px 24px;color:#111;">
+      <h1 style="font-size:22px;font-weight:700;margin:0 0 20px">You're invited to Funky IQ</h1>
+      <p style="font-size:15px;line-height:1.6;color:#333">
+        {inviter_label} thinks you'd get something out of Funky IQ — a
+        model-driven Australian horse-racing picks service. The site is
+        invite-only right now, and this link claims a seat for you.
+      </p>
+      <p style="margin:28px 0"><a href="{invite_url}" style="display:inline-block;background:#22c55e;color:#07090f;text-decoration:none;padding:12px 22px;border-radius:6px;font-weight:700;letter-spacing:0.02em">Claim your seat</a></p>
+      <p style="font-size:13px;color:#666;line-height:1.6">Or copy this URL into your browser:<br><span style="word-break:break-all;color:#333">{invite_url}</span></p>
+      <p style="font-size:12px;color:#999;margin-top:32px;padding-top:20px;border-top:1px solid #eee">This invite expires in 30 days and can only be used once. If you weren't expecting it, you can ignore this email.</p>
+    </div>
+    """
+    text = f"""You're invited to Funky IQ
+
+{inviter_label} thinks you'd get something out of Funky IQ — a
+model-driven Australian horse-racing picks service. The site is
+invite-only right now, and this link claims a seat for you.
+
+Claim your seat: {invite_url}
+
+This invite expires in 30 days and can only be used once.
+"""
+    return await _send(to_email, subject, html, text)
+
+
 async def send_magic_link(to_email: str, verify_url: str, intent: str = "login") -> bool:
     """Send the login/verification email. `verify_url` should be the full
     https URL a user clicks to complete authentication. intent shapes
