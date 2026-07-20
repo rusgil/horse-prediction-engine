@@ -8,6 +8,7 @@
     { "source": "/funkmeup",   "destination": "/funkmeup.html" },
     { "source": "/about",      "destination": "/about.html" },
     { "source": "/login",      "destination": "/login.html" },
+    { "source": "/verify",     "destination": "/verify.html" },
     { "source": "/dashboard",  "destination": "/dashboard.html" }
   ]
 }

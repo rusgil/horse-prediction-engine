@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>FunkyIQ — Signing you in…</title>
+  <meta name="robots" content="noindex, nofollow" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@400;600;700;800;900&family=Outfit:wght@300;400;500;600&display=swap" rel="stylesheet" />
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: 'Outfit', sans-serif;
+      background: #07090f;
+      color: #f0f4ff;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+      background-image:
+        radial-gradient(ellipse 80% 50% at 50% -20%, rgba(34,197,94,0.06), transparent),
+        radial-gradient(ellipse 60% 40% at 90% 90%, rgba(232,160,32,0.04), transparent);
+      -webkit-font-smoothing: antialiased;
+    }
+    .card {
+      background: #0e1220;
+      border: 1px solid #1e2840;
+      border-radius: 20px;
+      padding: 40px 36px;
+      width: 100%;
+      max-width: 380px;
+      box-shadow: 0 8px 40px rgba(0,0,0,0.6);
+      text-align: center;
+    }
+    .brand {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+      margin-bottom: 28px;
+    }
+    .brand-dot {
+      width: 10px; height: 10px;
+      border-radius: 50%;
+      background: #22c55e;
+      box-shadow: 0 0 10px #22c55e;
+    }
+    .brand-name {
+      font-family: 'Barlow Condensed', sans-serif;
+      font-size: 1.3rem;
+      font-weight: 900;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: #f0f4ff;
+    }
+    h1 {
+      font-family: 'Barlow Condensed', sans-serif;
+      font-size: 1.4rem;
+      font-weight: 800;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+      margin-bottom: 12px;
+      line-height: 1.1;
+    }
+    .msg {
+      font-size: 0.9rem;
+      color: #c8d0e0;
+      line-height: 1.6;
+      margin-bottom: 8px;
+    }
+    /* Loading spinner while we validate the token. */
+    .spinner {
+      width: 40px; height: 40px;
+      border: 3px solid #1e2840;
+      border-top-color: #22c55e;
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+      margin: 12px auto 20px;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    .icon {
+      font-size: 2.5rem;
+      margin-bottom: 16px;
+    }
+    .state { display: none; }
+    .state.show { display: block; }
+
+    .error-title { color: #f87171; }
+    .success-title { color: #22c55e; }
+
+    .btn {
+      display: inline-block;
+      background: #22c55e;
+      color: #07090f;
+      border: none;
+      border-radius: 10px;
+      font-family: 'Barlow Condensed', sans-serif;
+      font-size: 1rem;
+      font-weight: 800;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      padding: 12px 28px;
+      cursor: pointer;
+      margin-top: 20px;
+      text-decoration: none;
+    }
+    .btn:hover { background: #4ade80; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="brand">
+      <div class="brand-dot"></div>
+      <span class="brand-name">FunkyIQ</span>
+    </div>
+
+    <div id="stateLoading" class="state show">
+      <div class="spinner"></div>
+      <h1>Signing you in…</h1>
+      <p class="msg">Verifying your link.</p>
+    </div>
+
+    <div id="stateSuccess" class="state">
+      <div class="icon">✓</div>
+      <h1 class="success-title">You're in</h1>
+      <p class="msg">Taking you to <strong id="destName">the site</strong>…</p>
+    </div>
+
+    <div id="stateError" class="state">
+      <div class="icon">⚠</div>
+      <h1 class="error-title">Link Expired</h1>
+      <p class="msg" id="errMsg">This link has expired or already been used. Request a new one to sign in.</p>
+      <a href="/login" class="btn">Try Again</a>
+    </div>
+  </div>
+
+  <script>
+    // Backend API base — same pattern as login.html and other pages.
+    const API = 'https://web-production-dec62.up.railway.app';
+
+    // Safe redirect target: same-origin path only. Prevents open-redirect
+    // via a malicious "next" query param. If backend hands us a "next"
+    // that's not a safe path, fall back to "/".
+    function safeNext(next) {
+      try {
+        const u = new URL(next || '/', window.location.origin);
+        if (u.origin === window.location.origin) return u.pathname + u.search;
+      } catch (_) {}
+      return '/';
+    }
+
+    function showState(id) {
+      ['stateLoading', 'stateSuccess', 'stateError'].forEach(s => {
+        document.getElementById(s).classList.toggle('show', s === id);
+      });
+    }
+
+    (async function verify() {
+      // Token is in the URL as ?t=<token>.
+      const params = new URLSearchParams(window.location.search);
+      const token = params.get('t');
+      if (!token) {
+        showState('stateError');
+        document.getElementById('errMsg').textContent = 'Missing token in URL.';
+        return;
+      }
+
+      try {
+        const res = await fetch(`${API}/api/auth/verify?t=${encodeURIComponent(token)}`, {
+          method: 'GET',
+          credentials: 'include',
+        });
+
+        if (!res.ok) {
+          showState('stateError');
+          const data = await res.json().catch(() => ({}));
+          if (data.detail) {
+            document.getElementById('errMsg').textContent = data.detail;
+          }
+          return;
+        }
+
+        const data = await res.json();
+        const dest = safeNext(data.next);
+        document.getElementById('destName').textContent =
+          dest === '/pricing' ? 'pricing' :
+          dest === '/' ? 'the site' :
+          dest;
+        showState('stateSuccess');
+
+        // Small pause so users see the success state; feels less jarring
+        // than an instant redirect. Session cookie is already set by
+        // the server response above.
+        setTimeout(() => { window.location.href = dest; }, 900);
+      } catch (_) {
+        showState('stateError');
+        document.getElementById('errMsg').textContent = 'Could not reach the server. Try again.';
+      }
+    })();
+  </script>
+</body>
+</html>

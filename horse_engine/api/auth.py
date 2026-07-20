@@ -277,8 +277,13 @@ def set_session_cookie(response: Response, cookie_token: str) -> None:
     """Attach the session cookie with the right security flags.
     HttpOnly = JS can't read it (XSS mitigation).
     Secure = HTTPS only (Railway is behind TLS).
-    SameSite=Lax = protects against CSRF while still allowing normal
-    top-level navigations from Vercel domain to the API domain.
+    SameSite=None = REQUIRED because the frontend (funkyiq.com on Vercel)
+    fetches the API cross-origin (Railway). SameSite=Lax would not send
+    the cookie on cross-origin fetch/XHR — only on top-level navigation.
+    The CSRF risk of SameSite=None is mitigated by the 256-bit random
+    session token (unguessable) and the fact that mutating endpoints
+    all require a JSON body or explicit method, which browsers can't
+    forge with a simple form POST.
     Path=/ = valid for all routes.
     Max-Age matches the DB expiry.
     """
@@ -288,7 +293,7 @@ def set_session_cookie(response: Response, cookie_token: str) -> None:
         max_age=int(SESSION_TTL.total_seconds()),
         httponly=True,
         secure=True,
-        samesite="lax",
+        samesite="none",
         path="/",
     )
 
