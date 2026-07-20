@@ -3,7 +3,7 @@
 // is active, prepends a fixed-height banner above the page body. Toggle
 // controlled via the admin dashboard (POST /api/admin/site-warnings/*).
 (function() {
-  var API = window.SITE_WARNINGS_API || 'https://web-production-dec62.up.railway.app';
+  var API = window.SITE_WARNINGS_API || 'https://api.funkyiq.com';
   function render(w) {
     if (!w || !w.model_unstable || !w.model_unstable.active) return;
     var msg = w.model_unstable.message || 'Model not stable today — NO BETS';
