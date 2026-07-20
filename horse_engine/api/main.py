@@ -3078,20 +3078,26 @@ app = FastAPI(
 
 # CORS — was allow_origins=["*"] without credentials which was fine for
 # admin token-header calls. Membership auth (Phase 1, 2026-07-20) needs
-# credentialed cross-origin requests (Vercel-hosted frontend at
-# funkyiq.com → Railway API), and the browser rejects credentials with
-# a wildcard origin. Enumerate the origins we actually serve + set
+# credentialed cross-origin requests (Vercel-hosted frontend →
+# Railway API), and the browser rejects credentials with a wildcard
+# origin. Enumerate the origins we actually serve + set
 # allow_credentials=True. Wildcard admin token calls unchanged because
 # those don't send cookies.
+#
+# Domain map (funkyiq is the parent brand; horse-racing-predictions
+# is one of multiple product subdomains):
+#   funkyiq.com               — marketing / brand site (future)
+#   horse-racing-predictions.funkyiq.com  — the live app
+#   *.vercel.app              — Vercel preview deployments for the
+#                                horse-prediction-engine project
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
         "https://funkyiq.com",
         "https://www.funkyiq.com",
-        # Vercel preview deployments — matches funkyiq-<hash>-<team>.vercel.app.
-        # Regex is anchored to end of hostname to prevent origin bypass.
+        "https://horse-racing-predictions.funkyiq.com",
     ],
-    allow_origin_regex=r"^https://funkyiq(-[a-z0-9\-]+)?\.vercel\.app$",
+    allow_origin_regex=r"^https://horse-prediction-engine(-[a-z0-9\-]+)?\.vercel\.app$",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

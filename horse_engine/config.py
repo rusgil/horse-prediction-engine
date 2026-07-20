@@ -24,7 +24,10 @@ class Settings(BaseSettings):
     #                          Raise this later via env var, no code change.
     resend_api_key: str = ""
     sender_email: str = "no-reply@funkyiq.com"
-    app_base_url: str = "https://funkyiq.com"
+    # funkyiq.com is the parent brand. Horse-prediction lives on a
+    # subdomain so future products (NRL predictions, etc.) get their
+    # own subdomain under the same brand.
+    app_base_url: str = "https://horse-racing-predictions.funkyiq.com"
     first_admin_email: str = "rusgil@gmail.com"
     member_cap: int = 1000
 
