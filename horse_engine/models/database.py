@@ -474,6 +474,93 @@ class ResponseCacheRow(Base):
     updated_at = Column(DateTime, default=datetime.utcnow, index=True)
 
 
+# ── Membership + auth (Phase 1 — added 2026-07-20) ────────────────────
+
+class UserRow(Base):
+    """Every registered member. Created on first successful email
+    verification, not on the /request-code POST (avoids polluting the
+    table with unverified spam signups).
+
+    role determines site-wide capability:
+      - 'member'      — regular paying customer
+      - 'power_user'  — read-only access + a test_plan_override that
+                        bypasses Stripe for testing production flows
+      - 'admin'       — full CRUD via /api/admin/*
+
+    member_number is assigned when the user's subscription first goes
+    active (trial start counts as "seat taken" per the model). It's the
+    sequence 1..MEMBER_CAP and identifies founding members
+    (member_number <= 100). Null while user is pre-trial or lapsed.
+
+    seat_active tracks whether they currently occupy a seat against the
+    MEMBER_CAP. Flips false when trial expires unconverted OR when
+    subscription lapses. Waitlist promotion checks COUNT(seat_active=true).
+    """
+    __tablename__ = "users"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    email = Column(String, nullable=False, unique=True, index=True)
+    role = Column(String, nullable=False, default="member", index=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+
+    # Membership seat + founding status. Both nullable until first
+    # subscription-active event.
+    member_number = Column(Integer, nullable=True, unique=True, index=True)
+    seat_active = Column(Boolean, nullable=False, default=False, index=True)
+    founding = Column(Boolean, nullable=False, default=False)  # member_number <= 100 at seat allocation
+    founding_coupon_issued_at = Column(DateTime, nullable=True)  # set once, at 1-year anniversary
+
+    # Invite lineage — never mutated after signup. Helpful for tracing
+    # organic growth patterns + attribution.
+    invited_by_user_id = Column(Integer, nullable=True, index=True)
+
+    # Power-user-only override. Ignored for role != 'power_user'.
+    # Format: comma-separated plan tags, e.g. "punter_pro,labs,founding".
+    # Auth middleware reads this in place of Stripe subscription state.
+    test_plan_override = Column(String, nullable=True)
+
+
+class MagicLinkRow(Base):
+    """Short-lived (15 min) one-time-use tokens sent by email to prove
+    ownership of an email address. Consumed on GET /api/auth/verify
+    which then creates a SessionRow. Never used as a session itself —
+    the session lives in its own table with its own token.
+
+    Token stored as SHA-256 hex hash so a DB compromise doesn't leak
+    usable login codes.
+    """
+    __tablename__ = "magic_links"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    email = Column(String, nullable=False, index=True)   # not user_id — sometimes user doesn't exist yet
+    token_hash = Column(String, nullable=False, unique=True, index=True)
+    intent = Column(String, nullable=False)              # 'login' | 'signup' — determines redirect target
+    invite_token_hash = Column(String, nullable=True)    # tie-in with an InviteRow when intent='signup'
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    expires_at = Column(DateTime, nullable=False, index=True)
+    used_at = Column(DateTime, nullable=True)
+
+
+class SessionRow(Base):
+    """The 7-day authenticated session. HttpOnly cookie value on client
+    is hashed and stored here. Middleware reads cookie → hashes → looks
+    up in this table → returns user or 401.
+
+    On logout: delete this row (single session). Admin can 'revoke all
+    sessions for user X' by deleting all rows for that user_id.
+    """
+    __tablename__ = "sessions"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, nullable=False, index=True)
+    cookie_hash = Column(String, nullable=False, unique=True, index=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    expires_at = Column(DateTime, nullable=False, index=True)
+    last_seen_at = Column(DateTime, default=datetime.utcnow)   # touched on every authed request; helps identify stale devices
+    user_agent = Column(String, nullable=True)                 # useful for account-security review
+    ip_address = Column(String, nullable=True)
+
+
 class RAVenueKeyCacheRow(Base):
     """Persistent cache of the (date, state, clean_venue) → RA key mapping.
 
@@ -685,6 +772,14 @@ async def init_db() -> None:
         # uq_ra_form_kind_code unique constraint provides the equality
         # lookup index; the cached_at index supports TTL / cleanup queries.
         "CREATE INDEX IF NOT EXISTS ix_ra_form_cached_at ON ra_form_cache (cached_at)",
+        # ── Membership + auth (Phase 1 — 2026-07-20) ─────────────────
+        # New tables (users, magic_links, sessions) are auto-created by
+        # Base.metadata.create_all above. These migrations only need to
+        # exist for indexes not already declared inline on the model
+        # (email lookups, session expiry sweeps, magic-link cleanup).
+        "CREATE INDEX IF NOT EXISTS ix_users_role_seat ON users (role, seat_active)",
+        "CREATE INDEX IF NOT EXISTS ix_magic_links_email_created ON magic_links (email, created_at)",
+        "CREATE INDEX IF NOT EXISTS ix_sessions_user_expires ON sessions (user_id, expires_at)",
         "CREATE INDEX IF NOT EXISTS ix_hist_results_race_winner ON historical_results (race_id, winner)",
         "CREATE INDEX IF NOT EXISTS ix_hist_results_race_placed ON historical_results (race_id, placed)",
         # Composite for common top-3/top-4 fetches: SELECT ... WHERE race_id = X AND position IN (1,2,3)
@@ -790,6 +885,41 @@ async def init_db() -> None:
                 _log.info("[init_db] is_sharp backfill: %s rows", result.rowcount)
         except Exception as e:
             _log.warning("[init_db] is_sharp backfill skipped: %s", e)
+
+    # ── First-admin bootstrap ─────────────────────────────────────────
+    # Idempotent: only inserts if there is currently no admin AND the
+    # target email doesn't already exist. Subsequent config changes to
+    # first_admin_email are no-ops (won't demote an existing admin,
+    # won't create a second admin). Post-launch, admins are managed by
+    # existing admins via the admin dashboard.
+    try:
+        from horse_engine.config import settings as _settings
+        target_email = (_settings.first_admin_email or "").strip().lower()
+        if target_email:
+            async with engine.begin() as conn:
+                any_admin = (await conn.execute(
+                    text("SELECT 1 FROM users WHERE role = 'admin' LIMIT 1")
+                )).scalar()
+                if not any_admin:
+                    existing = (await conn.execute(
+                        text("SELECT id FROM users WHERE email = :e"),
+                        {"e": target_email},
+                    )).scalar()
+                    if existing:
+                        await conn.execute(
+                            text("UPDATE users SET role = 'admin' WHERE id = :id"),
+                            {"id": existing},
+                        )
+                        _log.info("[init_db] Promoted existing user %s to admin", target_email)
+                    else:
+                        await conn.execute(
+                            text("INSERT INTO users (email, role, created_at, seat_active, founding) "
+                                 "VALUES (:e, 'admin', :now, FALSE, FALSE)"),
+                            {"e": target_email, "now": datetime.utcnow()},
+                        )
+                        _log.info("[init_db] Bootstrapped first admin: %s", target_email)
+    except Exception as e:
+        _log.warning("[init_db] first-admin bootstrap skipped: %s", e)
 
 
 async def backfill_prediction_history(session: AsyncSession) -> int:
