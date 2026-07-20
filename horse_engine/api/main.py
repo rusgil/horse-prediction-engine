@@ -31,6 +31,7 @@ import os
 import random
 import re
 import secrets
+import time
 from contextlib import asynccontextmanager
 from datetime import date, datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
@@ -76,6 +77,9 @@ from horse_engine.models.database import (
     load_exotic_model_weights,
     save_exotic_model_weights,
     save_race_predictions,
+    UserRow,
+    MagicLinkRow,
+    SessionRow,
 )
 from horse_engine.analysis.nightly_review import (
     generate_review as _generate_nightly_review,
@@ -3156,6 +3160,142 @@ async def _load_exotic_model(session) -> ExoticModel:
 
 def _today() -> str:
     return _today_aest().isoformat()
+
+
+# ── Auth endpoints (Phase 1 — 2026-07-20) ────────────────────────────────
+# Magic-link email verification → 7-day session cookie.
+# Rate-limited per email AND per IP to prevent signup-spam abuse.
+# See horse_engine/api/auth.py + mailer.py for the underlying logic.
+
+from horse_engine.api.auth import (
+    COOKIE_NAME as _AUTH_COOKIE_NAME,
+    current_user_optional as _auth_current_user_optional,
+    consume_magic_link as _auth_consume_magic_link,
+    issue_magic_link as _auth_issue_magic_link,
+    get_or_create_user as _auth_get_or_create_user,
+    create_session as _auth_create_session,
+    revoke_session as _auth_revoke_session,
+    set_session_cookie as _auth_set_session_cookie,
+    clear_session_cookie as _auth_clear_session_cookie,
+)
+from horse_engine.api.mailer import send_magic_link as _mail_send_magic_link
+
+# Per-email rate limit for /api/auth/request-code — max 3 codes per
+# email per hour. Independent of the per-IP rate limit above so an
+# attacker rotating IPs can't spam a single mailbox.
+_AUTH_EMAIL_HITS: dict[str, list[float]] = {}
+_AUTH_EMAIL_LIMIT = 3
+_AUTH_EMAIL_WINDOW = 3600.0
+
+def _enforce_email_rate(email: str) -> None:
+    now = time.time()
+    hits = _AUTH_EMAIL_HITS.get(email, [])
+    hits = [t for t in hits if now - t < _AUTH_EMAIL_WINDOW]
+    if len(hits) >= _AUTH_EMAIL_LIMIT:
+        raise HTTPException(
+            status_code=429,
+            detail=f"Too many login attempts for this email. Try again in an hour.",
+            headers={"Retry-After": str(int(_AUTH_EMAIL_WINDOW))},
+        )
+    hits.append(now)
+    _AUTH_EMAIL_HITS[email] = hits
+
+
+@app.post("/api/auth/request-code")
+async def auth_request_code(request: Request, response: Response):
+    """Public — kicks off passwordless auth. Body: {"email": "user@..."}.
+
+    Emits a magic-link email valid for 15 minutes. Always returns 200
+    with a generic body regardless of whether the email is registered,
+    to avoid leaking membership state. If the email is unknown, the
+    magic link they receive on verify will land them on onboarding.
+
+    Rate-limited: 5 per IP per 60s (existing global limiter) and
+    3 per email per hour (see _enforce_email_rate above).
+    """
+    _enforce_caller_rate(request, "auth_request_code")
+    body = await request.json()
+    email = (body.get("email") or "").strip().lower()
+    if not email or "@" not in email or len(email) > 254:
+        raise HTTPException(status_code=400, detail="Invalid email address")
+    _enforce_email_rate(email)
+
+    # Existing user? Determines intent (affects email copy).
+    async with get_session() as _sess:
+        row = (await _sess.execute(
+            select(UserRow).where(UserRow.email == email).limit(1)
+        )).scalars().first()
+    intent = "login" if row is not None else "signup"
+
+    # Generate + email the link. Best-effort — Resend failures don't
+    # crash the endpoint. User can retry request-code if nothing arrives.
+    token = await _auth_issue_magic_link(email, intent=intent)
+    verify_url = f"{settings.app_base_url.rstrip('/')}/verify?t={token}"
+    delivered = await _mail_send_magic_link(email, verify_url, intent=intent)
+    if not delivered:
+        log.warning("[auth] magic-link email delivery to %s did not succeed", email)
+
+    return {"ok": True, "message": "If that email is valid, a login link is on its way."}
+
+
+@app.get("/api/auth/verify")
+async def auth_verify(t: str, response: Response):
+    """Public — clicked from the magic-link email. Consumes the token,
+    creates or finds the user, issues a 7-day session cookie, and
+    returns a redirect payload the frontend uses to route the user to
+    the appropriate next page.
+
+    Note: this is intentionally a GET (users clicking from email
+    clients), not a POST. The one-time-use guarantee + short expiry
+    protect against email-forwarding replay.
+    """
+    row = await _auth_consume_magic_link(t)
+    if row is None:
+        raise HTTPException(status_code=400, detail="This link has expired or already been used. Request a new one.")
+
+    user = await _auth_get_or_create_user(row.email)
+    cookie_token = await _auth_create_session(user.id)
+    _auth_set_session_cookie(response, cookie_token)
+
+    return {
+        "ok": True,
+        "user_id": user.id,
+        "email": user.email,
+        "role": user.role,
+        "intent": row.intent,
+        # Frontend consumes 'next' to decide where to send the user
+        # post-verify. signup -> /pricing (or /join/{invite} if invite
+        # was attached), login -> /
+        "next": "/pricing" if row.intent == "signup" else "/",
+    }
+
+
+@app.post("/api/auth/logout")
+async def auth_logout(request: Request, response: Response):
+    """Delete the current session server-side + clear the cookie
+    client-side. Safe to call while unauthenticated (no-op)."""
+    cookie = request.cookies.get(_AUTH_COOKIE_NAME)
+    if cookie:
+        await _auth_revoke_session(cookie)
+    _auth_clear_session_cookie(response)
+    return {"ok": True}
+
+
+@app.get("/api/auth/me")
+async def auth_me(user=Depends(_auth_current_user_optional)):
+    """Return the current user's identity + role, or 401 if not signed
+    in. Frontend polls this on page load to decide what to render."""
+    if user is None:
+        raise HTTPException(status_code=401, detail="Not signed in")
+    return {
+        "id": user.id,
+        "email": user.email,
+        "role": user.role,
+        "member_number": user.member_number,
+        "seat_active": bool(user.seat_active),
+        "founding": bool(user.founding),
+        "created_at": user.created_at.isoformat() if user.created_at else None,
+    }
 
 
 # ── Sportsbet-availability flag ──────────────────────────────────────────
