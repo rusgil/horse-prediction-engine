@@ -2868,14 +2868,15 @@ async def lifespan(app: FastAPI):
         _scheduled_odds_snapshot,
         IntervalTrigger(seconds=90),
     )
-    # Pre-race scan halved from 15-min → 30-min interval on 2026-07-20 to
-    # reduce RA request footprint while waiting on commercial API vendor.
-    # Detects scratchings + refreshes fields — 30-min lag on late scratchings
-    # is acceptable for now; jitter kills the predictable timing signature
-    # that WAFs use to flag automated traffic.
+    # Pre-race scan dropped from 15-min → hourly on 2026-07-20 while
+    # waiting on commercial API vendor. Cuts our biggest RA-hitter by
+    # ~75%. Detects scratchings + refreshes fields — up to 60-min lag
+    # on late scratchings is acceptable for this bridging period.
+    # Jitter kills the predictable :00 timing signature that WAFs use
+    # to flag automated traffic.
     scheduler.add_job(
         _scheduled_pre_race_enrich_and_scratch,
-        CronTrigger(hour="9-20", minute="0,30", jitter=90, timezone="Australia/Sydney")
+        CronTrigger(hour="9-20", minute="0", jitter=180, timezone="Australia/Sydney")
     )
     scheduler.add_job(
         _scheduled_live_odds_refresh,
