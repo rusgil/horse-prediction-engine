@@ -6244,7 +6244,7 @@ def _build_lock(edge_picks: list[dict]) -> Optional[dict]:
     pick = max(candidates, key=lambda p: p.get("edge_pct") or 0)
     return {
         "kind": "lock",
-        "title": "The Lock",
+        "title": "Win Bet",
         "subtitle": "Single win · Premium-tier pick · best edge of the day",
         "confidence": "B",
         "race_id": pick["race_id"],
@@ -6638,7 +6638,7 @@ def _build_banker(edge_picks: list[dict]) -> Optional[dict]:
     pick = max(candidates, key=lambda c: c["place_prob"])
     return {
         "kind": "banker",
-        "title": "The Banker",
+        "title": "Place Bet",
         "subtitle": f"Place bet · model has {round(pick['place_prob']*100,0)}% top-3 confidence",
         "confidence": "A",
         "race_id": pick["race_id"],
@@ -7328,6 +7328,15 @@ async def funk_me_up_today(date: Optional[str] = None):
             sum((p.get("outcome", {}).get("profit_dollars") or 0) for p in plays), 2
         )
 
+    # For past dates, tell the frontend which play kinds didn't qualify
+    # so it can show a "no qualifying selection" tile alongside the ones
+    # that ran. Live/future views omit this — a not-yet-qualifying kind
+    # can still surface later in the day when new data lands.
+    no_selection_kinds: list[str] = []
+    if is_past:
+        built_kinds = {p.get("kind") for p in plays if p.get("kind")}
+        no_selection_kinds = [k for k in _FUNK_ALL_KINDS if k not in built_kinds]
+
     return {
         "date": target_date,
         "is_past": is_past,
@@ -7335,12 +7344,21 @@ async def funk_me_up_today(date: Optional[str] = None):
         "base_stake": _FUNK_BASE_STAKE,
         "hero_kind": hero.get("kind") if hero else None,
         "plays": plays,
+        "no_selection_kinds": no_selection_kinds,
         "cash_exposure_dollars": total_cash_exposure,
         "bonus_exposure_dollars": bonus_exposure,
         "expected_profit_dollars": expected_profit,
         "actual_profit_dollars": actual_profit,
         "disclaimer": "Estimates use TAB odds; Sportsbet prices vary. Verify boost % and Top 4 prices in the Sportsbet betslip before placing.",
     }
+
+
+# Canonical order the Funk Me Up plays are attempted in each request.
+# Used to populate no_selection_kinds so the frontend can render a
+# stable "didn't qualify" list for past dates.
+_FUNK_ALL_KINDS: tuple = (
+    "lock", "double", "banker", "combo_doubles", "twofunk", "quaddie", "lab",
+)
 
 
 _funk_backtest_cache: tuple[datetime, dict] | None = None

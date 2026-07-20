@@ -129,6 +129,27 @@
       margin: 18px 0 8px;
     }
 
+    /* "Didn't qualify" strip — small grey tiles listing plays that
+       didn't have a valid selection on a past date. Rendered as
+       inline chips below the "Other Plays" section so the reader can
+       see the full menu at a glance. */
+    .no-select-strip {
+      display: flex; flex-wrap: wrap;
+      gap: 6px;
+      margin-top: 6px;
+    }
+    .no-select-chip {
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 6px 10px;
+      background: rgba(255,255,255,0.03);
+      border: 1px dashed rgba(255,255,255,0.14);
+      border-radius: 999px;
+      font-size: 12px;
+      color: var(--text-dim);
+      opacity: 0.72;
+    }
+    .no-select-chip .emoji { font-size: 14px; }
+
     /* Play card */
     .play {
       background: var(--bg-card);
@@ -674,20 +695,6 @@
       <button class="day-tab" data-day="yesterday">Yesterday</button>
       <button class="day-tab active" data-day="today">Today</button>
     </div>
-    <div id="exposure" class="exposure-row" style="display:none;">
-      <div class="exposure-card">
-        <div class="exposure-num" id="cashExp">—</div>
-        <div class="exposure-label" id="cashExpLabel">Cash exposure</div>
-      </div>
-      <div class="exposure-card">
-        <div class="exposure-num" id="bonusExp">—</div>
-        <div class="exposure-label">Bonus credit</div>
-      </div>
-      <div class="exposure-card">
-        <div class="exposure-num" id="expEv">—</div>
-        <div class="exposure-label" id="expEvLabel">Est. profit</div>
-      </div>
-    </div>
   </header>
 
   <main id="root">
@@ -698,17 +705,17 @@
   const API = 'https://web-production-dec62.up.railway.app';
 
   const KIND_META = {
-    lock:          { emoji: '💪' },
-    bonus:         { emoji: '⭐' },
-    double:        { emoji: '🪜' },
-    banker:        { emoji: '🏦' },
-    quaddie:       { emoji: '🎰' },
-    combo_doubles: { emoji: '🧩' },
-    twofunk:       { emoji: '🪩' },
-    lab:           { emoji: '🧪' },
+    lock:          { emoji: '💪', label: 'Win Bet' },
+    bonus:         { emoji: '⭐', label: 'Bonus' },
+    double:        { emoji: '🪜', label: 'Double' },
+    banker:        { emoji: '🏦', label: 'Place Bet' },
+    quaddie:       { emoji: '🎰', label: 'Early Quaddie' },
+    combo_doubles: { emoji: '🧩', label: 'Combo Doubles' },
+    twofunk:       { emoji: '🪩', label: '2 Funk' },
+    lab:           { emoji: '🧪', label: 'Lab Pick' },
     // Legacy kinds kept so historical (yesterday) data still renders
-    spine:   { emoji: '🎯' },
-    wave:    { emoji: '🌊' },
+    spine:   { emoji: '🎯', label: 'Spine' },
+    wave:    { emoji: '🌊', label: 'Wave' },
   };
 
   function escHtml(s) {
@@ -1169,29 +1176,11 @@
       </div>`;
   }
 
-  function renderExposure(d) {
-    const exp = document.getElementById('exposure');
-    document.getElementById('cashExp').textContent = `$${(d.cash_exposure_dollars || 0).toFixed(2)}`;
-    document.getElementById('bonusExp').textContent = `$${(d.bonus_exposure_dollars || 0).toFixed(2)}`;
-    const evEl = document.getElementById('expEv');
-    const evLabelEl = document.getElementById('expEvLabel');
-    const cashLabelEl = document.getElementById('cashExpLabel');
-    // For past dates, show ACTUAL profit instead of expected
-    if (d.is_past) {
-      const actual = d.actual_profit_dollars || 0;
-      evEl.textContent = fmtMoney(actual);
-      evEl.className = `exposure-num ${actual >= 0 ? 'pos' : 'neg'}`;
-      if (evLabelEl) evLabelEl.textContent = 'Actual profit';
-      if (cashLabelEl) cashLabelEl.textContent = 'Cash staked';
-    } else {
-      const ev = d.expected_profit_dollars || 0;
-      evEl.textContent = fmtMoney(ev);
-      evEl.className = `exposure-num ${ev >= 0 ? 'pos' : 'neg'}`;
-      if (evLabelEl) evLabelEl.textContent = 'Est. profit';
-      if (cashLabelEl) cashLabelEl.textContent = 'Cash exposure';
-    }
-    exp.style.display = 'grid';
-  }
+  // Exposure banner removed 2026-07-20 — per-play odds are shown on
+  // each card, and the aggregate cash-exposure/profit line was more
+  // noise than signal for members glancing at the page. Kept the
+  // function as a no-op so any leftover callers don't crash.
+  function renderExposure(_d) { /* no-op */ }
 
   // Current selected day. Drives the date passed to the API.
   let currentDay = 'today';
@@ -1275,6 +1264,21 @@
       if (others.length) {
         html += `<div class="section-title">${moreLabel}</div>`;
         html += others.map(p => renderPlay(p, false, ordinalByKind[p.kind])).join('');
+      }
+      // "Didn't qualify" chips — only for past dates. Backend populates
+      // no_selection_kinds with the play kinds that returned None for
+      // that day (usually because Sharp/edge/field-size gates weren't
+      // met). Rendered as small greyed chips so the reader sees the
+      // complete menu of possible plays, not just the ones that ran.
+      const nsk = data.no_selection_kinds || [];
+      if (nsk.length) {
+        html += `<div class="section-title">Didn't qualify that day</div>`;
+        html += `<div class="no-select-strip">`;
+        for (const k of nsk) {
+          const meta = KIND_META[k] || { emoji: '·', label: k };
+          html += `<span class="no-select-chip"><span class="emoji">${meta.emoji}</span>${escHtml(meta.label || k)}</span>`;
+        }
+        html += `</div>`;
       }
       html += `<div class="disclaimer">${escHtml(data.disclaimer || '')}</div>`;
       html += `<div class="responsible">Gamble responsibly · 1800 858 858 · gamblinghelponline.org.au</div>`;
