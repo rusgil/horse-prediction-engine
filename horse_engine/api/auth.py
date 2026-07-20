@@ -28,8 +28,11 @@ from sqlalchemy import select, delete
 
 from horse_engine.config import settings
 from horse_engine.models.database import (
-    MagicLinkRow, SessionRow, UserRow, get_session,
+    MagicLinkRow, SessionRow, UserRow,
 )
+# get_session lives in api.database, NOT models.database. First deploy of
+# this module failed startup with ImportError until this was split.
+from horse_engine.api.database import get_session
 
 log = logging.getLogger(__name__)
 
