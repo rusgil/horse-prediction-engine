@@ -1,0 +1,447 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>FunkyIQ — Account</title>
+  <meta name="robots" content="noindex, nofollow" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@400;600;700;800;900&family=Outfit:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --bg: #07090f;
+      --card: #0e1220;
+      --edge: #1e2840;
+      --text: #f0f4ff;
+      --muted: #8a9bc4;
+      --green: #22c55e;
+      --gold: #e8a020;
+      --red: #ef4444;
+      --blue: #60a5fa;
+    }
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: 'Outfit', sans-serif;
+      background: var(--bg); color: var(--text);
+      min-height: 100vh; padding: 24px;
+      -webkit-font-smoothing: antialiased;
+    }
+    .wrap { max-width: 780px; margin: 0 auto; }
+    header {
+      display: flex; align-items: center; gap: 12px;
+      padding-bottom: 20px; border-bottom: 1px solid var(--edge);
+      margin-bottom: 24px;
+    }
+    .brand-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--green); box-shadow: 0 0 10px var(--green); }
+    .brand-name {
+      font-family: 'Barlow Condensed', sans-serif;
+      font-size: 1.3rem; font-weight: 900;
+      letter-spacing: 0.08em; text-transform: uppercase;
+    }
+    .subtitle {
+      font-family: 'Barlow Condensed', sans-serif;
+      font-size: 1rem; font-weight: 600;
+      color: var(--muted); text-transform: uppercase;
+      letter-spacing: 0.15em; margin-left: 8px;
+    }
+    .nav-links {
+      margin-left: auto; display: flex; gap: 14px; font-size: 0.82rem;
+    }
+    .nav-links a { color: var(--muted); text-decoration: none; }
+    .nav-links a:hover { color: var(--green); }
+
+    section {
+      background: var(--card);
+      border: 1px solid var(--edge);
+      border-radius: 12px;
+      padding: 22px 24px;
+      margin-bottom: 20px;
+    }
+    h2 {
+      font-family: 'Barlow Condensed', sans-serif;
+      font-size: 1.1rem; font-weight: 800;
+      text-transform: uppercase; letter-spacing: 0.05em;
+      margin-bottom: 14px;
+    }
+
+    .profile-row { display: flex; gap: 24px; flex-wrap: wrap; }
+    .profile-item {
+      min-width: 140px;
+    }
+    .profile-label {
+      font-size: 0.68rem; color: var(--muted);
+      text-transform: uppercase; letter-spacing: 0.12em;
+      margin-bottom: 4px;
+    }
+    .profile-value {
+      font-family: 'Barlow Condensed', sans-serif;
+      font-size: 1.4rem; font-weight: 700; line-height: 1;
+    }
+    .profile-value.mono { font-family: 'JetBrains Mono', monospace; font-size: 0.95rem; }
+    .badge-founding {
+      display: inline-block; margin-left: 6px;
+      background: rgba(232,160,32,0.15);
+      color: var(--gold);
+      border: 1px solid rgba(232,160,32,0.35);
+      padding: 2px 8px; border-radius: 6px;
+      font-size: 0.72rem; letter-spacing: 0.04em;
+      font-weight: 700; text-transform: uppercase;
+      vertical-align: middle;
+    }
+
+    .invite-form { display: flex; gap: 10px; flex-wrap: wrap; align-items: end; }
+    .field { flex: 1; min-width: 200px; }
+    label {
+      display: block; font-size: 0.7rem; font-weight: 600;
+      color: var(--muted); text-transform: uppercase;
+      letter-spacing: 0.1em; margin-bottom: 6px;
+    }
+    input[type="email"] {
+      width: 100%;
+      background: #1a2035;
+      border: 1px solid var(--edge);
+      border-radius: 8px;
+      color: var(--text);
+      font-family: 'Outfit', sans-serif; font-size: 0.95rem;
+      padding: 10px 12px; outline: none;
+    }
+    input[type="email"]:focus { border-color: var(--green); box-shadow: 0 0 0 3px rgba(34,197,94,0.12); }
+    .btn {
+      background: var(--green); color: var(--bg);
+      border: none; border-radius: 8px;
+      font-family: 'Barlow Condensed', sans-serif;
+      font-size: 0.95rem; font-weight: 800;
+      letter-spacing: 0.08em; text-transform: uppercase;
+      padding: 11px 22px; cursor: pointer;
+      transition: background 0.15s;
+    }
+    .btn:hover { background: #4ade80; }
+    .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+    .btn.small { font-size: 0.75rem; padding: 6px 12px; }
+    .btn.ghost { background: transparent; border: 1px solid var(--edge); color: var(--muted); }
+    .btn.ghost:hover { border-color: var(--red); color: var(--red); }
+
+    .hint {
+      font-size: 0.78rem; color: var(--muted);
+      margin-top: 12px; line-height: 1.5;
+    }
+    .hint strong { color: var(--text); }
+    .cap {
+      display: inline-block;
+      background: rgba(96,165,250,0.12);
+      color: var(--blue);
+      border: 1px solid rgba(96,165,250,0.3);
+      padding: 3px 10px; border-radius: 8px;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.8rem;
+      font-weight: 600;
+    }
+
+    .mint-output {
+      margin-top: 16px; padding: 14px 16px;
+      background: #1a2035; border: 1px solid var(--green);
+      border-radius: 8px;
+      display: none;
+    }
+    .mint-output.show { display: block; }
+    .mint-output .lbl {
+      font-size: 0.72rem; color: var(--muted);
+      text-transform: uppercase; letter-spacing: 0.1em;
+      margin-bottom: 6px;
+    }
+    .mint-output .url {
+      display: block; word-break: break-all;
+      color: var(--green); text-decoration: none;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.85rem; line-height: 1.5;
+      padding: 8px 10px; background: rgba(34,197,94,0.06);
+      border-radius: 6px; margin-bottom: 10px;
+    }
+    .copy-btn {
+      background: transparent; border: 1px solid var(--edge);
+      color: var(--muted);
+      font-family: 'Barlow Condensed', sans-serif;
+      font-size: 0.78rem; font-weight: 700;
+      letter-spacing: 0.08em; text-transform: uppercase;
+      padding: 6px 12px; border-radius: 6px;
+      cursor: pointer;
+    }
+    .copy-btn:hover { border-color: var(--green); color: var(--green); }
+    .copy-btn.copied { border-color: var(--green); color: var(--green); background: rgba(34,197,94,0.1); }
+
+    table { width: 100%; border-collapse: collapse; font-size: 0.85rem; }
+    th, td { text-align: left; padding: 9px 10px; border-bottom: 1px solid var(--edge); }
+    th {
+      font-size: 0.66rem; color: var(--muted);
+      text-transform: uppercase; letter-spacing: 0.1em; font-weight: 600;
+    }
+    td.mono, code { font-family: 'JetBrains Mono', monospace; font-size: 0.78rem; }
+    .status-chip {
+      display: inline-block; padding: 2px 8px; border-radius: 6px;
+      font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.06em; font-weight: 600;
+    }
+    .status-valid { background: rgba(34,197,94,0.15); color: var(--green); }
+    .status-used  { background: rgba(96,165,250,0.15); color: var(--blue); }
+    .status-expired { background: rgba(232,160,32,0.15); color: var(--gold); }
+    .status-revoked { background: rgba(239,68,68,0.15); color: var(--red); }
+    .empty { color: var(--muted); font-size: 0.85rem; padding: 12px 0; }
+
+    .signout {
+      color: var(--muted); background: transparent;
+      border: 1px solid var(--edge); border-radius: 8px;
+      padding: 8px 16px; cursor: pointer;
+      font-family: 'Barlow Condensed', sans-serif;
+      font-size: 0.85rem; font-weight: 700;
+      letter-spacing: 0.08em; text-transform: uppercase;
+    }
+    .signout:hover { border-color: var(--red); color: var(--red); }
+
+    .toast {
+      position: fixed; top: 20px; right: 20px;
+      background: var(--card); border: 1px solid var(--green);
+      color: var(--green); padding: 12px 18px; border-radius: 8px;
+      font-size: 0.85rem; display: none; z-index: 100;
+      box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+    }
+    .toast.show { display: block; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <div class="brand-dot"></div>
+      <span class="brand-name">FunkyIQ</span>
+      <span class="subtitle">Account</span>
+      <div class="nav-links">
+        <a href="/edge">← The Edge</a>
+        <a href="/hotseat">Hot Seat</a>
+      </div>
+    </header>
+
+    <div id="content" style="display:none">
+      <section>
+        <h2>Profile</h2>
+        <div class="profile-row">
+          <div class="profile-item">
+            <div class="profile-label">Email</div>
+            <div class="profile-value mono" id="p-email">—</div>
+          </div>
+          <div class="profile-item">
+            <div class="profile-label">Member #</div>
+            <div class="profile-value" id="p-mn">—</div>
+          </div>
+          <div class="profile-item">
+            <div class="profile-label">Role</div>
+            <div class="profile-value" id="p-role">—</div>
+          </div>
+          <div class="profile-item">
+            <div class="profile-label">Joined</div>
+            <div class="profile-value" id="p-joined">—</div>
+          </div>
+          <div class="profile-item" style="margin-left:auto">
+            <button class="signout" id="signoutBtn">Sign out</button>
+          </div>
+        </div>
+      </section>
+
+      <section>
+        <h2>Invite a friend <span class="cap" id="cap-chip"></span></h2>
+        <p class="hint" style="margin-top:-4px; margin-bottom:14px">
+          Enter a recipient email (optional — leave blank for an open code
+          you can share). We'll generate a one-time link they can use to
+          claim a seat. Codes expire after 30 days.
+        </p>
+        <form id="inviteForm" class="invite-form">
+          <div class="field">
+            <label for="invEmail">Recipient email (optional)</label>
+            <input type="email" id="invEmail" placeholder="friend@example.com" />
+          </div>
+          <div>
+            <button class="btn" type="submit" id="mintBtn">Generate invite</button>
+          </div>
+        </form>
+        <div class="mint-output" id="mintOutput">
+          <div class="lbl">Send this link to your friend</div>
+          <a class="url" id="mintUrl" href="#" target="_blank"></a>
+          <button class="copy-btn" id="copyBtn">Copy link</button>
+        </div>
+      </section>
+
+      <section>
+        <h2>Your invites <span style="font-size:0.7rem; color:var(--muted); font-weight:400" id="invitesCount"></span></h2>
+        <div style="overflow-x:auto">
+          <table id="invitesTable">
+            <thead>
+              <tr>
+                <th>Recipient</th>
+                <th>Status</th>
+                <th>Expires</th>
+                <th>Sent</th>
+                <th></th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </section>
+    </div>
+
+    <div id="unauth" style="display:none; text-align:center; padding:60px 20px; color:var(--muted)">
+      <h1 style="font-family:'Barlow Condensed',sans-serif; font-size:1.5rem; margin-bottom:12px; color:var(--text)">Sign in required</h1>
+      <p style="margin-bottom:20px; font-size:0.9rem">Sign in to manage your invites and account.</p>
+      <a href="/login" class="btn" style="text-decoration:none">Sign In</a>
+    </div>
+  </div>
+
+  <div class="toast" id="toast"></div>
+
+  <script>
+    const API = 'https://web-production-dec62.up.railway.app';
+
+    function esc(s) {
+      return String(s == null ? '' : s)
+        .replace(/&/g,'&amp;').replace(/</g,'&lt;')
+        .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+    }
+    function fmtDate(iso) {
+      if (!iso) return '—';
+      try { return new Date(iso).toLocaleString('en-AU', { day:'2-digit', month:'short', hour:'2-digit', minute:'2-digit' }); }
+      catch { return iso; }
+    }
+    function toast(msg, ok=true) {
+      const el = document.getElementById('toast');
+      el.textContent = msg;
+      el.style.borderColor = ok ? 'var(--green)' : 'var(--red)';
+      el.style.color = ok ? 'var(--green)' : 'var(--red)';
+      el.classList.add('show');
+      setTimeout(() => el.classList.remove('show'), 2500);
+    }
+    async function api(path, opts = {}) {
+      opts.credentials = 'include';
+      opts.headers = { 'Content-Type': 'application/json', ...(opts.headers || {}) };
+      const res = await fetch(API + path, opts);
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.detail || `HTTP ${res.status}`);
+      }
+      return res.json();
+    }
+
+    let currentUser = null;
+
+    async function boot() {
+      try {
+        currentUser = await api('/api/auth/me');
+        document.getElementById('content').style.display = 'block';
+        renderProfile(currentUser);
+        updateCapChip(currentUser.invites_remaining ?? 0);
+        await loadInvites();
+      } catch (e) {
+        document.getElementById('unauth').style.display = 'block';
+      }
+    }
+
+    function renderProfile(u) {
+      document.getElementById('p-email').textContent = u.email;
+      document.getElementById('p-mn').innerHTML =
+        (u.member_number ?? '—') +
+        (u.founding ? ' <span class="badge-founding">Founding</span>' : '');
+      document.getElementById('p-role').textContent = u.role;
+      document.getElementById('p-joined').textContent = fmtDate(u.created_at);
+    }
+
+    function updateCapChip(remaining) {
+      document.getElementById('cap-chip').textContent = `${remaining} invites remaining`;
+    }
+
+    async function loadInvites() {
+      const d = await api('/api/invites/mine');
+      updateCapChip(d.invites_remaining ?? 0);
+      document.getElementById('invitesCount').textContent = `(${d.invites.length})`;
+      const tbody = document.querySelector('#invitesTable tbody');
+      if (!d.invites.length) {
+        tbody.innerHTML = '<tr><td colspan="5" class="empty">You haven\'t sent any invites yet.</td></tr>';
+        return;
+      }
+      tbody.innerHTML = d.invites.map(r => `
+        <tr>
+          <td class="mono">${esc(r.invited_email || '— open code —')}</td>
+          <td><span class="status-chip status-${esc(r.status)}">${esc(r.status)}</span></td>
+          <td>${fmtDate(r.expires_at)}</td>
+          <td>${fmtDate(r.created_at)}</td>
+          <td>${r.status === 'valid' ? `<button class="btn small ghost" data-revoke="${r.id}">Revoke</button>` : ''}</td>
+        </tr>`).join('');
+      tbody.querySelectorAll('[data-revoke]').forEach(btn => {
+        btn.addEventListener('click', async () => {
+          if (!confirm('Revoke this invite? It cannot be re-used and this cannot be undone. (Your invites_remaining is NOT refunded.)')) return;
+          const id = btn.getAttribute('data-revoke');
+          btn.disabled = true;
+          try {
+            await fetch(API + `/api/invites/${id}`, { method: 'DELETE', credentials: 'include' });
+            toast('Invite revoked');
+            loadInvites();
+          } catch (e) {
+            toast(String(e.message || e), false);
+          } finally {
+            btn.disabled = false;
+          }
+        });
+      });
+    }
+
+    // ── Mint invite ──────────────────────────────────────────────────
+    document.getElementById('inviteForm').addEventListener('submit', async e => {
+      e.preventDefault();
+      const email = document.getElementById('invEmail').value.trim() || undefined;
+      const btn = document.getElementById('mintBtn');
+      btn.disabled = true; btn.textContent = 'Generating…';
+      try {
+        const body = email ? { email } : {};
+        const r = await api('/api/invites/create', {
+          method: 'POST',
+          body: JSON.stringify(body),
+        });
+        const url = r.invite.url;
+        const out = document.getElementById('mintOutput');
+        const link = document.getElementById('mintUrl');
+        link.textContent = url; link.href = url;
+        out.classList.add('show');
+        document.getElementById('invEmail').value = '';
+        toast('Invite created');
+        loadInvites();
+      } catch (err) {
+        toast(String(err.message || err), false);
+      } finally {
+        btn.disabled = false; btn.textContent = 'Generate invite';
+      }
+    });
+
+    // ── Copy link button ─────────────────────────────────────────────
+    document.getElementById('copyBtn').addEventListener('click', async () => {
+      const url = document.getElementById('mintUrl').textContent;
+      if (!url) return;
+      const btn = document.getElementById('copyBtn');
+      try {
+        await navigator.clipboard.writeText(url);
+        btn.textContent = 'Copied ✓';
+        btn.classList.add('copied');
+        setTimeout(() => {
+          btn.textContent = 'Copy link';
+          btn.classList.remove('copied');
+        }, 1800);
+      } catch (_) {
+        toast('Copy failed — long-press the link to copy manually', false);
+      }
+    });
+
+    // ── Sign out ─────────────────────────────────────────────────────
+    document.getElementById('signoutBtn').addEventListener('click', async () => {
+      await fetch(API + '/api/auth/logout', { method:'POST', credentials:'include' });
+      location.href = '/login';
+    });
+
+    boot();
+  </script>
+</body>
+</html>
