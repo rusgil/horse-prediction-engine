@@ -21264,22 +21264,42 @@ async def win_feature_ablation(
         weights_dict = await load_model_weights(session)
         hr_result = await session.execute(select(HistoricalResultRow))
         all_hr = hr_result.scalars().all()
+        # Read holdout predictions from HISTORY, not mutable — Ground Rule 1
+        # (FIX-R). Mutable for past races can carry post-race re-enrichment
+        # (odds moves after result, form updates, etc.); scoring holdout with
+        # those inflates the reported "Production Win Rate" and diverges from
+        # the history-based /api/performance number. Filter set matches
+        # retrain_model + calibration sweep: cancelled NULL/false, source='live',
+        # healthy (contaminated=False|NULL). Order by enriched_at DESC and
+        # dedup in Python on (race_id, horse_name) so a race with multiple
+        # snapshots uses the latest PRE-race batch, not an accidental mix.
         pred_result = await session.execute(
-            select(RunnerPredictionRow).where(RunnerPredictionRow.enriched_json.isnot(None))
+            select(RunnerPredictionHistoryRow)
+            .where(RunnerPredictionHistoryRow.enriched_json.isnot(None))
+            .where(RunnerPredictionHistoryRow.cancelled.is_(False) | RunnerPredictionHistoryRow.cancelled.is_(None))
+            .where(RunnerPredictionHistoryRow.source == "live")
+            .where(_history_healthy_filter())
+            .where(RunnerPredictionHistoryRow.race_id >= holdout_cutoff)
+            .order_by(RunnerPredictionHistoryRow.enriched_at.desc())
         )
-        all_pred = pred_result.scalars().all()
+        _seen_keys: set = set()
+        all_pred = []
+        for _row in pred_result.scalars().all():
+            _k = (_row.race_id, _row.horse_name)
+            if _k in _seen_keys:
+                continue
+            _seen_keys.add(_k)
+            all_pred.append(_row)
 
     model = HorseModel.from_weights_dict(weights_dict) if weights_dict else HorseModel()
 
-    pred_by_key = {(p.race_id, p.horse_name): p for p in all_pred}
     holdout_races: dict[str, list] = {}
     holdout_results: dict[tuple, HistoricalResultRow] = {}
     for r in all_hr:
         if r.race_id >= holdout_cutoff:
             holdout_results[(r.race_id, r.horse_name)] = r
     for p in all_pred:
-        if p.race_id >= holdout_cutoff:
-            holdout_races.setdefault(p.race_id, []).append(p)
+        holdout_races.setdefault(p.race_id, []).append(p)
 
     # Build holdout feature vectors once
     holdout_fvs: dict[str, list[tuple]] = {}
