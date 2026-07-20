@@ -1985,7 +1985,15 @@ async def _seed_race_results_on_demand(race_ids: list[str]) -> dict[tuple, int]:
             .where(HistoricalResultRow.race_id.in_(race_ids))
         )).all()
 
-    db_positions: dict[tuple, int] = {(r.race_id, r.horse_name): r.position for r in existing_rows}
+    # Keys are (race_id, _normalize_horse(name)) — case-insensitive + country-
+    # code-stripped. Prevents the "hotseat shows loading, edge shows Wrong"
+    # split-brain where a raw case-sensitive lookup missed rows written by
+    # a different upstream (TAB title-cased vs RA all-caps horse names).
+    # All callers of this function MUST use _normalize_horse(name) when
+    # looking up positions.
+    db_positions: dict[tuple, int] = {
+        (r.race_id, _normalize_horse(r.horse_name)): r.position for r in existing_rows
+    }
     seeded_ids: set[str] = {r.race_id for r in existing_rows}
     unseeded = [rid for rid in race_ids if rid not in seeded_ids]
 
@@ -2041,15 +2049,27 @@ async def _seed_race_results_on_demand(race_ids: list[str]) -> dict[tuple, int]:
                             starting_price=sp,
                             tab_number=_tab_num,
                         ))
-                        db_positions[(race_id, horse)] = int(pos)
+                        db_positions[(race_id, _normalize_horse(horse))] = int(pos)
                     if rows_to_add:
                         from sqlalchemy import update as sa_update
                         async with get_session() as session:
                             for row in rows_to_add:
+                                # Case-insensitive existence check — the DB's
+                                # unique index is on (race_id, LOWER(horse_name)),
+                                # and _persist_live_results / prior seed attempts
+                                # can persist a differently-cased spelling of the
+                                # same horse ("COUNTY KILKENNY (IRE)" vs
+                                # "County Kilkenny (IRE)"). A case-sensitive check
+                                # would miss it, then the INSERT trips the unique
+                                # index during autoflush and rolls back the whole
+                                # batch, leaving the race with only whatever rows
+                                # got in via an earlier partial attempt. Result:
+                                # UI stuck on "Result pending" even though bits of
+                                # the field are already in HistoricalResultRow.
                                 existing = (await session.execute(
                                     select(HistoricalResultRow.id, HistoricalResultRow.starting_price)
                                     .where(HistoricalResultRow.race_id == row.race_id)
-                                    .where(HistoricalResultRow.horse_name == row.horse_name)
+                                    .where(func.lower(HistoricalResultRow.horse_name) == row.horse_name.lower())
                                     .limit(1)
                                 )).first()
                                 if not existing:
@@ -4673,21 +4693,29 @@ async def get_edge_picks():
                        HistoricalResultRow.starting_price)
                 .where(HistoricalResultRow.race_id.in_(finished_race_ids))
             )).all()
-        db_sp: dict[tuple, float | None] = {(r.race_id, r.horse_name): r.starting_price for r in sp_rows}
+        # Normalize both sides of the SP lookup for the same reason we
+        # normalize db_positions — different upstreams write the same
+        # horse with different casing / country-code suffix presence.
+        db_sp: dict[tuple, float | None] = {
+            (r.race_id, _normalize_horse(r.horse_name)): r.starting_price for r in sp_rows
+        }
 
         # Annotate main pick with result
         for p in finished_picks:
-            pos = db_positions.get((p["race_id"], p["horse_name"]))
+            _pk = (p["race_id"], _normalize_horse(p["horse_name"]))
+            pos = db_positions.get(_pk)
             if pos is not None:
                 p["actual_position"] = pos
                 p["won"] = pos == 1
                 p["placed"] = pos <= 3
-                p["sp"] = db_sp.get((p["race_id"], p["horse_name"]))
+                p["sp"] = db_sp.get(_pk)
             # 2 Funk: annotate partner position + quinella hit so the card
             # can celebrate when both rank-1 and rank-2 fill the placings.
             tf = p.get("two_funk")
             if tf and tf.get("partner_horse_name"):
-                partner_pos = db_positions.get((p["race_id"], tf["partner_horse_name"]))
+                partner_pos = db_positions.get(
+                    (p["race_id"], _normalize_horse(tf["partner_horse_name"]))
+                )
                 if partner_pos is not None:
                     tf["partner_actual_position"] = partner_pos
                 if pos is not None and partner_pos is not None:
@@ -4700,7 +4728,9 @@ async def get_edge_picks():
             race_id = p["race_id"]
 
             def _annotate_legs(legs):
-                return [{**l, "position": db_positions.get((race_id, l["horse_name"])), "scratched": False}
+                return [{**l,
+                         "position": db_positions.get((race_id, _normalize_horse(l["horse_name"]))),
+                         "scratched": False}
                         for l in legs]
 
             tri["legs"] = _annotate_legs(tri["legs"])
@@ -7809,7 +7839,9 @@ async def get_edge_trifectas():
             race_id = p["race_id"]
 
             def _annotate(legs):
-                return [{**l, "position": db_positions.get((race_id, l["horse_name"])), "scratched": False}
+                return [{**l,
+                         "position": db_positions.get((race_id, _normalize_horse(l["horse_name"]))),
+                         "scratched": False}
                         for l in legs]
 
             p["legs"] = _annotate(p["legs"])
