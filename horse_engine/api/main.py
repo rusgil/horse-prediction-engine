@@ -3228,12 +3228,15 @@ from horse_engine.api.auth import (
 )
 from horse_engine.api.mailer import send_magic_link as _mail_send_magic_link
 
-# Per-email rate limit for /api/auth/request-code — max 3 codes per
-# email per hour. Independent of the per-IP rate limit above so an
-# attacker rotating IPs can't spam a single mailbox.
+# Per-email rate limit for /api/auth/request-code — max N codes per
+# email per rolling window. Independent of the per-IP rate limit above
+# so an attacker rotating IPs can't spam a single mailbox.
+# Was 3/hour then 10/hour — both too tight during launch + real-user
+# retry loops. Loosened to 30 per 15-min window: catches obvious spam
+# (30 emails in 15 min IS abuse) but stops annoying legitimate users.
 _AUTH_EMAIL_HITS: dict[str, list[float]] = {}
-_AUTH_EMAIL_LIMIT = 3
-_AUTH_EMAIL_WINDOW = 3600.0
+_AUTH_EMAIL_LIMIT = 30
+_AUTH_EMAIL_WINDOW = 900.0
 
 def _enforce_email_rate(email: str) -> None:
     now = time.time()
@@ -4855,7 +4858,7 @@ def _should_debounce(endpoint: str, key: str) -> tuple[bool, float]:
 # (curl loops + accidental hammering) XFF-based tracking is sufficient.
 import time as _time
 _caller_hits: dict[str, list[float]] = {}
-_CALLER_RATE_LIMIT = 5       # max requests per origin per window
+_CALLER_RATE_LIMIT = 30      # max requests per origin per window
 _CALLER_RATE_WINDOW = 60.0   # seconds
 
 # Hard IP blocklist — short-circuit before rate-limit/auth so persistent
