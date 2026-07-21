@@ -245,6 +245,10 @@
             <button class="btn" type="submit" id="mintBtn">Create</button>
           </div>
         </form>
+        <label style="display:flex; align-items:center; gap:8px; margin-top:10px; font-size:0.82rem; color:var(--muted); cursor:pointer;">
+          <input type="checkbox" id="mintSendEmail" checked style="accent-color:var(--green); width:16px; height:16px;" />
+          <span>Send invite email to recipient (requires email above)</span>
+        </label>
         <div class="mint-output" id="mintOutput"></div>
       </section>
 
@@ -462,12 +466,15 @@
           const email = btn.getAttribute('data-mint');
           btn.disabled = true;
           try {
+            // Waitlist row button always sends the invite email — the
+            // whole point is to reach out to someone on the list.
             const r = await api('/api/admin/invites/mint', {
               method: 'POST',
-              body: JSON.stringify({ email, count: 1, ttl_days: 30 }),
+              body: JSON.stringify({ email, count: 1, ttl_days: 30, send_email: true }),
             });
             renderMintOutput(r.minted);
-            toast(`Invite created for ${email}`);
+            const emailedNote = r.email_sent ? ` · emailed` : ` · email delivery FAILED`;
+            toast(`Invite created for ${email}${emailedNote}`, !!r.email_sent);
             loadInvites(); loadUsers();
           } catch (e) {
             toast(String(e.message || e), false);
@@ -541,18 +548,27 @@
       const email = document.getElementById('mintEmail').value.trim() || undefined;
       const ttl_days = parseInt(document.getElementById('mintTtl').value, 10);
       const role = document.getElementById('mintRole').value || 'member';
+      const wantsEmail = document.getElementById('mintSendEmail').checked;
       const btn = document.getElementById('mintBtn');
       btn.disabled = true; btn.textContent = 'Creating…';
       try {
         const body = { count: 1, ttl_days, role };
         if (email) body.email = email;
+        // Only ask backend to email if the checkbox is on AND we have a
+        // recipient. Backend rejects send_email + no email with a 400,
+        // so guard here to match.
+        if (wantsEmail && email) body.send_email = true;
         const r = await api('/api/admin/invites/mint', {
           method: 'POST',
           body: JSON.stringify(body),
         });
         renderMintOutput(r.minted);
         const roleLabel = role === 'guest' ? ' (guest)' : '';
-        toast(`Created ${r.minted.length}${roleLabel} invite${r.minted.length === 1 ? '' : 's'}`);
+        const emailedNote = r.email_sent
+          ? ` · emailed to ${email}`
+          : (wantsEmail && email ? ` · email delivery FAILED — share URL manually` : '');
+        toast(`Created ${r.minted.length}${roleLabel} invite${r.minted.length === 1 ? '' : 's'}${emailedNote}`,
+              !wantsEmail || !email || r.email_sent);
         loadStats(); loadInvites(); loadUsers();
       } catch (err) {
         toast(String(err.message || err), false);

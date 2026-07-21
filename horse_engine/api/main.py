@@ -3676,6 +3676,10 @@ async def admin_invites_mint(
       - role (default 'member'): 'member' or 'guest'. Guest invites
         create free comp accounts that bypass the trial/Stripe path;
         the recipient still uses the same magic-link flow.
+      - send_email (default False): when true AND an email is set,
+        fire Resend to deliver the invite link to the recipient.
+        Mirrors the /account 'Send email' flow so admins have parity
+        with what members can do. Response includes email_sent flags.
     Returns all raw codes — the only moment they exist in plaintext.
     Does NOT touch invites_remaining. Useful for the initial cohort:
     mint 100 codes, hand-email them.
@@ -3685,6 +3689,7 @@ async def admin_invites_mint(
     count = int(body.get("count") or 1)
     ttl_days = int(body.get("ttl_days") or 30)
     role = (body.get("role") or "member").strip().lower()
+    send_email_flag = bool(body.get("send_email"))
     if role not in _ADMIN_INVITE_ROLES:
         raise HTTPException(status_code=400, detail=f"role must be one of {sorted(_ADMIN_INVITE_ROLES)}")
     if not (1 <= count <= 100):
@@ -3695,8 +3700,14 @@ async def admin_invites_mint(
         # A specific email + count > 1 doesn't make sense — one recipient,
         # one code. Force count=1 when an email is attached.
         raise HTTPException(status_code=400, detail="Specify count OR email, not both (count is for bulk open codes)")
+    if send_email_flag and not email:
+        raise HTTPException(
+            status_code=400,
+            detail="send_email requires a recipient email — leave email blank for a shareable link.",
+        )
 
     codes = []
+    any_email_sent = False
     for _ in range(count):
         code, row = await _inv_mint(
             issued_by_user_id=admin.id,
@@ -3704,17 +3715,31 @@ async def admin_invites_mint(
             ttl=timedelta(days=ttl_days),
             role=role,
         )
+        url = _invite_url(code)
+        # Fire Resend when the admin ticked "Send email". Best-effort:
+        # a Resend outage doesn't crash the endpoint. The invite row is
+        # still in the DB and the URL is returned so the admin can share
+        # manually if delivery reports False.
+        email_sent = False
+        if send_email_flag and email:
+            try:
+                email_sent = await _mail_send_invite(email, url, inviter_email=admin.email)
+                if email_sent:
+                    any_email_sent = True
+            except Exception as e:
+                log.warning("[invites] admin send-email failed for %s: %s", email, e)
         codes.append({
             "id": row.id,
             "code": code,
-            "url": _invite_url(code),
+            "url": url,
             "invited_email": row.issued_to_email,
             "role": row.role,
             "expires_at": row.expires_at.isoformat(),
+            "email_sent": email_sent,
         })
-    log.info("[invites] admin %s bulk-minted %d %s invites (email=%s, ttl=%dd)",
-             admin.email, count, role, email or "-", ttl_days)
-    return {"ok": True, "minted": codes}
+    log.info("[invites] admin %s bulk-minted %d %s invites (email=%s, ttl=%dd, emailed=%s)",
+             admin.email, count, role, email or "-", ttl_days, any_email_sent)
+    return {"ok": True, "minted": codes, "email_sent": any_email_sent}
 
 
 @app.get("/api/admin/waitlist")

@@ -22,13 +22,23 @@ log = logging.getLogger(__name__)
 _RESEND_URL = "https://api.resend.com/emails"
 
 
-async def _send(to_email: str, subject: str, html_body: str, text_body: Optional[str] = None) -> bool:
+async def _send(
+    to_email: str,
+    subject: str,
+    html_body: str,
+    text_body: Optional[str] = None,
+    bcc: Optional[str] = None,
+) -> bool:
     """Low-level Resend API call. Called by the higher-level send_* helpers.
 
     Fails closed to False on any error. Callers should log the outcome
     but continue — never crash the caller on a mail failure. Resend
     accepts HTML + optional plain-text alt; text is a good idea for
     spam-filter scoring.
+
+    `bcc` supports a single blind-carbon-copy recipient. Used to shadow
+    invite emails to the admin so you can see every invite that goes
+    out without opening the DB — see send_invite_email() below.
     """
     if not settings.resend_api_key:
         log.warning("[mailer] RESEND_API_KEY unset — cannot send to %s", to_email)
@@ -39,6 +49,9 @@ async def _send(to_email: str, subject: str, html_body: str, text_body: Optional
         "subject": subject,
         "html": html_body,
     }
+    if bcc:
+        # Resend accepts a list here even for a single BCC recipient.
+        payload["bcc"] = [bcc]
     if text_body:
         payload["text"] = text_body
     try:
@@ -102,7 +115,11 @@ Claim your seat: {invite_url}
 
 This invite expires in 30 days and can only be used once.
 """
-    return await _send(to_email, subject, html, text)
+    # BCC the invite to the first admin so every invite that goes out
+    # is visible from the admin's inbox — no need to check the DB or
+    # the /members admin console to see who was invited when.
+    bcc = (settings.first_admin_email or "").strip() or None
+    return await _send(to_email, subject, html, text, bcc=bcc)
 
 
 async def send_magic_link(to_email: str, verify_url: str, intent: str = "login") -> bool:
