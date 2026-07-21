@@ -3471,6 +3471,7 @@ from horse_engine.api.invites import (
     resolve_invite as _inv_resolve,
     revoke_invite as _inv_revoke,
     consume_invite_by_hash as _inv_consume_by_hash,
+    stamp_waitlist_invited as _inv_stamp_waitlist_invited,
     INVITE_TTL as _INVITE_TTL,
 )
 from horse_engine.api.mailer import send_invite_email as _mail_send_invite
@@ -3545,6 +3546,14 @@ async def invites_create(
             email_sent = await _mail_send_invite(invited_email, url, inviter_email=user.email)
         except Exception as e:
             log.warning("[invites] send-email failed for user %s → %s: %s", user.id, invited_email, e)
+    # If the recipient was on the waitlist, mark them as invited so the
+    # /members waitlist table's 'Invited?' column shows a real timestamp
+    # instead of a dash. Idempotent — repeat mints don't move the mark.
+    if invited_email:
+        try:
+            await _inv_stamp_waitlist_invited(invited_email)
+        except Exception as e:
+            log.debug("[invites] waitlist stamp skipped for %s: %s", invited_email, e)
     log.info("[invites] user %s issued invite %d (to=%s, emailed=%s)",
              user.id, row.id, invited_email or "-", email_sent)
     return {
@@ -3728,6 +3737,12 @@ async def admin_invites_mint(
                     any_email_sent = True
             except Exception as e:
                 log.warning("[invites] admin send-email failed for %s: %s", email, e)
+        # Stamp waitlist.invited_at if this recipient was on the list.
+        if email:
+            try:
+                await _inv_stamp_waitlist_invited(email)
+            except Exception as e:
+                log.debug("[invites] admin waitlist stamp skipped for %s: %s", email, e)
         codes.append({
             "id": row.id,
             "code": code,

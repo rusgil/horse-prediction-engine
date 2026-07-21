@@ -290,9 +290,14 @@
         .replace(/&/g,'&amp;').replace(/</g,'&lt;')
         .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
     }
+    // Force Sydney display regardless of the admin's laptop timezone —
+    // the DB stores UTC, this is presentation only.
     function fmtDate(iso) {
       if (!iso) return '—';
-      try { return new Date(iso).toLocaleString('en-AU', { day:'2-digit', month:'short', hour:'2-digit', minute:'2-digit' }); }
+      try { return new Date(iso).toLocaleString('en-AU', {
+        timeZone: 'Australia/Sydney',
+        day:'2-digit', month:'short', hour:'2-digit', minute:'2-digit',
+      }); }
       catch { return iso; }
     }
     function toast(msg, ok=true) {

@@ -292,6 +292,27 @@ async def list_waitlist(limit: int = 200) -> list[WaitlistRow]:
     return list(rows)
 
 
+async def stamp_waitlist_invited(email: str) -> bool:
+    """Mark a waitlist row as 'invited' by setting invited_at=now(). No-op
+    if the email isn't on the waitlist. Called from invite-creation paths
+    when the recipient happens to be a waitlister — closes the loop between
+    'they raised their hand' and 'we reached out'.
+    """
+    email_norm = (email or "").strip().lower()
+    if not email_norm:
+        return False
+    async with get_session() as session:
+        r = await session.execute(
+            update(WaitlistRow)
+            .where(WaitlistRow.email == email_norm)
+            .where(WaitlistRow.invited_at.is_(None))
+            .values(invited_at=datetime.utcnow())
+            .execution_options(synchronize_session=False)
+        )
+        await session.commit()
+        return bool(r.rowcount or 0)
+
+
 # ── Cap enforcement ─────────────────────────────────────────────────
 
 async def count_seats_taken() -> int:
