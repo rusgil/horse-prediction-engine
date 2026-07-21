@@ -224,7 +224,7 @@
       </section>
 
       <section>
-        <h2>Mint invites</h2>
+        <h2>Create invites</h2>
         <form id="mintForm" class="row">
           <div class="field">
             <label for="mintEmail">Recipient email (optional)</label>
@@ -246,7 +246,7 @@
             </select>
           </div>
           <div>
-            <button class="btn" type="submit" id="mintBtn">Mint</button>
+            <button class="btn" type="submit" id="mintBtn">Create</button>
           </div>
         </form>
         <div class="mint-output" id="mintOutput"></div>
@@ -459,7 +459,7 @@
           <td>${esc(r.source || '—')}</td>
           <td>${fmtDate(r.created_at)}</td>
           <td>${r.invited_at ? fmtDate(r.invited_at) : '<span class="empty" style="padding:0">—</span>'}</td>
-          <td><button class="btn small" data-mint="${esc(r.email)}">Mint invite</button></td>
+          <td><button class="btn small" data-mint="${esc(r.email)}">Send invite</button></td>
         </tr>`).join('');
       tbody.querySelectorAll('[data-mint]').forEach(btn => {
         btn.addEventListener('click', async () => {
@@ -471,7 +471,7 @@
               body: JSON.stringify({ email, count: 1, ttl_days: 30 }),
             });
             renderMintOutput(r.minted);
-            toast(`Minted invite for ${email}`);
+            toast(`Invite created for ${email}`);
             loadInvites(); loadUsers();
           } catch (e) {
             toast(String(e.message || e), false);
@@ -543,7 +543,7 @@
       const ttl_days = parseInt(document.getElementById('mintTtl').value, 10);
       const role = document.getElementById('mintRole').value || 'member';
       const btn = document.getElementById('mintBtn');
-      btn.disabled = true; btn.textContent = 'Minting…';
+      btn.disabled = true; btn.textContent = 'Creating…';
       try {
         const body = { count, ttl_days, role };
         if (email) { body.email = email; body.count = 1; }
@@ -553,12 +553,12 @@
         });
         renderMintOutput(r.minted);
         const roleLabel = role === 'guest' ? ' (guest)' : '';
-        toast(`Minted ${r.minted.length}${roleLabel} invite${r.minted.length === 1 ? '' : 's'}`);
+        toast(`Created ${r.minted.length}${roleLabel} invite${r.minted.length === 1 ? '' : 's'}`);
         loadStats(); loadInvites(); loadUsers();
       } catch (err) {
         toast(String(err.message || err), false);
       } finally {
-        btn.disabled = false; btn.textContent = 'Mint';
+        btn.disabled = false; btn.textContent = 'Create';
       }
     });
 
