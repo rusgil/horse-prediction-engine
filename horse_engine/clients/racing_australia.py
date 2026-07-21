@@ -762,8 +762,11 @@ def _parse_results_page(html: str) -> dict[int, dict]:
 
 # Persistent calendar cache helpers — keyed by (race_date, state). Loaded
 # on cold start so Railway redeploys don't trigger a fresh 32-Calendar
-# fanout. TTL is the same 1h as the in-memory cache.
-_PERSIST_TTL_SECONDS = 3600
+# fanout. Bumped from 1h → 6h on 2026-07-21 to cut Calendar.aspx daily
+# volume by 6x — RA publishes meetings days ahead, so intra-day churn is
+# rare; a mid-day new meeting shows up within one refresh window at the
+# next 6h tick or on the first user cache-miss for that state.
+_PERSIST_TTL_SECONDS = 21600
 
 
 async def _load_calendar_from_db(race_date: str, state: str):
@@ -959,7 +962,7 @@ class RacingAustraliaClient:
         if not horsecode:
             return {}
         cached = self._horse_form_cache.get(horsecode)
-        if cached and (datetime.utcnow() - cached[0]).total_seconds() < 3600:
+        if cached and (datetime.utcnow() - cached[0]).total_seconds() < 21600:
             return cached[1]
         url = f"{_IF_BASE}/HorseFullForm.aspx?horsecode={horsecode}&src=horseform&raceentry={raceentry}"
         try:
@@ -976,7 +979,7 @@ class RacingAustraliaClient:
             return {}
         cache = self._jockey_form_cache if kind == "jockey" else self._trainer_form_cache
         cached = cache.get(code)
-        if cached and (datetime.utcnow() - cached[0]).total_seconds() < 3600:
+        if cached and (datetime.utcnow() - cached[0]).total_seconds() < 21600:
             return cached[1]
         if kind == "jockey":
             url = f"{_IF_BASE}/JockeyLastRuns.aspx?jockeycode={code}"
@@ -1046,7 +1049,7 @@ class RacingAustraliaClient:
         cache_key = f"{race_date}:{state}"
         # Fast-path cache check (no lock needed for reads).
         cached = self._calendar_cache.get(cache_key)
-        if cached and (datetime.utcnow() - cached[0]).total_seconds() < 3600:
+        if cached and (datetime.utcnow() - cached[0]).total_seconds() < 21600:
             return cached[1]
 
         # Thundering-herd guard: hold a per-cache-key lock around the
@@ -1057,7 +1060,7 @@ class RacingAustraliaClient:
         async with lock:
             # Re-check in-memory cache — another caller may have populated it.
             cached = self._calendar_cache.get(cache_key)
-            if cached and (datetime.utcnow() - cached[0]).total_seconds() < 3600:
+            if cached and (datetime.utcnow() - cached[0]).total_seconds() < 21600:
                 return cached[1]
 
             # Persistent DB cache — survives Railway redeploys.
