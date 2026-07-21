@@ -1430,9 +1430,13 @@
         //   for a portion of the day
         const PIPELINE_CHAOS_DAYS_SHARP = new Set(['2026-07-11', '2026-07-12']);
         const suppressSharpWin = inSharp && PIPELINE_CHAOS_DAYS_SHARP.has(iso);
-        const smallSample = pillRaces < 5;
+        // ≤5 races is too thin for a percentage to be meaningful — one
+        // more or less win swings it 20pp. Show raw x/y instead so the
+        // reader sees the sample size at a glance.
+        const smallSample = pillRaces <= 5;
         const pct = Math.round(pillWinRate * 100);
         const placePct = Math.round(pillPlaceRate * 100);
+        const placedCount = Math.round(pillPlaceRate * pillRaces);
         // Performance tiers — aligned with the About page 5-tier scale:
         //   Elite    38%+     → purple
         //   Great    30-37%   → blue
@@ -1449,12 +1453,13 @@
             : pct >= 22 ? 'good'
             : pct >= 15 ? 'ok'
             : 'bad');
-        // Compact "Win: XX% / Plc: XX%" format on pills — the "x/y" detail
-        // still shows in the tooltip.
-        const winLabel = `Win: ${pct}%`;
-        const placeLabel = `Plc: ${placePct}%`;
+        // Compact "Win: XX% / Plc: XX%" for reasonable sample sizes; for
+        // ≤5 races we switch to raw "Win: x/y / Plc: x/y" so the pill
+        // shows the sample size directly instead of a noisy percentage.
+        const winLabel = smallSample ? `Win: ${pillWins}/${pillRaces}` : `Win: ${pct}%`;
+        const placeLabel = smallSample ? `Plc: ${placedCount}/${pillRaces}` : `Plc: ${placePct}%`;
         const winTooltipDetail = `${pillWins}/${pillRaces}`;
-        const placeTooltipDetail = `${Math.round(pillPlaceRate * pillRaces)}/${pillRaces}`;
+        const placeTooltipDetail = `${placedCount}/${pillRaces}`;
         const tipSuffix = perf._fallback_to_all
           ? ' (All-picks — no Sharp qualifiers this day)'
           : (smallSample ? ' — small sample' : (inSharp ? ' (Sharp picks)' : ''));
