@@ -3353,13 +3353,18 @@ async def auth_request_code(request: Request, response: Response):
 
 
 @app.get("/api/auth/verify")
-async def auth_verify(t: str):
-    """Magic-link click target — the URL is api.funkyiq.com/api/auth/verify
-    (embedded in the email), so the click is a TOP-LEVEL navigation to
-    the same host that owns the cookie. Set-Cookie in a redirect response
-    is unconditionally accepted by every browser (unlike Set-Cookie inside
-    a cross-origin fetch response, which iOS Safari's ITP silently drops —
-    the root cause of the July 2026 "you're in → back to login" loop).
+async def auth_verify(t: str, request: Request):
+    """Magic-link click target. The URL embedded in emails is
+    app_base_url/api/auth/verify?t=… (Vercel proxies /api/* to Railway
+    so the cookie is set on the same origin the app runs on). Backend
+    consumes the token, sets the session cookie, and 302-redirects the
+    browser to app_base_url/? auth=ok.
+
+    Legacy-email redirect: when the request Host is api.funkyiq.com
+    (older magic links minted before the mailer moved to app_base_url),
+    we forward WITHOUT consuming the token to the app-host URL. Token
+    is preserved, browser follows to the proxied URL, and the cookie
+    lands on the right origin. Prevents stranding users on old emails.
 
     Flow:
       1. Consume the magic-link token (idempotent, one-shot).
@@ -3374,6 +3379,19 @@ async def auth_verify(t: str):
     from fastapi.responses import RedirectResponse
 
     app_url = settings.app_base_url.rstrip("/")
+    # Legacy-email hop: if the browser landed here via api.funkyiq.com
+    # (Host: api.funkyiq.com or the Railway *.up.railway.app host),
+    # bounce to the same-origin URL on app_base_url WITHOUT consuming
+    # the token. Vercel proxies /api/* through to Railway again but
+    # this time the cookie will stick under the app's origin.
+    host_header = (request.headers.get("host") or "").lower()
+    app_host = settings.app_base_url.replace("https://", "").replace("http://", "").rstrip("/").lower()
+    if host_header and host_header != app_host and not host_header.startswith(app_host + ":"):
+        return RedirectResponse(
+            url=f"{app_url}/api/auth/verify?t={t}",
+            status_code=302,
+        )
+
     row = await _auth_consume_magic_link(t)
     if row is None:
         return RedirectResponse(url=f"{app_url}/login?err=link_expired", status_code=302)
