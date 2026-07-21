@@ -90,8 +90,16 @@ async def issue_magic_link(
 
 async def consume_magic_link(token: str) -> Optional[MagicLinkRow]:
     """Look up, validate, and mark as consumed. Returns the row if it
-    was valid + unexpired + unused (so caller can inspect intent /
-    invite_token_hash / email). None on any failure.
+    was valid + unexpired (unused OR consumed within the prefetch
+    grace window). None on any failure.
+
+    Prefetch grace window (60s): Gmail's Safe Browsing crawler + other
+    email-scanner services hit magic-link URLs seconds before delivery
+    to check for phishing. That crawler hit would flip used_at and
+    burn the token before the user's actual tap. Instead we allow the
+    same token to complete verification multiple times within 60s of
+    its FIRST use — long enough for the user's real click to land,
+    short enough that a stolen token is dead almost immediately.
 
     Fail closed: we never tell the caller *why* validation failed,
     to avoid oracle attacks that distinguish 'expired' from 'wrong
@@ -101,18 +109,24 @@ async def consume_magic_link(token: str) -> Optional[MagicLinkRow]:
         return None
     now = datetime.utcnow()
     h = hash_token(token)
+    prefetch_grace = timedelta(seconds=60)
     async with get_session() as session:
         row = (await session.execute(
             select(MagicLinkRow).where(MagicLinkRow.token_hash == h).limit(1)
         )).scalars().first()
         if row is None:
             return None
-        if row.used_at is not None:
-            return None
         if row.expires_at < now:
             return None
-        row.used_at = now
-        await session.commit()
+        if row.used_at is not None and (now - row.used_at) > prefetch_grace:
+            # Consumed >60s ago — the grace window's closed. Treat as used.
+            return None
+        # First consume OR within the grace window. Stamp used_at only
+        # on first consume so the window is measured from real first
+        # hit (usually the prefetcher).
+        if row.used_at is None:
+            row.used_at = now
+            await session.commit()
         return row
 
 
