@@ -228,11 +228,7 @@
         <form id="mintForm" class="row">
           <div class="field">
             <label for="mintEmail">Recipient email (optional)</label>
-            <input type="email" id="mintEmail" placeholder="friend@example.com — blank = open code" />
-          </div>
-          <div class="field" id="mintCountField" style="max-width:100px">
-            <label for="mintCount">Count</label>
-            <input type="number" id="mintCount" min="1" max="100" value="1" />
+            <input type="email" id="mintEmail" placeholder="friend@example.com — blank = shareable open code" />
           </div>
           <div class="field" style="max-width:100px">
             <label for="mintTtl">TTL (days)</label>
@@ -536,33 +532,20 @@
         </div>`).join('');
     }
 
-    // Count only applies to OPEN codes (bulk-mint). When a recipient email
-    // is entered the invite is 1-to-1 with that address — Count is
-    // meaningless, so hide it. Backend already rejects email + count>1.
-    (function bindCountToggle() {
-      const emailEl = document.getElementById('mintEmail');
-      const countField = document.getElementById('mintCountField');
-      const countInput = document.getElementById('mintCount');
-      const sync = () => {
-        const hasEmail = emailEl.value.trim().length > 0;
-        countField.style.display = hasEmail ? 'none' : '';
-        if (hasEmail) countInput.value = 1;
-      };
-      emailEl.addEventListener('input', sync);
-      sync();
-    })();
-
+    // Bulk-mint (count > 1) is still supported by POST /api/admin/invites/mint —
+    // pass {count: N} to generate N open codes at once. Dropped from the UI
+    // because the day-to-day flow is one invite at a time. Restore the field
+    // (and the email→count visibility toggle) if we ever run an event.
     document.getElementById('mintForm').addEventListener('submit', async e => {
       e.preventDefault();
       const email = document.getElementById('mintEmail').value.trim() || undefined;
-      const count = parseInt(document.getElementById('mintCount').value, 10);
       const ttl_days = parseInt(document.getElementById('mintTtl').value, 10);
       const role = document.getElementById('mintRole').value || 'member';
       const btn = document.getElementById('mintBtn');
       btn.disabled = true; btn.textContent = 'Creating…';
       try {
-        const body = { count, ttl_days, role };
-        if (email) { body.email = email; body.count = 1; }
+        const body = { count: 1, ttl_days, role };
+        if (email) body.email = email;
         const r = await api('/api/admin/invites/mint', {
           method: 'POST',
           body: JSON.stringify(body),
