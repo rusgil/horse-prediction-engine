@@ -4714,7 +4714,7 @@ async def get_edge_picks():
             market_implied_pct = round((1 / odds) * 100, 1) if odds else None
             edge_pct = round(model_pct - market_implied_pct, 1) if market_implied_pct else None
             calibrated = next((r for t, r in _CALIBRATED_WIN_RATES if model_pct >= t), 66)
-            hot = model_pct >= 45
+            hot = model_pct >= 46
             _, venue_code, race_num = _parse_race_id(runner_row.race_id)
 
             # Build trifecta legs by mirroring the Lab's committed paper bets.
@@ -15532,10 +15532,15 @@ async def get_track_record():
         if hr and r.win_probability is not None:
             unified.append({"win_prob": r.win_probability, "winner": hr.position == 1})
 
+    # Non-overlapping bands (2026-07-22 UX pass):
+    #   Strong 30–35, High 36–45, Hot 46+. Previously the labels overlapped
+    #   at 35 / 45 which read as "which bucket does exactly 35% land in?".
+    #   Decimal thresholds use 0.36 / 0.46 so a raw model_prob of 0.36
+    #   (displayed as 36%) lands in High, not Strong.
     tiers = [
-        {"badge": "hot",      "min": 0.45, "max": 1.01, "conf_min": 45, "conf_max": None},
-        {"badge": "high",     "min": 0.35, "max": 0.45, "conf_min": 35, "conf_max": 45},
-        {"badge": "standard", "min": 0.30, "max": 0.35, "conf_min": 30, "conf_max": 35},
+        {"badge": "hot",      "min": 0.46, "max": 1.01, "conf_min": 46, "conf_max": None},
+        {"badge": "high",     "min": 0.36, "max": 0.46, "conf_min": 36, "conf_max": 45},
+        {"badge": "standard", "min": 0.30, "max": 0.36, "conf_min": 30, "conf_max": 35},
     ]
     output = []
     for tier in tiers:
@@ -22211,9 +22216,9 @@ async def performance_summary(
             d["value_pnl"] += (sp - 1) if act_won else -1.0
             if model_pct >= 50:
                 d["tier_premium"] += 1
-            elif model_pct >= 45:
+            elif model_pct >= 46:
                 d["tier_hot"] += 1
-            elif model_pct >= 35:
+            elif model_pct >= 36:
                 d["tier_high"] += 1
             else:
                 d["tier_strong"] += 1

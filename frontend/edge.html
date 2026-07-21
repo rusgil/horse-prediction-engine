@@ -2158,11 +2158,11 @@
     const conf = pick.model_pct;
     const barW = Math.min(100, (conf / 70) * 100);
 
-    // Tier badge — always shown
+    // Tier badge — always shown. Bands: Strong 30-35, High 36-45, Hot 46+.
     let tierBadge;
-    if (conf >= 45) {
+    if (conf >= 46) {
       tierBadge = `<span class="pick-badge-hot">🔥 Hot Pick</span>`;
-    } else if (conf >= 35) {
+    } else if (conf >= 36) {
       tierBadge = `<span class="pick-badge-hot" style="background:rgba(59,130,246,0.12);color:#60a5fa;border-color:rgba(59,130,246,0.28);">⚡ High Confidence</span>`;
     } else {
       tierBadge = `<span class="pick-badge-standard">Strong Pick</span>`;
@@ -2394,8 +2394,8 @@
           })() : ''}
           ${!isPast ? (() => {
             let level, color;
-            if (conf >= 45)      { level = '🔥 Hot Pick — high win confidence'; color = '#f97316'; }
-            else if (conf >= 35) { level = '⚡ High Confidence'; color = '#60a5fa'; }
+            if (conf >= 46)      { level = '🔥 Hot Pick — high win confidence'; color = '#f97316'; }
+            else if (conf >= 36) { level = '⚡ High Confidence'; color = '#60a5fa'; }
             else                 { level = '📈 Value Pick'; color = 'var(--text-secondary)'; }
             if (isPremium) level += ' · 💎 Premium value';
             return `<span class="pick-footer-chip" style="color:${color}">${level}</span>`;
@@ -2871,9 +2871,9 @@
   }
 
   const TIER_META = {
-    hot:      { badge: '🔥 Hot Pick',        color: 'var(--gold-light)', threshold: '≥ 45%', note: 'Highest conviction picks — the model and market strongly agree.' },
-    high:     { badge: '⚡ High Confidence', color: '#60a5fa',           threshold: '35–44%', note: 'Strong picks with good value potential — often where the model diverges slightly from market odds.' },
-    standard: { badge: 'Strong Pick',         color: 'var(--green)',      threshold: '30–34%', note: 'Largest sample — the most statistically reliable win rate of the three tiers.' },
+    hot:      { badge: '🔥 Hot Pick',        color: 'var(--gold-light)', threshold: '≥ 46%', note: 'Highest conviction picks — the model and market strongly agree.' },
+    high:     { badge: '⚡ High Confidence', color: '#60a5fa',           threshold: '36–45%', note: 'Strong picks with good value potential — often where the model diverges slightly from market odds.' },
+    standard: { badge: 'Strong Pick',         color: 'var(--green)',      threshold: '30–35%', note: 'Largest sample — the most statistically reliable win rate of the three tiers.' },
   };
 
   async function loadPremiumPerf() {
@@ -3064,11 +3064,12 @@
     const marketImplied = p.sp ? +(100 / p.sp).toFixed(1) : null;
     const edgePct = marketImplied ? +(p.model_pct - marketImplied).toFixed(1) : null;
 
-    // Win rate pill — same as upcoming but shows actual result inline
+    // Win rate pill — same as upcoming but shows actual result inline.
+    // Bands: Strong 30-35, High 36-45, Hot 46+.
     let tierBadgeHtml;
-    if (p.model_pct >= 45) {
+    if (p.model_pct >= 46) {
       tierBadgeHtml = `<span class="pick-badge-hot">🔥 Hot Pick</span>`;
-    } else if (p.model_pct >= 35) {
+    } else if (p.model_pct >= 36) {
       tierBadgeHtml = `<span class="pick-badge-hot" style="background:rgba(59,130,246,0.12);color:#60a5fa;border-color:rgba(59,130,246,0.28);">⚡ High Confidence</span>`;
     } else {
       tierBadgeHtml = `<span class="pick-badge-standard">Strong Pick</span>`;
