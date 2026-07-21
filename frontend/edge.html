@@ -1972,6 +1972,10 @@
     </div>
     <div class="tr-section">
       <div class="tr-section-title">Performance by Tier</div>
+      <div style="margin:0 0 14px; padding:10px 12px; background:rgba(96,165,250,0.06); border:1px solid rgba(96,165,250,0.22); border-radius:6px; font-size:0.78rem; line-height:1.55; color:var(--text-secondary)">
+        <strong style="color:#93c5fd">A note on how to read these numbers:</strong>
+        the top two tiers (Hot Pick and High Confidence) currently sit at the same headline win rate. Sample sizes at these confidence levels are still small enough that the difference between them is inside the noise. As more races land the two are expected to separate. Meanwhile the model is being re-calibrated on raw softmax output (isotonic fit — pipeline ready, waiting on data volume) which should also close the gap between what Premium promises and what it delivers on longer-odds picks.
+      </div>
       <div id="trTierGrid" class="tr-tier-grid">
         <div class="loading"><div class="loading-spinner"></div>Loading track record…</div>
       </div>
