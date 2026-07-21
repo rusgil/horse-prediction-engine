@@ -3379,27 +3379,6 @@ async def auth_verify(t: str, request: Request):
     from fastapi.responses import RedirectResponse
 
     app_url = settings.app_base_url.rstrip("/")
-    # Legacy-email hop: if the browser landed on api.funkyiq.com direct
-    # (magic link issued before the mailer moved to app_base_url), bounce
-    # to the same URL under app_base_url WITHOUT consuming the token so
-    # the eventual cookie set lands on the app's origin.
-    #
-    # X-Forwarded-Host is the source-of-truth: Vercel proxies /api/* by
-    # rewriting Host to api.funkyiq.com and forwarding the original host
-    # under X-Forwarded-Host. Checking that header (not Host) prevents
-    # the redirect loop we'd get if we treated every Vercel-proxied
-    # request as "arrived via the wrong host".
-    fwd_host = (request.headers.get("x-forwarded-host") or "").lower()
-    host_header = (request.headers.get("host") or "").lower()
-    app_host = settings.app_base_url.replace("https://", "").replace("http://", "").rstrip("/").lower()
-    # Trust XFH when present; fall back to Host for direct requests.
-    effective_host = fwd_host or host_header
-    if effective_host and effective_host != app_host and not effective_host.startswith(app_host + ":"):
-        return RedirectResponse(
-            url=f"{app_url}/api/auth/verify?t={t}",
-            status_code=302,
-        )
-
     row = await _auth_consume_magic_link(t)
     if row is None:
         return RedirectResponse(url=f"{app_url}/login?err=link_expired", status_code=302)
