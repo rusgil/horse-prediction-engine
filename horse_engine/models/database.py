@@ -1329,6 +1329,19 @@ async def save_race_predictions(session: AsyncSession, race_id: str, predictions
                         tab_number=p.get("tab_number"), barrier=p.get("barrier"),
                         jockey=p.get("jockey"), trainer=p.get("trainer"), weight=p.get("weight"),
                         win_probability=p.get("win_probability"),
+                        # Snapshot the pre-multiplier raw softmax so the
+                        # isotonic-on-raw calibration measurer + nightly
+                        # rebuild have data to fit against. Without this,
+                        # every history row written via save_race_predictions
+                        # (the 8:30/10:30/11:30 AEST enrich crons + the
+                        # 15-min combined cron) landed with win_prob_raw
+                        # NULL — starving both _measure_isotonic_raw_sample_size
+                        # and _compute_output_calibration_curve. The
+                        # 09:00 AEST snapshot code path was already writing
+                        # it, but that only runs when no history row exists
+                        # yet for a race, which is rarely true after the
+                        # 08:30 enrich has fired.
+                        win_prob_raw=p.get("win_prob_raw"),
                         place_probability=p.get("place_probability"),
                         model_rank=p.get("model_rank"), market_rank=p.get("market_rank"),
                         overlay=p.get("overlay"), best_available_odds=p.get("best_available_odds"),
