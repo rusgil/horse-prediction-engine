@@ -871,10 +871,11 @@
       .header-side-link:hover { background: rgba(16,185,129,0.18); color: #4ade80; }
     }
 
-    /* Collapsible filter section — collapsed by default on mobile, open
-       on desktop. Toggle button reads 'Filters ▾' / 'Filters ▴'. */
+    /* Collapsible filter section — same toggle on every viewport
+       (2026-07-21 UX pass). Default state: collapsed on mobile,
+       open on desktop. User's toggle choice persists via sessionStorage. */
     .filters-toggle {
-      display: none;
+      display: block;
       width: 100%;
       margin: 0 0 8px 0;
       padding: 9px 12px;
@@ -890,10 +891,7 @@
     }
     .filters-toggle:hover { color: var(--text, #fff); border-color: rgba(255,255,255,0.18); }
     .filters-toggle .toggle-caret { float: right; font-size: 11px; }
-    @media (max-width: 760px) {
-      .filters-toggle { display: block; }
-      .filters-body[hidden] { display: none; }
-    }
+    .filters-body[hidden] { display: none; }
     .page-title {
       font-family: 'Barlow Condensed', sans-serif;
       font-size: 36px;
@@ -1745,9 +1743,9 @@
     });
   });
 
-  // Collapsible filters — collapsed by default on mobile (≤760px), open
-  // on desktop. Toggle state persists via sessionStorage so a user who
-  // opens the panel keeps it open across reloads.
+  // Collapsible filters — SAME toggle on every viewport now. Default is
+  // collapsed on mobile / open on desktop; the user's choice overrides
+  // that default and persists via sessionStorage across reloads.
   (() => {
     const toggleBtn = document.getElementById('filtersToggle');
     const body = document.getElementById('filtersBody');
@@ -1756,7 +1754,7 @@
     const KEY = 'hotseat:filtersOpen';
     const isMobile = () => window.matchMedia('(max-width: 760px)').matches;
     const apply = (open) => {
-      body.hidden = isMobile() ? !open : false;
+      body.hidden = !open;
       toggleBtn.setAttribute('aria-expanded', open ? 'true' : 'false');
       if (caret) caret.textContent = open ? '▴' : '▾';
     };
@@ -1772,14 +1770,6 @@
       const nowOpen = body.hidden;  // currently hidden → opening
       apply(nowOpen);
       try { sessionStorage.setItem(KEY, nowOpen ? '1' : '0'); } catch (e) {}
-    });
-    // If the viewport crosses the breakpoint (e.g. rotate), re-evaluate
-    // so desktop always shows filters and mobile honours the stored choice.
-    window.matchMedia('(max-width: 760px)').addEventListener('change', () => {
-      let open;
-      try { open = sessionStorage.getItem(KEY) === '1' || !isMobile(); }
-      catch (e) { open = !isMobile(); }
-      apply(open);
     });
   })();
 

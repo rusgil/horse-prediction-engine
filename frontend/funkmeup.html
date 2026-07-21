@@ -1155,22 +1155,7 @@
         ${outcomeHtml}
         ${actionHtml}
         ${legsHtml}
-        <div class="stats">
-          <div class="stat">
-            <div class="stat-num purple">${fmtPct(p.model_hit_probability)}</div>
-            <div class="stat-label">Hit prob.</div>
-          </div>
-          <div class="stat">
-            <div class="stat-num">${fmtMoneyPlain(stakeShown)}</div>
-            <div class="stat-label">${stakeLabel}</div>
-          </div>
-          <div class="stat">
-            <div class="stat-num ${evCls}">${fmtMoney(p.expected_value_dollars)}</div>
-            <div class="stat-label">Est. profit</div>
-          </div>
-        </div>
         <div class="play-foot">
-          <span class="past-stat">Potential return: ${fmtMoneyPlain(p.potential_return_dollars)}</span>
           <button data-copy="${p.kind}">Copy plan</button>
         </div>
       </div>`;
