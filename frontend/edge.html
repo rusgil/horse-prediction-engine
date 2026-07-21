@@ -1803,12 +1803,6 @@
       </div>
       <span class="updated-at" id="updatedAt"></span>
     </div>
-    <div class="edge-mode-row" id="edgeModeRow">
-      <span class="edge-mode-label">Mode</span>
-      <button class="edge-mode-pill active" id="edgeModeSharp" onclick="setEdgeMode('sharp')">🎯 Sharp only</button>
-      <button class="edge-mode-pill" id="edgeModeAll" onclick="setEdgeMode('all')">All picks</button>
-      <span class="edge-mode-hint">Sharp = high-confidence niche (~32% win rate vs 17% baseline)</span>
-    </div>
   </div>
 
   <div class="nav-tabs-wrap">
@@ -1866,6 +1860,17 @@
         <span class="legend-desc">Remaining picks — value trifectas &amp; first fours</span>
       </span>
     </div>
+  </div>
+
+  <!-- Sharp/All selector — sits below the legend to match the Lounge
+       layout (2026-07-21 UX request). Was above the tabs; new position
+       puts the filter close to the picks it filters, above the sort
+       controls. -->
+  <div class="edge-mode-row" id="edgeModeRow">
+    <span class="edge-mode-label">Mode</span>
+    <button class="edge-mode-pill active" id="edgeModeSharp" onclick="setEdgeMode('sharp')">🎯 Sharp only</button>
+    <button class="edge-mode-pill" id="edgeModeAll" onclick="setEdgeMode('all')">All picks</button>
+    <span class="edge-mode-hint">Sharp = high-confidence niche (~32% win rate vs 17% baseline)</span>
   </div>
 
   <div id="panelUpcoming">
@@ -2824,16 +2829,19 @@
     }
   }
 
-  // Sharp/All toggle handler. Re-renders the current picks list using
-  // the new mode without re-fetching from the server.
+  // Sharp/All toggle handler. Re-renders whichever picks list is
+  // currently visible (upcoming OR yesterday) using the new mode.
+  // No server round-trip — filter is client-side.
   function setEdgeMode(mode) {
     window.__edgeMode = mode;
     const sharpBtn = document.getElementById('edgeModeSharp');
     const allBtn = document.getElementById('edgeModeAll');
     if (sharpBtn) sharpBtn.classList.toggle('active', mode === 'sharp');
     if (allBtn) allBtn.classList.toggle('active', mode === 'all');
-    if (picksData) {
-      const stake = 10;  // input removed 2026-07-20
+    const stake = 10;  // input removed 2026-07-20
+    if (currentSub === 'yesterday' && yesterdayData) {
+      renderYesterdayContent(yesterdayData, stake);
+    } else if (picksData) {
       renderContent(picksData, stake, resultsMap);
     }
   }
@@ -3441,11 +3449,7 @@
           </div>
           <div class="pick-right">
             ${oddsHtml}
-            ${payoutHtml}
           </div>
-        </div>
-        <div class="pick-footer">
-          <span class="pick-footer-chip" style="color:var(--text-dim)">$${stake} stake</span>
         </div>
         ${p.trifecta ? (() => {
           const tri = p.trifecta;
@@ -3720,44 +3724,48 @@
 
   function renderYesterdayContent(data, stake) {
     const el = document.getElementById('yesterdayContent');
-    if (!data.picks.length) {
-      el.innerHTML = `<div class="empty-state"><div class="empty-icon">📭</div><div class="empty-title">No qualifying picks yesterday</div><div class="empty-sub">No races had ≥30% confidence on ${data.date}.</div></div>`;
+    // Apply the Sharp/All filter that was previously ignored on this
+    // view — same rule as upcoming, using isSharpEdgePick from sharp.js.
+    const inSharp = window.__edgeMode === 'sharp';
+    const shownPicks = inSharp && typeof isSharpEdgePick === 'function'
+      ? data.picks.filter(isSharpEdgePick)
+      : data.picks;
+    if (!shownPicks.length) {
+      const emptyMsg = inSharp
+        ? `No Sharp picks qualified on ${data.date}. Switch to "All picks" above to see the full field.`
+        : `No races had ≥30% confidence on ${data.date}.`;
+      el.innerHTML = `<div class="empty-state"><div class="empty-icon">📭</div><div class="empty-title">No qualifying picks yesterday</div><div class="empty-sub">${emptyMsg}</div></div>`;
       return;
     }
 
-    // Recalculate P&L from SP + current stake.
-    // Exclude no_result rows too — race hasn't been seeded, so we can't
-    // treat it as a $10 loss. Otherwise Unplaced/ROI inflate on days
+    // Exclude scratched + no_result rows from the stats — race wasn't
+    // bet-eligible in either case. Otherwise Unplaced inflates on days
     // where RA scraping fell behind (Fri 2026-07-10 incident).
-    const activePicks = data.picks.filter(p => !p.scratched && !p.no_result);
-    const totalStaked = +(activePicks.length * stake).toFixed(2);
-    const totalReturns = +activePicks.filter(p => p.winner && p.sp).reduce((s, p) => s + p.sp * stake, 0).toFixed(2);
-    const pnl = +(totalReturns - totalStaked).toFixed(2);
+    const activePicks = shownPicks.filter(p => !p.scratched && !p.no_result);
     const winRate = activePicks.length ? +(activePicks.filter(p => p.winner).length / activePicks.length * 100).toFixed(1) : 0;
-    const roi = totalStaked ? +(pnl / totalStaked * 100).toFixed(1) : 0;
 
     // Update date nav label with win %
     const ystLbl = document.getElementById('ystDateLabel');
     if (ystLbl && yesterdayViewDate) ystLbl.textContent = `${fmtDate(yesterdayViewDate)} — ${winRate}% win`;
 
-    const pnlCls  = pnl >= 0 ? 'pnl-positive' : 'pnl-negative';
-    const pnlSign = pnl >= 0 ? '+' : '';
-    const roiSign = roi >= 0 ? '+' : '';
     const wins   = activePicks.filter(p => p.winner).length;
     const placed = activePicks.filter(p => (p.placed || (p.position && p.position <= 3)) && !p.winner).length;
     const losses = activePicks.filter(p => !p.winner && !p.placed).length;
     const placeRate = activePicks.length ? +((wins + placed) / activePicks.length * 100).toFixed(1) : 0;
-    const premiumCount = data.picks.filter(p => {
+    const premiumCount = shownPicks.filter(p => {
       const mi = p.sp ? +(100 / p.sp).toFixed(1) : null;
       const ep = mi ? +(p.model_pct - mi).toFixed(1) : null;
       return p.model_pct >= 29.5 && p.sp && p.sp >= 3.0 && ep != null && ep > 5;
     }).length;
 
+    // Summary strip: dropped the P&L + ROI cells (2026-07-21 UX pass) —
+    // odds/results tell the story on the cards below, aggregate P&L
+    // added visual noise without adding information.
     el.innerHTML = `
       <div class="pnl-bar">
         <div class="pnl-cell">
           <div class="pnl-cell-num">${activePicks.length}</div>
-          <div class="pnl-cell-label">Picks ($${totalStaked} staked)</div>
+          <div class="pnl-cell-label">Picks</div>
         </div>
         <div class="pnl-cell">
           <div class="pnl-cell-num" style="color:var(--purple-bright)">${premiumCount}</div>
@@ -3775,12 +3783,8 @@
           <div class="pnl-cell-num pnl-negative">${losses}</div>
           <div class="pnl-cell-label">Unplaced</div>
         </div>
-        <div class="pnl-cell">
-          <div class="pnl-cell-num ${pnlCls}">${pnlSign}$${pnl.toFixed(2)}</div>
-          <div class="pnl-cell-label">P&L (${roiSign}${roi}% ROI)</div>
-        </div>
       </div>
-      ${data.picks.map(p => renderYesterdayCard(p, stake)).join('')}`;
+      ${shownPicks.map(p => renderYesterdayCard(p, stake)).join('')}`;
   }
 
   async function load() {
