@@ -325,9 +325,21 @@
           errEl.textContent = data.detail || 'Too many attempts — try again in a bit.';
           errEl.classList.add('show');
         } else if (res.status === 403) {
+          // Two shapes of 403 land here:
+          //   a) Invite validity fail — expired/used/revoked/wrong-email.
+          //      For these, Join the waitlist is a real fallback.
+          //   b) Human check (Turnstile) fail — nothing to do with the
+          //      invite, so appending 'Join the waitlist' is misleading
+          //      and pushes people away from a page they belong on.
+          // Cheap heuristic: only append the waitlist link when the
+          // detail mentions the word 'invite' (backend messages for the
+          // invite paths all do; Turnstile / rate-limit ones don't).
           const data = await res.json().catch(() => ({}));
-          errEl.innerHTML = escHtml(data.detail || 'This invite is not usable.') +
-            " <a href='/waitlist'>Join the waitlist →</a>";
+          const detail = data.detail || 'This invite is not usable.';
+          const inviteRelated = /invite/i.test(detail);
+          errEl.innerHTML = escHtml(detail) + (inviteRelated
+            ? " <a href='/waitlist'>Join the waitlist →</a>"
+            : "");
           errEl.classList.add('show');
         } else if (res.status === 400) {
           errEl.textContent = 'Please enter a valid email address.';
