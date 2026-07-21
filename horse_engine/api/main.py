@@ -15522,15 +15522,27 @@ async def get_track_record():
                 live_top_picks[p.race_id] = p
         live_rows = list(live_top_picks.values())
 
-    # Build unified row list (same shape as /api/admin/backtest/analysis)
+    # Build unified row list (same shape as /api/admin/backtest/analysis).
+    # 'placed' = finished top-3 (includes winner). Backtest rows expose
+    # actual_position; live rows use HistoricalResultRow.position. Both
+    # sources normalise the placed flag the same way.
     unified = []
     for r in bt_rows:
         if r.win_probability is not None:
-            unified.append({"win_prob": r.win_probability, "winner": bool(r.winner)})
+            pos = r.actual_position
+            unified.append({
+                "win_prob": r.win_probability,
+                "winner": bool(r.winner),
+                "placed": bool(pos and pos <= 3),
+            })
     for r in live_rows:
         hr = hr_map.get((r.race_id, r.horse_name))
         if hr and r.win_probability is not None:
-            unified.append({"win_prob": r.win_probability, "winner": hr.position == 1})
+            unified.append({
+                "win_prob": r.win_probability,
+                "winner": hr.position == 1,
+                "placed": bool(hr.position and hr.position <= 3),
+            })
 
     # Non-overlapping bands (2026-07-22 UX pass):
     #   Strong 30–35, High 36–45, Hot 46+. Previously the labels overlapped
@@ -15546,11 +15558,16 @@ async def get_track_record():
     for tier in tiers:
         picks = [r for r in unified if tier["min"] <= r["win_prob"] < tier["max"]]
         wins  = sum(1 for r in picks if r["winner"])
-        win_pct = round(wins / len(picks) * 100) if picks else 0
+        places = sum(1 for r in picks if r["placed"])
+        win_pct = round(wins / len(picks) * 100, 1) if picks else 0.0
+        place_pct = round(places / len(picks) * 100, 1) if picks else 0.0
         output.append({
             "badge":    tier["badge"],
             "win_pct":  win_pct,
+            "place_pct": place_pct,
             "races":    len(picks),
+            "wins":     wins,
+            "places":   places,
             "conf_min": tier["conf_min"],
             "conf_max": tier["conf_max"],
         })
