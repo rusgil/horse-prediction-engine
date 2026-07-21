@@ -688,7 +688,7 @@
   </nav>
   <header class="page-header funk">
     <h1 class="page-title">🎺 Funk Me Up <span class="tier-badge tier-pro">Pro</span></h1>
-    <p class="page-subtitle" id="pageSubtitle">Today's lower-variance playbook · 🎯 Sharp picks · $10 base stake</p>
+    <p class="page-subtitle" id="pageSubtitle">Today's lower-variance playbook · 🎯 Sharp picks</p>
   </header>
   <header>
     <div class="day-tabs">
@@ -780,32 +780,31 @@
       p.legs.forEach((l, i) => {
         parts.push(`  ${i+1}. ${venueLabel(l.venue)} R${l.race_number} · ${l.horse_name} · Top 4`);
       });
-      parts.push(`  Multi ~$${p.boosted_multi_odds} (boosted) · stake $${p.stake_dollars}`);
+      parts.push(`  Multi ~$${p.boosted_multi_odds} (boosted)`);
     } else if (p.kind === 'lock' || p.kind === 'bonus') {
       parts.push(`  ${venueLabel(p.venue)} R${p.race_number} · ${p.horse_name} · $${p.best_available_odds}`);
-      const stk = p.kind === 'bonus' ? `bonus $${p.bonus_stake_dollars}` : `stake $${p.stake_dollars}`;
-      parts.push(`  ${stk} · model ${p.model_pct}% · edge +${p.edge_pct}pts`);
+      parts.push(`  model ${p.model_pct}% · edge +${p.edge_pct}pts`);
     } else if (p.kind === 'wave' && p.legs) {
       parts.push(`  Venue: ${venueLabel(p.venue)}`);
       p.legs.forEach((l) => {
         const names = (l.picks || []).map(x => x.horse_name).join(' / ');
         parts.push(`  R${l.race_number}: ${names}`);
       });
-      parts.push(`  Quaddie 16-perm box · stake $${p.stake_dollars}`);
+      parts.push(`  Quaddie 16-perm box`);
     } else if (p.kind === 'lab') {
       parts.push(`  ${venueLabel(p.venue)} R${p.race_number} · Trio box`);
       parts.push(`  Box: ${(p.box_horse_names || []).join(' / ')}`);
-      parts.push(`  Stake $${p.stake_dollars} · top-3 sum ${p.top3_sum_pct}% · ${p.field_size}-horse field`);
+      parts.push(`  top-3 sum ${p.top3_sum_pct}% · ${p.field_size}-horse field`);
     } else if (p.kind === 'double' && p.legs) {
       p.legs.forEach((l, i) => {
         parts.push(`  ${i+1}. ${venueLabel(l.venue)} R${l.race_number} · ${l.horse_name} · Place`);
       });
-      parts.push(`  Place Multi ~$${p.raw_multi_odds} · stake $${p.stake_dollars}`);
+      parts.push(`  Place Multi ~$${p.raw_multi_odds}`);
     } else if (p.kind === 'combo_doubles' && p.legs) {
       p.legs.forEach((l, i) => {
         parts.push(`  ${i+1}. ${venueLabel(l.venue)} R${l.race_number} · ${l.horse_name} · $${l.best_available_odds ? l.best_available_odds.toFixed(2) : 'TBA'}`);
       });
-      parts.push(`  Combo Doubles · 6 pairs × $${p.unit_stake_dollars} = $${p.stake_dollars} total`);
+      parts.push(`  Combo Doubles · 6 pairs`);
       parts.push(`  ≥1 pair hits ${((p.prob_at_least_1_win || 0)*100).toFixed(1)}% · ≥2 legs ${((p.prob_at_least_2_wins || 0)*100).toFixed(1)}%`);
     } else if (p.kind === 'quaddie' && p.legs) {
       parts.push(`  Venue: ${venueLabel(p.venue)}`);
@@ -815,17 +814,17 @@
           : '';
         parts.push(`  Leg ${i+1} (R${l.race_number}): ${l.horse_name} · win ${l.model_pct}%${second}`);
       });
-      parts.push(`  Straight: stake $${p.stake_dollars} · hit ${(p.model_hit_probability*100).toFixed(2)}%`);
+      parts.push(`  Straight · hit ${(p.model_hit_probability*100).toFixed(2)}%`);
       if (p.boxed_available) {
-        parts.push(`  Boxed (${p.boxed_perms} perms): stake $${p.boxed_stake_dollars} · hit ${(p.boxed_hit_probability*100).toFixed(2)}%`);
+        parts.push(`  Boxed (${p.boxed_perms} perms) · hit ${(p.boxed_hit_probability*100).toFixed(2)}%`);
       }
     } else if (p.kind === 'twofunk') {
       parts.push(`  ${venueLabel(p.venue)} R${p.race_number} · Quinella`);
       parts.push(`  ${p.horse_name} ($${p.leg1_odds}) + ${p.partner_horse_name} ($${p.partner_odds})`);
-      parts.push(`  stake $${p.stake_dollars} · top-2 sum ${p.top2_win_sum_pct}% · gap to rk3 ${p.rank2_rank3_gap_pct}pt`);
+      parts.push(`  top-2 sum ${p.top2_win_sum_pct}% · gap to rk3 ${p.rank2_rank3_gap_pct}pt`);
     } else if (p.kind === 'banker') {
       parts.push(`  ${venueLabel(p.venue)} R${p.race_number} · ${p.horse_name} · Place ~$${p.place_odds_est}`);
-      parts.push(`  stake $${p.stake_dollars} · model place ${Math.round(p.place_prob*100)}%`);
+      parts.push(`  model place ${Math.round(p.place_prob*100)}%`);
     }
     return parts.join('\n');
   }
@@ -852,7 +851,7 @@
     if (p.kind === 'lock') {
       return {
         verb: 'PLACE THIS WIN BET',
-        product: `$${p.stake_dollars.toFixed(0)} Win on ${p.horse_name}`,
+        product: `Win on ${p.horse_name}`,
         path: `Sportsbet → Racing → ${venueLabel(p.venue)} → R${p.race_number} → Win`,
         returnIf: `Returns ${fmtMoneyPlain(p.potential_return_dollars)} if it wins`,
       };
@@ -860,7 +859,7 @@
     if (p.kind === 'bonus') {
       return {
         verb: 'USE YOUR BONUS BET',
-        product: `$${p.bonus_stake_dollars.toFixed(0)} Bonus Bet on ${p.horse_name}`,
+        product: `Bonus Bet on ${p.horse_name}`,
         path: `Sportsbet → Racing → ${venueLabel(p.venue)} → R${p.race_number} → Win → use Bonus Bet`,
         returnIf: `Returns ${fmtMoneyPlain(p.potential_return_dollars)} profit if it wins (stake not returned)`,
       };
@@ -868,7 +867,7 @@
     if (p.kind === 'spine') {
       return {
         verb: 'BUILD THIS 4-LEG MULTI',
-        product: `$${p.stake_dollars.toFixed(0)} Racing Multi · 4 × Top 4`,
+        product: `Racing Multi · 4 × Top 4`,
         path: `Sportsbet → Multi Builder → tap Top 4 for each horse below → confirm +20% boost shows in betslip`,
         returnIf: `Returns ${fmtMoneyPlain(p.potential_return_dollars)} if all 4 land`,
       };
@@ -876,7 +875,7 @@
     if (p.kind === 'wave') {
       return {
         verb: 'PLACE THIS QUADDIE BOX',
-        product: `$${p.stake_dollars.toFixed(0)} Quaddie · 2×2×2×2 box (${p.perms} combos)`,
+        product: `Quaddie · 2×2×2×2 box (${p.perms} combos)`,
         path: `Sportsbet → Racing → ${venueLabel(p.venue)} → Quaddie → box the 2 horses per leg below`,
         returnIf: `Est. ${fmtMoneyPlain(p.potential_return_dollars)} share of the pool if all 4 winners come from your picks`,
       };
@@ -885,7 +884,7 @@
       const names = (p.box_horse_names || []).join(', ');
       return {
         verb: 'PLACE THIS TRIFECTA BOX',
-        product: `$${p.stake_dollars.toFixed(0)} Flexi Trifecta Box (3 horses · ${p.perms} perms)`,
+        product: `Flexi Trifecta Box (3 horses · ${p.perms} perms)`,
         path: `Sportsbet → Racing → ${venueLabel(p.venue)} → R${p.race_number} → Exotics → Trifecta → Box ${names}`,
         returnIf: `Est. ${fmtMoneyPlain(p.potential_return_dollars)} if any order of these 3 fills the trifecta`,
       };
@@ -893,7 +892,7 @@
     if (p.kind === 'double') {
       return {
         verb: 'BUILD THIS PLACE MULTI',
-        product: `$${p.stake_dollars.toFixed(0)} 2-leg Place Multi`,
+        product: `2-leg Place Multi`,
         path: `Sportsbet → Multi Builder → tap Place for each horse below → confirm 2 legs in betslip`,
         returnIf: `Returns ${fmtMoneyPlain(p.potential_return_dollars)} if both horses place (top 3)`,
       };
@@ -901,15 +900,15 @@
     if (p.kind === 'combo_doubles') {
       return {
         verb: 'PLACE THIS COMBO DOUBLES',
-        product: `$${p.stake_dollars} total · $${p.unit_stake_dollars}/pair × 6 doubles`,
-        path: `Sportsbet → Multi Builder → add all 4 horses below (one per race) → set to "Combo Multi Doubles" → confirm 6 doubles at $${p.unit_stake_dollars} each`,
+        product: `6 doubles · combo multi`,
+        path: `Sportsbet → Multi Builder → add all 4 horses below (one per race) → set to "Combo Multi Doubles"`,
         returnIf: `${((p.prob_at_least_2_wins || 0)*100).toFixed(1)}% chance of a paying double (any 2 of 4 legs win)`,
       };
     }
     if (p.kind === 'quaddie') {
       const product = p.boxed_available
-        ? `$${p.stake_dollars.toFixed(0)} straight · OR $${p.boxed_stake_dollars} boxed (${p.boxed_perms} perms)`
-        : `$${p.stake_dollars.toFixed(0)} Quaddie · 1 horse × 4 legs`;
+        ? `Straight · OR boxed (${p.boxed_perms} perms)`
+        : `Quaddie · 1 horse × 4 legs`;
       const path = p.boxed_available
         ? `Sportsbet → Racing → ${venueLabel(p.venue)} → Quaddie → pick rank-1 only (straight) OR rank-1 + rank-2 in every leg (boxed)`
         : `Sportsbet → Racing → ${venueLabel(p.venue)} → Quaddie → pick the rank-1 horse for each leg below`;
@@ -928,7 +927,7 @@
     if (p.kind === 'banker') {
       return {
         verb: 'PLACE THIS PLACE BET',
-        product: `$${p.stake_dollars.toFixed(0)} Place on ${p.horse_name}`,
+        product: `Place on ${p.horse_name}`,
         path: `Sportsbet → Racing → ${venueLabel(p.venue)} → R${p.race_number} → Place`,
         returnIf: `Returns ~${fmtMoneyPlain(p.potential_return_dollars)} if it finishes top 3`,
       };
@@ -939,7 +938,7 @@
         : `Quinella pays if these two fill 1-2 in any order`;
       return {
         verb: 'PLACE THIS QUINELLA',
-        product: `$${p.stake_dollars.toFixed(0)} Quinella · ${p.horse_name} + ${p.partner_horse_name}`,
+        product: `Quinella · ${p.horse_name} + ${p.partner_horse_name}`,
         path: `Sportsbet → Racing → ${venueLabel(p.venue)} → R${p.race_number} → Exotics → Quinella → tap both horses`,
         returnIf: ret,
       };
@@ -964,7 +963,6 @@
           <div class="leg-odds">$${l.sb_top4_odds_est}</div>
         </div>`).join('')}</div>`;
     } else if (p.kind === 'lock' || p.kind === 'bonus') {
-      const stakeLabel = p.kind === 'bonus' ? `$${p.bonus_stake_dollars} bonus` : `$${p.stake_dollars}`;
       legsHtml = `<div class="legs"><div class="leg">
         <div>
           <div class="leg-horse">${escHtml(p.horse_name)}</div>
@@ -1023,7 +1021,7 @@
         <div class="leg" style="background: rgba(168,85,247,0.10); border-color: rgba(168,85,247,0.3);">
           <div style="flex:1">
             <div style="font-size:13px; font-weight:600; color: var(--text-primary)">
-              🧩 6 doubles · $${p.unit_stake_dollars}/pair · $${p.stake_dollars} total
+              🧩 6 doubles · combo multi
             </div>
             <div style="font-size:11px; color: var(--text-muted); margin-top:3px">
               ≥1 pair hits ${((p.prob_at_least_1_win || 0)*100).toFixed(1)}% · ≥2 legs ${p2}% · ≥3 legs ${p3}% · 4/4 ${p4}%
@@ -1054,7 +1052,7 @@
               📦 Box rank-1 + rank-2 (${p.boxed_perms} perms)
             </div>
             <div style="font-size:11px; color: var(--text-muted)">
-              Hit prob ${(p.boxed_hit_probability * 100).toFixed(2)}% · stake $${p.boxed_stake_dollars}
+              Hit prob ${(p.boxed_hit_probability * 100).toFixed(2)}%
             </div>
           </div>
         </div>` : '';
@@ -1085,9 +1083,8 @@
       </div>`;
     }
 
+    // evCls still used by the outcome banner styling below.
     const evCls = (p.expected_value_dollars || 0) >= 0 ? 'pos' : 'neg';
-    const stakeShown = p.kind === 'bonus' ? p.bonus_stake_dollars : p.stake_dollars;
-    const stakeLabel = p.kind === 'bonus' ? 'Bonus' : 'Stake';
 
     // Outcome banner (past dates only) — shows what actually happened
     // with this play and the realised P/L.
@@ -1192,7 +1189,7 @@
     if (day === 'tomorrow') {
       return "Tomorrow's playbook · 🎯 Sharp picks · take prices early before the market shortens.";
     }
-    return "Today's lower-variance playbook · 🎯 Sharp picks · place-led · $10 base stake";
+    return "Today's lower-variance playbook · 🎯 Sharp picks · place-led";
   }
 
   async function load(day) {
