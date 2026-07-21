@@ -895,7 +895,18 @@ class RacingAustraliaClient:
 
     async def _request(self, url: str, *, referer: str | None = None, timeout: float = 20.0) -> str:
         """Shared GET path. Honours the breaker, jitters delay, rotates UA,
-        and trips the breaker on 403 instead of grinding the WAF deeper."""
+        and trips the breaker on 403 instead of grinding the WAF deeper.
+
+        Double-check pattern: the pre-semaphore check catches callers made
+        AFTER the breaker was tripped. A burst arrival (asyncio.gather of
+        30+ form fetches) can pass the first check together, queue at the
+        semaphore, and then request #1 trips the breaker on its 403 while
+        requests #2..30 are still queued but past the check — they'd all
+        fire anyway, giving RA another 30 free 403s to fingerprint on.
+        Re-checking inside the semaphore short-circuits every queued
+        request the moment #1 has tripped, so a WAF-block burst goes from
+        30+ wasted hits to at most 1.
+        """
         if self._is_blocked():
             raise httpx.HTTPStatusError(
                 f"RA circuit breaker open until {self._blocked_until.isoformat()}",
@@ -903,6 +914,14 @@ class RacingAustraliaClient:
                 response=httpx.Response(503),
             )
         async with self._get_sem():
+            # Re-check the breaker AFTER queuing behind the semaphore. Cuts
+            # the 30-hit 403 burst down to at most 1 hit per burst.
+            if self._is_blocked():
+                raise httpx.HTTPStatusError(
+                    f"RA circuit breaker open until {self._blocked_until.isoformat()}",
+                    request=httpx.Request("GET", url),
+                    response=httpx.Response(503),
+                )
             # 0.6–1.2s jittered pause between requests. Was 0.3s — that was too
             # tight; combined with Semaphore(3) it produced ~10 req/s sustained.
             await asyncio.sleep(0.6 + random.random() * 0.6)
