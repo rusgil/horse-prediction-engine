@@ -2906,8 +2906,13 @@
       const d = await res.json();
       document.getElementById('premium-perf-loading').style.display = 'none';
       const pnl = d.pnl_at_10;
-      const isPositive = d.bets > 0 && pnl != null && pnl > 0;
-      if (!isPositive) {
+      // Show stats whenever we have real data — regardless of sign.
+      // Previously gated on pnl > 0 which hid the panel while quietly
+      // showing 'Premium stats still accumulating…' when the tier was
+      // running at a loss; that's marketing dressed as UI (and Anna /
+      // any prospective member notices — the number is what it is).
+      const hasData = d.bets > 0 && pnl != null;
+      if (!hasData) {
         const accum = document.createElement('div');
         accum.style.cssText = 'padding:18px 0 6px;font-size:0.88rem;color:var(--text-dim);text-align:center;font-style:italic';
         accum.textContent = 'Premium stats still accumulating…';
@@ -2924,11 +2929,19 @@
       document.getElementById('pps-roi').textContent = d.roi_pct != null ? (d.roi_pct >= 0 ? '+' : '') + d.roi_pct + '%' : '—';
       function updateTagline(stake) {
         if (!d.bets || d.pnl_at_10 == null) return;
+        const tagEl = document.getElementById('pps-tagline');
         const multiplier = stake / 10;
         const spent = d.bets * stake;
         const pnl = d.pnl_at_10 * multiplier;
         const returned = spent + pnl;
-        const tagEl = document.getElementById('pps-tagline');
+        // Only run the celebratory 'Now that's Funky!' framing when the
+        // tier was actually profitable. When P&L is negative, hide the
+        // tagline entirely — stats block still tells the story honestly.
+        if (pnl <= 0) {
+          tagEl.style.display = 'none';
+          tagEl.innerHTML = '';
+          return;
+        }
         tagEl.style.display = '';
         tagEl.innerHTML = `For the last 30 days, FunkyIQ would have returned <strong style="color:var(--green-bright)">$${Math.round(returned).toLocaleString()}</strong>, if someone bet <strong style="color:var(--text-primary)">$${spent.toLocaleString()}</strong> on the VALUE races ($${stake.toLocaleString()} per VALUE race for the ${d.bets} races over the last 30 days). <span style="color:var(--purple-bright);font-weight:700">Now that's Funky!</span>`;
       }
