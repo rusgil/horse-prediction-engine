@@ -3940,6 +3940,77 @@ async def admin_membership_stats(admin=Depends(_auth_current_admin)):
     }
 
 
+@app.post("/api/admin/users/purge")
+async def admin_users_purge(
+    email: str = Query(...),
+    reset_invite: bool = Query(True),
+    admin=Depends(_auth_current_admin),
+):
+    """Delete a user + their auth state so they can be invited fresh.
+
+    Removes: user row, all sessions, all magic-links for that email,
+    all waitlist entries for that email. When reset_invite=true (default),
+    any invite this user consumed is un-consumed so the same code can be
+    redeemed by them again. Doesn't touch invites they issued.
+
+    Safety: admin auth required; refuses to purge an admin/power_user
+    (need to demote via a separate endpoint first — deliberately friction).
+    """
+    email_norm = (email or "").strip().lower()
+    if not email_norm or "@" not in email_norm:
+        raise HTTPException(status_code=400, detail="Invalid email")
+    async with get_session() as session:
+        user = (await session.execute(
+            select(UserRow).where(UserRow.email == email_norm).limit(1)
+        )).scalars().first()
+        if user is None:
+            raise HTTPException(status_code=404, detail="No user with that email")
+        if user.role != "member" and user.role != "guest":
+            raise HTTPException(
+                status_code=403,
+                detail=f"Refusing to purge {user.role} account — demote via role change first",
+            )
+        user_id = user.id
+
+        from sqlalchemy import delete as sa_delete, update as sa_update
+        # Un-consume any invite this user redeemed so the same code can be
+        # re-used. Also clears consumed_by_user_id to a null lineage.
+        invites_reset = 0
+        if reset_invite:
+            r = await session.execute(
+                sa_update(InviteRow)
+                .where(InviteRow.consumed_by_user_id == user_id)
+                .values(consumed_at=None, consumed_by_user_id=None)
+            )
+            invites_reset = r.rowcount or 0
+
+        sessions_del = (await session.execute(
+            sa_delete(SessionRow).where(SessionRow.user_id == user_id)
+        )).rowcount or 0
+        magic_del = (await session.execute(
+            sa_delete(MagicLinkRow).where(MagicLinkRow.email == email_norm)
+        )).rowcount or 0
+        waitlist_del = (await session.execute(
+            sa_delete(WaitlistRow).where(WaitlistRow.email == email_norm)
+        )).rowcount or 0
+        await session.execute(sa_delete(UserRow).where(UserRow.id == user_id))
+        await session.commit()
+
+    log.warning(
+        "[admin-purge] %s purged %s (id=%d) — sessions=%d magic_links=%d waitlist=%d invites_reset=%d",
+        admin.email, email_norm, user_id, sessions_del, magic_del, waitlist_del, invites_reset,
+    )
+    return {
+        "ok": True,
+        "email": email_norm,
+        "user_id": user_id,
+        "sessions_deleted": sessions_del,
+        "magic_links_deleted": magic_del,
+        "waitlist_deleted": waitlist_del,
+        "invites_reset": invites_reset,
+    }
+
+
 # ── Sportsbet-availability flag ──────────────────────────────────────────
 # Venues that Sportsbet doesn't market — mostly tiny picnic / bush meetings
 # where turnover is too thin for a corporate book. RA lists them anyway
