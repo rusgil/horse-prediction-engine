@@ -3337,11 +3337,14 @@ async def auth_request_code(request: Request, response: Response):
     token = await _auth_issue_magic_link(
         email, intent=intent, invite_token_hash=invite_hash,
     )
-    # Point the click at the API host — top-level navigation to a same-
-    # host response is the only cookie-set path that survives iOS Safari
-    # ITP. Backend consumes the token, sets the session cookie on
-    # api.funkyiq.com, then redirects the browser to app_base_url.
-    verify_url = f"{settings.api_base_url.rstrip('/')}/api/auth/verify?t={token}"
+    # Route the click through the frontend host (Vercel) which proxies
+    # /api/* to the Railway backend. This way the browser thinks the
+    # request is same-origin as the app — Set-Cookie is stored under
+    # funkyiq.com (not api.funkyiq.com), so future /api/auth/me fetches
+    # from the app include it without hitting cross-site rules. Fixes
+    # the iOS-and-mobile-Chrome bounce loop where cookies set via a
+    # cross-origin redirect were being dropped by WebKit's ITP.
+    verify_url = f"{settings.app_base_url.rstrip('/')}/api/auth/verify?t={token}"
     delivered = await _mail_send_magic_link(email, verify_url, intent=intent)
     if not delivered:
         log.warning("[auth] magic-link email delivery to %s did not succeed", email)

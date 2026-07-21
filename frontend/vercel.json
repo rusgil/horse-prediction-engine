@@ -13,6 +13,7 @@
     { "source": "/invite",     "destination": "/invite.html" },
     { "source": "/waitlist",   "destination": "/waitlist.html" },
     { "source": "/members",    "destination": "/members.html" },
-    { "source": "/account",    "destination": "/account.html" }
+    { "source": "/account",    "destination": "/account.html" },
+    { "source": "/api/:path*", "destination": "https://api.funkyiq.com/api/:path*" }
   ]
 }
