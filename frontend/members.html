@@ -230,7 +230,7 @@
             <label for="mintEmail">Recipient email (optional)</label>
             <input type="email" id="mintEmail" placeholder="friend@example.com — blank = open code" />
           </div>
-          <div class="field" style="max-width:100px">
+          <div class="field" id="mintCountField" style="max-width:100px">
             <label for="mintCount">Count</label>
             <input type="number" id="mintCount" min="1" max="100" value="1" />
           </div>
@@ -535,6 +535,22 @@
           <a class="url" href="${esc(m.url)}" target="_blank">${esc(m.url)}</a>
         </div>`).join('');
     }
+
+    // Count only applies to OPEN codes (bulk-mint). When a recipient email
+    // is entered the invite is 1-to-1 with that address — Count is
+    // meaningless, so hide it. Backend already rejects email + count>1.
+    (function bindCountToggle() {
+      const emailEl = document.getElementById('mintEmail');
+      const countField = document.getElementById('mintCountField');
+      const countInput = document.getElementById('mintCount');
+      const sync = () => {
+        const hasEmail = emailEl.value.trim().length > 0;
+        countField.style.display = hasEmail ? 'none' : '';
+        if (hasEmail) countInput.value = 1;
+      };
+      emailEl.addEventListener('input', sync);
+      sync();
+    })();
 
     document.getElementById('mintForm').addEventListener('submit', async e => {
       e.preventDefault();
