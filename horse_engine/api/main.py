@@ -37,7 +37,7 @@ from datetime import date, datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 from typing import Any, Optional
 
-from fastapi import BackgroundTasks, Depends, FastAPI, Header, HTTPException, Query, Request
+from fastapi import BackgroundTasks, Cookie, Depends, FastAPI, Header, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel
