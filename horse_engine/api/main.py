@@ -3892,6 +3892,16 @@ async def admin_users_list(
     for (u, last_seen) in rows:
         my_invites = invite_rows_by_user.get(u.id, [])
         converted = sum(1 for i in my_invites if i["status"] == "converted")
+        # Count unique recipients rather than raw invite rows. Multiple
+        # invites for the same recipient (retries / duplicate mints) are
+        # a support/UX artifact — the admin cares about how many distinct
+        # people this user reached. Open codes (email=None) all bucket
+        # together under a single 'open' key so they still contribute 1
+        # if any exist, matching how the admin thinks about them.
+        unique_recipients = {(i["invited_email"] or "__open__") for i in my_invites}
+        # Consumed_by attribution is more accurate for "actually landed a
+        # signup", but the pre-existing behaviour just counts converted
+        # invite ROWS. Preserve that for now — separate cleanup pass.
         users_out.append({
             "id": u.id,
             "email": u.email,
@@ -3901,7 +3911,7 @@ async def admin_users_list(
             "seat_active": bool(u.seat_active),
             "founding": bool(u.founding),
             "invites_remaining": int(u.invites_remaining or 0),
-            "invites_sent": len(my_invites),
+            "invites_sent": len(unique_recipients),
             "invites_converted": converted,
             # Top 10 most-recent recipients so the payload stays bounded
             # for admins who issued huge numbers.
@@ -3944,8 +3954,23 @@ async def admin_membership_stats(admin=Depends(_auth_current_admin)):
 async def admin_users_purge(
     email: str = Query(...),
     reset_invite: bool = Query(True),
-    admin=Depends(_auth_current_admin),
+    x_cron_secret: Optional[str] = Header(None),
+    fiq_session: Optional[str] = Cookie(default=None, alias="fiq_session"),
 ):
+    """Dual auth: browser session cookie (admin dashboard) OR x-cron-secret
+    header (curl / cron / support script). Cookie path lets me hit it from
+    /members later without pasting the secret; header path lets me hit it
+    from a terminal now."""
+    from horse_engine.api.auth import current_user_optional as _cuo
+    admin_email_label = "cron_secret"
+    if fiq_session:
+        u = await _cuo(fiq_session)
+        if u is not None and u.role == "admin":
+            admin_email_label = u.email
+        else:
+            _check_admin(x_cron_secret)
+    else:
+        _check_admin(x_cron_secret)
     """Delete a user + their auth state so they can be invited fresh.
 
     Removes: user row, all sessions, all magic-links for that email,
@@ -3998,7 +4023,7 @@ async def admin_users_purge(
 
     log.warning(
         "[admin-purge] %s purged %s (id=%d) — sessions=%d magic_links=%d waitlist=%d invites_reset=%d",
-        admin.email, email_norm, user_id, sessions_del, magic_del, waitlist_del, invites_reset,
+        admin_email_label, email_norm, user_id, sessions_del, magic_del, waitlist_del, invites_reset,
     )
     return {
         "ok": True,
