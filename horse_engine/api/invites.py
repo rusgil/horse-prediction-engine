@@ -67,6 +67,7 @@ async def mint_invite(
     issued_by_user_id: Optional[int],
     invited_email: Optional[str] = None,
     ttl: timedelta = INVITE_TTL,
+    role: str = "member",
 ) -> tuple[str, InviteRow]:
     """Create an invite row and return (raw_code, row).
 
@@ -74,6 +75,11 @@ async def mint_invite(
     to a specific admin — the caller is expected to check admin auth
     before invoking. invited_email is normalised lowercase; None means
     'anyone can redeem this code'.
+
+    `role` stamps the user's role on consumption. 'member' is normal
+    (Stripe-billed once Phase 3 lands); 'guest' is an admin-only comp
+    that skips the billing flow entirely. Callers must gate 'guest'
+    behind an admin check — this function trusts the caller.
 
     Caller is responsible for decrementing the issuer's
     `invites_remaining` counter separately (we don't do it here because
@@ -85,6 +91,7 @@ async def mint_invite(
         code_hash=_hash_code(code),
         issued_to_email=(invited_email.strip().lower() if invited_email else None),
         issued_by_user_id=issued_by_user_id,
+        role=role,
         created_at=now,
         expires_at=now + ttl,
     )

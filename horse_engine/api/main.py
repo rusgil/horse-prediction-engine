@@ -3391,15 +3391,25 @@ async def auth_verify(t: str, request: Request):
     # won't have one).
     if row.invite_token_hash and not user.invited_by_user_id:
         inv = await _inv_consume_by_hash(row.invite_token_hash, user.id)
-        if inv and inv.issued_by_user_id:
-            from sqlalchemy import update as sa_update
-            async with get_session() as _sess:
-                await _sess.execute(
-                    sa_update(UserRow)
-                    .where(UserRow.id == user.id)
-                    .values(invited_by_user_id=inv.issued_by_user_id)
-                )
-                await _sess.commit()
+        if inv:
+            # Build the UserRow update in one round-trip. Always stamp
+            # invited_by_user_id if the invite had an issuer; also
+            # promote the role when the invite was minted as 'guest' so
+            # the user bypasses the eventual trial/Stripe gate.
+            _updates: dict = {}
+            if inv.issued_by_user_id:
+                _updates["invited_by_user_id"] = inv.issued_by_user_id
+            # Only bump role when the current role is the default 'member'
+            # (never demote an admin or overwrite an existing power_user).
+            if inv.role and inv.role != "member" and user.role == "member":
+                _updates["role"] = inv.role
+            if _updates:
+                from sqlalchemy import update as sa_update
+                async with get_session() as _sess:
+                    await _sess.execute(
+                        sa_update(UserRow).where(UserRow.id == user.id).values(**_updates)
+                    )
+                    await _sess.commit()
         elif inv is None:
             log.info("[auth] invite hash on magic link no longer consumable for %s", row.email)
 
@@ -3651,6 +3661,9 @@ async def public_config():
 
 # ── Admin invite/waitlist endpoints ──────────────────────────────────────
 
+_ADMIN_INVITE_ROLES = frozenset({"member", "guest"})
+
+
 @app.post("/api/admin/invites/mint")
 async def admin_invites_mint(
     request: Request,
@@ -3660,6 +3673,9 @@ async def admin_invites_mint(
       - email (optional): tie the code to a specific recipient
       - count (default 1, max 100): mint N codes in one call
       - ttl_days (default 30): expiry
+      - role (default 'member'): 'member' or 'guest'. Guest invites
+        create free comp accounts that bypass the trial/Stripe path;
+        the recipient still uses the same magic-link flow.
     Returns all raw codes — the only moment they exist in plaintext.
     Does NOT touch invites_remaining. Useful for the initial cohort:
     mint 100 codes, hand-email them.
@@ -3668,6 +3684,9 @@ async def admin_invites_mint(
     email = (body.get("email") or "").strip().lower() or None
     count = int(body.get("count") or 1)
     ttl_days = int(body.get("ttl_days") or 30)
+    role = (body.get("role") or "member").strip().lower()
+    if role not in _ADMIN_INVITE_ROLES:
+        raise HTTPException(status_code=400, detail=f"role must be one of {sorted(_ADMIN_INVITE_ROLES)}")
     if not (1 <= count <= 100):
         raise HTTPException(status_code=400, detail="count must be 1..100")
     if not (1 <= ttl_days <= 365):
@@ -3683,16 +3702,18 @@ async def admin_invites_mint(
             issued_by_user_id=admin.id,
             invited_email=email,
             ttl=timedelta(days=ttl_days),
+            role=role,
         )
         codes.append({
             "id": row.id,
             "code": code,
             "url": _invite_url(code),
             "invited_email": row.issued_to_email,
+            "role": row.role,
             "expires_at": row.expires_at.isoformat(),
         })
-    log.info("[invites] admin %s bulk-minted %d invites (email=%s, ttl=%dd)",
-             admin.email, count, email or "-", ttl_days)
+    log.info("[invites] admin %s bulk-minted %d %s invites (email=%s, ttl=%dd)",
+             admin.email, count, role, email or "-", ttl_days)
     return {"ok": True, "minted": codes}
 
 
@@ -3744,6 +3765,7 @@ async def admin_invites_list(admin=Depends(_auth_current_admin), limit: int = 20
                 "invited_email": r.issued_to_email,
                 "issued_by_email": emails.get(r.issued_by_user_id) if r.issued_by_user_id else None,
                 "consumed_by_email": emails.get(r.consumed_by_user_id) if r.consumed_by_user_id else None,
+                "role": r.role,
                 "created_at": r.created_at.isoformat(),
                 "expires_at": r.expires_at.isoformat(),
                 "consumed_at": r.consumed_at.isoformat() if r.consumed_at else None,

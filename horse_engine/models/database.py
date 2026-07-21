@@ -599,6 +599,13 @@ class InviteRow(Base):
     # Nullable — bulk admin invites may not attribute to a specific
     # admin (e.g., minted by cron for a promo campaign).
     issued_by_user_id = Column(Integer, nullable=True, index=True)
+    # Role the recipient gets on user creation. 'member' = normal (billed
+    # eventually via Stripe), 'guest' = comp'd account with full read
+    # access but no trial/subscription tie-in. Admin-only field — the
+    # member-facing /api/invites/create ignores it and always mints
+    # role='member'. Populated on consumption: verify sets
+    # user.role = invite.role when this row is atomically consumed.
+    role = Column(String, nullable=False, default="member")
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     expires_at = Column(DateTime, nullable=False, index=True)
     consumed_at = Column(DateTime, nullable=True)
@@ -864,6 +871,10 @@ async def init_db() -> None:
         # IS NULL, consumed_at IS NULL). Postgres can use this prefix.
         "CREATE INDEX IF NOT EXISTS ix_invites_issuer_active ON invites (issued_by_user_id, consumed_at, revoked_at)",
         "CREATE INDEX IF NOT EXISTS ix_invites_expires ON invites (expires_at)",
+        # Guest-invite support: role stamped on the invite propagates to
+        # user.role on consumption. Defaults to 'member' so any pre-Phase-2.1
+        # invite still creates a normal member account.
+        "ALTER TABLE invites ADD COLUMN IF NOT EXISTS role TEXT NOT NULL DEFAULT 'member'",
         "CREATE INDEX IF NOT EXISTS ix_waitlist_created ON waitlist (created_at)",
         "CREATE INDEX IF NOT EXISTS ix_hist_results_race_winner ON historical_results (race_id, winner)",
         "CREATE INDEX IF NOT EXISTS ix_hist_results_race_placed ON historical_results (race_id, placed)",

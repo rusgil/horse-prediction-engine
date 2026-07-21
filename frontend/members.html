@@ -230,13 +230,20 @@
             <label for="mintEmail">Recipient email (optional)</label>
             <input type="email" id="mintEmail" placeholder="friend@example.com — blank = open code" />
           </div>
-          <div class="field" style="max-width:120px">
+          <div class="field" style="max-width:100px">
             <label for="mintCount">Count</label>
             <input type="number" id="mintCount" min="1" max="100" value="1" />
           </div>
-          <div class="field" style="max-width:120px">
+          <div class="field" style="max-width:100px">
             <label for="mintTtl">TTL (days)</label>
             <input type="number" id="mintTtl" min="1" max="365" value="30" />
+          </div>
+          <div class="field" style="max-width:140px">
+            <label for="mintRole">Role</label>
+            <select id="mintRole" style="width:100%; background:#1a2035; border:1px solid var(--edge); border-radius:8px; color:var(--text); font-family:'Outfit',sans-serif; font-size:0.95rem; padding:10px 12px; outline:none;">
+              <option value="member">Member (billed)</option>
+              <option value="guest">Guest (free / comp)</option>
+            </select>
           </div>
           <div>
             <button class="btn" type="submit" id="mintBtn">Mint</button>
@@ -259,7 +266,7 @@
         <h2>Invites <span style="font-size:0.7rem; color:var(--muted); font-weight:400" id="invitesCount"></span></h2>
         <table id="invitesTable">
           <thead>
-            <tr><th>Recipient</th><th>Status</th><th>Issued by</th><th>Consumed by</th><th>Expires</th><th>Created</th><th></th></tr>
+            <tr><th>Recipient</th><th>Role</th><th>Status</th><th>Issued by</th><th>Consumed by</th><th>Expires</th><th>Created</th><th></th></tr>
           </thead>
           <tbody></tbody>
         </table>
@@ -480,19 +487,27 @@
       const tbody = document.querySelector('#invitesTable tbody');
       document.getElementById('invitesCount').textContent = `(${d.total})`;
       if (!d.invites.length) {
-        tbody.innerHTML = '<tr><td colspan="7" class="empty">No invites yet.</td></tr>';
+        tbody.innerHTML = '<tr><td colspan="8" class="empty">No invites yet.</td></tr>';
         return;
       }
-      tbody.innerHTML = d.invites.map(r => `
+      tbody.innerHTML = d.invites.map(r => {
+        // Guest chip in gold to visually separate comp invites from
+        // paying-member invites in an admin scan of the list.
+        const roleChip = r.role === 'guest'
+          ? '<span class="status-chip status-expired" title="Free comp account — no trial / no billing">guest</span>'
+          : '<span class="status-chip status-valid" title="Normal billed member">member</span>';
+        return `
         <tr>
           <td class="mono">${esc(r.invited_email || '— open code —')}</td>
+          <td>${roleChip}</td>
           <td><span class="status-chip status-${esc(r.status)}">${esc(r.status)}</span></td>
           <td class="mono">${esc(r.issued_by_email || '—')}</td>
           <td class="mono">${esc(r.consumed_by_email || '—')}</td>
           <td>${fmtDate(r.expires_at)}</td>
           <td>${fmtDate(r.created_at)}</td>
           <td>${r.status === 'valid' ? `<button class="btn small ghost" data-revoke="${r.id}">Revoke</button>` : ''}</td>
-        </tr>`).join('');
+        </tr>`;
+      }).join('');
       tbody.querySelectorAll('[data-revoke]').forEach(btn => {
         btn.addEventListener('click', async () => {
           if (!confirm('Revoke this invite? This cannot be undone.')) return;
@@ -526,17 +541,19 @@
       const email = document.getElementById('mintEmail').value.trim() || undefined;
       const count = parseInt(document.getElementById('mintCount').value, 10);
       const ttl_days = parseInt(document.getElementById('mintTtl').value, 10);
+      const role = document.getElementById('mintRole').value || 'member';
       const btn = document.getElementById('mintBtn');
       btn.disabled = true; btn.textContent = 'Minting…';
       try {
-        const body = { count, ttl_days };
+        const body = { count, ttl_days, role };
         if (email) { body.email = email; body.count = 1; }
         const r = await api('/api/admin/invites/mint', {
           method: 'POST',
           body: JSON.stringify(body),
         });
         renderMintOutput(r.minted);
-        toast(`Minted ${r.minted.length} invite${r.minted.length === 1 ? '' : 's'}`);
+        const roleLabel = role === 'guest' ? ' (guest)' : '';
+        toast(`Minted ${r.minted.length}${roleLabel} invite${r.minted.length === 1 ? '' : 's'}`);
         loadStats(); loadInvites(); loadUsers();
       } catch (err) {
         toast(String(err.message || err), false);
