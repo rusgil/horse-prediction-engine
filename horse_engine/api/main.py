@@ -3354,6 +3354,13 @@ async def auth_request_code(request: Request, response: Response):
 
 @app.get("/api/auth/verify")
 async def auth_verify(t: str, request: Request):
+    # DEBUG (temporary — remove after mobile loop resolved):
+    log.info("[auth_verify] host=%r xfh=%r xfp=%r ua=%r cookies=%r",
+             request.headers.get("host"),
+             request.headers.get("x-forwarded-host"),
+             request.headers.get("x-forwarded-proto"),
+             (request.headers.get("user-agent") or "")[:80],
+             list((request.cookies or {}).keys()))
     """Magic-link click target. The URL embedded in emails is
     app_base_url/api/auth/verify?t=… (Vercel proxies /api/* to Railway
     so the cookie is set on the same origin the app runs on). Backend
@@ -3427,9 +3434,16 @@ async def auth_logout(request: Request, response: Response):
 
 
 @app.get("/api/auth/me")
-async def auth_me(user=Depends(_auth_current_user_optional)):
+async def auth_me(request: Request, user=Depends(_auth_current_user_optional)):
     """Return the current user's identity + role, or 401 if not signed
     in. Frontend polls this on page load to decide what to render."""
+    # DEBUG (temporary — remove after mobile loop resolved):
+    log.info("[auth_me] host=%r xfh=%r cookies=%r ua=%r → user=%s",
+             request.headers.get("host"),
+             request.headers.get("x-forwarded-host"),
+             list((request.cookies or {}).keys()),
+             (request.headers.get("user-agent") or "")[:80],
+             user.id if user else None)
     if user is None:
         raise HTTPException(status_code=401, detail="Not signed in")
     return {
