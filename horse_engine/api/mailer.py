@@ -124,18 +124,24 @@ This invite expires in 30 days and can only be used once.
 
 async def send_magic_link(to_email: str, verify_url: str, intent: str = "login") -> bool:
     """Send the login/verification email. `verify_url` should be the full
-    https URL a user clicks to complete authentication. intent shapes
-    the subject line (login vs finish-signup) but the email body is the
-    same shape either way.
+    https URL a user clicks to complete authentication.
+
+    intent used to shape the subject line ('login' vs 'signup') with a
+    "Finish setting up your account" variant for the first click. A
+    recipient (Anna, 2026-07-21) read that as "I need to complete a
+    profile" and disengaged — there is no profile to complete. Both
+    intents now use the same neutral "Sign in" copy; the only visible
+    difference between first-click and subsequent clicks is which page
+    they land on post-verify (backend routes signup → /account so the
+    new member sees their invite widget).
     """
-    is_signup = intent == "signup"
-    subject = "Finish setting up your Funky IQ account" if is_signup else "Your Funky IQ login link"
-    heading = "One more step" if is_signup else "Sign in to Funky IQ"
-    cta_text = "Finish signup" if is_signup else "Log in"
+    subject = "Sign in to Funky IQ"
+    heading = "Sign in to Funky IQ"
+    cta_text = "Sign in"
     html = f"""
     <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;max-width:520px;margin:0 auto;padding:32px 24px;color:#111;">
       <h1 style="font-size:22px;font-weight:700;margin:0 0 20px">{heading}</h1>
-      <p style="font-size:15px;line-height:1.6;color:#333">Click the button below to {cta_text.lower()}. This link expires in 15 minutes and can only be used once.</p>
+      <p style="font-size:15px;line-height:1.6;color:#333">Click the button below to sign in. This link expires in 15 minutes and can only be used once.</p>
       <p style="margin:28px 0"><a href="{verify_url}" style="display:inline-block;background:#111;color:#fff;text-decoration:none;padding:12px 20px;border-radius:6px;font-weight:600">{cta_text}</a></p>
       <p style="font-size:13px;color:#666;line-height:1.6">Or copy this URL into your browser:<br><span style="word-break:break-all;color:#333">{verify_url}</span></p>
       <p style="font-size:12px;color:#999;margin-top:32px;padding-top:20px;border-top:1px solid #eee">If you didn't request this email, you can safely ignore it. No account changes have been made.</p>

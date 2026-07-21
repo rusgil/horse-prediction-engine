@@ -156,9 +156,9 @@
     </div>
 
     <div class="state" id="invalidState">
-      <h1>Invite Not Valid</h1>
+      <h1 id="invalidHeading">Invite Not Valid</h1>
       <div class="error show" id="invalidReason"></div>
-      <a href="/waitlist" class="btn" style="display:block; text-align:center; text-decoration:none; margin-top:6px;">Join the Waitlist</a>
+      <a id="invalidCta" href="/waitlist" class="btn" style="display:block; text-align:center; text-decoration:none; margin-top:6px;">Join the Waitlist</a>
     </div>
 
     <div class="state" id="validState">
@@ -254,8 +254,22 @@
           const data = await res.json();
           if (data.status !== 'valid') {
             show('invalidState');
+            // 'used' means the invite was already consumed — usually by
+            // the intended recipient themselves. They're a member now
+            // and should sign in via /login, not join the waitlist.
+            // Other statuses (expired / revoked / unknown) are dead-ends,
+            // so waitlist is the right fallback for those.
+            if (data.status === 'used') {
+              document.getElementById('invalidHeading').textContent = "You're already in";
+              document.getElementById('invalidReason').innerHTML =
+                "This invite has already been used. If that was you, " +
+                "you're already a member — sign in below.";
+              const cta = document.getElementById('invalidCta');
+              cta.href = '/login';
+              cta.textContent = 'Sign In';
+              return;
+            }
             const msg = {
-              used: 'This invite has already been redeemed.',
               expired: 'This invite has expired.',
               revoked: 'This invite is no longer active.',
             }[data.status] || 'This invite is not valid.';
