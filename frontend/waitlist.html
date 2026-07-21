@@ -150,8 +150,35 @@
     </div>
   </div>
 
+  <script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
+  <div id="turnstile-holder" style="visibility:hidden;position:absolute;left:-9999px;"></div>
+
   <script>
     const API = 'https://api.funkyiq.com';
+
+    // Turnstile — same invisible-widget pattern as login.html. Fail-open
+    // if config endpoint doesn't advertise it.
+    let _turnstileToken = null;
+    let _turnstileWidgetId = null;
+    async function _initTurnstile() {
+      try {
+        const cfg = await (await fetch(`${API}/api/config/public`)).json();
+        if (!cfg.turnstile_enabled || !cfg.turnstile_site_key) return;
+        while (!window.turnstile) await new Promise(r => setTimeout(r, 50));
+        _turnstileWidgetId = window.turnstile.render('#turnstile-holder', {
+          sitekey: cfg.turnstile_site_key,
+          size: 'invisible',
+          callback: (tok) => { _turnstileToken = tok; },
+          'error-callback': () => { _turnstileToken = null; },
+          'expired-callback': () => {
+            _turnstileToken = null;
+            if (_turnstileWidgetId != null) window.turnstile.reset(_turnstileWidgetId);
+          },
+        });
+      } catch (_) { /* silent */ }
+    }
+    _initTurnstile();
+
     document.getElementById('waitlistForm').addEventListener('submit', async function(e) {
       e.preventDefault();
       const btn = document.getElementById('submitBtn');
@@ -161,10 +188,12 @@
       btn.textContent = 'Adding…';
       errEl.classList.remove('show');
       try {
+        const body = { email, source: 'public_waitlist_page' };
+        if (_turnstileToken) body.turnstile_token = _turnstileToken;
         const res = await fetch(`${API}/api/waitlist`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ email, source: 'public_waitlist_page' }),
+          body: JSON.stringify(body),
         });
         if (res.ok) {
           document.getElementById('formSection').style.display = 'none';
@@ -176,6 +205,10 @@
         } else if (res.status === 400) {
           errEl.textContent = 'Please enter a valid email address.';
           errEl.classList.add('show');
+        } else if (res.status === 403) {
+          const data = await res.json().catch(() => ({}));
+          errEl.textContent = data.detail || 'Human check failed — refresh and try again.';
+          errEl.classList.add('show');
         } else {
           errEl.textContent = 'Something went wrong. Try again in a moment.';
           errEl.classList.add('show');
@@ -186,6 +219,10 @@
       } finally {
         btn.disabled = false;
         btn.textContent = 'Add Me to the Waitlist';
+        _turnstileToken = null;
+        if (_turnstileWidgetId != null && window.turnstile) {
+          window.turnstile.reset(_turnstileWidgetId);
+        }
       }
     });
   </script>

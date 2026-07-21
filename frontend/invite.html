@@ -193,8 +193,33 @@
     </div>
   </div>
 
+  <script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
+  <div id="turnstile-holder" style="visibility:hidden;position:absolute;left:-9999px;"></div>
+
   <script>
     const API = 'https://api.funkyiq.com';
+
+    // Turnstile — same invisible-widget pattern as login.html.
+    let _turnstileToken = null;
+    let _turnstileWidgetId = null;
+    async function _initTurnstile() {
+      try {
+        const cfg = await (await fetch(`${API}/api/config/public`)).json();
+        if (!cfg.turnstile_enabled || !cfg.turnstile_site_key) return;
+        while (!window.turnstile) await new Promise(r => setTimeout(r, 50));
+        _turnstileWidgetId = window.turnstile.render('#turnstile-holder', {
+          sitekey: cfg.turnstile_site_key,
+          size: 'invisible',
+          callback: (tok) => { _turnstileToken = tok; },
+          'error-callback': () => { _turnstileToken = null; },
+          'expired-callback': () => {
+            _turnstileToken = null;
+            if (_turnstileWidgetId != null) window.turnstile.reset(_turnstileWidgetId);
+          },
+        });
+      } catch (_) { /* silent */ }
+    }
+    _initTurnstile();
 
     function qs(k) {
       const p = new URLSearchParams(location.search);
@@ -270,10 +295,12 @@
       errEl.classList.remove('show');
 
       try {
+        const body = { email, invite_code: code };
+        if (_turnstileToken) body.turnstile_token = _turnstileToken;
         const res = await fetch(`${API}/api/auth/request-code`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ email, invite_code: code }),
+          body: JSON.stringify(body),
           credentials: 'include',
         });
         if (res.ok) {
@@ -301,6 +328,10 @@
       } finally {
         btn.disabled = false;
         btn.textContent = 'Send Sign-in Link';
+        _turnstileToken = null;
+        if (_turnstileWidgetId != null && window.turnstile) {
+          window.turnstile.reset(_turnstileWidgetId);
+        }
       }
     });
   </script>
