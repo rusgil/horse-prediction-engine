@@ -61,7 +61,14 @@ if [[ "$current" == "$today" ]]; then
   next="${today}-2"
 elif [[ "$current" == "${today}-"* ]]; then
   suffix="${current#${today}-}"
-  next="${today}-$((suffix+1))"
+  # Non-numeric suffixes (e.g. 20260721-fsn1) can't be arithmetic-bumped
+  # and 'set -u' turns $((fsn1+1)) into an unbound-variable crash. Reset
+  # to a plain -2 in that case; the user can hand-set a fancier tag later.
+  if [[ "$suffix" =~ ^[0-9]+$ ]]; then
+    next="${today}-$((suffix+1))"
+  else
+    next="${today}-2"
+  fi
 else
   next="$today"
 fi
