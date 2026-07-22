@@ -1215,7 +1215,7 @@
     if (perfData?.summary?.length) {
       perfHtml = `
         <div class="section">
-          <div class="section-title">Phase-2 Improvement Tracker — daily top-pick win &amp; place %</div>
+          <div class="section-title">Phase-2 Improvement Tracker — daily top-pick win &amp; place % · <span style="color:#e8a020">changes live 22 Jul 2026</span></div>
           <div class="chart-card">
             <div style="display:flex;gap:12px;margin-bottom:10px;font-size:0.7rem;color:var(--text-dim)">
               <span><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:rgba(34,197,94,0.8);margin-right:4px;vertical-align:middle"></span>Win %</span>
@@ -1485,6 +1485,10 @@ export CRON_SECRET='&lt;your CRON_SECRET&gt;'
               c.save();
               c.strokeStyle = '#e8a020'; c.setLineDash([4, 4]); c.lineWidth = 1.5;
               c.beginPath(); c.moveTo(x, top); c.lineTo(x, bottom); c.stroke();
+              c.setLineDash([]);
+              c.fillStyle = '#e8a020'; c.font = '600 10px -apple-system, sans-serif';
+              c.textAlign = 'left';
+              c.fillText('22 Jul — Phase 2 live', x + 5, top + 12);
               c.restore();
             }
           };
