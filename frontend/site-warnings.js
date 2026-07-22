@@ -69,13 +69,16 @@ window.FIQConditions = (function() {
       return map;
     })
     .catch(function() { map = {}; return map; });
-  var COLORS = { good: '#22c55e', soft: '#e8a020', heavy: '#ef4444' };
-  var LABELS = { good: 'Good', soft: 'Soft', heavy: 'Heavy' };
+  // WARNING-ONLY chips: Good/Firm meetings render nothing — a green chip
+  // on every card clashed with the green result markers and was noise on
+  // all-Good days. No chip = track is Good/Firm.
+  var COLORS = { soft: '#e8a020', heavy: '#ef4444' };
+  var LABELS = { soft: 'Soft track', heavy: 'Heavy track' };
   return {
     ready: ready,
     // meeting record for a venue name (fuzzy: case/punctuation-insensitive)
     lookup: function(venue) { return (map && map[norm(venue)]) || null; },
-    // small inline chip: '● Good' colored by category; '' when unknown
+    // inline chip: '● Soft track' / '● Heavy track'; '' for good/unknown
     chip: function(venue) {
       var m = map && map[norm(venue)];
       if (!m || !COLORS[m.category]) return '';
