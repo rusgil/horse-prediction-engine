@@ -13,6 +13,7 @@ For each race:
 from __future__ import annotations
 
 import logging
+import math
 from datetime import date
 
 from horse_engine.enrichers import form as form_enricher
@@ -45,10 +46,13 @@ class RunnerPrediction:
         self.runner = runner
         self.enriched = enriched
         self.win_prob = win_prob
-        # Raw softmax value, captured before any calibration/multiplier
-        # transformation. Persisted so the nightly output-calibration
-        # rebuild can fit isotonic on raw→actual (monotone by design)
-        # instead of on the post-multiplier value that produces plateaus.
+        # Isotonic input snapshot. NOT the bare softmax: it is captured
+        # AFTER venue calibration but BEFORE isotonic and the multiplier
+        # stack — i.e. exactly the value the isotonic curve receives at
+        # inference time. Fit and apply must use the same quantity; the
+        # nightly rebuild fits on this column. (Renamed conceptually from
+        # "raw softmax" 2026-07-22 — the old comment was wrong about
+        # where the snapshot sits, the plumbing was always consistent.)
         self.win_prob_raw: float = win_prob
         self.place_prob = place_prob
         self.feature_vector = feature_vector
@@ -402,7 +406,7 @@ def predict_race(race: Race, model: HorseModel, venue_calibration: dict[str, flo
             place_prob=round(pp, 4),
             feature_vector=feature_vectors[i],
         )
-        pred.win_prob_raw = round(wp, 4)  # snapshot BEFORE any calibration or multipliers
+        pred.win_prob_raw = round(wp, 4)  # isotonic-input snapshot: post-venue-calibration, pre-isotonic/multipliers
         pred.overlay = overlay
         pred.key_flags = _generate_flags(er, wp, overlay)
         # Attach exotic score before sort so ranking pairs the right horse.
@@ -566,27 +570,19 @@ def predict_race(race: Race, model: HorseModel, venue_calibration: dict[str, flo
     # Shipped 2026-07-11 after COEUR VOLANTE hit 72.1% against a bookie
     # price of ~17.4% (55pp overlay) — isotonic curve was identity at
     # that band, feature-completeness gate alone only dropped it to ~58%.
-    _SHRINK_START = 0.25   # 25pp overlay — no shrinkage below
-    _SHRINK_FULL = 0.55    # 55pp overlay — full shrinkage weight
-    _SHRINK_MAX = 0.60     # max weight on market (never fully overrule the model)
-    _NULL_MARKET_CAP = 0.40  # ceiling for win_prob when market signal is missing
-    for p in predictions:
-        market = getattr(p.enriched, "market_implied_prob", 0.0) or 0.0
-        shrink_action = "none"
-        if market <= 0:
-            if p.win_prob > _NULL_MARKET_CAP:
-                p.win_prob = round(0.5 * p.win_prob + 0.5 * _NULL_MARKET_CAP, 4)
-                shrink_action = "null_market_cap"
-        else:
-            overlay = p.win_prob - market
-            if overlay > _SHRINK_START:
-                excess = min(overlay, _SHRINK_FULL) - _SHRINK_START
-                weight = _SHRINK_MAX * excess / (_SHRINK_FULL - _SHRINK_START)
-                p.win_prob = round((1.0 - weight) * p.win_prob + weight * market, 4)
-                shrink_action = f"market_anchor(w={round(weight, 3)})"
-        if trace is not None and p.runner.horse_name in trace:
-            trace[p.runner.horse_name]["market_shrinkage"] = shrink_action
-            trace[p.runner.horse_name]["final_win_prob"] = p.win_prob
+    # Benter blend (2026-07-22) — when BENTER_ALPHA/BETA are set, replace
+    # the one-sided shrinkage below with a fitted two-sided combination:
+    #   score_i = alpha·log(p_model_i) + beta·log(p_market_i) → softmax.
+    # Applied MASS-PRESERVINGLY: the field's total probability mass (already
+    # deflated by going/thin-record/completeness multipliers) is kept and
+    # redistributed by the blend, so absolute tier semantics (>=30% gates,
+    # Sharp) are unchanged while within-race ranking gains the market signal.
+    # Unlike shrinkage this also pulls the model UP toward strong favourites
+    # it under-rates — the documented 10-17pp favourite gap.
+    if _apply_benter_blend(predictions, trace):
+        pass  # blend supersedes shrinkage
+    else:
+        _run_market_shrinkage(predictions, trace)
 
     # Enforce P(top-3) ≥ P(top-1) per horse — a mathematical axiom for
     # the same horse in the same race. If any calibration step made
@@ -619,6 +615,81 @@ def predict_race(race: Race, model: HorseModel, venue_calibration: dict[str, flo
             p.exotic_model_rank = exotic_rank
 
     return predictions
+
+
+def _apply_benter_blend(predictions: list, trace: dict | None = None) -> bool:
+    """Mass-preserving Benter blend. Returns True if applied.
+
+    Requires BENTER_ALPHA/BENTER_BETA > 0 in settings and market coverage
+    on ≥80% of the field (missing-market runners use their own model prob
+    as the market proxy so they are neither boosted nor punished).
+    Evidence (2026-07-22 offline backtest, 868-race holdout): model-alone
+    top-1 21.8%, SP-market 35.0%, blend 35.1%; live-market fit
+    alpha=0.14, beta=0.53. See memory phase2-experiments-2026-07-22."""
+    from horse_engine.config import settings
+    alpha = float(getattr(settings, "benter_alpha", 0.0) or 0.0)
+    beta = float(getattr(settings, "benter_beta", 0.0) or 0.0)
+    if alpha <= 0.0 and beta <= 0.0:
+        return False
+    if len(predictions) < 2:
+        return False
+    markets = [getattr(p.enriched, "market_implied_prob", 0.0) or 0.0 for p in predictions]
+    covered = sum(1 for m in markets if m > 0)
+    if covered < 0.8 * len(predictions):
+        if trace is not None:
+            for p in predictions:
+                if p.runner.horse_name in trace:
+                    trace[p.runner.horse_name]["benter_blend"] = f"skipped_coverage({covered}/{len(predictions)})"
+        return False
+    mass = sum(p.win_prob for p in predictions)
+    if mass <= 0:
+        return False
+    floor = 1e-4
+    p_model = [max(p.win_prob / mass, floor) for p in predictions]
+    mkt_sum = sum(m for m in markets if m > 0)
+    scores = []
+    for pm, mk in zip(p_model, markets):
+        mk_n = max(mk / mkt_sum, floor) if (mk > 0 and mkt_sum > 0) else pm
+        scores.append(alpha * math.log(pm) + beta * math.log(mk_n))
+    mx = max(scores)
+    exps = [math.exp(s - mx) for s in scores]
+    total = sum(exps)
+    for p, e in zip(predictions, exps):
+        blended = mass * e / total
+        if trace is not None and p.runner.horse_name in trace:
+            trace[p.runner.horse_name]["benter_blend"] = (
+                f"applied(a={alpha},b={beta})"
+            )
+            trace[p.runner.horse_name]["pre_blend_win_prob"] = p.win_prob
+            trace[p.runner.horse_name]["final_win_prob"] = round(blended, 4)
+        p.win_prob = round(blended, 4)
+    return True
+
+
+def _run_market_shrinkage(predictions: list, trace: dict | None = None) -> None:
+    """Legacy one-sided market-anchored shrinkage (pre-Benter behaviour).
+    Active whenever the Benter blend is disabled or skipped for coverage."""
+    _SHRINK_START = 0.25   # 25pp overlay — no shrinkage below
+    _SHRINK_FULL = 0.55    # 55pp overlay — full shrinkage weight
+    _SHRINK_MAX = 0.60     # max weight on market (never fully overrule the model)
+    _NULL_MARKET_CAP = 0.40  # ceiling for win_prob when market signal is missing
+    for p in predictions:
+        market = getattr(p.enriched, "market_implied_prob", 0.0) or 0.0
+        shrink_action = "none"
+        if market <= 0:
+            if p.win_prob > _NULL_MARKET_CAP:
+                p.win_prob = round(0.5 * p.win_prob + 0.5 * _NULL_MARKET_CAP, 4)
+                shrink_action = "null_market_cap"
+        else:
+            overlay = p.win_prob - market
+            if overlay > _SHRINK_START:
+                excess = min(overlay, _SHRINK_FULL) - _SHRINK_START
+                weight = _SHRINK_MAX * excess / (_SHRINK_FULL - _SHRINK_START)
+                p.win_prob = round((1.0 - weight) * p.win_prob + weight * market, 4)
+                shrink_action = f"market_anchor(w={round(weight, 3)})"
+        if trace is not None and p.runner.horse_name in trace:
+            trace[p.runner.horse_name]["market_shrinkage"] = shrink_action
+            trace[p.runner.horse_name]["final_win_prob"] = p.win_prob
 
 
 def _generate_flags(er: EnrichedRunner, win_prob: float, overlay: float) -> list[str]:

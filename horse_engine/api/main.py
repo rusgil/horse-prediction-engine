@@ -2179,6 +2179,10 @@ async def _scheduled_exotic_retrain():
             # source IN ('live', 'backfill') matches the win/place/exotic
             # calibration sweeps. Excludes 'validation' / 'backtest' sources
             # so backtest-fit signal doesn't leak into exotic weights.
+            # BUG-42: clip training at the candidate-backtest holdout boundary
+            # so the 7-day backtest below is out-of-sample. hr_rows stays full
+            # range — it only feeds the aggregate index and result lookup.
+            _train_end = _candidate_train_end()
             hist_result = await session.execute(
                 select(RunnerPredictionHistoryRow)
                 .where(RunnerPredictionHistoryRow.enriched_json.isnot(None))
@@ -2188,6 +2192,7 @@ async def _scheduled_exotic_retrain():
                 )
                 .where(RunnerPredictionHistoryRow.source.in_(("live", "backfill")))
                 .where(_history_healthy_filter())
+                .where(RunnerPredictionHistoryRow.race_id < _train_end)
             )
             hist_rows = hist_result.scalars().all()
 
@@ -2242,12 +2247,14 @@ async def _scheduled_exotic_retrain():
             "holdout_days": None,
             "best_window": None,
             "training_window_start": None,
-            "training_window_end": None,
+            "training_window_end": _train_end,
         }
         async with get_session() as session:
             await save_weight_candidate(session, "exotic", stats["weights"], batch_id, meta)
         try:
-            backtest = await _backtest_weight_candidate("exotic", stats["weights"], holdout_days=7)
+            backtest = await _backtest_weight_candidate(
+                "exotic", stats["weights"], holdout_days=_CANDIDATE_HOLDOUT_DAYS
+            )
             async with get_session() as sess:
                 _rows = (await sess.execute(
                     select(ModelWeightCandidateRow).where(ModelWeightCandidateRow.batch_id == batch_id)
@@ -2464,6 +2471,17 @@ async def _snapshot_prerace_predictions() -> int:
     # Group by race — skip races already in history OR that have already started.
     # The time guard (BUG-01 fix) prevents post-race mutable state from being
     # snapshotted as if it were a pre-race prediction.
+    #
+    # BUG-43 (2026-07-22): also skip races starting MORE than 2h from now.
+    # The old single 9am snapshot froze afternoon races with their morning
+    # (odds-less) enrichment — 71% of clean post-2026-07-16 races had a
+    # flat/missing market in history, starving the market features, the
+    # Benter blend and the clean-market retrain. The job now runs hourly
+    # (09:00–19:00 AEST) and each race is captured in its T-2h window,
+    # after the 20-min odds refresh (which targets races within 3h) has
+    # had at least one pass. Races with unknown start times are written
+    # immediately, as before — a flat snapshot beats no snapshot.
+    _SNAP_WINDOW = timedelta(hours=2)
     races: dict[str, list[RunnerPredictionRow]] = {}
     for r in rows:
         if r.race_id in already_set:
@@ -2477,6 +2495,8 @@ async def _snapshot_prerace_predictions() -> int:
                 pass
         if sched and sched <= now_utc:
             continue
+        if sched and sched - now_utc > _SNAP_WINDOW:
+            continue  # too early — a later hourly tick will capture it with live odds
         races.setdefault(r.race_id, []).append(r)
 
     if not races:
@@ -2794,7 +2814,9 @@ async def lifespan(app: FastAPI):
         IntervalTrigger(seconds=165, jitter=15, timezone="Australia/Sydney"),
     )
 
-    scheduler.add_job(_scheduled_prerace_snapshot, CronTrigger(hour=9, minute=0, timezone="Australia/Sydney"))
+    # BUG-43: hourly (was 9am once) — each race snapshots inside its T-2h
+    # window so the frozen market features reflect a live market.
+    scheduler.add_job(_scheduled_prerace_snapshot, CronTrigger(hour="9-19", minute=0, timezone="Australia/Sydney"))
     # Defense #3 — auto-repair contaminated snapshots once upstream is
     # stable again. Every 5 min: checks health, requires 5+ min of
     # continuous healthy state, then walks contaminated=True rows from
@@ -6429,13 +6451,18 @@ def _build_spine(edge_picks: list[dict]) -> Optional[dict]:
 def _build_lock(edge_picks: list[dict]) -> Optional[dict]:
     """The Lock: single win bet on the day's strongest Premium pick.
     Defined by Edge page's Premium criteria (≥29.5% + ≥$3 + >5pt edge)
-    plus an additional 'highest edge_pct' tiebreak."""
+    plus an additional 'highest edge_pct' tiebreak.
+
+    Upper odds cap $10 added 2026-07-22: 180-day disagreement backtest
+    showed model-vs-market picks at SP $4-8 ran -2.9% ROI (likely
+    positive at BAO) while SP $8-15 ran -18.9% and $15+ ran -44.7%.
+    Long-priced overlays are model error, not market error — cap them."""
     candidates = []
     for p in edge_picks:
         odds = p.get("best_available_odds")
         edge = p.get("edge_pct")
         model_pct = p.get("model_pct") or 0
-        if not odds or odds < 3.0:
+        if not odds or odds < 3.0 or odds > 10.0:
             continue
         if model_pct < 29.5:
             continue
@@ -15484,6 +15511,19 @@ async def admin_debug_dividend(race_id: str, x_cron_secret: Optional[str] = Head
 _track_record_cache: tuple[datetime, dict] | None = None
 _TRACK_RECORD_TTL = 600  # 10 min — tier rates barely move between settlements
 
+def _wilson_ci(successes: int, n: int, z: float = 1.96) -> tuple[float, float]:
+    """Wilson score 95% interval for a binomial proportion, in percent.
+    Small-sample honest — a 44.9% win rate on 69 races reads very
+    differently once you see the ±12pp band around it."""
+    if n <= 0:
+        return (0.0, 0.0)
+    p = successes / n
+    denom = 1 + z * z / n
+    centre = (p + z * z / (2 * n)) / denom
+    half = (z / denom) * math.sqrt(p * (1 - p) / n + z * z / (4 * n * n))
+    return (round(max(0.0, centre - half) * 100, 1), round(min(1.0, centre + half) * 100, 1))
+
+
 @app.get("/api/track-record")
 async def get_track_record():
     """Public endpoint — tier win rates from the unified all-time backtest +
@@ -15561,10 +15601,14 @@ async def get_track_record():
         places = sum(1 for r in picks if r["placed"])
         win_pct = round(wins / len(picks) * 100, 1) if picks else 0.0
         place_pct = round(places / len(picks) * 100, 1) if picks else 0.0
+        win_ci = _wilson_ci(wins, len(picks))
+        place_ci = _wilson_ci(places, len(picks))
         output.append({
             "badge":    tier["badge"],
             "win_pct":  win_pct,
             "place_pct": place_pct,
+            "win_ci_low": win_ci[0], "win_ci_high": win_ci[1],
+            "place_ci_low": place_ci[0], "place_ci_high": place_ci[1],
             "races":    len(picks),
             "wins":     wins,
             "places":   places,
@@ -16850,6 +16894,22 @@ async def enrich_meeting_endpoint(race_date: str, venue_code: str):
 
 # ── Retrain ───────────────────────────────────────────────────────────────────
 
+# BUG-42: every retrain path must clip its training window to end BEFORE this
+# holdout, or _backtest_weight_candidate evaluates the candidate on races it
+# was trained on and the promote/reject recommendation measures memorisation.
+# Shared by the win/place/exotic retrain endpoints and the nightly exotic cron.
+_CANDIDATE_HOLDOUT_DAYS = 7
+
+
+def _candidate_train_end(end_date: Optional[str] = None) -> str:
+    """Exclusive upper bound (ISO date) for a retrain training window: the
+    start of the candidate-backtest holdout, or the caller's end_date if
+    that is earlier. race_id 'YYYY-MM-DD_venue_RN' lex-compares correctly
+    against a bare ISO date."""
+    holdout_start = (_today_aest() - timedelta(days=_CANDIDATE_HOLDOUT_DAYS)).isoformat()
+    return min(end_date, holdout_start) if end_date else holdout_start
+
+
 async def _backtest_weight_candidate(
     model_type: str,
     candidate_weights: dict[str, float],
@@ -17301,12 +17361,12 @@ async def retrain_model(
             )
             if cutoff:
                 hist_query = hist_query.where(RunnerPredictionHistoryRow.race_id >= cutoff)
-            if end_date:
-                # end_date is exclusive — race_id 'YYYY-MM-DD_venue_RN' lex-
-                # compares against ISO 'YYYY-MM-DD' correctly. Lets a retrain
-                # clip out contaminated tails (e.g. days=45&end_date=2026-07-10
-                # trains on clean data before the pipeline-chaos period).
-                hist_query = hist_query.where(RunnerPredictionHistoryRow.race_id < end_date)
+            # BUG-42: always clip the training window at the candidate-backtest
+            # holdout boundary (min with caller end_date). Before this fix,
+            # days=0 trained through today and the 7-day holdout was a subset
+            # of the training window — in-sample evaluation.
+            train_end = _candidate_train_end(end_date)
+            hist_query = hist_query.where(RunnerPredictionHistoryRow.race_id < train_end)
             hist_rows = (await session.execute(hist_query)).scalars().all()
 
             hr_rows = (await session.execute(select(HistoricalResultRow))).scalars().all()
@@ -17379,12 +17439,14 @@ async def retrain_model(
             "holdout_days": None,
             "best_window": None,
             "training_window_start": cutoff,
-            "training_window_end": end_date,
+            "training_window_end": train_end,
         }
         async with get_session() as sess:
             await save_weight_candidate(sess, "win", s["weights"], batch_id, meta)
         # Backtest candidate vs active + seed follow-up for human review.
-        backtest = await _backtest_weight_candidate("win", s["weights"], holdout_days=7)
+        backtest = await _backtest_weight_candidate(
+            "win", s["weights"], holdout_days=_CANDIDATE_HOLDOUT_DAYS
+        )
         async with get_session() as sess:
             _rows = (await sess.execute(
                 select(ModelWeightCandidateRow).where(ModelWeightCandidateRow.batch_id == batch_id)
@@ -17484,9 +17546,10 @@ async def retrain_place_model(
             )
             if cutoff:
                 hist_query = hist_query.where(RunnerPredictionHistoryRow.race_id >= cutoff)
-            if end_date:
-                # end_date exclusive — race_id ISO-date prefix lex-compares OK.
-                hist_query = hist_query.where(RunnerPredictionHistoryRow.race_id < end_date)
+            # BUG-42: clip training at the candidate-backtest holdout boundary
+            # (min with caller end_date) — see win retrain.
+            train_end = _candidate_train_end(end_date)
+            hist_query = hist_query.where(RunnerPredictionHistoryRow.race_id < train_end)
             hist_rows = (await session.execute(hist_query)).scalars().all()
 
             hr_rows = (await session.execute(select(HistoricalResultRow))).scalars().all()
@@ -17546,11 +17609,13 @@ async def retrain_place_model(
             "holdout_days": None,
             "best_window": None,
             "training_window_start": cutoff,
-            "training_window_end": end_date,
+            "training_window_end": train_end,
         }
         async with get_session() as sess:
             await save_weight_candidate(sess, "place", s["weights"], batch_id, meta)
-        backtest = await _backtest_weight_candidate("place", s["weights"], holdout_days=7)
+        backtest = await _backtest_weight_candidate(
+            "place", s["weights"], holdout_days=_CANDIDATE_HOLDOUT_DAYS
+        )
         async with get_session() as sess:
             _rows = (await sess.execute(
                 select(ModelWeightCandidateRow).where(ModelWeightCandidateRow.batch_id == batch_id)
@@ -17594,12 +17659,14 @@ async def retrain_exotic_model(
     cutoff = (date.today() - timedelta(days=days)).isoformat() if days > 0 else None
 
     async def _do_exotic_retrain():
+        # BUG-42: clip training at the candidate-backtest holdout boundary
+        # (min with caller end_date) — see win retrain.
+        train_end = _candidate_train_end(end_date)
         async with get_session() as session:
             hr_query = select(HistoricalResultRow)
             if cutoff:
                 hr_query = hr_query.where(HistoricalResultRow.race_id >= cutoff)
-            if end_date:
-                hr_query = hr_query.where(HistoricalResultRow.race_id < end_date)
+            hr_query = hr_query.where(HistoricalResultRow.race_id < train_end)
             hr_rows = (await session.execute(hr_query)).scalars().all()
 
             hist_query = select(RunnerPredictionHistoryRow).where(
@@ -17610,8 +17677,7 @@ async def retrain_exotic_model(
             )
             if cutoff:
                 hist_query = hist_query.where(RunnerPredictionHistoryRow.race_id >= cutoff)
-            if end_date:
-                hist_query = hist_query.where(RunnerPredictionHistoryRow.race_id < end_date)
+            hist_query = hist_query.where(RunnerPredictionHistoryRow.race_id < train_end)
             hist_rows = (await session.execute(hist_query)).scalars().all()
 
         result_lookup: dict[tuple, tuple] = {
@@ -17658,11 +17724,13 @@ async def retrain_exotic_model(
             "holdout_days": None,
             "best_window": None,
             "training_window_start": cutoff,
-            "training_window_end": end_date,
+            "training_window_end": train_end,
         }
         async with get_session() as sess:
             await save_weight_candidate(sess, "exotic", s["weights"], batch_id, meta)
-        backtest = await _backtest_weight_candidate("exotic", s["weights"], holdout_days=7)
+        backtest = await _backtest_weight_candidate(
+            "exotic", s["weights"], holdout_days=_CANDIDATE_HOLDOUT_DAYS
+        )
         async with get_session() as sess:
             _rows = (await sess.execute(
                 select(ModelWeightCandidateRow).where(ModelWeightCandidateRow.batch_id == batch_id)

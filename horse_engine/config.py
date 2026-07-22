@@ -47,6 +47,18 @@ class Settings(BaseSettings):
     first_admin_email: str = "rusgil@gmail.com"
     member_cap: int = 1000
 
+    # Benter blend (2026-07-22): final ranking score is
+    #   alpha·log(p_model) + beta·log(p_market)  →  softmax within race,
+    # applied mass-preservingly (see engine._apply_benter_blend). Both 0.0
+    # = disabled (current shrinkage-only behaviour). Enable by setting
+    # BENTER_ALPHA / BENTER_BETA on Railway — a deliberate human release
+    # action per [[feedback_model_release_process]]. Evidence 2026-07-22:
+    # holdout top-1 21.8% (model) vs 35.0% (SP market) vs 35.1% (blend);
+    # live-market LODO fit alpha=0.14 beta=0.53 (n=85, thin — refit as
+    # clean-market data accumulates).
+    benter_alpha: float = 0.0
+    benter_beta: float = 0.0
+
     # Betfair clients were removed 2026-06-13. RA + OddsPro cover everything
     # the model trains on; the Betfair-derived features (steam_60, steam_30,
     # drift_flag, odds_velocity, late_money, odds_movement_norm) ablated to
