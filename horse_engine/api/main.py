@@ -1688,6 +1688,87 @@ async def _seed_results_for_date(race_date: str) -> int:
                 .distinct()
             )).scalars().all()
         )
+    # ── OddsPro-first results seeding (2026-07-23) ──────────────────────────
+    # Finishing order comes from OddsPro, which Racing Australia's WAF does NOT
+    # block (it's a separate provider we already use for odds). So win / place /
+    # exotic outcomes seed even when the RA proxy is down or throttled. RA is now
+    # a FALLBACK for races OddsPro doesn't cover, and stays the source for the
+    # RA-exclusive form / pedigree the model trains on. Races seeded here are
+    # added to `already_seeded_ra` so the RA passes below skip them — that's how
+    # we "hit RA less and only for what only RA has".
+    op_seeded_total = 0
+    try:
+        preds_by_vc: dict[str, dict[int, dict]] = {}
+        vc_display: dict[str, str] = {}
+        for row in pred_rows_for_date:
+            parts = _parse_race_id(row.race_id)
+            vc = parts[1] if len(parts) > 1 else ""
+            try:
+                race_num = int(row.race_id.rsplit("_R", 1)[-1])
+            except (ValueError, IndexError):
+                continue
+            if not vc:
+                continue
+            vc_display.setdefault(vc, (row.venue or vc).strip())
+            preds_by_vc.setdefault(vc, {}).setdefault(race_num, {})[_normalize_horse(row.horse_name)] = row
+
+        op_results = await client._odds.get_results(race_date)  # {track_lower: {race_num: [finishers]}}
+        op_tracks = list(op_results.keys())
+        for vc, races_by_num in preds_by_vc.items():
+            track = (client._odds.find_matching_track(vc_display.get(vc, vc), op_tracks)
+                     or client._odds.find_matching_track(vc, op_tracks))
+            if not track:
+                continue
+            track_results = op_results.get(track) or op_results.get(track.lower()) or {}
+            for race_num, finishers in track_results.items():
+                race_id = f"{race_date}_{vc}_R{race_num}"
+                if race_id in already_seeded_ra:
+                    continue
+                pred_by_name = races_by_num.get(int(race_num), {})
+                async with get_session() as session:
+                    existing_lower = {
+                        n.lower() for n in (await session.execute(
+                            select(HistoricalResultRow.horse_name)
+                            .where(HistoricalResultRow.race_id == race_id)
+                        )).scalars().all()
+                    }
+                    wrote = 0
+                    for f in finishers:
+                        pos, name = f.get("position"), f.get("name")
+                        if not pos or pos <= 0 or not name:
+                            continue
+                        matched = pred_by_name.get(_normalize_horse(name))
+                        display_name = matched.horse_name if matched else name
+                        if display_name.lower() in existing_lower:
+                            continue
+                        session.add(HistoricalResultRow(
+                            race_id=race_id,
+                            horse_name=display_name,
+                            position=pos,
+                            beaten_margin=0.0,   # OddsPro gives order, not margins
+                            winner=pos == 1,
+                            placed=pos <= 3,
+                            starting_price=f.get("sp"),
+                            tab_number=f.get("number") or (getattr(matched, "tab_number", None) if matched else None),
+                            feature_vector_json=matched.enriched_json if matched else None,
+                        ))
+                        existing_lower.add(display_name.lower())
+                        wrote += 1
+                    if wrote:
+                        try:
+                            await session.commit()
+                            op_seeded_total += wrote
+                            already_seeded_ra.add(race_id)
+                        except Exception as e:
+                            await session.rollback()
+                            log.debug("[seed-results] OddsPro batch commit failed (dupe?): %s", e)
+        if op_seeded_total:
+            log.info("[seed-results] OddsPro seeded %d entries for %s (RA untouched for these)",
+                     op_seeded_total, race_date)
+    except Exception as e:
+        log.warning("[seed-results] OddsPro results pass failed for %s: %s — RA fallback continues",
+                    race_date, e)
+
     venue_state_map_ra: dict[tuple[str, str], set[str]] = {}
     for row in pred_rows_for_date:
         v = (row.venue or "").strip()
@@ -4768,9 +4849,11 @@ async def get_edge_picks():
                         "tab_number": fr.get("tab_number"),
                         "horse_name": name,
                         "place_pct": fr.get("place_pct"),
+                        "win_prob": fr.get("win_prob"),
+                        "win_pct": fr.get("win_pct"),
                     }
                 # Last resort: leg with just the name + tab (from the Lab bet)
-                return {"tab_number": None, "horse_name": name, "place_pct": None}
+                return {"tab_number": None, "horse_name": name, "place_pct": None, "win_prob": None, "win_pct": None}
 
             tri_legs: list[dict] = []
             ff_legs: list[dict] = []

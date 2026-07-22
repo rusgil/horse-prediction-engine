@@ -130,6 +130,73 @@ class OddsProClient:
         log.info("OddsPro meetings: %d AU tracks on %s", len(result), date)
         return result
 
+    async def get_results(self, date: str) -> dict[str, dict[int, list[dict]]]:
+        """Finished-race results per AU domestic thoroughbred track for `date`.
+
+        Returns {track_lower: {race_num: [{"number", "name", "position", "sp"},
+        ...]}}. The OddsPro `results` field is the finishing order by runner
+        number — each slot is itself a list to allow dead-heats
+        (e.g. [[8],[1],[9],[4]] = 1st #8, 2nd #1, 3rd #9, 4th #4). Runner name
+        and a best fixed-win price (SP proxy) come from the race's runner list.
+
+        NON-RA: this path is unaffected by the Racing Australia WAF, so it seeds
+        win/place/exotic outcomes even when the RA proxy is blocked. Only races
+        with status=='finished' and a populated `results` array are returned.
+        """
+        try:
+            data = await self._get(f"{_MEETINGS_BASE}?date={date}")
+            if not isinstance(data, list):
+                data = []
+        except Exception as e:
+            log.debug("OddsPro results failed for %s: %s", date, e)
+            return {}
+
+        out: dict[str, dict[int, list[dict]]] = {}
+        for meeting in data:
+            if meeting.get("location") not in _AU_STATES or meeting.get("type") != "T":
+                continue
+            track_lower = (meeting.get("track") or "").lower().strip()
+            if not track_lower:
+                continue
+            for race in meeting.get("races", []):
+                if (race.get("status") or "").lower() != "finished":
+                    continue
+                order = race.get("results")
+                race_num = race.get("number")
+                if not order or not isinstance(order, list) or not race_num:
+                    continue
+                # runner number -> {name, sp}
+                info: dict[int, dict] = {}
+                for runner in race.get("runners", []):
+                    num = runner.get("number")
+                    if not num:
+                        continue
+                    prices = [
+                        bm["fixedWin"]["price"]
+                        for bm in runner.get("bookmakerMarkets", [])
+                        if bm.get("fixedWin") and (bm["fixedWin"].get("price") or 0) > 1.0
+                    ]
+                    info[num] = {
+                        "name": (runner.get("name") or "").strip(),
+                        "sp": max(prices) if prices else None,
+                    }
+                finishers: list[dict] = []
+                for pos_idx, slot in enumerate(order, start=1):
+                    nums = slot if isinstance(slot, list) else [slot]
+                    for num in nums:
+                        ri = info.get(num, {})
+                        if not ri.get("name"):
+                            continue
+                        finishers.append({
+                            "number": num,
+                            "name": ri["name"],
+                            "position": pos_idx,
+                            "sp": ri.get("sp"),
+                        })
+                if finishers:
+                    out.setdefault(track_lower, {})[race_num] = finishers
+        return out
+
     def find_matching_track(self, venue: str, tracks: list[str]) -> Optional[str]:
         """
         Match an RA venue name to an OddsPro track name.
