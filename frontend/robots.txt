@@ -1,0 +1,11 @@
+User-agent: *
+Allow: /
+Disallow: /account
+Disallow: /dashboard
+Disallow: /members
+Disallow: /invite
+Disallow: /waitlist
+Disallow: /login
+Disallow: /verify
+
+Sitemap: https://horse-racing-predictions.funkyiq.com/sitemap.xml
