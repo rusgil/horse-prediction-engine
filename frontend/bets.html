@@ -2,19 +2,10 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <style>body{visibility:hidden}</style>
-  <script>
-    fetch('/api/check', {credentials:'include'})
-      .then(function(r){
-        if(r.ok){ document.body.style.visibility='visible'; }
-        else{ window.location.replace('/login?next='+encodeURIComponent(location.pathname)); }
-      })
-      .catch(function(){ document.body.style.visibility='visible'; });
-  </script>
+<!-- AUTH GATE TEMPORARILY REMOVED 2026-07-23 for Google AdSense review. To re-lock: restore the /api/check gate (redirect to /login) and the noindex meta. Admin + Account stay locked. -->
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
   <meta name="theme-color" content="#07090f" />
   <title>🧪 Funky IQ Labs — Paper Trading Trifectas | FunkyIQ</title>
-  <meta name="robots" content="noindex" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700;800&family=Outfit:wght@400;500;600;700&display=swap" rel="stylesheet" />
   <style>
