@@ -727,6 +727,84 @@ async def _rerank_race_after_scratch(session, race_id: str) -> bool:
     return True
 
 
+async def _apply_oddspro_scratches(client, today: str) -> int:
+    """Mark runners scratched using OddsPro's live `status` flag — no RA.
+
+    OddsPro flags scratchings DIRECTLY (status=='SCRATCHED') and pre-race, so
+    this drives the interval scratch job even when RA is WAF-blocked. Mirrors the
+    RA scratch-apply flow: cancel in predictions + history, then re-rank the
+    surviving field. Conservative — only cancels runners OddsPro explicitly marks
+    scratched that match one of our active runners. Returns count cancelled."""
+    from sqlalchemy import update as sa_update
+    total = 0
+    try:
+        scratch_map = await client._odds.get_scratchings(today)  # {track: {race_num: {name_lower}}}
+        if not scratch_map:
+            return 0
+        async with get_session() as session:
+            rows = (await session.execute(
+                select(RunnerPredictionRow.race_id, RunnerPredictionRow.venue, RunnerPredictionRow.horse_name)
+                .where(RunnerPredictionRow.race_id.like(f"{today}_%"))
+                .where(RunnerPredictionRow.cancelled.is_(False) | RunnerPredictionRow.cancelled.is_(None))
+            )).all()
+        vc_display: dict[str, str] = {}
+        active_by_race: dict[tuple[str, int], dict[str, str]] = {}
+        for race_id, venue, horse in rows:
+            parts = _parse_race_id(race_id)
+            vc = parts[1] if len(parts) > 1 else ""
+            try:
+                rn = int(race_id.rsplit("_R", 1)[-1])
+            except (ValueError, IndexError):
+                continue
+            if not vc:
+                continue
+            vc_display.setdefault(vc, (venue or vc).strip())
+            active_by_race.setdefault((vc, rn), {})[_normalize_horse(horse)] = horse
+
+        op_tracks = list(scratch_map.keys())
+        for (vc, rn), active in active_by_race.items():
+            track = (client._odds.find_matching_track(vc_display.get(vc, vc), op_tracks)
+                     or client._odds.find_matching_track(vc, op_tracks))
+            if not track:
+                continue
+            scratched_lower = (scratch_map.get(track) or scratch_map.get(track.lower()) or {}).get(rn) or set()
+            if not scratched_lower:
+                continue
+            scratched_norm = {_normalize_horse(s) for s in scratched_lower}
+            to_cancel = [horse for norm, horse in active.items() if norm in scratched_norm]
+            if not to_cancel:
+                continue
+            race_id = f"{today}_{vc}_R{rn}"
+            async with get_session() as session:
+                res = await session.execute(
+                    sa_update(RunnerPredictionRow)
+                    .where(RunnerPredictionRow.race_id == race_id)
+                    .where(RunnerPredictionRow.horse_name.in_(to_cancel))
+                    .where(RunnerPredictionRow.cancelled.is_(False) | RunnerPredictionRow.cancelled.is_(None))
+                    .values(cancelled=True)
+                )
+                await session.execute(
+                    sa_update(RunnerPredictionHistoryRow)
+                    .where(RunnerPredictionHistoryRow.race_id == race_id)
+                    .where(RunnerPredictionHistoryRow.horse_name.in_(to_cancel))
+                    .values(cancelled=True)
+                )
+                if res.rowcount:
+                    await session.commit()
+                    total += res.rowcount
+                    log.info("[scratch-check] OddsPro %s: cancelled %d runner(s): %s",
+                             race_id, res.rowcount, to_cancel)
+                    try:
+                        async with get_session() as rsession:
+                            if await _rerank_race_after_scratch(rsession, race_id):
+                                await rsession.commit()
+                    except Exception as re:
+                        log.warning("[scratch-check] OddsPro rerank %s failed: %s", race_id, re)
+    except Exception as e:
+        log.warning("[scratch-check] OddsPro scratch pass failed: %s", e)
+    return total
+
+
 async def _check_scratches_today() -> int:
     """
     Lightweight scratch detection — no ML inference.
@@ -744,6 +822,12 @@ async def _check_scratches_today() -> int:
 
     try:
         client = get_tab_client()
+
+        # OddsPro-first scratch pass (2026-07-23): direct SCRATCHED status, no RA.
+        # Runs every tick; the RA loop below is now a fallback for anything OddsPro
+        # doesn't cover. This is what "locks in OddsPro for the interval scratch job".
+        total_cancelled += await _apply_oddspro_scratches(client, today)
+
         # Clear RA meeting cache so we always see fresh runner statuses
         if hasattr(client, "_ra") and hasattr(client._ra, "_meeting_cache"):
             client._ra._meeting_cache.clear()

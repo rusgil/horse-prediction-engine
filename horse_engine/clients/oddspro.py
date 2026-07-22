@@ -197,6 +197,44 @@ class OddsProClient:
                     out.setdefault(track_lower, {})[race_num] = finishers
         return out
 
+    async def get_scratchings(self, date: str) -> dict[str, dict[int, set[str]]]:
+        """Scratched runners per AU domestic thoroughbred track/race for `date`.
+
+        Returns {track_lower: {race_num: {runner_name_lower, ...}}}. Uses the
+        runner `status` field (=='SCRATCHED'), which OddsPro populates LIVE and
+        pre-race throughout the day — so scratch detection runs without touching
+        Racing Australia. This is a DIRECT flag, unlike the RA path which has to
+        infer scratchings from a runner's absence from the acceptance field.
+        """
+        try:
+            data = await self._get(f"{_MEETINGS_BASE}?date={date}")
+            if not isinstance(data, list):
+                data = []
+        except Exception as e:
+            log.debug("OddsPro scratchings failed for %s: %s", date, e)
+            return {}
+
+        out: dict[str, dict[int, set[str]]] = {}
+        for meeting in data:
+            if meeting.get("location") not in _AU_STATES or meeting.get("type") != "T":
+                continue
+            track_lower = (meeting.get("track") or "").lower().strip()
+            if not track_lower:
+                continue
+            for race in meeting.get("races", []):
+                race_num = race.get("number")
+                if not race_num:
+                    continue
+                scratched = {
+                    (runner.get("name") or "").lower().strip()
+                    for runner in race.get("runners", [])
+                    if (runner.get("status") or "").upper() == "SCRATCHED"
+                    and (runner.get("name") or "").strip()
+                }
+                if scratched:
+                    out.setdefault(track_lower, {})[race_num] = scratched
+        return out
+
     def find_matching_track(self, venue: str, tracks: list[str]) -> Optional[str]:
         """
         Match an RA venue name to an OddsPro track name.
