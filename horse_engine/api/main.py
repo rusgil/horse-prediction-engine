@@ -15521,23 +15521,37 @@ async def conditions_today():
     today's PRE-RACE cards (RacePredictionRow), so it works from the
     morning enrich onward, before any results settle."""
     today = _today_aest().isoformat()
+    # NOTE: RacePredictionRow is a DEAD table — nothing constructs it any
+    # more (only legacy reads remain). Live going data rides on each
+    # runner's enriched_json (track_condition_category). One rank-1 row
+    # per race is enough.
     async with get_session() as session:
         rows = (await session.execute(
-            select(
-                RacePredictionRow.race_id,
-                RacePredictionRow.venue,
-                RacePredictionRow.state,
-                RacePredictionRow.track_condition,
-            )
-            .where(RacePredictionRow.date == today)
+            select(RunnerPredictionRow.race_id, RunnerPredictionRow.enriched_json)
+            .where(RunnerPredictionRow.race_id.like(f"{today}_%"))
+            .where(RunnerPredictionRow.model_rank == 1)
+            .where(RunnerPredictionRow.enriched_json.isnot(None))
         )).all()
 
-    # Going is a MEETING-level property — aggregate per venue, using the
-    # most recent race row per race_id (conditions can be upgraded or
-    # downgraded during the day; last write wins per race).
+    # Going is a MEETING-level property — aggregate per venue. Venue slug
+    # comes from race_id "{date}_{venue}_R{n}"; going category from the
+    # enriched runner (raw going string like "Good 4" isn't stored per
+    # runner, so chips show the category).
     per_race: dict[str, tuple] = {}
-    for rid, venue, state, tc in rows:
-        per_race[rid] = (venue or "?", state or "", (tc or "").strip())
+    for rid, ejson in rows:
+        if rid in per_race:
+            continue
+        try:
+            venue_slug = rid.rsplit("_R", 1)[0].split("_", 1)[1]
+        except IndexError:
+            venue_slug = "?"
+        venue = venue_slug.replace("-", " ").title()
+        tc = ""
+        try:
+            tc = (json.loads(ejson).get("track_condition_category") or "").strip()
+        except Exception:
+            pass
+        per_race[rid] = (venue, "", tc)
 
     def _cat(tc: str) -> str:
         t = tc.lower()
