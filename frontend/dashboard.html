@@ -963,6 +963,32 @@
     }
   }
 
+  // Today's model-conditions banner — going mix underpins the whole model:
+  // an all-Good/Firm national card is its home condition (no going
+  // deflation in play; historically its strongest days, e.g. 8 Jul 37.2%).
+  async function loadConditionsBadge() {
+    const el = document.getElementById('conditionsBadge');
+    if (!el) return;
+    try {
+      const res = await fetch(`${API}/api/conditions-today`);
+      if (!res.ok) return;
+      const c = await res.json();
+      const styles = {
+        favourable:   { bg: 'rgba(34,197,94,0.12)',  bd: 'rgba(34,197,94,0.5)',  fg: '#22c55e', icon: '🟢', text: `FAVOURABLE — all ${c.races_known} tracks Good/Firm. Model at full confidence.` },
+        mixed:        { bg: 'rgba(232,160,32,0.10)', bd: 'rgba(232,160,32,0.5)', fg: '#e8a020', icon: '🟠', text: `MIXED — ${c.offgoing_races} of ${c.races_known} races on Soft/Heavy (${c.offgoing_pct}%). Off-going picks are de-confidenced.` },
+        unfavourable: { bg: 'rgba(239,68,68,0.10)',  bd: 'rgba(239,68,68,0.5)',  fg: '#ef4444', icon: '🔴', text: `UNFAVOURABLE — ${c.offgoing_pct}% of today's races on Soft/Heavy. Expect fewer tier-qualifying picks; readings today are weak evidence either way.` },
+        unknown:      { bg: 'rgba(122,132,148,0.10)', bd: 'rgba(122,132,148,0.4)', fg: '#7a8494', icon: '⚪', text: `Track conditions not yet known — cards may not be enriched yet.` },
+      };
+      const s = styles[c.label] || styles.unknown;
+      el.innerHTML = `
+        <div style="display:flex;align-items:center;gap:10px;padding:10px 14px;border:1px solid ${s.bd};background:${s.bg};border-radius:6px;font-size:0.82rem">
+          <span>${s.icon}</span>
+          <span style="font-weight:600;color:${s.fg};text-transform:uppercase;letter-spacing:0.04em;white-space:nowrap">Model conditions today</span>
+          <span style="color:var(--text-secondary)">${s.text}</span>
+        </div>`;
+    } catch (e) { /* non-critical */ }
+  }
+
   function renderShell(calData, perfData, analysisData, prodData, premData) {
     const winContent     = buildWinContent(calData, perfData, analysisData, prodData, premData);
     const exoContent     = buildExoticPlaceholder();
@@ -971,6 +997,7 @@
     const followUpsContent = buildFollowUpsPlaceholder();
 
     document.getElementById('dashContent').innerHTML = `
+      <div id="conditionsBadge" style="margin-bottom:14px"></div>
       <div class="model-tabs">
         <button class="model-tab active" id="tabWin" onclick="switchTab('win')">Win &amp; Placement</button>
         <button class="model-tab exotic" id="tabExotic" onclick="switchTab('exotic')">Exotics (beta)</button>
@@ -986,6 +1013,7 @@
     `;
 
     mountWinCharts(calData, perfData);
+    loadConditionsBadge();
     if (typeof refreshSiteWarnStatus === 'function') refreshSiteWarnStatus();
     // Lab hit-stats lives in the Exotic panel — call AFTER innerHTML is
     // set so the target div exists. The panel is hidden on initial load
@@ -1222,6 +1250,7 @@
               <span><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:rgba(59,130,246,0.8);margin-right:4px;vertical-align:middle"></span>Place %</span>
               <span><span style="display:inline-block;width:10px;height:2px;background:#e8a020;margin-right:4px;vertical-align:middle"></span>Phase-2 changes live (22 Jul)</span>
               <span style="color:var(--text-dim)">Dashed = pre-change baseline average</span>
+              <span style="color:var(--text-dim)">· Bottom dots = conditions: <span style="color:#22c55e">●</span> all Good/Firm <span style="color:#e8a020">●</span> some Soft/Heavy <span style="color:#ef4444">●</span> heavy day</span>
             </div>
             <div class="chart-wrap" style="height:220px"><canvas id="phase2Chart"></canvas></div>
             <div style="font-size:0.68rem;color:var(--text-dim);margin-top:10px;line-height:1.5;">
@@ -1475,20 +1504,38 @@ export CRON_SECRET='&lt;your CRON_SECRET&gt;'
           const baseWin  = pre.length ? pre.reduce((s, d) => s + d.win_rate, 0) / pre.length * 100 : null;
           const basePlace= pre.length ? pre.reduce((s, d) => s + (d.place_rate || 0), 0) / pre.length * 100 : null;
           const deployIdx = p2days.findIndex(d => d.date >= P2_DEPLOY);
+          // Conditions strip: per-day going mix drawn as dots along the
+          // bottom of the plot. Green = all Good/Firm nationally (the
+          // model's home condition — no going deflation in play), amber =
+          // some Soft/Heavy, red = heavy off-going day, grey = unknown.
+          const offgoing = p2days.map(d => d.offgoing_pct);
+          const goingColor = v => v == null ? 'rgba(122,132,148,0.5)'
+            : v === 0 ? 'rgba(34,197,94,0.95)'
+            : v <= 30 ? 'rgba(232,160,32,0.95)'
+            : 'rgba(239,68,68,0.95)';
           const deployLine = {
             id: 'p2deploy',
             afterDraw(chart) {
-              if (deployIdx < 0) return;
-              const x = chart.scales.x.getPixelForValue(deployIdx);
               const { top, bottom } = chart.chartArea;
               const c = chart.ctx;
               c.save();
-              c.strokeStyle = '#e8a020'; c.setLineDash([4, 4]); c.lineWidth = 1.5;
-              c.beginPath(); c.moveTo(x, top); c.lineTo(x, bottom); c.stroke();
-              c.setLineDash([]);
-              c.fillStyle = '#e8a020'; c.font = '600 10px -apple-system, sans-serif';
-              c.textAlign = 'left';
-              c.fillText('22 Jul — Phase 2 live', x + 5, top + 12);
+              // going dots
+              offgoing.forEach((v, i) => {
+                const x = chart.scales.x.getPixelForValue(i);
+                c.fillStyle = goingColor(v);
+                c.beginPath();
+                c.arc(x, bottom - 6, 3, 0, Math.PI * 2);
+                c.fill();
+              });
+              if (deployIdx >= 0) {
+                const x = chart.scales.x.getPixelForValue(deployIdx);
+                c.strokeStyle = '#e8a020'; c.setLineDash([4, 4]); c.lineWidth = 1.5;
+                c.beginPath(); c.moveTo(x, top); c.lineTo(x, bottom); c.stroke();
+                c.setLineDash([]);
+                c.fillStyle = '#e8a020'; c.font = '600 10px -apple-system, sans-serif';
+                c.textAlign = 'left';
+                c.fillText('22 Jul — Phase 2 live', x + 5, top + 12);
+              }
               c.restore();
             }
           };

@@ -15511,6 +15511,49 @@ async def admin_debug_dividend(race_id: str, x_cron_secret: Optional[str] = Head
 _track_record_cache: tuple[datetime, dict] | None = None
 _TRACK_RECORD_TTL = 600  # 10 min — tier rates barely move between settlements
 
+@app.get("/api/conditions-today")
+async def conditions_today():
+    """Today's national going mix — the model-conditions indicator.
+
+    All Good/Firm = 'favourable': the model's home condition (no going
+    deflation multipliers in play — historically its best days, e.g.
+    2026-07-08 ran 37.2% rank-1 on an all-Good national card). Reads
+    today's PRE-RACE cards (RacePredictionRow), so it works from the
+    morning enrich onward, before any results settle."""
+    today = _today_aest().isoformat()
+    async with get_session() as session:
+        rows = (await session.execute(
+            select(RacePredictionRow.race_id, RacePredictionRow.track_condition)
+            .where(RacePredictionRow.date == today)
+        )).all()
+    seen: set[str] = set()
+    known = off = 0
+    for rid, tc in rows:
+        if rid in seen or not tc:
+            continue
+        seen.add(rid)
+        known += 1
+        t = tc.strip().lower()
+        if t.startswith("soft") or t.startswith("heavy"):
+            off += 1
+    offgoing_pct = round(off / known * 100, 1) if known else None
+    if offgoing_pct is None:
+        label = "unknown"
+    elif offgoing_pct == 0:
+        label = "favourable"
+    elif offgoing_pct <= 30:
+        label = "mixed"
+    else:
+        label = "unfavourable"
+    return {
+        "date": today,
+        "races_known": known,
+        "offgoing_races": off,
+        "offgoing_pct": offgoing_pct,
+        "label": label,
+    }
+
+
 def _wilson_ci(successes: int, n: int, z: float = 1.96) -> tuple[float, float]:
     """Wilson score 95% interval for a binomial proportion, in percent.
     Small-sample honest — a 44.9% win rate on 69 races reads very
@@ -22260,6 +22303,22 @@ async def performance_summary(
         result_race_ids_by_date.setdefault(r.race_id[:10], set()).add(r.race_id)
     result_races_by_date = {d: len(ids) for d, ids in result_race_ids_by_date.items()}
 
+    # Per-date going mix — share of settled races run on Soft/Heavy going.
+    # Feeds the dashboard "favourable conditions" indicator: 0% off-going
+    # = all Good/Firm nationally, the model's home condition (no going
+    # deflation multipliers in play, historically its best days).
+    _going_seen: set[str] = set()
+    going_by_date: dict[str, dict[str, int]] = {}
+    for r in hr_rows:
+        if not r.track_condition or r.race_id in _going_seen:
+            continue
+        _going_seen.add(r.race_id)
+        g = going_by_date.setdefault(r.race_id[:10], {"known": 0, "off": 0})
+        g["known"] += 1
+        tc = r.track_condition.strip().lower()
+        if tc.startswith("soft") or tc.startswith("heavy"):
+            g["off"] += 1
+
     # predicted+settled intersection — correct denominator for data_complete
     result_race_id_flat: set[str] = {rid for ids in result_race_ids_by_date.values() for rid in ids}
     predicted_settled_by_date: dict[str, int] = {}
@@ -22331,6 +22390,11 @@ async def performance_summary(
             "tier_high": d["tier_high"],
             "tier_strong": d["tier_strong"],
             "data_complete": data_complete,
+            "offgoing_pct": (
+                round(going_by_date[day_str]["off"] / going_by_date[day_str]["known"] * 100, 1)
+                if going_by_date.get(day_str, {}).get("known") else None
+            ),
+            "going_known_races": going_by_date.get(day_str, {}).get("known", 0),
         })
 
     # "Sharp meetings" metric — rank-1 wins across meetings that had at
