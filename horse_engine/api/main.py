@@ -1669,33 +1669,19 @@ async def _inject_accumulated_stats(race, session) -> None:
                     runner.trainer_stats.win_rate_second_up = round(100.0 * su_w / su_n, 1)
 
 
-async def _seed_results_for_date(race_date: str) -> int:
-    """Fetch settled results for race_date and store as training data. Returns count seeded."""
-    client = get_tab_client()
+async def _seed_results_from_oddspro(
+    client, race_date: str, pred_rows_for_date: list, already_seeded: set
+) -> int:
+    """Seed HistoricalResultRow finishing positions from OddsPro (not RA).
 
-    # Fast path for past dates: use stored venue+state to find RA results directly.
-    # RA Calendar.aspx only lists future/current meetings — it can't resolve yesterday.
-    async with get_session() as session:
-        pred_rows_for_date = (await session.execute(
-            select(RunnerPredictionRow)
-            .where(RunnerPredictionRow.race_id.like(f"{race_date}_%"))
-            .where(RunnerPredictionRow.cancelled.is_(False) | RunnerPredictionRow.cancelled.is_(None))
-        )).scalars().all()
-        already_seeded_ra = set(
-            (await session.execute(
-                select(HistoricalResultRow.race_id)
-                .where(HistoricalResultRow.race_id.like(f"{race_date}_%"))
-                .distinct()
-            )).scalars().all()
-        )
-    # ── OddsPro-first results seeding (2026-07-23) ──────────────────────────
-    # Finishing order comes from OddsPro, which Racing Australia's WAF does NOT
-    # block (it's a separate provider we already use for odds). So win / place /
-    # exotic outcomes seed even when the RA proxy is down or throttled. RA is now
-    # a FALLBACK for races OddsPro doesn't cover, and stays the source for the
-    # RA-exclusive form / pedigree the model trains on. Races seeded here are
-    # added to `already_seeded_ra` so the RA passes below skip them — that's how
-    # we "hit RA less and only for what only RA has".
+    OddsPro carries the finished-race order in its meetings feed and is NOT
+    subject to Racing Australia's WAF, so win/place/exotic outcomes seed even
+    when the RA proxy is down. Race_ids seeded here are added to `already_seeded`
+    (mutated in place) so RA passes skip them — "hit RA less, only for what only
+    RA has". Matches OddsPro finishers to our prediction rows by normalised horse
+    name for tab_number + feature vector; SP is the best fixed-win price. Returns
+    the number of runner rows written. Shared by the cron path and the admin
+    seed endpoint. Best-effort — any failure is swallowed so RA fallback runs."""
     op_seeded_total = 0
     try:
         preds_by_vc: dict[str, dict[int, dict]] = {}
@@ -1722,7 +1708,7 @@ async def _seed_results_for_date(race_date: str) -> int:
             track_results = op_results.get(track) or op_results.get(track.lower()) or {}
             for race_num, finishers in track_results.items():
                 race_id = f"{race_date}_{vc}_R{race_num}"
-                if race_id in already_seeded_ra:
+                if race_id in already_seeded:
                     continue
                 pred_by_name = races_by_num.get(int(race_num), {})
                 async with get_session() as session:
@@ -1758,7 +1744,7 @@ async def _seed_results_for_date(race_date: str) -> int:
                         try:
                             await session.commit()
                             op_seeded_total += wrote
-                            already_seeded_ra.add(race_id)
+                            already_seeded.add(race_id)
                         except Exception as e:
                             await session.rollback()
                             log.debug("[seed-results] OddsPro batch commit failed (dupe?): %s", e)
@@ -1768,6 +1754,33 @@ async def _seed_results_for_date(race_date: str) -> int:
     except Exception as e:
         log.warning("[seed-results] OddsPro results pass failed for %s: %s — RA fallback continues",
                     race_date, e)
+    return op_seeded_total
+
+
+async def _seed_results_for_date(race_date: str) -> int:
+    """Fetch settled results for race_date and store as training data. Returns count seeded."""
+    client = get_tab_client()
+
+    # Fast path for past dates: use stored venue+state to find RA results directly.
+    # RA Calendar.aspx only lists future/current meetings — it can't resolve yesterday.
+    async with get_session() as session:
+        pred_rows_for_date = (await session.execute(
+            select(RunnerPredictionRow)
+            .where(RunnerPredictionRow.race_id.like(f"{race_date}_%"))
+            .where(RunnerPredictionRow.cancelled.is_(False) | RunnerPredictionRow.cancelled.is_(None))
+        )).scalars().all()
+        already_seeded_ra = set(
+            (await session.execute(
+                select(HistoricalResultRow.race_id)
+                .where(HistoricalResultRow.race_id.like(f"{race_date}_%"))
+                .distinct()
+            )).scalars().all()
+        )
+    # OddsPro-first pass (2026-07-23): seed finishing order from OddsPro (never
+    # RA-WAF-blocked) and mark those races done so the RA passes below skip them.
+    op_seeded_total = await _seed_results_from_oddspro(
+        client, race_date, pred_rows_for_date, already_seeded_ra
+    )
 
     venue_state_map_ra: dict[tuple[str, str], set[str]] = {}
     for row in pred_rows_for_date:
@@ -19467,6 +19480,12 @@ async def seed_ra_results(
         (h.race_id, _normalize_horse(h.horse_name)): h for h in hist_rows
     }
 
+    # OddsPro-first (2026-07-23): seed finishing order from OddsPro (non-RA) so a
+    # manual reseed works even when RA is WAF-blocked. The RA loop below then
+    # only fills races OddsPro didn't cover. Same helper the cron uses.
+    _op_already: set[str] = set()
+    op_seeded = await _seed_results_from_oddspro(client, race_date, pred_rows, _op_already)
+
     # Group predictions by (venue_name, state) → list of race_ids
     venue_state_map: dict[tuple[str, str], set[str]] = {}
     for row in pred_rows:
@@ -19607,7 +19626,8 @@ async def seed_ra_results(
         detail.append({"venue": venue_name, "state": state, "ra_key": ra_key,
                        "races_found": len(results), "seeded": seeded_here, "races": races_detail})
 
-    return {"status": "ok", "seeded": seeded_total, "detail": detail}
+    return {"status": "ok", "seeded": seeded_total + op_seeded,
+            "oddspro_seeded": op_seeded, "ra_seeded": seeded_total, "detail": detail}
 
 
 @app.post("/api/admin/patch-tab-numbers/{race_date}")
