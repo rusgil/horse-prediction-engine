@@ -1540,7 +1540,7 @@
         <div class="race ${cls}">
           <div class="race-top">
             <div>
-              <div class="race-id">${escHtml(venue)} R${r.race_number}</div>
+              <div class="race-id">${escHtml(venue)}${dateKey >= _todayAestKey() && window.FIQConditions ? FIQConditions.chip(r.venue) : ''} R${r.race_number}</div>
               <div class="race-meta">${escHtml(r.date || '')} · ${r.num_bets} bets · stake $${r.total_stake.toFixed(2)}${r.top3_sum_pct != null ? ` · <strong style="color:var(--green-bright)" title="Top-3 model probability — lower = more open race = higher hit rate">top-3 ${r.top3_sum_pct.toFixed(0)}%</strong>` : ''}${r.field_size != null ? ` · <strong style="color:var(--blue)" title="Runners in the race — smaller fields hit more often">${r.field_size}-horse</strong>` : ''}</div>
               ${timeRow}
             </div>
@@ -1581,6 +1581,9 @@
       const r = await fetch(`${API}/api/bets?days=14&include_bets=true`);
       if (!r.ok) throw new Error('HTTP ' + r.status);
       const data = await r.json();
+      // Wait for the shared track-condition helper once — after this,
+      // FIQConditions.chip() lookups are synchronous.
+      if (window.FIQConditions) { try { await FIQConditions.ready; } catch (e) {} }
       render(data);
     } catch (e) {
       document.getElementById('races').innerHTML = `
@@ -1659,6 +1662,7 @@
       const r = await fetch(`${API}/api/bet-insights/today?limit=20`);
       if (!r.ok) throw new Error('HTTP ' + r.status);
       const d = await r.json();
+      if (window.FIQConditions) { try { await FIQConditions.ready; } catch (e) {} }
       const candidates = d.tomorrow_candidates || [];
       const cand = candidates.find(_heroMatchesFilter) || null;
       if (!cand) {
@@ -1678,7 +1682,7 @@
         <div class="hero-pick">
           <div class="hero-label">🎯 Today's Best Pick · predicted ${cand.predicted_hit_rate_pct.toFixed(0)}% hit</div>
           <div>
-            <span class="hero-race">${escHtml(venue)} R${cand.race_number}</span>
+            <span class="hero-race">${escHtml(venue)}${window.FIQConditions ? FIQConditions.chip(cand.venue) : ''} R${cand.race_number}</span>
             <span class="hero-jump">🕐 ${jump}</span>
           </div>
           <div class="hero-row">

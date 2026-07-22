@@ -2313,7 +2313,7 @@
         <div class="pick-card-top-bar">
           ${badgeHtml}
           <div class="pick-race-ref">
-            <span class="venue-name">${escHtml(pick.venue)}</span>
+            <span class="venue-name">${escHtml(pick.venue)}</span>${window.FIQConditions ? FIQConditions.chip(pick.venue) : ''}
             <span class="sep">·</span>
             <span>R${pick.race_number}</span>
             ${pick.race_name ? `<span class="sep">·</span><span style="color:var(--text-secondary)">${escHtml(pick.race_name)}</span>` : ''}
@@ -3250,7 +3250,7 @@
         <div class="exotic-card-header ${tierClass}">
           <span class="exotic-tier-badge ${tierClass}">${tierLabel}</span>
           <div class="pick-race-ref" style="margin-left:0">
-            <span class="venue-name">${escHtml(pick.venue)}</span>
+            <span class="venue-name">${escHtml(pick.venue)}</span>${window.FIQConditions ? FIQConditions.chip(pick.venue) : ''}
             <span class="sep">·</span>
             <span>R${pick.race_number}</span>
           </div>
@@ -3298,6 +3298,7 @@
 
   async function loadTrifectas() {
     trifectasLoaded = true;
+    if (window.FIQConditions) { try { await FIQConditions.ready; } catch(e){} }
     try {
       const res = await fetch(`${API}/api/edge/trifectas`);
       if (!res.ok) throw new Error(res.statusText);
@@ -3458,6 +3459,7 @@
   }
 
   async function load() {
+    if (window.FIQConditions) { try { await FIQConditions.ready; } catch(e){} }
     try {
       // Populate the win/place legend strip at page load (was only firing
       // when the Wins→Insights subtab was opened, so first-time visitors

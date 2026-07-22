@@ -1817,6 +1817,10 @@
     if (label) label.textContent = formatDayLabel(iso) + "'s Meetings";
     document.getElementById('heroSub').textContent = 'Loading meetings…';
 
+    // Wait once for the shared track-conditions helper (site-warnings.js)
+    // so FIQConditions.chip() lookups are synchronous during render.
+    if (window.FIQConditions) { try { await FIQConditions.ready; } catch (e) {} }
+
     try {
       S.meetingStats = {};
       S.statsLoadGen++;
@@ -1952,7 +1956,7 @@
           ? `<span style="display:inline-block;font-size:0.6rem;font-weight:700;padding:1px 5px;border-radius:4px;background:rgba(45,212,191,0.15);color:#5eead4;border:1px solid rgba(45,212,191,0.4);letter-spacing:0.4px;margin-left:6px">METRO</span>`
           : '';
         el.innerHTML = `
-          <span class="pill-name">${escHtml(m.venue || '')}${metroTag}</span>
+          <span class="pill-name">${escHtml(m.venue || '')}${window.FIQConditions ? FIQConditions.chip(m.venue) : ''}${metroTag}</span>
           <span class="pill-sub">${escHtml(m.state || '')}${m.rail_position && typeof m.rail_position === 'string' ? ' · ' + escHtml(m.rail_position.substring(0,20)) : ''}</span>
           ${wxHtml}
           ${statHtml}

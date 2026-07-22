@@ -1557,7 +1557,7 @@
               ${jumpTime ? `<div class="jump-time">${jumpTime}</div>` : ''}
             </div>
             <div class="race-meta">
-              <strong>${escHtml(venueLabel)} R${p.race_number}</strong>
+              <strong>${escHtml(venueLabel)} R${p.race_number}</strong>${window.FIQConditions ? FIQConditions.chip(p.venue) : ''}
               ${p.distance ? escHtml(p.distance) + 'm · ' : ''}${p.track_condition ? escHtml(p.track_condition) : ''}
             </div>
           </div>
@@ -1608,6 +1608,7 @@
   }
 
   async function loadPicks() {
+    if (window.FIQConditions) { try { await FIQConditions.ready; } catch(e){} }
     document.getElementById('refreshLabel').textContent = 'Refreshing…';
     try {
       // Backend sends 'Access-Control-Allow-Origin: *' which is incompatible

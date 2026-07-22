@@ -763,6 +763,14 @@
     return (VENUE_DISPLAY_ALIAS[key] || (v || '').replace(/-/g, ' ')).toUpperCase();
   }
 
+  // Track-condition (going) chip via the shared site-warnings helper.
+  // '' on past-date views (conditions are today-only) or if the helper
+  // hasn't loaded. load() awaits FIQConditions.ready before rendering.
+  function goingChip(v) {
+    if (currentDay === 'yesterday' || !window.FIQConditions) return '';
+    return FIQConditions.chip(v);
+  }
+
   function copyPlan(text) {
     if (!navigator.clipboard) return;
     navigator.clipboard.writeText(text).then(() => {
@@ -958,7 +966,7 @@
         <div class="leg">
           <div>
             <div class="leg-horse">${escHtml(l.horse_name)}</div>
-            <div class="leg-meta">${escHtml(venueLabel(l.venue))} R${l.race_number} · Top 4${l.scheduled_time ? ' · ' + fmtJump(l.scheduled_time) : ''}</div>
+            <div class="leg-meta">${escHtml(venueLabel(l.venue))}${goingChip(l.venue)} R${l.race_number} · Top 4${l.scheduled_time ? ' · ' + fmtJump(l.scheduled_time) : ''}</div>
           </div>
           <div class="leg-odds">$${l.sb_top4_odds_est}</div>
         </div>`).join('')}</div>`;
@@ -966,7 +974,7 @@
       legsHtml = `<div class="legs"><div class="leg">
         <div>
           <div class="leg-horse">${escHtml(p.horse_name)}</div>
-          <div class="leg-meta">${escHtml(venueLabel(p.venue))} R${p.race_number}${p.scheduled_time ? ' · ' + fmtJump(p.scheduled_time) : ''} · model ${p.model_pct}% · +${p.edge_pct}pt edge</div>
+          <div class="leg-meta">${escHtml(venueLabel(p.venue))}${goingChip(p.venue)} R${p.race_number}${p.scheduled_time ? ' · ' + fmtJump(p.scheduled_time) : ''} · model ${p.model_pct}% · +${p.edge_pct}pt edge</div>
         </div>
         <div class="leg-odds">$${p.best_available_odds}</div>
       </div></div>`;
@@ -983,7 +991,7 @@
       const names = (p.box_horse_names || []).join(' · ');
       legsHtml = `<div class="legs"><div class="leg">
         <div style="flex:1">
-          <div class="leg-horse">${escHtml(venueLabel(p.venue))} R${p.race_number}</div>
+          <div class="leg-horse">${escHtml(venueLabel(p.venue))}${goingChip(p.venue)} R${p.race_number}</div>
           <div class="leg-picks">${escHtml(names)}</div>
         </div>
         <div class="leg-odds">Trio</div>
@@ -993,7 +1001,7 @@
         <div class="leg">
           <div>
             <div class="leg-horse">${escHtml(l.horse_name)}</div>
-            <div class="leg-meta">${escHtml(venueLabel(l.venue))} R${l.race_number} · Place${l.scheduled_time ? ' · ' + fmtJump(l.scheduled_time) : ''} · place ${Math.round(l.place_prob*100)}%</div>
+            <div class="leg-meta">${escHtml(venueLabel(l.venue))}${goingChip(l.venue)} R${l.race_number} · Place${l.scheduled_time ? ' · ' + fmtJump(l.scheduled_time) : ''} · place ${Math.round(l.place_prob*100)}%</div>
           </div>
           <div class="leg-odds">$${l.place_odds_est}</div>
         </div>`).join('')}</div>`;
@@ -1001,7 +1009,7 @@
       legsHtml = `<div class="legs"><div class="leg">
         <div>
           <div class="leg-horse">${escHtml(p.horse_name)}</div>
-          <div class="leg-meta">${escHtml(venueLabel(p.venue))} R${p.race_number}${p.scheduled_time ? ' · ' + fmtJump(p.scheduled_time) : ''} · place ${Math.round(p.place_prob*100)}%</div>
+          <div class="leg-meta">${escHtml(venueLabel(p.venue))}${goingChip(p.venue)} R${p.race_number}${p.scheduled_time ? ' · ' + fmtJump(p.scheduled_time) : ''} · place ${Math.round(p.place_prob*100)}%</div>
         </div>
         <div class="leg-odds">$${p.place_odds_est}</div>
       </div></div>`;
@@ -1010,7 +1018,7 @@
         <div class="leg">
           <div style="flex:1">
             <div class="leg-horse">${i+1}. ${escHtml(l.horse_name)} <span class="leg-meta">(${l.model_pct}%)</span></div>
-            <div class="leg-meta">${escHtml(venueLabel(l.venue))} R${l.race_number}${l.scheduled_time ? ' · ' + fmtJump(l.scheduled_time) : ''}</div>
+            <div class="leg-meta">${escHtml(venueLabel(l.venue))}${goingChip(l.venue)} R${l.race_number}${l.scheduled_time ? ' · ' + fmtJump(l.scheduled_time) : ''}</div>
           </div>
           <div class="leg-odds">${l.best_available_odds ? '$' + l.best_available_odds.toFixed(2) : '—'}</div>
         </div>`).join('');
@@ -1038,7 +1046,7 @@
         <div class="leg">
           <div style="flex:1">
             <div class="leg-horse">${escHtml(l.horse_name)} <span class="leg-meta">(${l.model_pct}%)</span></div>
-            <div class="leg-meta">${escHtml(venueLabel(l.venue))} R${l.race_number}${l.scheduled_time ? ' · ' + fmtJump(l.scheduled_time) : ''}</div>
+            <div class="leg-meta">${escHtml(venueLabel(l.venue))}${goingChip(l.venue)} R${l.race_number}${l.scheduled_time ? ' · ' + fmtJump(l.scheduled_time) : ''}</div>
             ${second}
           </div>
           <div class="leg-odds">${l.best_available_odds ? '$' + l.best_available_odds.toFixed(2) : '—'}</div>
@@ -1064,7 +1072,7 @@
         <div class="leg">
           <div>
             <div class="leg-horse">${escHtml(p.horse_name)}</div>
-            <div class="leg-meta">${escHtml(venueLabel(p.venue))} R${p.race_number}${p.scheduled_time ? ' · ' + fmtJump(p.scheduled_time) : ''} · win ${p.model_pct}% · rank 1</div>
+            <div class="leg-meta">${escHtml(venueLabel(p.venue))}${goingChip(p.venue)} R${p.race_number}${p.scheduled_time ? ' · ' + fmtJump(p.scheduled_time) : ''} · win ${p.model_pct}% · rank 1</div>
           </div>
           <div class="leg-odds">${leg1Odds}</div>
         </div>
@@ -1208,6 +1216,9 @@
       const planRes = await fetch(`${API}/api/funk-me-up/today?date=${targetDate}`);
       if (!planRes.ok) throw new Error('HTTP ' + planRes.status);
       const data = await planRes.json();
+      // Wait for the shared track-condition helper once — after this,
+      // goingChip()/FIQConditions.chip() lookups are synchronous.
+      if (window.FIQConditions) { try { await FIQConditions.ready; } catch (e) {} }
       window._funkData = data;
       renderExposure(data);
       if (!data.plays || !data.plays.length) {

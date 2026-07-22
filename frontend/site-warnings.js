@@ -50,3 +50,39 @@
     init();
   }
 })();
+
+// ── Shared track-conditions lookup ─────────────────────────────────────
+// Going underpins model confidence, so every surface shows it: the
+// Lounge at meeting level, and a chip on each pick card (Edge, Hot Seat,
+// Funk Me Up, Labs). Pages await FIQConditions.ready once at the start
+// of their render, then call FIQConditions.chip(venue) inline.
+// Data: /api/conditions-today — meetings[] with worst-seen category.
+window.FIQConditions = (function() {
+  var API = window.SITE_WARNINGS_API || '';
+  var map = null;
+  function norm(v) { return String(v || '').toLowerCase().replace(/[^a-z]/g, ''); }
+  var ready = fetch(API + '/api/conditions-today')
+    .then(function(r) { return r.ok ? r.json() : null; })
+    .then(function(c) {
+      map = {};
+      ((c && c.meetings) || []).forEach(function(m) { map[norm(m.venue)] = m; });
+      return map;
+    })
+    .catch(function() { map = {}; return map; });
+  var COLORS = { good: '#22c55e', soft: '#e8a020', heavy: '#ef4444' };
+  var LABELS = { good: 'Good', soft: 'Soft', heavy: 'Heavy' };
+  return {
+    ready: ready,
+    // meeting record for a venue name (fuzzy: case/punctuation-insensitive)
+    lookup: function(venue) { return (map && map[norm(venue)]) || null; },
+    // small inline chip: '● Good' colored by category; '' when unknown
+    chip: function(venue) {
+      var m = map && map[norm(venue)];
+      if (!m || !COLORS[m.category]) return '';
+      var col = COLORS[m.category];
+      return '<span class="fiq-going-chip" style="display:inline-flex;align-items:center;gap:4px;padding:1px 7px;border-radius:999px;border:1px solid ' + col + '55;background:' + col + '18;color:' + col + ';font-size:0.68rem;font-weight:600;white-space:nowrap;vertical-align:middle;margin-left:6px">' +
+        '<span style="width:6px;height:6px;border-radius:50%;background:' + col + ';display:inline-block"></span>' +
+        LABELS[m.category] + '</span>';
+    }
+  };
+})();
