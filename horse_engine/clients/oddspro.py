@@ -130,18 +130,22 @@ class OddsProClient:
         log.info("OddsPro meetings: %d AU tracks on %s", len(result), date)
         return result
 
-    async def get_results(self, date: str) -> dict[str, dict[int, list[dict]]]:
+    async def get_results(self, date: str) -> dict[str, dict[int, dict]]:
         """Finished-race results per AU domestic thoroughbred track for `date`.
 
-        Returns {track_lower: {race_num: [{"number", "name", "position", "sp"},
-        ...]}}. The OddsPro `results` field is the finishing order by runner
-        number — each slot is itself a list to allow dead-heats
-        (e.g. [[8],[1],[9],[4]] = 1st #8, 2nd #1, 3rd #9, 4th #4). Runner name
-        and a best fixed-win price (SP proxy) come from the race's runner list.
+        Returns {track_lower: {race_num: {"finishers": [...], "ran": [...]}}}.
+        - "finishers": [{"number","name","position","sp"}] — the placed runners
+          from the OddsPro `results` field (finishing order by runner number,
+          each slot a list for dead-heats: [[8],[1],[9],[4]] = 1st #8 … 4th #4).
+          NOTE: OddsPro only publishes the top placings (~top 4), NOT the full
+          field, so runners that finished 5th+ are absent here.
+        - "ran": [{"number","name","sp"}] — every NON-scratched runner in the
+          field. Callers use this to mark predicted runners that ran but did
+          not place as losses (unplaced), so win/place denominators aren't
+          silently inflated by dropping 5th+ finishers (2026-07-23 fix).
 
-        NON-RA: this path is unaffected by the Racing Australia WAF, so it seeds
-        win/place/exotic outcomes even when the RA proxy is blocked. Only races
-        with status=='finished' and a populated `results` array are returned.
+        NON-RA: unaffected by the Racing Australia WAF. Only status=='finished'
+        races with a populated `results` array are returned.
         """
         try:
             data = await self._get(f"{_MEETINGS_BASE}?date={date}")
@@ -151,7 +155,7 @@ class OddsProClient:
             log.debug("OddsPro results failed for %s: %s", date, e)
             return {}
 
-        out: dict[str, dict[int, list[dict]]] = {}
+        out: dict[str, dict[int, dict]] = {}
         for meeting in data:
             if meeting.get("location") not in _AU_STATES or meeting.get("type") != "T":
                 continue
@@ -165,21 +169,23 @@ class OddsProClient:
                 race_num = race.get("number")
                 if not order or not isinstance(order, list) or not race_num:
                     continue
-                # runner number -> {name, sp}
+                # runner number -> {name, sp}; and the ran (non-scratched) field
                 info: dict[int, dict] = {}
+                ran: list[dict] = []
                 for runner in race.get("runners", []):
                     num = runner.get("number")
-                    if not num:
+                    name = (runner.get("name") or "").strip()
+                    if not num or not name:
                         continue
                     prices = [
                         bm["fixedWin"]["price"]
                         for bm in runner.get("bookmakerMarkets", [])
                         if bm.get("fixedWin") and (bm["fixedWin"].get("price") or 0) > 1.0
                     ]
-                    info[num] = {
-                        "name": (runner.get("name") or "").strip(),
-                        "sp": max(prices) if prices else None,
-                    }
+                    sp = max(prices) if prices else None
+                    info[num] = {"name": name, "sp": sp}
+                    if (runner.get("status") or "").upper() != "SCRATCHED":
+                        ran.append({"number": num, "name": name, "sp": sp})
                 finishers: list[dict] = []
                 for pos_idx, slot in enumerate(order, start=1):
                     nums = slot if isinstance(slot, list) else [slot]
@@ -194,7 +200,7 @@ class OddsProClient:
                             "sp": ri.get("sp"),
                         })
                 if finishers:
-                    out.setdefault(track_lower, {})[race_num] = finishers
+                    out.setdefault(track_lower, {})[race_num] = {"finishers": finishers, "ran": ran}
         return out
 
     async def get_scratchings(self, date: str) -> dict[str, dict[int, set[str]]]:

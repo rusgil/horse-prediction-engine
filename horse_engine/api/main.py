@@ -1790,10 +1790,13 @@ async def _seed_results_from_oddspro(
             if not track:
                 continue
             track_results = op_results.get(track) or op_results.get(track.lower()) or {}
-            for race_num, finishers in track_results.items():
+            for race_num, race_data in track_results.items():
                 race_id = f"{race_date}_{vc}_R{race_num}"
                 if race_id in already_seeded:
                     continue
+                # get_results now returns {"finishers": [...], "ran": [...]}.
+                finishers = race_data.get("finishers", []) if isinstance(race_data, dict) else race_data
+                ran = race_data.get("ran", []) if isinstance(race_data, dict) else []
                 pred_by_name = races_by_num.get(int(race_num), {})
                 async with get_session() as session:
                     existing_lower = {
@@ -1803,10 +1806,12 @@ async def _seed_results_from_oddspro(
                         )).scalars().all()
                     }
                     wrote = 0
+                    placed_norm = set()
                     for f in finishers:
                         pos, name = f.get("position"), f.get("name")
                         if not pos or pos <= 0 or not name:
                             continue
+                        placed_norm.add(_normalize_horse(name))
                         matched = pred_by_name.get(_normalize_horse(name))
                         display_name = matched.horse_name if matched else name
                         if display_name.lower() in existing_lower:
@@ -1820,6 +1825,34 @@ async def _seed_results_from_oddspro(
                             placed=pos <= 3,
                             starting_price=f.get("sp"),
                             tab_number=f.get("number") or (getattr(matched, "tab_number", None) if matched else None),
+                            feature_vector_json=matched.enriched_json if matched else None,
+                        ))
+                        existing_lower.add(display_name.lower())
+                        wrote += 1
+                    # UNPLACED (2026-07-23 fix): OddsPro lists only the top ~4, so a
+                    # runner that RAN but finished 5th+ has no finisher row. Without a
+                    # row the win/place denominator drops it instead of counting the
+                    # loss — which inflated the 2026-07-22 rate (38.5% vs true ~33%).
+                    # Write an unplaced marker (position 99, not winner/placed) for
+                    # every runner that ran but didn't place. Scratched runners are
+                    # absent from `ran`, so they're correctly excluded, not fabricated.
+                    for rr in ran:
+                        name = rr.get("name")
+                        if not name or _normalize_horse(name) in placed_norm:
+                            continue
+                        matched = pred_by_name.get(_normalize_horse(name))
+                        display_name = matched.horse_name if matched else name
+                        if display_name.lower() in existing_lower:
+                            continue
+                        session.add(HistoricalResultRow(
+                            race_id=race_id,
+                            horse_name=display_name,
+                            position=99,          # sentinel: ran, finished outside the top placings
+                            beaten_margin=0.0,
+                            winner=False,
+                            placed=False,
+                            starting_price=rr.get("sp"),
+                            tab_number=rr.get("number") or (getattr(matched, "tab_number", None) if matched else None),
                             feature_vector_json=matched.enriched_json if matched else None,
                         ))
                         existing_lower.add(display_name.lower())
