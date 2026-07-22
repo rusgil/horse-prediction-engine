@@ -15523,33 +15523,67 @@ async def conditions_today():
     today = _today_aest().isoformat()
     async with get_session() as session:
         rows = (await session.execute(
-            select(RacePredictionRow.race_id, RacePredictionRow.track_condition)
+            select(
+                RacePredictionRow.race_id,
+                RacePredictionRow.venue,
+                RacePredictionRow.state,
+                RacePredictionRow.track_condition,
+            )
             .where(RacePredictionRow.date == today)
         )).all()
-    seen: set[str] = set()
-    known = off = 0
-    for rid, tc in rows:
-        if rid in seen or not tc:
-            continue
-        seen.add(rid)
-        known += 1
-        t = tc.strip().lower()
-        if t.startswith("soft") or t.startswith("heavy"):
-            off += 1
-    offgoing_pct = round(off / known * 100, 1) if known else None
-    if offgoing_pct is None:
+
+    # Going is a MEETING-level property — aggregate per venue, using the
+    # most recent race row per race_id (conditions can be upgraded or
+    # downgraded during the day; last write wins per race).
+    per_race: dict[str, tuple] = {}
+    for rid, venue, state, tc in rows:
+        per_race[rid] = (venue or "?", state or "", (tc or "").strip())
+
+    def _cat(tc: str) -> str:
+        t = tc.lower()
+        if t.startswith("soft"):
+            return "soft"
+        if t.startswith("heavy"):
+            return "heavy"
+        if t.startswith("good") or t.startswith("firm"):
+            return "good"
+        return "unknown"
+
+    meetings: dict[str, dict] = {}
+    for rid, (venue, state, tc) in per_race.items():
+        m = meetings.setdefault(venue, {
+            "venue": venue, "state": state, "races": 0,
+            "conditions": {}, "going": "", "category": "unknown",
+        })
+        m["races"] += 1
+        if tc:
+            m["conditions"][tc] = m["conditions"].get(tc, 0) + 1
+
+    _SEVERITY = {"unknown": 0, "good": 1, "soft": 2, "heavy": 3}
+    for m in meetings.values():
+        # display the modal condition string; classify by the WORST seen
+        # (a meeting drifting Good 4 → Soft 5 mid-card is a soft meeting
+        # for confidence purposes)
+        if m["conditions"]:
+            m["going"] = max(m["conditions"], key=m["conditions"].get)
+            m["category"] = max((_cat(c) for c in m["conditions"]), key=lambda c: _SEVERITY[c])
+        del m["conditions"]
+
+    known = [m for m in meetings.values() if m["category"] != "unknown"]
+    off = [m for m in known if m["category"] in ("soft", "heavy")]
+    if not known:
         label = "unknown"
-    elif offgoing_pct == 0:
+    elif not off:
         label = "favourable"
-    elif offgoing_pct <= 30:
+    elif len(off) <= len(known) * 0.3:
         label = "mixed"
     else:
         label = "unfavourable"
     return {
         "date": today,
-        "races_known": known,
-        "offgoing_races": off,
-        "offgoing_pct": offgoing_pct,
+        "meetings": sorted(meetings.values(), key=lambda m: (_SEVERITY[m["category"]], m["venue"])),
+        "meetings_known": len(known),
+        "meetings_offgoing": len(off),
         "label": label,
     }
 

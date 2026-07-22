@@ -974,17 +974,26 @@
       if (!res.ok) return;
       const c = await res.json();
       const styles = {
-        favourable:   { bg: 'rgba(34,197,94,0.12)',  bd: 'rgba(34,197,94,0.5)',  fg: '#22c55e', icon: '🟢', text: `FAVOURABLE — all ${c.races_known} tracks Good/Firm. Model at full confidence.` },
-        mixed:        { bg: 'rgba(232,160,32,0.10)', bd: 'rgba(232,160,32,0.5)', fg: '#e8a020', icon: '🟠', text: `MIXED — ${c.offgoing_races} of ${c.races_known} races on Soft/Heavy (${c.offgoing_pct}%). Off-going picks are de-confidenced.` },
-        unfavourable: { bg: 'rgba(239,68,68,0.10)',  bd: 'rgba(239,68,68,0.5)',  fg: '#ef4444', icon: '🔴', text: `UNFAVOURABLE — ${c.offgoing_pct}% of today's races on Soft/Heavy. Expect fewer tier-qualifying picks; readings today are weak evidence either way.` },
+        favourable:   { bg: 'rgba(34,197,94,0.12)',  bd: 'rgba(34,197,94,0.5)',  fg: '#22c55e', icon: '🟢', text: `FAVOURABLE — all ${c.meetings_known} meetings Good/Firm. Model at full confidence.` },
+        mixed:        { bg: 'rgba(232,160,32,0.10)', bd: 'rgba(232,160,32,0.5)', fg: '#e8a020', icon: '🟠', text: `MIXED — ${c.meetings_offgoing} of ${c.meetings_known} meetings on Soft/Heavy. Off-going meetings' picks are de-confidenced.` },
+        unfavourable: { bg: 'rgba(239,68,68,0.10)',  bd: 'rgba(239,68,68,0.5)',  fg: '#ef4444', icon: '🔴', text: `UNFAVOURABLE — ${c.meetings_offgoing} of ${c.meetings_known} meetings on Soft/Heavy. Expect fewer tier picks; today's results are weak evidence either way.` },
         unknown:      { bg: 'rgba(122,132,148,0.10)', bd: 'rgba(122,132,148,0.4)', fg: '#7a8494', icon: '⚪', text: `Track conditions not yet known — cards may not be enriched yet.` },
       };
       const s = styles[c.label] || styles.unknown;
+      const catColor = { good: '#22c55e', soft: '#e8a020', heavy: '#ef4444', unknown: '#7a8494' };
+      const chips = (c.meetings || []).map(m => `
+        <span style="display:inline-flex;align-items:center;gap:5px;padding:2px 9px;border-radius:999px;border:1px solid ${catColor[m.category] || catColor.unknown}44;background:${catColor[m.category] || catColor.unknown}14;font-size:0.72rem;white-space:nowrap">
+          <span style="width:7px;height:7px;border-radius:50%;background:${catColor[m.category] || catColor.unknown};display:inline-block"></span>
+          ${m.venue}${m.going ? ` · ${m.going}` : ''}
+        </span>`).join('');
       el.innerHTML = `
-        <div style="display:flex;align-items:center;gap:10px;padding:10px 14px;border:1px solid ${s.bd};background:${s.bg};border-radius:6px;font-size:0.82rem">
-          <span>${s.icon}</span>
-          <span style="font-weight:600;color:${s.fg};text-transform:uppercase;letter-spacing:0.04em;white-space:nowrap">Model conditions today</span>
-          <span style="color:var(--text-secondary)">${s.text}</span>
+        <div style="padding:10px 14px;border:1px solid ${s.bd};background:${s.bg};border-radius:6px;font-size:0.82rem">
+          <div style="display:flex;align-items:center;gap:10px">
+            <span>${s.icon}</span>
+            <span style="font-weight:600;color:${s.fg};text-transform:uppercase;letter-spacing:0.04em;white-space:nowrap">Model conditions today</span>
+            <span style="color:var(--text-secondary)">${s.text}</span>
+          </div>
+          ${chips ? `<div style="display:flex;flex-wrap:wrap;gap:6px;margin-top:9px">${chips}</div>` : ''}
         </div>`;
     } catch (e) { /* non-critical */ }
   }
