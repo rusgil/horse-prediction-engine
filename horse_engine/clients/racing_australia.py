@@ -938,7 +938,21 @@ class RacingAustraliaClient:
                 if referer:
                     headers["X-Proxy-Referer"] = referer
             async with httpx.AsyncClient(headers=headers, timeout=timeout, follow_redirects=True) as client:
-                resp = await client.get(fetch_url)
+                try:
+                    resp = await client.get(fetch_url)
+                except (httpx.TimeoutException, httpx.ConnectError, httpx.ReadError) as e:
+                    # A tarpitting WAF HANGS the connection instead of
+                    # returning 403 — the timeout raises here and never
+                    # reaches the 403 check below, so historically the
+                    # breaker never tripped. Every caller (incl. /api/edge
+                    # live enrichment) then kept hanging the full `timeout`,
+                    # producing slow pages with no self-heal. Treat sustained
+                    # transport failure as a block: trip the breaker so
+                    # callers short-circuit until backoff expires, exactly
+                    # like a 403. (2026-07-22 incident — fresh proxy IP was
+                    # tarpitted by RA and the breaker sat closed.)
+                    self._trip_breaker()
+                    raise
                 if resp.status_code == 403:
                     self._trip_breaker()
                     resp.raise_for_status()
