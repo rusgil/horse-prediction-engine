@@ -896,7 +896,7 @@ class RacingAustraliaClient:
             backoff, self._block_count,
         )
 
-    async def _request(self, url: str, *, referer: str | None = None, timeout: float = 20.0) -> str:
+    async def _request(self, url: str, *, referer: str | None = None, timeout: float = 35.0) -> str:
         """Shared GET path. Honours the breaker, jitters delay, rotates UA,
         and trips the breaker on 403 instead of grinding the WAF deeper.
 
@@ -963,12 +963,20 @@ class RacingAustraliaClient:
                 return resp.text
 
     async def _get(self, url: str) -> str:
-        return await self._request(url, timeout=20.0)
+        # 35s (was 20s): the Hetzner→RA path runs a steady ~21s per fetch
+        # (2026-07-23 — likely RA soft-throttling the datacenter IP with a
+        # fixed delay). At 20s every fetch timed out just short of success,
+        # tripped the breaker (which now trips on timeout), and starved the
+        # overnight result-seeding crons. 35s lets a slow-but-working fetch
+        # COMPLETE while a genuine tarpit (no response) still trips the
+        # breaker. Root fix is a faster proxy / the commercial feed.
+        return await self._request(url, timeout=35.0)
 
     async def _get_form(self, url: str) -> str:
         # Form pages are inner pages — supply a Referer so the traffic looks
-        # like a normal navigation from the calendar/meeting page.
-        return await self._request(url, referer=f"{_BASE}/Calendar.aspx", timeout=10.0)
+        # like a normal navigation from the calendar/meeting page. 25s (was
+        # 10s) for the same ~21s slow-proxy reason as _get.
+        return await self._request(url, referer=f"{_BASE}/Calendar.aspx", timeout=25.0)
 
     # ── InteractiveForm fetchers ──────────────────────────────────────────────
 
