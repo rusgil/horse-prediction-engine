@@ -80,8 +80,12 @@ if [[ $PLAN_ONLY -eq 0 ]]; then
 fi
 
 # --- 2. Terraform plan/apply -----------------------------------------------
-log "terraform plan"
-terraform plan -out=rotate.plan
+# NOTE: hcloud_server.name is an IN-PLACE update, not force-new. Bumping
+# rotation_id alone only renames the box — same IP, so RA's WAF block on
+# the old IP persists (this silently defeated the 2026-07-22 rotation).
+# Force-replace the server so every rotation genuinely gets a NEW IP.
+log "terraform plan (force-replacing ra_proxy for a new IP)"
+terraform plan -replace="hcloud_server.ra_proxy" -out=rotate.plan
 
 if [[ $PLAN_ONLY -eq 1 ]]; then
   log "plan-only mode — stopping here. Plan saved as rotate.plan."
