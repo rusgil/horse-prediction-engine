@@ -17160,8 +17160,14 @@ async def odds_trend(race_id: str, horse: str = Query(...)):
 _RACE_ID_RE = re.compile(r"^\d{4}-\d{2}-\d{2}_[a-z0-9-]{1,60}_R\d{1,2}$")
 
 @app.post("/api/races/{race_id}/enrich")
-async def enrich_race(race_id: str, force: bool = Query(False)):
-    """Enrich a specific race. race_id format: {date}_{venue}_R{num}"""
+async def enrich_race(race_id: str, force: bool = Query(False),
+                      x_cron_secret: Optional[str] = Header(None)):
+    """Enrich a specific race. race_id format: {date}_{venue}_R{num}
+
+    Admin-only (X-Cron-Secret). Previously public — a full RA fetch could
+    be triggered by anyone hitting the URL, no rate limit.
+    """
+    _check_admin(x_cron_secret)
     if not _RACE_ID_RE.match(race_id):
         raise HTTPException(400, "Invalid race_id format. Expected: YYYY-MM-DD_venue_RN")
     parts = race_id.split("_")
@@ -17229,8 +17235,14 @@ async def enrich_race(race_id: str, force: bool = Query(False)):
 
 
 @app.post("/api/meetings/{race_date}/{venue_code}/enrich")
-async def enrich_meeting_endpoint(race_date: str, venue_code: str):
-    """Enrich all races at a meeting."""
+async def enrich_meeting_endpoint(race_date: str, venue_code: str,
+                                  x_cron_secret: Optional[str] = Header(None)):
+    """Enrich all races at a meeting.
+
+    Admin-only (X-Cron-Secret). Previously public — a full RA fetch across
+    every race in a meeting could be triggered anonymously.
+    """
+    _check_admin(x_cron_secret)
     _validate_date(race_date)
     _validate_venue(venue_code)
     client = get_tab_client()
@@ -19985,8 +19997,11 @@ async def patch_sp(race_date: str, x_cron_secret: Optional[str] = Header(None)):
 @app.get("/api/meetings/{race_date}/{venue_code}/results")
 async def get_meeting_results(race_date: str, venue_code: str):
     """
-    Return today's race results for a single venue, fetched live from Racing Australia.
-    Also seeds HistoricalResultRow so model-correct dots appear immediately.
+    Return race results for a single venue.
+
+    Tries OddsPro first (no RA WAF, populated live). Falls back to RA only
+    when OddsPro doesn't carry the venue (e.g. some QLD provincial tracks).
+    Seeds HistoricalResultRow so model-correct dots appear immediately.
     """
     _validate_date(race_date)
     _validate_venue(venue_code)
@@ -19995,6 +20010,86 @@ async def get_meeting_results(race_date: str, venue_code: str):
     client = get_tab_client()
     slug = _meeting_slug(venue_code, race_date)
 
+    # ── OddsPro-first path — no RA touch ────────────────────────────────────
+    # OddsPro carries the finishing order in its meetings feed. Try it before
+    # going near RA; on a normal day this returns full results and the RA
+    # block below is skipped entirely.
+    op_results_map: dict[int, dict] = {}
+    try:
+        op_all = await client._odds.get_results(race_date)  # {track_lower: {race_num: {finishers, ran}}}
+        op_tracks = list(op_all.keys())
+        # Match our venue_code → OddsPro track name (fuzzy)
+        venue_display = venue_code.replace("-", " ").strip()
+        matched = (client._odds.find_matching_track(venue_display, op_tracks)
+                   or client._odds.find_matching_track(venue_code, op_tracks))
+        if matched:
+            op_results_map = op_all.get(matched) or op_all.get(matched.lower()) or {}
+    except Exception as e:
+        log.debug("[get_meeting_results] OddsPro pre-check failed for %s/%s: %s",
+                  race_date, venue_code, e)
+
+    # If OddsPro has finishers for at least one race, seed from OddsPro and
+    # return a response built from that data — no RA call.
+    if op_results_map:
+        async with get_session() as session:
+            pred_rows = (await session.execute(
+                select(RunnerPredictionRow)
+                .where(RunnerPredictionRow.race_id.like(f"{race_date}_{venue_code}_%"))
+                .where(RunnerPredictionRow.cancelled.is_(False) | RunnerPredictionRow.cancelled.is_(None))
+            )).scalars().all()
+            already = set(
+                (await session.execute(
+                    select(HistoricalResultRow.race_id)
+                    .where(HistoricalResultRow.race_id.like(f"{race_date}_{venue_code}_%"))
+                    .distinct()
+                )).scalars().all()
+            )
+        seeded = await _seed_results_from_oddspro(client, race_date, pred_rows, already)
+
+        # Load top picks for the races with results
+        races_with_results = {f"{race_date}_{venue_code}_R{n}" for n in op_results_map.keys()}
+        top_picks: dict[str, str] = {}
+        async with get_session() as session:
+            hist_rows = (await session.execute(
+                select(RunnerPredictionHistoryRow.race_id, RunnerPredictionHistoryRow.horse_name)
+                .where(RunnerPredictionHistoryRow.race_id.in_(list(races_with_results)))
+                .where(RunnerPredictionHistoryRow.model_rank == 1)
+                .where(RunnerPredictionHistoryRow.cancelled.is_(False) | RunnerPredictionHistoryRow.cancelled.is_(None))
+                .order_by(RunnerPredictionHistoryRow.enriched_at.desc())
+            )).all()
+        seen: set[str] = set()
+        for r in hist_rows:
+            if r.race_id not in seen:
+                seen.add(r.race_id)
+                top_picks[r.race_id] = r.horse_name
+
+        races_out = []
+        for race_num in sorted(op_results_map.keys()):
+            race_id = f"{race_date}_{venue_code}_R{race_num}"
+            finishers = op_results_map[race_num].get("finishers", [])
+            winner = finishers[0]["name"] if finishers else None
+            top_pick = top_picks.get(race_id) or ""
+            norm_pick = _normalize_horse(top_pick)
+            placed_norm = {_normalize_horse(f["name"]) for f in finishers if f["position"] <= 3}
+            model_correct = (norm_pick == _normalize_horse(winner)) if (norm_pick and winner) else None
+            model_placed = (norm_pick in placed_norm) if norm_pick else None
+            races_out.append({
+                "race_number": race_num,
+                "race_id": race_id,
+                "track_condition": "",
+                "has_result": bool(finishers),
+                "model_correct": model_correct,
+                "model_placed": model_placed,
+                "top_pick": top_pick or None,
+                "runners": [
+                    {"position": f["position"], "name": f["name"].upper(),
+                     "margin": 0, "sp": f.get("sp")}
+                    for f in finishers
+                ],
+            })
+        return {"date": race_date, "venue": venue_code, "races": races_out, "seeded": seeded}
+
+    # ── RA fallback path — only reached when OddsPro doesn't cover this venue ──
     # Prime slug→key cache then get the RA internal key
     await client.get_meeting_by_slug(slug)
     ra_key = client._ra._slug_to_key.get(slug) if hasattr(client, "_ra") else None
