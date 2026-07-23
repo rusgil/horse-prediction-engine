@@ -137,6 +137,38 @@ async def get_sportsbet_results(date: str) -> dict[str, dict[int, list[int]]] | 
     return out or None
 
 
+async def get_sportsbet_race_times(date: str) -> dict[str, dict[int, str]] | None:
+    """Race start times per AU thoroughbred track/race for `date`, from Sportsbet.
+
+    Returns {track_lower: {race_num: start_iso_utc}}. Sportsbet AllRacing events
+    carry `startTime` (unix seconds); we surface it as an ISO-8601 UTC string so
+    the snapshot / edge scheduling never needs RA's Calendar/Acceptances. Reuses
+    the cached AllRacing payload. None on failure."""
+    data = await _fetch_allracing(date)
+    if data is None:
+        return None
+    out: dict[str, dict[int, str]] = {}
+    try:
+        for m in _iter_au_horse_meetings(data):
+            track = _norm(m.get("name"))
+            if not track:
+                continue
+            for e in m.get("events", []):
+                rnum = e.get("raceNumber")
+                st = e.get("startTime")
+                if not rnum or not st:
+                    continue
+                try:
+                    iso = datetime.utcfromtimestamp(int(st)).isoformat() + "Z"
+                except (ValueError, OSError, OverflowError):
+                    continue
+                out.setdefault(track, {})[rnum] = iso
+    except Exception as e:
+        log.warning("[sportsbet-schedule] race-times parse failed for %s: %s", date, e)
+        return None
+    return out or None
+
+
 def venue_on_sportsbet(venue: str, allowlist: frozenset[str] | None) -> bool:
     """Does `venue` (an RA venue name or hyphenated code) appear in the Sportsbet
     allowlist? Fuzzy: exact normalised match, or one is a substring of the other

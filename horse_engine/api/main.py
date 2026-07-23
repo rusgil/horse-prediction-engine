@@ -2515,27 +2515,40 @@ async def _snapshot_prerace_predictions() -> int:
         await _set_model_unstable_banner_internal(True, f"upstream:{reason}")
         return 0
 
-    # Build race_id → scheduled_time from Racing Australia (authoritative start times)
+    # Build race_id → scheduled_time from SPORTSBET (non-RA start times,
+    # 2026-07-23). Sportsbet AllRacing carries startTime per event, so the
+    # snapshot's time-guard no longer needs RA's Calendar/Acceptances. Our
+    # venue codes come from today's predictions; matched to Sportsbet tracks.
+    # (Rows the map misses fall back to runner_row.scheduled_time below.)
     sched_map: dict[str, datetime] = {}
     try:
-        client = get_tab_client()
-        date_sfx = f"-{today.replace('-', '')}"
-        meetings = await asyncio.wait_for(client.get_meetings(today), timeout=20)
-        for m in meetings:
-            slug = m.get("slug", "")
-            vc = slug[:-len(date_sfx)] if slug.endswith(date_sfx) else slug.split("-")[0] if slug else ""
-            try:
-                races_raw = await asyncio.wait_for(client.get_meeting_races(slug), timeout=15)
-                for ev in races_raw:
-                    rnum = ev.get("eventNumber")
-                    start = ev.get("startTime") or ev.get("scheduledTime")
-                    if rnum and start:
-                        rid = f"{today}_{vc}_R{rnum}"
-                        sched_map[rid] = datetime.fromisoformat(start.replace("Z", "+00:00")).replace(tzinfo=None)
-            except Exception:
-                pass
+        from horse_engine.clients.sportsbet_schedule import get_sportsbet_race_times, _norm as _sb_norm
+        sb_times = await get_sportsbet_race_times(today)  # {track: {rnum: iso}}
+        if sb_times:
+            async with get_session() as session:
+                _vc_rows = (await session.execute(
+                    select(RunnerPredictionRow.race_id)
+                    .where(RunnerPredictionRow.race_id.like(f"{today}_%")).distinct()
+                )).scalars().all()
+            our_vcs: set[str] = set()
+            for rid in _vc_rows:
+                parts = _parse_race_id(rid)
+                if len(parts) > 1 and parts[1]:
+                    our_vcs.add(parts[1])
+            sb_tracks = list(sb_times.keys())
+            for vc in our_vcs:
+                vn = _sb_norm(vc)
+                track = next((t for t in sb_tracks if t == vn or t in vn or vn in t), None)
+                if not track:
+                    continue
+                for rnum, iso in sb_times.get(track, {}).items():
+                    try:
+                        sched_map[f"{today}_{vc}_R{rnum}"] = datetime.fromisoformat(
+                            iso.replace("Z", "+00:00")).replace(tzinfo=None)
+                    except Exception:
+                        pass
     except Exception as e:
-        log.warning("[snapshot] Could not fetch RA start times: %s", e)
+        log.warning("[snapshot] Could not fetch Sportsbet start times: %s", e)
 
     async with get_session() as session:
         already_result = await session.execute(
@@ -4360,14 +4373,27 @@ async def _fetch_live_odds(client, race_id: str) -> dict[str, float]:
         return {}
 
 async def _fetch_race_times(client, slug: str) -> dict[int, str]:
-    """Return {race_number: startTime ISO string} for a meeting slug. Cached 5 min."""
+    """Return {race_number: startTime ISO} for a meeting slug — from Sportsbet
+    (non-RA, 2026-07-23). Cached 5 min. slug is '<venue>-YYYYMMDD'."""
     cached = _edge_times_cache.get(slug)
     if cached and (datetime.utcnow() - cached[0]).total_seconds() < 300:
         return cached[1]
     try:
-        # 5s timeout (was 20s) — same reasoning as _fetch_live_odds.
-        events = await asyncio.wait_for(client.get_meeting_races(slug), timeout=5)
-        times = {e["eventNumber"]: e.get("startTime") for e in events if e.get("eventNumber")}
+        from horse_engine.clients.sportsbet_schedule import get_sportsbet_race_times, _norm as _sb_norm
+        mobj = re.match(r"^(.*)-(\d{8})$", slug)
+        if mobj:
+            venue = mobj.group(1)
+            d8 = mobj.group(2)
+            date = f"{d8[:4]}-{d8[4:6]}-{d8[6:]}"
+        else:
+            venue, date = slug, _today_aest().isoformat()
+        sb = await get_sportsbet_race_times(date)
+        times: dict[int, str] = {}
+        if sb:
+            vn = _sb_norm(venue)
+            track = next((t for t in sb if t == vn or t in vn or vn in t), None)
+            if track:
+                times = dict(sb.get(track, {}))
         _edge_times_cache[slug] = (datetime.utcnow(), times)
         return times
     except Exception:
