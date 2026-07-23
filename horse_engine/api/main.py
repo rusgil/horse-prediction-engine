@@ -5090,6 +5090,22 @@ async def get_edge_picks():
             places_last_10 = enriched_json_payload.get("places_last_10")
             starts_last_10 = enriched_json_payload.get("starts_last_10")
             days_since_last_run = enriched_json_payload.get("days_since_last_run")
+
+            # Off-going tier cap (2026-07-23). The model is badly over-confident on
+            # Soft/Heavy tracks — historically soft rank-1 picks win 4.3% and heavy
+            # 4.4%, yet heavy has published "Hot" (≥46%) badges. Never headline an
+            # off-going pick as Hot or High: cap the published confidence tier at
+            # "Strong" on Soft/Heavy. The raw model_pct is unchanged (shown as-is);
+            # only the badge is capped, and the conditions chip explains why.
+            going_cat = (enriched_json_payload.get("track_condition_category") or "").strip().lower()
+            off_going = going_cat in ("soft", "heavy")
+            hot = (model_pct >= 46) and not off_going
+            if model_pct >= 30:
+                confidence_tier = "strong" if off_going else (
+                    "hot" if model_pct >= 46 else "high" if model_pct >= 36 else "strong"
+                )
+            else:
+                confidence_tier = None
             # Server-computed is_sharp flag — single source of truth for the
             # Sharp niche across all surfaces (Edge / Hot Seat / Lounge).
             # Gates: (model_pct ≥30 OR top-3 sum ≥60) AND days_off ≤180.
@@ -5126,6 +5142,12 @@ async def get_edge_picks():
                 "market_implied_pct": market_implied_pct,
                 "edge_pct": edge_pct,
                 "hot_pick": hot,
+                # Off-going tier cap: on Soft/Heavy, confidence_tier is capped at
+                # "strong" (never hot/high). Frontends badge from confidence_tier
+                # when present. going_offtrack drives the "reduced confidence" note.
+                "confidence_tier": confidence_tier,
+                "going_offtrack": off_going,
+                "going_category": going_cat or None,
                 "overlay": runner_row.overlay,
                 "value_rating": runner_row.value_rating,
                 "place_probability": round(runner_row.place_probability * 100, 1) if runner_row.place_probability else None,

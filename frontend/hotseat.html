@@ -1478,7 +1478,9 @@
       const barPct = progressPct(p.scheduled_time);
       const isImminent = cd.cls === 'imminent' || cd.cls === 'now';
       const isNow = cd.cls === 'now';
-      const isHot = p.model_pct >= 40;
+      // Off-going cap: never flag a Soft/Heavy pick as Hot — the model is badly
+      // over-confident there (soft/heavy rank-1 win ~4%). Server sends going_offtrack.
+      const isHot = p.model_pct >= 40 && !p.going_offtrack;
       const finished = isFinished(p.scheduled_time);
 
       // Result banner (only shown for finished races within the 3-min window).

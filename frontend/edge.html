@@ -2159,13 +2159,20 @@
     const barW = Math.min(100, (conf / 70) * 100);
 
     // Tier badge — always shown. Bands: Strong 30-35, High 36-45, Hot 46+.
+    // Off-going cap: on Soft/Heavy the server sends confidence_tier='strong'
+    // (never hot/high) because the model is badly over-confident there. Prefer
+    // the server's confidence_tier when present so the cap holds everywhere.
     let tierBadge;
-    if (conf >= 46) {
+    const ctier = pick.confidence_tier;
+    if (ctier === 'hot' || (ctier == null && conf >= 46 && !pick.going_offtrack)) {
       tierBadge = `<span class="pick-badge-hot">🔥 Hot Pick</span>`;
-    } else if (conf >= 36) {
+    } else if (ctier === 'high' || (ctier == null && conf >= 36 && !pick.going_offtrack)) {
       tierBadge = `<span class="pick-badge-hot" style="background:rgba(59,130,246,0.12);color:#60a5fa;border-color:rgba(59,130,246,0.28);">⚡ High Confidence</span>`;
     } else {
       tierBadge = `<span class="pick-badge-standard">Strong Pick</span>`;
+    }
+    if (pick.going_offtrack) {
+      tierBadge += `<span class="pick-badge-standard" title="Soft/Heavy track — the model is far less reliable on off-going, so confidence is capped at Strong." style="background:rgba(232,160,32,0.12);color:#e8a020;border-color:rgba(232,160,32,0.3);">⚠ Off-going</span>`;
     }
 
     const premiumBadge = isPremium ? `<span class="pick-badge-premium">💎 Premium</span>` : '';
@@ -3067,9 +3074,10 @@
     // Win rate pill — same as upcoming but shows actual result inline.
     // Bands: Strong 30-35, High 36-45, Hot 46+.
     let tierBadgeHtml;
-    if (p.model_pct >= 46) {
+    const yCtier = p.confidence_tier;
+    if (yCtier === 'hot' || (yCtier == null && p.model_pct >= 46 && !p.going_offtrack)) {
       tierBadgeHtml = `<span class="pick-badge-hot">🔥 Hot Pick</span>`;
-    } else if (p.model_pct >= 36) {
+    } else if (yCtier === 'high' || (yCtier == null && p.model_pct >= 36 && !p.going_offtrack)) {
       tierBadgeHtml = `<span class="pick-badge-hot" style="background:rgba(59,130,246,0.12);color:#60a5fa;border-color:rgba(59,130,246,0.28);">⚡ High Confidence</span>`;
     } else {
       tierBadgeHtml = `<span class="pick-badge-standard">Strong Pick</span>`;
