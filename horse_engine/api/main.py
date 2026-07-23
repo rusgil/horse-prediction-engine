@@ -3026,6 +3026,32 @@ async def lifespan(app: FastAPI):
         IntervalTrigger(seconds=165, jitter=15, timezone="Australia/Sydney"),
     )
 
+    # Warm yesterday + tomorrow meetings cache. Users click date pills to
+    # navigate to those dates — without this the first click eats a full
+    # RA cold-fetch (~10-15s) because only today is warmed by _warm_lounge.
+    # Runs every 10 min so the DB cache (6h TTL) stays fresh well before
+    # expiry. Fired on startup too — cold container serves adjacent dates
+    # fast from the first request.
+    async def _warm_adjacent_meetings():
+        try:
+            today_dt = _today_aest()
+            for d in (today_dt - timedelta(days=1), today_dt + timedelta(days=1)):
+                iso = d.isoformat()
+                try:
+                    body = await list_meetings(iso)
+                    log.info("[meetings-warm] %s: %d meetings",
+                             iso, len(body.get("meetings") or []))
+                except Exception as e:
+                    log.debug("[meetings-warm] %s failed: %s", iso, e)
+        except Exception as e:
+            log.warning("[meetings-warm] tick failed: %s", e)
+
+    scheduler.add_job(
+        _warm_adjacent_meetings,
+        IntervalTrigger(minutes=10, jitter=60, timezone="Australia/Sydney"),
+    )
+    asyncio.create_task(_warm_adjacent_meetings())
+
     # BUG-43: hourly (was 9am once) — each race snapshots inside its T-2h
     # window so the frozen market features reflect a live market.
     scheduler.add_job(_scheduled_prerace_snapshot, CronTrigger(hour="9-19", minute=0, timezone="Australia/Sydney"))
