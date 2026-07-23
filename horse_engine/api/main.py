@@ -1906,6 +1906,118 @@ async def _seed_results_from_oddspro(
     return op_seeded_total
 
 
+async def _seed_results_from_sportsbet(race_date: str, pred_rows_for_date: list, already_seeded: set) -> int:
+    """Seed finishing positions from Sportsbet — backup to OddsPro, replaces RA.
+
+    Sportsbet books exactly the meetings we enrich (it's the allowlist source),
+    isn't WAF-blocked, and its AllRacing feed carries the top-3 finishing order
+    by tab number ("8,1,9"). This fills the tracks OddsPro misses (e.g. Murray
+    Bridge). Matches by tab_number to our prediction rows. Marks non-cancelled
+    predicted runners outside the top-3 as unplaced losses (same as OddsPro) so
+    win/place denominators stay correct. Only touches races not already seeded.
+    Returns rows written. Best-effort — swallows errors so RA fallback can run."""
+    total = 0
+    try:
+        from horse_engine.clients.sportsbet_schedule import get_sportsbet_results, _norm as _sb_norm
+        sb = await get_sportsbet_results(race_date)
+        if not sb:
+            return 0
+        # vc -> {race_num -> {tab_number -> pred_row}}, and vc -> display name
+        preds_by_vc: dict[str, dict[int, dict]] = {}
+        vc_display: dict[str, str] = {}
+        for row in pred_rows_for_date:
+            parts = _parse_race_id(row.race_id)
+            vc = parts[1] if len(parts) > 1 else ""
+            try:
+                rn = int(row.race_id.rsplit("_R", 1)[-1])
+            except (ValueError, IndexError):
+                continue
+            if not vc or row.tab_number is None:
+                continue
+            vc_display.setdefault(vc, (row.venue or vc).strip())
+            preds_by_vc.setdefault(vc, {}).setdefault(rn, {})[int(row.tab_number)] = row
+
+        sb_tracks = list(sb.keys())
+        for vc, races in preds_by_vc.items():
+            vnorm = _sb_norm(vc_display.get(vc, vc))
+            vcnorm = _sb_norm(vc)
+            track = next((t for t in sb_tracks
+                          if t in (vnorm, vcnorm) or t in vnorm or vnorm in t or t in vcnorm or vcnorm in t), None)
+            if not track:
+                continue
+            track_res = sb.get(track, {})
+            for rn, tab_by in races.items():
+                race_id = f"{race_date}_{vc}_R{rn}"
+                if race_id in already_seeded:
+                    continue
+                order = track_res.get(rn)  # [tab1, tab2, tab3]
+                if not order:
+                    continue
+                async with get_session() as session:
+                    existing_lower = {
+                        n.lower() for n in (await session.execute(
+                            select(HistoricalResultRow.horse_name)
+                            .where(HistoricalResultRow.race_id == race_id)
+                        )).scalars().all()
+                    }
+                    wrote = 0
+                    placed_tabs = set()
+                    for pos_idx, tab in enumerate(order, start=1):
+                        placed_tabs.add(tab)
+                        matched = tab_by.get(tab)
+                        display_name = matched.horse_name if matched else f"#{tab}"
+                        if display_name.lower() in existing_lower:
+                            continue
+                        session.add(HistoricalResultRow(
+                            race_id=race_id,
+                            horse_name=display_name,
+                            position=pos_idx,
+                            beaten_margin=0.0,
+                            winner=pos_idx == 1,
+                            placed=pos_idx <= 3,
+                            starting_price=(matched.best_available_odds if matched else None),
+                            tab_number=tab,
+                            feature_vector_json=matched.enriched_json if matched else None,
+                        ))
+                        existing_lower.add(display_name.lower())
+                        wrote += 1
+                    # Unplaced: our predicted runners that ran (not cancelled) and
+                    # finished outside the top-3.
+                    for tab, prow in tab_by.items():
+                        if tab in placed_tabs or getattr(prow, "cancelled", False):
+                            continue
+                        display_name = prow.horse_name
+                        if not display_name or display_name.lower() in existing_lower:
+                            continue
+                        session.add(HistoricalResultRow(
+                            race_id=race_id,
+                            horse_name=display_name,
+                            position=99,
+                            beaten_margin=0.0,
+                            winner=False,
+                            placed=False,
+                            starting_price=prow.best_available_odds,
+                            tab_number=tab,
+                            feature_vector_json=prow.enriched_json,
+                        ))
+                        existing_lower.add(display_name.lower())
+                        wrote += 1
+                    if wrote:
+                        try:
+                            await session.commit()
+                            total += wrote
+                            already_seeded.add(race_id)
+                        except Exception as e:
+                            await session.rollback()
+                            log.debug("[seed-results] Sportsbet batch commit failed (dupe?): %s", e)
+        if total:
+            log.info("[seed-results] Sportsbet backup seeded %d entries for %s (OddsPro-missed races)",
+                     total, race_date)
+    except Exception as e:
+        log.warning("[seed-results] Sportsbet results pass failed for %s: %s", race_date, e)
+    return total
+
+
 async def _seed_results_for_date(race_date: str) -> int:
     """Fetch settled results for race_date and store as training data. Returns count seeded."""
     client = get_tab_client()
@@ -1929,6 +2041,11 @@ async def _seed_results_for_date(race_date: str) -> int:
     # RA-WAF-blocked) and mark those races done so the RA passes below skip them.
     op_seeded_total = await _seed_results_from_oddspro(
         client, race_date, pred_rows_for_date, already_seeded_ra
+    )
+    # Sportsbet backup (2026-07-23): fill races OddsPro missed (e.g. Murray Bridge)
+    # from Sportsbet's schedule feed — non-RA, so RA stays untouched for results.
+    op_seeded_total += await _seed_results_from_sportsbet(
+        race_date, pred_rows_for_date, already_seeded_ra
     )
 
     venue_state_map_ra: dict[tuple[str, str], set[str]] = {}
@@ -19754,6 +19871,7 @@ async def seed_ra_results(
     # only fills races OddsPro didn't cover. Same helper the cron uses.
     _op_already: set[str] = set()
     op_seeded = await _seed_results_from_oddspro(client, race_date, pred_rows, _op_already)
+    op_seeded += await _seed_results_from_sportsbet(race_date, pred_rows, _op_already)
 
     # Group predictions by (venue_name, state) → list of race_ids
     venue_state_map: dict[tuple[str, str], set[str]] = {}
@@ -20107,6 +20225,7 @@ async def get_meeting_results(race_date: str, venue_code: str):
                 )).scalars().all()
             )
         seeded = await _seed_results_from_oddspro(client, race_date, pred_rows, already)
+        seeded += await _seed_results_from_sportsbet(race_date, pred_rows, already)
 
         # Load top picks for the races with results
         races_with_results = {f"{race_date}_{venue_code}_R{n}" for n in op_results_map.keys()}

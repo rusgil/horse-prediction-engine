@@ -30,8 +30,8 @@ _UA = (
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
     "(KHTML, like Gecko) Chrome/120.0 Safari/537.36"
 )
-_TTL_SECONDS = 2 * 3600  # re-fetch at most every 2h; enrich crons run a few times/day
-_cache: dict[str, tuple[datetime, frozenset[str]]] = {}
+_TTL_SECONDS = 900  # re-fetch at most every 15 min (results update through the day)
+_raw_cache: dict[str, tuple[datetime, dict]] = {}   # date -> (ts, raw AllRacing json)
 
 
 def _norm(s: str) -> str:
@@ -40,12 +40,11 @@ def _norm(s: str) -> str:
     return re.sub(r"[^a-z0-9]", "", (s or "").lower())
 
 
-async def get_sportsbet_au_meetings(date: str) -> frozenset[str] | None:
-    """Normalised AU thoroughbred track names Sportsbet books on `date`.
-
-    Returns None on any failure OR an empty result — callers treat None as
-    "don't filter" (fail-open). Cached for _TTL_SECONDS."""
-    cached = _cache.get(date)
+async def _fetch_allracing(date: str) -> dict | None:
+    """Fetch (and 15-min cache) the raw Sportsbet AllRacing payload for `date`.
+    One call feeds both the meeting allowlist and the results backup. None on
+    failure."""
+    cached = _raw_cache.get(date)
     if cached and (datetime.utcnow() - cached[0]).total_seconds() < _TTL_SECONDS:
         return cached[1]
     try:
@@ -57,32 +56,85 @@ async def get_sportsbet_au_meetings(date: str) -> frozenset[str] | None:
             resp.raise_for_status()
             data = resp.json()
     except Exception as e:
-        log.warning("[sportsbet-schedule] fetch failed for %s: %s — allowlist disabled", date, e)
+        log.warning("[sportsbet-schedule] fetch failed for %s: %s", date, e)
         return None
+    if not isinstance(data, dict):
+        return None
+    _raw_cache[date] = (datetime.utcnow(), data)
+    return data
 
+
+def _iter_au_horse_meetings(data: dict):
+    """Yield AU thoroughbred meeting dicts from an AllRacing payload."""
+    for dt in data.get("dates", []):
+        for sec in dt.get("sections", []):
+            if sec.get("raceType") != "horse":
+                continue
+            for m in sec.get("meetings", []):
+                if m.get("regionName") == "Australia" and not m.get("isInternational"):
+                    yield m
+
+
+async def get_sportsbet_au_meetings(date: str) -> frozenset[str] | None:
+    """Normalised AU thoroughbred track names Sportsbet books on `date`.
+
+    Returns None on any failure OR an empty result — callers treat None as
+    "don't filter" (fail-open)."""
+    data = await _fetch_allracing(date)
+    if data is None:
+        return None
     names: set[str] = set()
     try:
-        for dt in data.get("dates", []):
-            for sec in dt.get("sections", []):
-                if sec.get("raceType") != "horse":
-                    continue
-                for m in sec.get("meetings", []):
-                    if m.get("regionName") == "Australia" and not m.get("isInternational"):
-                        n = _norm(m.get("name"))
-                        if n:
-                            names.add(n)
+        for m in _iter_au_horse_meetings(data):
+            n = _norm(m.get("name"))
+            if n:
+                names.add(n)
     except Exception as e:
-        log.warning("[sportsbet-schedule] parse failed for %s: %s", date, e)
+        log.warning("[sportsbet-schedule] allowlist parse failed for %s: %s", date, e)
         return None
-
     if not names:
         log.warning("[sportsbet-schedule] no AU thoroughbred meetings parsed for %s — allowlist disabled", date)
         return None
-
     frozen = frozenset(names)
-    _cache[date] = (datetime.utcnow(), frozen)
     log.info("[sportsbet-schedule] %s: %d AU thoroughbred meetings on Sportsbet", date, len(frozen))
     return frozen
+
+
+async def get_sportsbet_results(date: str) -> dict[str, dict[int, list[int]]] | None:
+    """Finishing order (top ~3) per AU thoroughbred track/race for `date`.
+
+    Returns {track_lower: {race_num: [tab_num_1st, tab_num_2nd, tab_num_3rd]}}
+    for resulted races (statusCode 'R'), parsed from each event's `result`
+    field ("8,1,9" = 1st #8, 2nd #1, 3rd #9). Runner NUMBERS — callers match to
+    their own field by tab_number. Backup to OddsPro (no RA, not WAF-blocked).
+    None on failure."""
+    data = await _fetch_allracing(date)
+    if data is None:
+        return None
+    out: dict[str, dict[int, list[int]]] = {}
+    try:
+        for m in _iter_au_horse_meetings(data):
+            track = _norm(m.get("name"))
+            if not track:
+                continue
+            for e in m.get("events", []):
+                if e.get("statusCode") != "R":
+                    continue
+                rnum = e.get("raceNumber")
+                raw = (e.get("result") or "").strip()
+                if not rnum or not raw:
+                    continue
+                order: list[int] = []
+                for part in raw.split(","):
+                    part = part.strip()
+                    if part.isdigit():
+                        order.append(int(part))
+                if order:
+                    out.setdefault(track, {})[rnum] = order
+    except Exception as e:
+        log.warning("[sportsbet-schedule] results parse failed for %s: %s", date, e)
+        return None
+    return out or None
 
 
 def venue_on_sportsbet(venue: str, allowlist: frozenset[str] | None) -> bool:
