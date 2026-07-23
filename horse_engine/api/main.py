@@ -4332,6 +4332,10 @@ _NOT_ON_SPORTSBET_VENUES: frozenset = frozenset({
     "gympie",           # QLD, Wide Bay
     "thangool",         # QLD, Banana Shire — bush meeting
     "carinda",          # NSW, Walgett Shire — picnic
+    # Added 2026-07-23 — Cannon Park (Cairns) not carried by OddsPro at
+    # all, so results seed had to fall back to RA every day. Confirmed
+    # missing from Sportsbet too.
+    "cannon-park",      # QLD, Cairns
 })
 
 
