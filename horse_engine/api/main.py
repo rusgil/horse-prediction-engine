@@ -2939,15 +2939,15 @@ async def lifespan(app: FastAPI):
     # The 13:00 enrich is dropped — it was mid-racing and the per-15-min
     # pre-race-enrich-and-scratch cron already keeps individual race
     # data fresh as their jump windows open.
-    scheduler.add_job(_scheduled_enrich, CronTrigger(hour=8,  minute=30, timezone="Australia/Sydney"))
-    scheduler.add_job(_scheduled_enrich, CronTrigger(hour=10, minute=30, timezone="Australia/Sydney"))
+    scheduler.add_job(_scheduled_enrich, CronTrigger(hour=8,  minute=30, jitter=600, timezone="Australia/Sydney"))
+    scheduler.add_job(_scheduled_enrich, CronTrigger(hour=10, minute=30, jitter=600, timezone="Australia/Sydney"))
     # 11:30 AEST safety-net tick — recovers from days when the 8:30 + 10:30
     # runs were partially eaten by RA 503s. _enrich_date is idempotent
     # (force=True only on today; tomorrow/day-after use cached field), so
     # an extra run on a healthy morning costs ~24s of background work and
     # one set of Calendar.aspx hits, all post-stagger so RA-friendly. On a
     # day RA is flaky this is the cron tick that saves the afternoon.
-    scheduler.add_job(_scheduled_enrich, CronTrigger(hour=11, minute=30, timezone="Australia/Sydney"))
+    scheduler.add_job(_scheduled_enrich, CronTrigger(hour=11, minute=30, jitter=600, timezone="Australia/Sydney"))
 
     # Edge cache warm-up ticks at strategic times. The continuous prewarm
     # task (`_prewarm_edge_cache` below) refreshes every 60-90s once it
@@ -3050,14 +3050,14 @@ async def lifespan(app: FastAPI):
     # fetches, well within the proxy budget.
     scheduler.add_job(
         _scheduled_seed_results,
-        CronTrigger(hour="11-23", minute="0,30", timezone="Australia/Sydney")
+        CronTrigger(hour="11-23", minute="0,30", jitter=300, timezone="Australia/Sydney")
     )
     # 08:00 morning seed+settle for yesterday's results so any late-night
     # races that didn't seed by 23:30 are picked up before users open the
     # app in the morning.
     scheduler.add_job(
         _scheduled_morning_settle,
-        CronTrigger(hour=8, minute=0, timezone="Australia/Sydney")
+        CronTrigger(hour=8, minute=0, jitter=600, timezone="Australia/Sydney")
     )
     # Calibration was running daily but docstring says "weekly". Daily
     # was burning CPU on a model whose drift signal moves on a week+
@@ -3136,7 +3136,7 @@ async def lifespan(app: FastAPI):
     )
     scheduler.add_job(
         _scheduled_live_odds_refresh,
-        CronTrigger(hour="9-20", minute="0,20,40", timezone="Australia/Sydney")
+        CronTrigger(hour="9-20", minute="0,20,40", jitter=300, timezone="Australia/Sydney")
     )
     # Paper-trading trifecta recommender — runs hourly during racing hours
     # to lock-in pre-race recommendations for the day's qualifying races.
