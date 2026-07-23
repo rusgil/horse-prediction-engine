@@ -4692,30 +4692,58 @@ async def get_edge_picks():
                 # Last resort: leg with just the name + tab (from the Lab bet)
                 return {"tab_number": None, "horse_name": name, "place_pct": None, "win_prob": None, "win_pct": None}
 
-            tri_legs: list[dict] = []
-            ff_legs: list[dict] = []
-            if lab_top3:
+            # A horse is LIVE if it's still in the field (place-model row or
+            # field_map). The stored Lab box is built at enrich time, so a
+            # runner scratched afterwards is still in box_horse_names_json —
+            # we must drop it and backfill, or the exotic spread shows a
+            # scratched banker (Canberra R6 NEESON / tab 8, 2026-07-24).
+            def _is_live_leg(nm: str) -> bool:
+                # Live = in the field AND not scratched. Handles both a runner
+                # that's absent from the field entirely (scratched pre-enrich)
+                # and one marked cancelled=True by the OddsPro scratch sweep.
+                fr = tri_field_by_name.get(nm)
+                if fr is not None:
+                    return not fr.get("scratched")
+                pr = tri_horse_by_name.get(nm)
+                if pr is not None:
+                    return not bool(getattr(pr, "cancelled", False))
+                return False  # not in the field at all → scratched/absent
+
+            def _live_box_legs(box_names_json, box_tabs_json, box_size: int) -> list[dict]:
                 try:
-                    names = json.loads(lab_top3.box_horse_names_json or "[]")
-                    tabs = json.loads(lab_top3.box_horses_json or "[]")
-                    for nm, tab in zip(names, tabs):
-                        leg = _leg_from_lab(nm) or {"tab_number": tab, "horse_name": nm, "place_pct": None}
-                        if leg.get("tab_number") is None and tab is not None:
-                            leg["tab_number"] = tab
-                        tri_legs.append(leg)
+                    names = json.loads(box_names_json or "[]")
+                    tabs = json.loads(box_tabs_json or "[]")
                 except Exception:
-                    tri_legs = []
-            if lab_top4:
-                try:
-                    names = json.loads(lab_top4.box_horse_names_json or "[]")
-                    tabs = json.loads(lab_top4.box_horses_json or "[]")
-                    for nm, tab in zip(names, tabs):
-                        leg = _leg_from_lab(nm) or {"tab_number": tab, "horse_name": nm, "place_pct": None}
-                        if leg.get("tab_number") is None and tab is not None:
-                            leg["tab_number"] = tab
-                        ff_legs.append(leg)
-                except Exception:
-                    ff_legs = []
+                    return []
+                legs: list[dict] = []
+                used: set[str] = set()
+                for nm, tab in zip(names, tabs):
+                    if not _is_live_leg(nm):
+                        continue  # scratched since the box was stored — drop it
+                    leg = _leg_from_lab(nm)
+                    if leg.get("tab_number") is None and tab is not None:
+                        leg["tab_number"] = tab
+                    legs.append(leg)
+                    used.add(nm)
+                # Backfill to box_size from the best remaining LIVE (non-scratched)
+                # runners by win %, so dropping a scratching doesn't shrink the box.
+                if len(legs) < box_size:
+                    pool = sorted(
+                        (f for f in field_for_race
+                         if f.get("horse_name") not in used and not f.get("scratched")),
+                        key=lambda f: (f.get("win_pct") or 0.0), reverse=True,
+                    )
+                    for f in pool:
+                        if len(legs) >= box_size:
+                            break
+                        legs.append(_leg_from_lab(f["horse_name"]))
+                        used.add(f["horse_name"])
+                return legs
+
+            tri_legs: list[dict] = _live_box_legs(
+                lab_top3.box_horse_names_json, lab_top3.box_horses_json, 3) if lab_top3 else []
+            ff_legs: list[dict] = _live_box_legs(
+                lab_top4.box_horse_names_json, lab_top4.box_horses_json, 4) if lab_top4 else []
             # Combined-probability estimate: any-order trifecta / first-four
             # hit rate. Uses the Harville model (bets.py) — the mathematically
             # correct derivation from win probabilities, which accounts for
