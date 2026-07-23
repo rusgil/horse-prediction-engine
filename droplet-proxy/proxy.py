@@ -71,6 +71,38 @@ _UA_STRING = (
     "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
 )
 
+# Sticky residential session (2026-07-24). Webshare rotates its residential
+# pool PER CONNECTION, not per request — a kept-alive connection holds ONE
+# exit IP (verified: 3 requests over one connection all returned the same IP).
+# So we keep ONE persistent curl_cffi session and reuse it for every request:
+# once we've locked onto an IP RA accepts, every fetch rides that same good IP,
+# and a full enrich completes instead of re-rolling the block lottery on every
+# request. On a 403 (that IP just got blocked) we DROP the session to force a
+# fresh connection → a new residential IP, then retry. Rotate only on failure.
+_STICKY_ROTATE_RETRIES = int(os.environ.get("RA_PROXY_ROTATE_RETRIES", "4"))
+_STICKY_ROTATE_BACKOFF = 3.0   # seconds between IP rotations
+_sticky_session: Optional[AsyncSession] = None
+
+
+async def _get_session() -> AsyncSession:
+    """The persistent session (one kept-alive connection = one residential IP)."""
+    global _sticky_session
+    if _sticky_session is None:
+        _sticky_session = AsyncSession(impersonate=_IMPERSONATE_PROFILE, proxies=_PROXIES)
+    return _sticky_session
+
+
+async def _rotate_session() -> None:
+    """Drop the current connection so the next request opens a fresh one —
+    webshare hands a NEW residential exit IP on the new connection."""
+    global _sticky_session
+    s, _sticky_session = _sticky_session, None
+    if s is not None:
+        try:
+            await s.close()
+        except Exception:
+            pass
+
 # Single-flight + delay between requests - the proxy IS our single client to RA,
 # so it must not hammer. asyncio.Lock + jittered sleep between each request.
 _request_lock = asyncio.Lock()
@@ -196,24 +228,42 @@ async def proxy(path: str, request: Request):
         elapsed = time.monotonic() - _last_request_at
         if elapsed < _MIN_INTERVAL:
             await asyncio.sleep(_MIN_INTERVAL - elapsed + random.random() * 0.5)
-        # curl_cffi AsyncSession with impersonate= handles the TLS
-        # ClientHello + HTTP/2 SETTINGS ordering that WAFs fingerprint on.
-        # Same call shape as httpx (resp.status_code, resp.content, resp.headers).
-        try:
-            async with AsyncSession(impersonate=_IMPERSONATE_PROFILE) as client:
-                resp = await client.get(
+        # Reuse the persistent (sticky) session so every request rides the same
+        # residential exit IP. On a 403 the IP is blocked → rotate to a fresh
+        # connection/IP and retry; only after all rotations fail do we surface
+        # the 403. The impersonate= profile handles the TLS ClientHello + HTTP/2
+        # SETTINGS ordering that WAFs fingerprint on.
+        import logging as _l
+        _log = _l.getLogger("ra-proxy")
+        resp = None
+        last_err = None
+        for attempt in range(1 + _STICKY_ROTATE_RETRIES):
+            if attempt > 0:
+                await _rotate_session()                    # force a new exit IP
+                await asyncio.sleep(_STICKY_ROTATE_BACKOFF)
+                _log.warning("rotating residential IP (attempt %d/%d) for %s",
+                             attempt, _STICKY_ROTATE_RETRIES, upstream_url[:120])
+            session = await _get_session()
+            try:
+                resp = await session.get(
                     upstream_url,
                     headers=_headers(referer),
                     timeout=20.0,
                     allow_redirects=True,
-                    # When set, tunnel through a residential exit IP so RA
-                    # never sees this box's (WAF-blocked) datacenter IP.
-                    proxies=_PROXIES,
                 )
-        except RequestsError as e:
-            raise HTTPException(status_code=502, detail=f"Upstream error: {e}")
+            except RequestsError as e:
+                last_err = e
+                await _rotate_session()                    # drop the bad connection
+                resp = None
+                continue
+            if resp.status_code == 403:
+                # This exit IP just got blocked — rotate to a new one and retry.
+                continue
+            break                                          # non-403 → done
         _last_request_at = time.monotonic()
         _daily_count += 1
+        if resp is None:
+            raise HTTPException(status_code=502, detail=f"Upstream error: {last_err}")
 
     # CRITICAL: RA returned 403 to the proxy. Source IP may be WAF-flagged.
     # Log loudly so it surfaces in `journalctl -u ra-proxy`.
