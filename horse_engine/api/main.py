@@ -578,19 +578,26 @@ async def _scheduled_pre_race_enrich():
             from horse_engine.clients.sportsbet_schedule import (
                 get_sportsbet_au_meetings, venue_on_sportsbet,
             )
+            def _m_vc(m: dict) -> str:
+                slug = m.get("slug", "")
+                return slug[:-len(date_sfx)] if slug.endswith(date_sfx) else (slug.split("-")[0] if slug else "")
             _sb_allow = await get_sportsbet_au_meetings(today)
+            _before = len(meetings)
             if _sb_allow:
                 def _m_on_sb(m: dict) -> bool:
-                    slug = m.get("slug", "")
-                    vc = slug[:-len(date_sfx)] if slug.endswith(date_sfx) else (slug.split("-")[0] if slug else "")
                     return (venue_on_sportsbet(m.get("venue") or "", _sb_allow)
                             or venue_on_sportsbet(m.get("name") or "", _sb_allow)
-                            or venue_on_sportsbet(vc, _sb_allow))
-                _before = len(meetings)
+                            or venue_on_sportsbet(_m_vc(m), _sb_allow))
                 meetings = [m for m in meetings if _m_on_sb(m)]
                 if len(meetings) != _before:
                     log.info("[enrich] Sportsbet allowlist: enriching %d/%d meetings for %s (skipped %d not on Sportsbet)",
                              len(meetings), _before, today, _before - len(meetings))
+            else:
+                # Sportsbet unreachable — fall back to the static blocklist so
+                # known dead venues (Cannon Park, etc.) still skip enrichment.
+                meetings = [m for m in meetings if _m_vc(m).lower() not in _SKIP_ENRICHMENT_VENUES]
+                log.warning("[enrich] Sportsbet allowlist unavailable — using static blocklist fallback (%d/%d meetings) for %s",
+                            len(meetings), _before, today)
         except Exception as e:
             log.warning("[enrich] Sportsbet allowlist skipped (keeping all meetings): %s", e)
 
