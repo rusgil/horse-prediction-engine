@@ -2048,286 +2048,11 @@ async def _seed_results_for_date(race_date: str) -> int:
         race_date, pred_rows_for_date, already_seeded_ra
     )
 
-    venue_state_map_ra: dict[tuple[str, str], set[str]] = {}
-    for row in pred_rows_for_date:
-        v = (row.venue or "").strip()
-        s = (row.state or "").strip().upper()
-        if v and s:
-            venue_state_map_ra.setdefault((v, s), set()).add(row.race_id)
-    ra_seeded_total = 0
-    ra = client._ra
-    for (venue_name, state), race_ids in venue_state_map_ra.items():
-        # Skip venues whose every race is already in historical_results.
-        # Without this, every 30-min seed-cron tick re-fetches Results.aspx
-        # for already-done venues — by mid-afternoon a Sat metro card
-        # burns hundreds of redundant fetches and trips the proxy cap.
-        if race_ids and race_ids.issubset(already_seeded_ra):
-            continue
-        try:
-            _, results = await ra.find_results(race_date, state, venue_name)
-        except Exception:
-            results = {}
-        if not results:
-            continue
-        venue_code = _parse_race_id(list(race_ids)[0])[1]
-        matched_preds = {p.race_id: p for p in pred_rows_for_date
-                        if _parse_race_id(p.race_id)[1] == venue_code}
-        async with get_session() as session:
-            for race_num, race_data in results.items():
-                race_id = f"{race_date}_{venue_code}_R{race_num}"
-                if race_id in already_seeded_ra:
-                    continue
-                runners_data = race_data.get("runners", {})
-                if not runners_data:
-                    continue
-                for name_lower, rd in runners_data.items():
-                    pos = rd.get("position")
-                    if not pos or pos <= 0:
-                        continue
-                    matched = next(
-                        (p for p in matched_preds.values()
-                         if p.race_id == race_id
-                         and _normalize_horse(p.horse_name) == _normalize_horse(name_lower)),
-                        None,
-                    )
-                    existing_at_pos = (await session.execute(
-                        select(HistoricalResultRow.horse_name)
-                        .where(HistoricalResultRow.race_id == race_id)
-                        .where(HistoricalResultRow.position == pos)
-                    )).scalars().all()
-                    if any(_normalize_horse(h) == _normalize_horse(name_lower) for h in existing_at_pos):
-                        continue
-                    display_name = matched.horse_name if matched else name_lower.title()
-                    session.add(HistoricalResultRow(
-                        race_id=race_id,
-                        horse_name=display_name,
-                        position=pos,
-                        beaten_margin=float(rd.get("margin") or 0),
-                        winner=pos == 1,
-                        placed=pos <= 3,
-                        starting_price=rd.get("sp"),
-                        # tab_number is required by the bet-settlement path —
-                        # without it, hit/miss can't be evaluated. Prefer RA's
-                        # own 'No.' column (populated by _parse_results_page)
-                        # so finishers absent from our pre-race field still
-                        # get a saddle number; fall back to the matched
-                        # prediction row when RA didn't provide one.
-                        tab_number=(
-                            rd.get("tab_number")
-                            or (getattr(matched, "tab_number", None) if matched else None)
-                        ),
-                        feature_vector_json=matched.enriched_json if matched else None,
-                    ))
-                    ra_seeded_total += 1
-                already_seeded_ra.add(race_id)
-            try:
-                await session.commit()
-            except Exception as e:
-                # DB-level unique index on (race_id, LOWER(horse_name))
-                # will raise IntegrityError on concurrent-seed races.
-                # Rollback the batch and continue — pre-check catches
-                # sequential dupes, the constraint catches racy ones.
-                await session.rollback()
-                log.debug("[seed-results] batch commit failed (likely duplicate): %s", e)
-    if ra_seeded_total:
-        log.info("[seed-results] RA direct-key seeded %d entries for %s", ra_seeded_total, race_date)
-
-    # Primary source: meetings from Racing Australia (works reliably for today/upcoming)
-    meetings = await client.get_meetings(race_date)
-    date_sfx = f"-{race_date.replace('-', '')}"
-    ra_slugs = {m.get("slug", ""): m for m in meetings if m.get("slug")}
-
-    # Secondary source: venues we already have predictions for — RA form guide
-    # doesn't reliably list past country meetings so many venues get missed.
-    async with get_session() as session:
-        db_race_ids = (await session.execute(
-            select(RunnerPredictionRow.race_id, RunnerPredictionRow.venue)
-            .where(RunnerPredictionRow.race_id.like(f"{race_date}_%"))
-            .where(RunnerPredictionRow.cancelled.is_(False) | RunnerPredictionRow.cancelled.is_(None))
-            .distinct()
-        )).all()
-    db_venue_codes = {}
-    for row in db_race_ids:
-        _, vc, _ = _parse_race_id(row.race_id)
-        if vc:
-            db_venue_codes[vc] = row.venue or vc
-
-    # Build union of meetings: RA slugs + DB-only venues (synthesise slug for DB venues)
-    all_meetings = list(meetings)
-    ra_vcs = set()
-    for m in meetings:
-        slug = m.get("slug", "")
-        vc = slug[:-len(date_sfx)] if slug.endswith(date_sfx) else slug.split("-")[0] if slug else ""
-        if vc:
-            ra_vcs.add(vc)
-    for vc, venue_name in db_venue_codes.items():
-        if vc not in ra_vcs:
-            synth_slug = f"{vc}{date_sfx}"
-            all_meetings.append({"slug": synth_slug, "id": None, "name": venue_name, "state": "", "rail_position": ""})
-            log.info("[seed-results] Adding DB-only venue %s (slug: %s) for %s", vc, synth_slug, race_date)
-
-    seeded = 0
-    for meeting in all_meetings:
-        slug = meeting.get("slug", "")
-        venue_code = slug[:-len(date_sfx)] if slug.endswith(date_sfx) else slug.split("-")[0] if slug else ""
-        races_with_results: set[str] = set()
-        raw_races = await client.get_meeting_races(slug)
-        for raw_race in raw_races:
-            race_num = raw_race.get("eventNumber")
-            race_id = f"{race_date}_{venue_code}_R{race_num}"
-            full_race = await client.get_race(slug, race_num)
-            if not full_race:
-                continue
-
-            # Build selection lookup: horse_name → selection dict (has jockey, trainer, barrier, etc.)
-            sel_by_name = {}
-            for sel in full_race.get("selections") or []:
-                sel_name = ((sel.get("competitor") or {}).get("name") or "").lower()
-                if sel_name:
-                    sel_by_name[sel_name] = sel
-
-            race_meeting = full_race.get("_meeting") or {}
-            race_venue = race_meeting.get("venue") or venue_code
-            race_state = race_meeting.get("state") or meeting.get("state") or ""
-            race_distance = int(raw_race.get("distance") or 0) or None
-            race_condition = (raw_race.get("trackCondition") or {}).get("overall") or ""
-            if race_condition and (raw_race.get("trackCondition") or {}).get("rating"):
-                race_condition = f"{race_condition} {(raw_race.get('trackCondition') or {}).get('rating')}".strip()
-            race_class = raw_race.get("eventClass") or ""
-            runners_list = full_race.get("runners") or []
-            race_field_size = len([r for r in runners_list if not r.get("scratched")])
-
-            for r in runners_list:
-                if r.get("scratched"):
-                    continue
-                position = r.get("finishingPosition")
-                if not position or int(position) <= 0:
-                    continue
-                horse = r.get("runnerName", "")
-                beaten = float(r.get("margin", 0) or 0)
-                sp = None
-                for p in r.get("prices", []):
-                    if p.get("priceType") in ("StartingPrice", "SP", "Win"):
-                        sp = float(p.get("winPrice", 0) or 0) or None
-                        break
-
-                sel = sel_by_name.get(horse.lower()) or {}
-                jockey = (sel.get("jockey") or {}).get("name") or ""
-                trainer = (sel.get("trainer") or {}).get("name") or ""
-                barrier = int(sel.get("barrierNumber") or 0) or None
-                tab_num = int(sel.get("competitorNumber") or 0) or None
-                weight = float(sel.get("weight") or 0) or None
-                comp = sel.get("competitor") or {}
-                age = int(comp.get("age") or 0) or None
-                sex = comp.get("sex") or ""
-                prize = int(full_race.get("prize_money") or 0) or None
-
-                async with get_session() as session:
-                    existing = await session.execute(
-                        select(HistoricalResultRow)
-                        .where(HistoricalResultRow.race_id == race_id)
-                        .where(HistoricalResultRow.horse_name == horse)
-                        .limit(1)
-                    )
-                    existing_row = existing.scalars().first()
-                    if existing_row:
-                        # Patch SP and any missing context fields
-                        updated = False
-                        if existing_row.starting_price is None and sp:
-                            existing_row.starting_price = sp
-                            updated = True
-                        if not existing_row.jockey and jockey:
-                            existing_row.jockey = jockey
-                            updated = True
-                        if not existing_row.trainer and trainer:
-                            existing_row.trainer = trainer
-                            updated = True
-                        if not existing_row.venue and race_venue:
-                            existing_row.venue = race_venue
-                            updated = True
-                        if not existing_row.distance and race_distance:
-                            existing_row.distance = race_distance
-                            updated = True
-                        if not existing_row.track_condition and race_condition:
-                            existing_row.track_condition = race_condition
-                            updated = True
-                        if existing_row.barrier is None and barrier:
-                            existing_row.barrier = barrier
-                            updated = True
-                        if not existing_row.state and race_state:
-                            existing_row.state = race_state
-                            updated = True
-                        if updated:
-                            await session.commit()
-                        races_with_results.add(race_id)
-                        continue
-                    fv_result = await session.execute(
-                        select(RunnerPredictionRow)
-                        .where(RunnerPredictionRow.race_id == race_id)
-                        .where(RunnerPredictionRow.horse_name == horse)
-                        .limit(1)
-                    )
-                    fv_row = fv_result.scalars().first()
-                    session.add(HistoricalResultRow(
-                        race_id=race_id,
-                        horse_name=horse,
-                        position=int(position),
-                        beaten_margin=beaten,
-                        winner=int(position) == 1,
-                        placed=int(position) <= 3,
-                        starting_price=sp,
-                        feature_vector_json=fv_row.enriched_json if fv_row else None,
-                        jockey=jockey or None,
-                        trainer=trainer or None,
-                        venue=race_venue or None,
-                        state=race_state or None,
-                        distance=race_distance,
-                        track_condition=race_condition or None,
-                        barrier=barrier,
-                        tab_number=tab_num,
-                        weight=weight,
-                        age=age,
-                        sex=sex or None,
-                        race_class=race_class or None,
-                        prize_money=prize,
-                        field_size=race_field_size or None,
-                        race_number=race_num,
-                    ))
-                    try:
-                        await session.commit()
-                        seeded += 1
-                        races_with_results.add(race_id)
-                    except Exception as e:
-                        # (race_id, LOWER(horse_name)) unique index —
-                        # concurrent seed produced the row already.
-                        await session.rollback()
-                        log.debug("[seed-results] row commit failed (dup): %s", e)
-
-        # Clear stale cancelled flags only for mass-cancelled races (all runners cancelled).
-        # Never clear individual dedup cancellations — only restore when the whole race
-        # was mass-cancelled by _cancel_abandoned_meetings due to a feed block.
-        if races_with_results:
-            from sqlalchemy import update as sa_update
-            async with get_session() as session:
-                for rid in list(races_with_results):
-                    total = (await session.execute(
-                        select(func.count()).select_from(RunnerPredictionRow)
-                        .where(RunnerPredictionRow.race_id == rid)
-                    )).scalar_one()
-                    n_cancelled = (await session.execute(
-                        select(func.count()).select_from(RunnerPredictionRow)
-                        .where(RunnerPredictionRow.race_id == rid)
-                        .where(RunnerPredictionRow.cancelled.is_(True))
-                    )).scalar_one()
-                    if total > 0 and n_cancelled == total:
-                        await session.execute(
-                            sa_update(RunnerPredictionRow)
-                            .where(RunnerPredictionRow.race_id == rid)
-                            .where(RunnerPredictionRow.cancelled.is_(True))
-                            .values(cancelled=False)
-                        )
-                await session.commit()
-    return seeded + ra_seeded_total
+    # RA fallback for results REMOVED (2026-07-23): OddsPro + Sportsbet cover
+    # every meeting we enrich (Sportsbet IS the enrichment allowlist, so it has
+    # results for all of them), making RA redundant here — and this keeps RA out
+    # of the intraday seed path entirely.
+    return op_seeded_total
 
 
 async def _seed_race_results_on_demand(race_ids: list[str]) -> dict[tuple, int]:
@@ -4612,30 +4337,23 @@ def _invalidate_meeting_caches(race_date: str, venue_code: str | None = None) ->
             _get_meeting_cache.pop(key, None)
 
 async def _fetch_live_odds(client, race_id: str) -> dict[str, float]:
-    """Return {horse_name: flucs_win_odds} for a race. Cached 5 min."""
+    """Return {normalized_horse_name: best_win_odds} for a race from OddsPro —
+    our live-odds source, never RA (2026-07-23). One get_meeting_odds call
+    covers the whole date and is cached in the OddsPro client. Cached 5 min
+    here too. Keyed by _normalize_horse so the caller matches by normalised name."""
     cached = _edge_odds_cache.get(race_id)
     if cached and (datetime.utcnow() - cached[0]).total_seconds() < 300:
         return cached[1]
     try:
         _, venue, race_num = _parse_race_id(race_id)
         date_part = race_id[:10]
-        slug = _meeting_slug(venue, date_part)
-        # 5s timeout (was 20s). When RA is healthy this returns in ~500ms;
-        # when blocked we want to fail fast and skip live odds rather than
-        # block the whole /api/edge response for 20s per missing race.
-        event = await asyncio.wait_for(client.get_race(slug, race_num), timeout=5)
-        if not event:
-            return {}
+        meeting_odds = await client._odds.get_meeting_odds(date_part)  # {track_lower: {(rn, name_lower): price}}
+        track = client._odds.find_matching_track(venue.replace("-", " "), list(meeting_odds.keys()))
         odds: dict[str, float] = {}
-        for sel in event.get("selections", []):
-            if (sel.get("status") or "").upper() == "SCRATCHED":
-                continue
-            comp = sel.get("competitor") or {}
-            name = comp.get("name")
-            flucs = sel.get("flucs") or {}
-            win = sel.get("topToteWin") or flucs.get("low") or flucs.get("open") or sel.get("startingPrice")
-            if name and win:
-                odds[name] = float(win)
+        if track:
+            for (rn, name_lower), price in (meeting_odds.get(track) or {}).items():
+                if rn == race_num and price and price > 1.0:
+                    odds[_normalize_horse(name_lower)] = float(price)
         _edge_odds_cache[race_id] = (datetime.utcnow(), odds)
         return odds
     except Exception:
@@ -5258,7 +4976,7 @@ async def get_edge_picks():
             for hr in hedge_runners:
                 w = hr.best_available_odds or 0
                 if w <= 1.0:
-                    w = live_race_odds.get(hr.horse_name, 0)
+                    w = live_race_odds.get(_normalize_horse(hr.horse_name), 0)
                 if w > 1.0:
                     hedge_candidates.append({
                         "horse_name": hr.horse_name,
