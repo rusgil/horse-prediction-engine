@@ -11949,6 +11949,14 @@ async def admin_bust_meetings_cache(
     _check_admin(x_cron_secret)
     _validate_date(race_date)
     _invalidate_meeting_caches(race_date)
+    # Also drop the persistent DB cache row — the in-memory pop alone left the
+    # stale venue list served for up to the DB TTL (2026-07-24).
+    from sqlalchemy import delete as sa_delete
+    async with get_session() as session:
+        await session.execute(
+            sa_delete(ResponseCacheRow).where(ResponseCacheRow.cache_key == f"meetings:{race_date}")
+        )
+        await session.commit()
     return {"ok": True, "date": race_date}
 
 
@@ -15752,11 +15760,14 @@ async def list_meetings(race_date: str = _today()):
                 .where(ResponseCacheRow.cache_key == f"meetings:{race_date}")
             )).scalar_one_or_none()
         if row:
-            # 6h staleness budget — older than that we re-fetch from RA to
-            # pick up new meetings / scratchings published since the cache
-            # was written.
+            # 5-min staleness budget. The Lounge no longer cold-fetches RA
+            # (it's a pure DB merge now), so the old 6h TTL protected nothing
+            # and instead served a stale venue list for hours — an enrich that
+            # added meetings mid-morning (Echuca/Grafton, 2026-07-24) stayed
+            # invisible until the cache aged out. Short TTL keeps intraday
+            # enrich additions visible fast while still absorbing request bursts.
             age = (datetime.utcnow() - row.updated_at).total_seconds()
-            if age < 21600:
+            if age < 300:
                 body = json.loads(row.payload_json)
                 _list_meetings_cache[race_date] = (datetime.utcnow(), body)
                 return body
@@ -15797,11 +15808,16 @@ async def list_meetings(race_date: str = _today()):
             select(RacePredictionRow.race_id, RacePredictionRow.venue, RacePredictionRow.state)
             .where(RacePredictionRow.race_id.like(f"{race_date}_%"))
         )).all()
-        # RunnerPredictionRow covers future dates enriched before RacePredictionRow was written
+        # RunnerPredictionRow covers future dates enriched before RacePredictionRow was written.
+        # Presence = a venue has ANY non-cancelled prediction for the date. Do NOT
+        # require model_rank==1 here: if a meeting's rank wasn't (yet) assigned —
+        # e.g. an enrich interrupted mid-rank, or a rerank left it null — the
+        # meeting still has real predictions and MUST show in the Lounge. Keying
+        # off model_rank==1 hid whole enriched meetings (Echuca/Grafton,
+        # 2026-07-24) even though Edge and get_meeting rendered them fine.
         runner_race_ids = (await session.execute(
             select(RunnerPredictionRow.race_id)
             .where(RunnerPredictionRow.race_id.like(f"{race_date}_%"))
-            .where(RunnerPredictionRow.model_rank == 1)
             .where(RunnerPredictionRow.cancelled.is_(False) | RunnerPredictionRow.cancelled.is_(None))
             .distinct()
         )).scalars().all()
