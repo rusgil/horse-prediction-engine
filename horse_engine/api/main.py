@@ -569,6 +569,31 @@ async def _scheduled_pre_race_enrich():
             place_model = await _load_place_model(session)
         meetings = await client.get_meetings(today)
 
+        # Sportsbet allowlist (2026-07-23): only enrich AU thoroughbred meetings
+        # Sportsbet actually books. Skips obscure country tracks nobody can bet,
+        # saving the bulk of per-race RA form/pedigree fetches — and replaces the
+        # hand-maintained blocklist. FAIL-OPEN: on any Sportsbet error the
+        # allowlist is None and we keep every RA meeting.
+        try:
+            from horse_engine.clients.sportsbet_schedule import (
+                get_sportsbet_au_meetings, venue_on_sportsbet,
+            )
+            _sb_allow = await get_sportsbet_au_meetings(today)
+            if _sb_allow:
+                def _m_on_sb(m: dict) -> bool:
+                    slug = m.get("slug", "")
+                    vc = slug[:-len(date_sfx)] if slug.endswith(date_sfx) else (slug.split("-")[0] if slug else "")
+                    return (venue_on_sportsbet(m.get("venue") or "", _sb_allow)
+                            or venue_on_sportsbet(m.get("name") or "", _sb_allow)
+                            or venue_on_sportsbet(vc, _sb_allow))
+                _before = len(meetings)
+                meetings = [m for m in meetings if _m_on_sb(m)]
+                if len(meetings) != _before:
+                    log.info("[enrich] Sportsbet allowlist: enriching %d/%d meetings for %s (skipped %d not on Sportsbet)",
+                             len(meetings), _before, today, _before - len(meetings))
+        except Exception as e:
+            log.warning("[enrich] Sportsbet allowlist skipped (keeping all meetings): %s", e)
+
         # Check for abandoned meetings (dropped venues or all races closed)
         await _cancel_abandoned_meetings(client, today)
 
