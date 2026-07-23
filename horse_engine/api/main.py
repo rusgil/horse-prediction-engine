@@ -15892,22 +15892,38 @@ async def get_track_record():
     # 'placed' = finished top-3 (includes winner). Backtest rows expose
     # actual_position; live rows use HistoricalResultRow.position. Both
     # sources normalise the placed flag the same way.
+    def _is_off_going(s: str) -> bool:
+        s = (s or "").strip().lower()
+        return s.startswith("soft") or s.startswith("heavy")
+
     unified = []
     for r in bt_rows:
         if r.win_probability is not None:
             pos = r.actual_position
+            hr_bt = hr_map.get((r.race_id, r.horse_name))
             unified.append({
                 "win_prob": r.win_probability,
                 "winner": bool(r.winner),
                 "placed": bool(pos and pos <= 3),
+                "off_going": _is_off_going(hr_bt.track_condition if hr_bt else ""),
             })
     for r in live_rows:
         hr = hr_map.get((r.race_id, r.horse_name))
         if hr and r.win_probability is not None:
+            # Prefer the pre-race going category on the prediction; fall back
+            # to the settled result's track_condition.
+            going = ""
+            try:
+                if r.enriched_json:
+                    going = json.loads(r.enriched_json).get("track_condition_category") or ""
+            except Exception:
+                going = ""
+            off = _is_off_going(going) or _is_off_going(hr.track_condition)
             unified.append({
                 "win_prob": r.win_probability,
                 "winner": hr.position == 1,
                 "placed": bool(hr.position and hr.position <= 3),
+                "off_going": off,
             })
 
     # Non-overlapping bands (2026-07-22 UX pass):
@@ -15920,9 +15936,19 @@ async def get_track_record():
         {"badge": "high",     "min": 0.36, "max": 0.46, "conf_min": 36, "conf_max": 45},
         {"badge": "standard", "min": 0.30, "max": 0.36, "conf_min": 30, "conf_max": 35},
     ]
+    # Off-going tier cap (2026-07-23): matches the published-badge cap. Soft/Heavy
+    # picks never count in Hot/High — they're forced into Strong — so the tier
+    # win rates reflect what users actually see badged (no off-going in Hot/High).
     output = []
     for tier in tiers:
-        picks = [r for r in unified if tier["min"] <= r["win_prob"] < tier["max"]]
+        if tier["badge"] == "standard":
+            picks = [r for r in unified if (
+                (r.get("off_going") and r["win_prob"] >= tiers[-1]["min"]) or
+                (not r.get("off_going") and tier["min"] <= r["win_prob"] < tier["max"])
+            )]
+        else:  # hot / high — on-going only
+            picks = [r for r in unified
+                     if not r.get("off_going") and tier["min"] <= r["win_prob"] < tier["max"]]
         wins  = sum(1 for r in picks if r["winner"])
         places = sum(1 for r in picks if r["placed"])
         win_pct = round(wins / len(picks) * 100, 1) if picks else 0.0
