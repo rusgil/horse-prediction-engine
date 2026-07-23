@@ -6,37 +6,27 @@
   var API = window.SITE_WARNINGS_API || '';
   function render(w) {
     if (!w || !w.model_unstable || !w.model_unstable.active) return;
-    var msg = w.model_unstable.message || 'Model not stable today — NO BETS';
-    var banner = document.createElement('div');
-    banner.id = 'siteModelUnstableBanner';
-    banner.style.cssText = [
-      'background:#dc2626',
-      'color:#fff',
-      'font-weight:700',
-      'text-align:center',
-      'padding:10px 16px',
-      'font-size:14px',
-      'letter-spacing:0.02em',
-      'border-top:2px solid #7f1d1d',
-      'border-bottom:2px solid #7f1d1d',
-      'z-index:9998',
-      'box-shadow:0 2px 6px rgba(0,0,0,0.35)'
+    if (document.getElementById('sitePredictionsSplash')) return;  // idempotent
+    // Generic splash only — never expose the internal reason (breaker_open,
+    // distribution:*) to users. Backend sets `message` to the generic copy.
+    var msg = w.model_unstable.message || 'Predictions temporarily unavailable';
+    var splash = document.createElement('div');
+    splash.id = 'sitePredictionsSplash';
+    splash.setAttribute('role', 'status');
+    splash.style.cssText = [
+      'position:fixed', 'inset:0', 'z-index:9998',
+      'display:flex', 'align-items:center', 'justify-content:center',
+      'padding:24px', 'text-align:center',
+      'background:rgba(7,9,15,0.94)',
+      'backdrop-filter:blur(6px)', '-webkit-backdrop-filter:blur(6px)'
     ].join(';');
-    banner.textContent = '⚠ ' + msg;
-    // Insert immediately AFTER the FunkyIQ brand bar so the top-of-page
-    // chrome ("FunkyIQ / Horse Racing") remains visible above the alert.
-    // Falls back to first child of body if the brand bar isn't present
-    // (defensive — every user page currently ships one).
-    var brand = document.querySelector('.brand-bar');
-    if (brand && brand.parentNode) {
-      if (brand.nextSibling) {
-        brand.parentNode.insertBefore(banner, brand.nextSibling);
-      } else {
-        brand.parentNode.appendChild(banner);
-      }
-    } else if (document.body) {
-      document.body.insertBefore(banner, document.body.firstChild);
-    }
+    splash.innerHTML =
+      '<div style="max-width:420px;font-family:-apple-system,BlinkMacSystemFont,\'Segoe UI\',sans-serif;color:#e5e7eb">' +
+        '<div style="font-size:44px;line-height:1;margin-bottom:18px">⏳</div>' +
+        '<div style="font-size:20px;font-weight:700;letter-spacing:0.01em;margin-bottom:10px">' + msg + '</div>' +
+        '<div style="font-size:14px;line-height:1.6;color:#9ca3af">We\'re refreshing the model. Your picks will be back shortly — please check again in a few minutes.</div>' +
+      '</div>';
+    if (document.body) document.body.appendChild(splash);
   }
   function init() {
     fetch(API + '/api/config/site-warnings')

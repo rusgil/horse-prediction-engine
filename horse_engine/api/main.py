@@ -2082,12 +2082,113 @@ def _detect_snapshot_distribution_degradation(races: dict) -> tuple[bool, str]:
     return False, f"ok(max={max_p:.3f} std={std_p:.3f})"
 
 
+# User-facing splash copy — deliberately generic. Internal reasons
+# (breaker_open, distribution:*) stay in logs + the ops-alert email, never
+# on screen (2026-07-24, per user).
+_SPLASH_MESSAGE = "Predictions temporarily unavailable"
+
+# Ops-alert email rate limits (per alert_key). DB-backed so redeploys don't
+# reset the counter. Max 3 delivered per rolling 24h, and never two within
+# 30 min — "do not spam me" (2026-07-24, user).
+_OPS_ALERT_CAP = 3
+_OPS_ALERT_WINDOW = timedelta(hours=24)
+_OPS_ALERT_MIN_GAP = timedelta(minutes=30)
+
+# When RA/upstream first went unhealthy in the current degradation spell.
+# Set on a failed health check, cleared on a healthy one. Drives the
+# 'RA degraded for ~1h' ops email — the operational signal that replaces the
+# old blanket NO-BETS banner (2026-07-24). None = currently healthy.
+_ra_degraded_since: Optional[datetime] = None
+_RA_DEGRADED_ALERT_AFTER = timedelta(hours=1)
+
+
+async def _send_ops_alert(alert_key: str, subject: str, detail_html: str) -> bool:
+    """Email the admin (settings.first_admin_email → rusgil@gmail.com) about an
+    operational condition, capped at 3 per `alert_key` per rolling 24h with a
+    30-min floor between sends. Two independent budgets today:
+      - 'splash_active'  — the user-facing splash went up
+      - 'ra_degraded_1h' — RA has been failing across rotations for ~1h
+    DB-backed (ResponseCacheRow) so a redeploy can't reset the cap. Never raises."""
+    to = (getattr(settings, "first_admin_email", "") or "").strip()
+    if not to:
+        return False
+    cache_key = f"ops_alert:{alert_key}"
+    now = datetime.utcnow()
+    try:
+        async with get_session() as session:
+            row = (await session.execute(
+                select(ResponseCacheRow).where(ResponseCacheRow.cache_key == cache_key)
+            )).scalars().first()
+            sends: list[str] = []
+            if row and row.payload_json:
+                try:
+                    sends = json.loads(row.payload_json)
+                except Exception:
+                    sends = []
+            sends = [s for s in sends
+                     if (now - datetime.fromisoformat(s)) < _OPS_ALERT_WINDOW]
+            if len(sends) >= _OPS_ALERT_CAP:
+                log.info("[ops-alert] %s suppressed (cap %d/24h reached)", alert_key, _OPS_ALERT_CAP)
+                return False
+            if sends and (now - datetime.fromisoformat(sends[-1])) < _OPS_ALERT_MIN_GAP:
+                log.info("[ops-alert] %s suppressed (min-gap)", alert_key)
+                return False
+    except Exception as e:
+        # Fail CLOSED on the cap check — better to miss an alert than to spam.
+        log.warning("[ops-alert] rate-limit check failed for %s: %s", alert_key, e)
+        return False
+
+    from horse_engine.api import mailer
+    html = (
+        "<div style=\"font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;"
+        "max-width:560px;margin:0 auto;padding:24px;color:#111\">"
+        "<h2 style=\"font-size:18px;margin:0 0 12px\">FunkyIQ ops alert</h2>"
+        f"{detail_html}"
+        f"<p style=\"font-size:12px;color:#999;margin-top:24px;padding-top:16px;border-top:1px solid #eee\">"
+        f"Automated — capped at {_OPS_ALERT_CAP} per 24h for this alert type.</p></div>"
+    )
+    ok = await mailer._send(to, subject, html)
+    if ok:
+        # Record only on successful delivery, so a Resend outage doesn't burn
+        # the daily budget without you ever seeing an email.
+        try:
+            async with get_session() as session:
+                row = (await session.execute(
+                    select(ResponseCacheRow).where(ResponseCacheRow.cache_key == cache_key)
+                )).scalars().first()
+                sends = []
+                if row and row.payload_json:
+                    try:
+                        sends = json.loads(row.payload_json)
+                    except Exception:
+                        sends = []
+                sends = [s for s in sends
+                         if (now - datetime.fromisoformat(s)) < _OPS_ALERT_WINDOW]
+                sends.append(now.isoformat())
+                payload = json.dumps(sends)
+                if row:
+                    row.payload_json = payload
+                    row.updated_at = now
+                else:
+                    session.add(ResponseCacheRow(cache_key=cache_key, payload_json=payload, updated_at=now))
+                await session.commit()
+        except Exception as e:
+            log.warning("[ops-alert] failed to record send for %s: %s", alert_key, e)
+    return ok
+
+
 async def _set_model_unstable_banner_internal(active: bool, reason: str) -> None:
-    """Flip the site-wide 'Model not stable — NO BETS' banner from inside
-    a scheduled job (no HTTP round-trip). Mirrors the endpoint at
-    /api/admin/site-warnings/model-unstable but callable from any async
-    context. Used by the snapshot-time defenses so a detected degradation
-    surfaces to users immediately rather than waiting for a human to notice."""
+    """Flip the site-wide 'Predictions temporarily unavailable' splash from
+    inside a scheduled job (no HTTP round-trip). Callable from any async
+    context. Used by the snapshot-time defenses so a genuine model-output
+    degradation surfaces to users immediately.
+
+    IMPORTANT (2026-07-24): this should be flipped ON only when PREDICTIONS
+    ARE ACTUALLY IMPACTED — i.e. the model output is degraded. RA being down
+    is NOT a reason (pre-computed predictions stay valid overnight; scratches
+    are handled by OddsPro and aren't critical). The user-facing message is
+    always the generic splash copy; the real `reason` is kept for logs + the
+    ops-alert email only."""
     try:
         warnings = await _load_site_warnings()
         already = bool(warnings.get("model_unstable", {}).get("active"))
@@ -2095,9 +2196,8 @@ async def _set_model_unstable_banner_internal(active: bool, reason: str) -> None
             return  # no-op — don't churn cache_version
         warnings.setdefault("model_unstable", {})["active"] = active
         if active:
-            warnings["model_unstable"]["message"] = (
-                f"Model not stable — NO BETS ({reason})"
-            )
+            warnings["model_unstable"]["message"] = _SPLASH_MESSAGE
+            warnings["model_unstable"]["reason"] = reason  # internal only — not rendered
         payload = json.dumps(warnings)
         async with get_session() as session:
             existing = (await session.execute(
@@ -2115,7 +2215,19 @@ async def _set_model_unstable_banner_internal(active: bool, reason: str) -> None
                     updated_at=datetime.utcnow(),
                 ))
             await session.commit()
-        log.warning("[snapshot-defense] model_unstable banner set to %s: %s", active, reason)
+        log.warning("[snapshot-defense] model_unstable splash set to %s: %s", active, reason)
+        # Email the admin when the splash goes UP (predictions genuinely
+        # impacted). Rate-limited to 3/day; reason detail lives in the email,
+        # never on the splash.
+        if active:
+            await _send_ops_alert(
+                "splash_active",
+                "FunkyIQ: predictions splash is showing",
+                f"<p>The <b>“{_SPLASH_MESSAGE}”</b> splash is now live on the prediction "
+                f"pages — the model output was flagged as impacted.</p>"
+                f"<p style='color:#555'>Internal reason: <code>{reason}</code></p>"
+                f"<p>Users see only the generic splash; no detail is exposed.</p>",
+            )
     except Exception as e:
         log.exception("[snapshot-defense] banner toggle failed: %s", e)
 
@@ -2150,12 +2262,37 @@ async def _snapshot_prerace_predictions() -> int:
         # we can't verify the client is OK.
         healthy, reason = False, f"health_probe_error:{type(e).__name__}"
     if not healthy:
+        # RA/upstream degraded → SKIP this snapshot (it's for history integrity,
+        # not the live pick). Do NOT raise the splash: pre-computed predictions
+        # stay valid overnight and scratches are handled by OddsPro, so RA being
+        # down does not impact the picks users bet on (2026-07-24, per user).
+        # Instead, track the degradation and email after ~1h — the operational
+        # signal that replaces the old blanket NO-BETS wall.
+        global _ra_degraded_since
+        now2 = datetime.utcnow()
+        if _ra_degraded_since is None:
+            _ra_degraded_since = now2
         log.critical(
-            "[snapshot-defense] SKIPPING snapshot for %s — upstream degraded (%s). "
-            "Will retry next tick.", today, reason,
+            "[snapshot-defense] SKIPPING snapshot for %s — upstream degraded (%s), "
+            "degraded for %s. Splash NOT raised (picks unaffected).",
+            today, reason, str(now2 - _ra_degraded_since).split(".")[0],
         )
-        await _set_model_unstable_banner_internal(True, f"upstream:{reason}")
+        if (now2 - _ra_degraded_since) >= _RA_DEGRADED_ALERT_AFTER:
+            await _send_ops_alert(
+                "ra_degraded_1h",
+                "FunkyIQ: RA upstream degraded ~1h",
+                f"<p>Racing Australia has been failing (across residential-proxy "
+                f"rotations) for about <b>{str(now2 - _ra_degraded_since).split('.')[0]}</b>.</p>"
+                f"<p style='color:#555'>Latest reason: <code>{reason}</code></p>"
+                f"<p>Predictions already on the board are unaffected and users can "
+                f"still bet; new enrichment/snapshots are paused until RA recovers. "
+                f"No user-facing splash was raised.</p>",
+            )
         return 0
+    else:
+        # Healthy — clear any degradation spell so the next outage starts fresh.
+        if _ra_degraded_since is not None:
+            _ra_degraded_since = None
 
     # Build race_id → scheduled_time from SPORTSBET (non-RA start times,
     # 2026-07-23). Sportsbet AllRacing carries startTime per event, so the
