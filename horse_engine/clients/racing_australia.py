@@ -44,6 +44,19 @@ _RA_PROXY_ACTIVE = bool(_RA_PROXY_URL and _RA_PROXY_SECRET)
 if _RA_PROXY_ACTIVE:
     log.info("[RA] Proxy enabled — routing through %s", _RA_PROXY_URL)
 
+# Rotate-retry / breaker tuning (2026-07-24). On a 403 (or transport error)
+# through the rotating residential proxy, retry the request up to
+# _ROTATE_RETRIES more times — each retry opens a fresh connection, which the
+# webshare rotating pool answers from a NEW residential exit IP. A single bad
+# rotation therefore self-heals on the next attempt. `_ROTATE_BACKOFFS` are the
+# waits (seconds) before each retry — short enough to keep the enrich moving,
+# spaced enough not to hammer. Only when _TRIP_AFTER_CYCLES whole cycles fail
+# within _CYCLE_WINDOW_S do we trip the breaker (sustained pool-wide block).
+_ROTATE_RETRIES = 3
+_ROTATE_BACKOFFS = [5.0, 15.0, 30.0]   # len must be >= _ROTATE_RETRIES
+_TRIP_AFTER_CYCLES = 3
+_CYCLE_WINDOW_S = 3600                  # 1 hour
+
 
 def _proxied(url: str) -> str:
     """Rewrite an RA URL to go through the configured proxy.
@@ -859,6 +872,15 @@ class RacingAustraliaClient:
         # Hard rule: this program can not HAMMER apis.
         self._blocked_until: datetime | None = None
         self._block_count: int = 0  # tracks consecutive 403s for backoff growth
+        # Rotate-retry (2026-07-24): we reach RA through a webshare ROTATING
+        # residential proxy, so a single 403 usually means "this rotation
+        # landed on an IP RA blocks", NOT a durable block. Instead of tripping
+        # the breaker on one bad IP, we retry the request a few times (each
+        # retry rides a fresh rotation → new exit IP). Only when a whole
+        # rotate-retry cycle fails, AND enough cycles fail within the window,
+        # do we trip. `_recent_403_cycles` holds the timestamps of fully-failed
+        # cycles inside the rolling window.
+        self._recent_403_cycles: list[datetime] = []
         # DB-hydration flag for the venue-key cache. On first find_results
         # call, we do ONE bulk read from ra_venue_key_cache to populate
         # _slug_to_key. All subsequent lookups hit RAM only. Prevents the
@@ -885,16 +907,38 @@ class RacingAustraliaClient:
         return True
 
     def _trip_breaker(self) -> None:
-        """Called on 403. Exponential backoff: 60s, 5min, 15min, 60min cap."""
+        """Called only after a SUSTAINED failure (multiple failed rotate-retry
+        cycles). Exponential backoff: 60s, 5min, 15min, 60min cap."""
         self._block_count += 1
         backoff = min(60 * (5 ** (self._block_count - 1)), 3600)
         from datetime import timedelta as _td
         self._blocked_until = datetime.utcnow() + _td(seconds=backoff)
         log.warning(
-            "[RA] WAF block detected (403). Circuit breaker tripped — "
+            "[RA] Circuit breaker tripped after sustained failure — "
             "no requests for %ds (consecutive=%d).",
             backoff, self._block_count,
         )
+
+    def _record_failed_cycle(self) -> bool:
+        """Record one fully-failed rotate-retry cycle (all rotations 403'd or
+        timed out). Trip the breaker only once _TRIP_AFTER_CYCLES such cycles
+        occur within _CYCLE_WINDOW_S — i.e. RA is blocking the whole residential
+        pool, not just one unlucky IP. Returns True if this call tripped it."""
+        from datetime import timedelta as _td
+        now = datetime.utcnow()
+        cutoff = now - _td(seconds=_CYCLE_WINDOW_S)
+        self._recent_403_cycles = [t for t in self._recent_403_cycles if t > cutoff]
+        self._recent_403_cycles.append(now)
+        if len(self._recent_403_cycles) >= _TRIP_AFTER_CYCLES:
+            self._trip_breaker()
+            self._recent_403_cycles.clear()
+            return True
+        log.warning(
+            "[RA] rotate-retry cycle failed (%d/%d within %dm) — a bad rotation, "
+            "NOT tripping the breaker yet.",
+            len(self._recent_403_cycles), _TRIP_AFTER_CYCLES, _CYCLE_WINDOW_S // 60,
+        )
+        return False
 
     async def _request(self, url: str, *, referer: str | None = None, timeout: float = 35.0) -> str:
         """Shared GET path. Honours the breaker, jitters delay, rotates UA,
@@ -925,9 +969,6 @@ class RacingAustraliaClient:
                     request=httpx.Request("GET", url),
                     response=httpx.Response(503),
                 )
-            # 0.6–1.2s jittered pause between requests. Was 0.3s — that was too
-            # tight; combined with Semaphore(3) it produced ~10 req/s sustained.
-            await asyncio.sleep(0.6 + random.random() * 0.6)
             headers = _build_headers(referer=referer)
             fetch_url = _proxied(url)
             if _RA_PROXY_ACTIVE and fetch_url != url:
@@ -944,30 +985,56 @@ class RacingAustraliaClient:
             # proxy->RA leg is still verified HTTPS. Direct-RA (no proxy) keeps
             # full verification.
             _verify = not (_RA_PROXY_ACTIVE and fetch_url != url)
-            async with httpx.AsyncClient(headers=headers, timeout=timeout, follow_redirects=True, verify=_verify) as client:
+            # Rotate-retry only makes sense behind the rotating residential
+            # proxy — a fresh connection there = a fresh exit IP. Direct-RA
+            # retries would reuse the same (blocked) IP, so no rotation.
+            _can_rotate = _RA_PROXY_ACTIVE and fetch_url != url
+            attempts = 1 + (_ROTATE_RETRIES if _can_rotate else 0)
+            last_exc: Exception | None = None
+            for attempt in range(attempts):
+                if attempt == 0:
+                    # 0.6–1.2s jittered pause between requests (single-flight).
+                    await asyncio.sleep(0.6 + random.random() * 0.6)
+                else:
+                    # Wait, then rotate: a NEW AsyncClient below opens a fresh
+                    # connection → webshare hands a new residential exit IP.
+                    await asyncio.sleep(_ROTATE_BACKOFFS[attempt - 1])
+                    log.info("[RA] rotate-retry %d/%d (fresh residential IP) for %s",
+                             attempt, _ROTATE_RETRIES, url[:90])
                 try:
-                    resp = await client.get(fetch_url)
+                    async with httpx.AsyncClient(headers=headers, timeout=timeout,
+                                                 follow_redirects=True, verify=_verify) as client:
+                        resp = await client.get(fetch_url)
                 except (httpx.TimeoutException, httpx.ConnectError, httpx.ReadError) as e:
-                    # A tarpitting WAF HANGS the connection instead of
-                    # returning 403 — the timeout raises here and never
-                    # reaches the 403 check below, so historically the
-                    # breaker never tripped. Every caller (incl. /api/edge
-                    # live enrichment) then kept hanging the full `timeout`,
-                    # producing slow pages with no self-heal. Treat sustained
-                    # transport failure as a block: trip the breaker so
-                    # callers short-circuit until backoff expires, exactly
-                    # like a 403. (2026-07-22 incident — fresh proxy IP was
-                    # tarpitted by RA and the breaker sat closed.)
-                    self._trip_breaker()
-                    raise
+                    # Slow/tarpitted rotation — retry on a fresh IP rather than
+                    # tripping on one bad exit.
+                    last_exc = e
+                    continue
                 if resp.status_code == 403:
-                    self._trip_breaker()
-                    resp.raise_for_status()
+                    # Almost always "this rotation landed on an IP RA blocks",
+                    # not a durable block — retry with a fresh rotation.
+                    last_exc = httpx.HTTPStatusError(
+                        "RA returned 403 (bad rotation)",
+                        request=httpx.Request("GET", fetch_url), response=resp,
+                    )
+                    continue
+                # Non-403, non-transport: let raise_for_status surface real
+                # errors (e.g. 503 RA-overload is handled by the caller's own
+                # retry layer and must propagate, NOT rotate here).
                 resp.raise_for_status()
-                # Successful response → reset breaker counter (block_count was
-                # for *consecutive* 403s).
+                # Success → clear all failure state.
                 self._block_count = 0
+                self._recent_403_cycles.clear()
                 return resp.text
+            # Every rotation in this cycle failed → count it; trip only on
+            # sustained pool-wide failure (see _record_failed_cycle).
+            self._record_failed_cycle()
+            if last_exc is not None:
+                raise last_exc
+            raise httpx.HTTPStatusError(
+                "RA request failed after rotate-retries",
+                request=httpx.Request("GET", fetch_url), response=httpx.Response(503),
+            )
 
     async def _get(self, url: str) -> str:
         # 35s (was 20s): the Hetzner→RA path runs a steady ~21s per fetch
