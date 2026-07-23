@@ -163,8 +163,12 @@ class OddsProClient:
             if not track_lower:
                 continue
             for race in meeting.get("races", []):
-                if (race.get("status") or "").lower() != "finished":
-                    continue
+                # Key on `results` populated, not `status=="finished"`. OddsPro
+                # frequently leaves status='scheduled' even after a race has run
+                # and results are published (observed 2026-07-23 — Wyong R2/R3,
+                # Warrnambool R1/R2 all had results but status='scheduled', so
+                # nothing settled all morning). The `results` array is the
+                # definitive signal a race has been called.
                 order = race.get("results")
                 race_num = race.get("number")
                 if not order or not isinstance(order, list) or not race_num:
