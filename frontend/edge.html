@@ -2257,8 +2257,19 @@
           <div class="payout-box" style="background:rgba(239,68,68,0.08);border-color:rgba(239,68,68,0.2);">
             <div class="payout-profit-label" style="color:#f87171;font-size:1rem">✗ Lost</div>
           </div>`;
+      } else if (result.placed || (result.position && result.position <= 3)) {
+        // Placed (2nd/3rd) but not the winner — the win bet didn't land, but
+        // the horse ran a place. Show an amber Placed chip so the right side
+        // MATCHES the left badge (was falling through to "Result pending",
+        // contradicting the "Placed 2nd" badge — Warrnambool R8 GOLDEN GARDEN
+        // 2026-07-23).
+        const posLbl = result.position ? ordinal(result.position) : '';
+        payoutHtml = `
+          <div class="payout-box" style="background:rgba(245,158,11,0.10);border-color:rgba(245,158,11,0.25);">
+            <div class="payout-profit-label" style="color:#f59e0b;font-size:1rem">Placed ${posLbl}</div>
+          </div>`;
       } else {
-        // No position, not a winner, not marked scratched or no_result —
+        // No position, not a winner, not placed, not scratched/no_result —
         // treat as pending. Silent regression to loss was the bug.
         payoutHtml = `<div class="no-odds">Result pending</div>`;
       }
