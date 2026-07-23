@@ -130,10 +130,12 @@ resource "null_resource" "caddy_hostname_fix" {
       "sed -i \"s/PLACEHOLDER_HOSTNAME.sslip.io/$${REAL_HOST}/g\" /etc/caddy/Caddyfile",
       "grep -q \"$${REAL_HOST}\" /etc/caddy/Caddyfile || { echo 'hostname substitution failed' >&2; exit 1; }",
       "systemctl reload caddy || systemctl restart caddy",
-      # LetsEncrypt cert issue takes ~30-60s on first request
+      # Caddy `tls internal` mints a self-signed cert instantly (no ACME wait,
+      # no Let's Encrypt rate limits). Probe the real sslip hostname resolved to
+      # localhost so it matches the site block + self-signed cert (-k trusts it).
       "for i in $(seq 1 12); do",
-      "  sleep 10",
-      "  CODE=$(curl -sk -o /dev/null -w '%%{http_code}' https://localhost/health || echo 000)",
+      "  sleep 5",
+      "  CODE=$(curl -sk -o /dev/null -w '%%{http_code}' --resolve $${REAL_HOST}:443:127.0.0.1 https://$${REAL_HOST}/health || echo 000)",
       "  echo \"health probe $i: $CODE\"",
       "  if [ \"$CODE\" = \"200\" ]; then break; fi",
       "done"

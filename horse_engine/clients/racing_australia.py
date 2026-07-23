@@ -937,7 +937,14 @@ class RacingAustraliaClient:
                 headers["X-Proxy-Secret"] = _RA_PROXY_SECRET
                 if referer:
                     headers["X-Proxy-Referer"] = referer
-            async with httpx.AsyncClient(headers=headers, timeout=timeout, follow_redirects=True) as client:
+            # When routing through the proxy, its TLS is Caddy's internal
+            # self-signed CA (we dropped Let's Encrypt — its rate limits broke
+            # every IP rotation). Skip cert verification for the proxy hop only;
+            # it's an internal, X-Proxy-Secret-authenticated connection and the
+            # proxy->RA leg is still verified HTTPS. Direct-RA (no proxy) keeps
+            # full verification.
+            _verify = not (_RA_PROXY_ACTIVE and fetch_url != url)
+            async with httpx.AsyncClient(headers=headers, timeout=timeout, follow_redirects=True, verify=_verify) as client:
                 try:
                     resp = await client.get(fetch_url)
                 except (httpx.TimeoutException, httpx.ConnectError, httpx.ReadError) as e:

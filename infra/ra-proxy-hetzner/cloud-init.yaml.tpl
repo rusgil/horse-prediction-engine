@@ -86,8 +86,13 @@ write_files:
       WantedBy=multi-user.target
 
   # Caddyfile - TLS-fronted reverse proxy to 127.0.0.1:8000.
-  # Hostname is baked in from Terraform (${proxy_hostname}) so LetsEncrypt
-  # can validate the sslip.io host on first boot.
+  # TLS is Caddy's INTERNAL self-signed CA (`tls internal`) — NOT Let's Encrypt.
+  # LE cert issuance was rate-limiting every rotation (recycled sslip.io
+  # hostnames hit the 5-duplicate-certs/week cap), leaving new boxes with no
+  # cert and Caddy unable to serve HTTPS. The Railway->proxy hop is internal and
+  # authenticated by X-Proxy-Secret, so a public CA buys nothing; the app's RA
+  # client trusts this self-signed cert via verify=False for the proxy host.
+  # Transport stays TLS-encrypted; rotations no longer depend on Let's Encrypt.
   - path: /etc/caddy/Caddyfile
     permissions: "0644"
     content: |
@@ -97,9 +102,7 @@ write_files:
               not path /proxy/* /health
           }
           respond @notproxy 404
-          tls {
-              protocols tls1.2 tls1.3
-          }
+          tls internal
           encode gzip
           log {
               output file /var/log/caddy/access.log {
