@@ -2972,11 +2972,12 @@ async def lifespan(app: FastAPI):
             log.info("[edge-warm] performance cache warmed")
         except Exception as e:
             log.warning("[edge-warm] performance warm failed: %s", e)
-    scheduler.add_job(_warm_edge, CronTrigger(hour=6,  minute=30, timezone="Australia/Sydney"))  # pre-morning
-    scheduler.add_job(_warm_edge, CronTrigger(hour=8,  minute=45, timezone="Australia/Sydney"))  # post 8:30 enrich
-    scheduler.add_job(_warm_edge, CronTrigger(hour=10, minute=45, timezone="Australia/Sydney"))  # post 10:30 enrich
-    scheduler.add_job(_warm_edge, CronTrigger(hour=11, minute=45, timezone="Australia/Sydney"))  # post 11:30 enrich
-    scheduler.add_job(_warm_edge, CronTrigger(hour=12, minute=15, timezone="Australia/Sydney"))  # pre-metro
+    # Continuous edge/performance cache warm — every 2 min from 07:00 through
+    # 21:59 AEST. Replaces the old five discrete cron ticks (06:30, 08:45,
+    # 10:45, 11:45, 12:15) which left stale windows and were brittle to enrich
+    # timing changes. Early-morning warmth is important for BAO hunters who
+    # check picks as soon as markets open. DB-only, so cost is negligible.
+    scheduler.add_job(_warm_edge, CronTrigger(hour="7-21", minute="*/2", timezone="Australia/Sydney"))
 
     # Lounge landing-page pre-warm. The /api/lounge/init endpoint bundles
     # ~60 discrete fetches worth of data into one payload. If nobody visits
@@ -4972,6 +4973,10 @@ async def get_edge_picks():
                         "tab_number": pr.tab_number,
                         "horse_name": pr.horse_name,
                         "place_pct": round((pr.place_probability or 0) * 100, 1) if pr.place_probability else None,
+                        # win_prob (0..1) feeds Harville trifecta/first-four math.
+                        # win_pct is display-friendly percentage.
+                        "win_prob": pr.win_probability if pr.win_probability else None,
+                        "win_pct": round((pr.win_probability or 0) * 100, 1) if pr.win_probability else None,
                     }
                 fr = tri_field_by_name.get(name)
                 if fr is not None:
@@ -5009,14 +5014,37 @@ async def get_edge_picks():
                         ff_legs.append(leg)
                 except Exception:
                     ff_legs = []
-            # Combined-probability estimate: any-order trifecta hit rate. The
-            # naive product-of-place-probs (the old formula) ignores that
-            # filling one of the three slots raises the conditional chance
-            # of the others. Use it as an approximation, no overround divisor.
-            tri_probs = [l["place_pct"] for l in tri_legs if l.get("place_pct") is not None]
-            tri_combined = round(tri_probs[0] * tri_probs[1] * tri_probs[2] / 10000, 1) if len(tri_probs) == 3 else None
-            ff_probs = [l["place_pct"] for l in ff_legs if l.get("place_pct") is not None]
-            ff_combined = round(ff_probs[0] * ff_probs[1] * ff_probs[2] * ff_probs[3] / 1000000, 1) if len(ff_probs) == 4 else None
+            # Combined-probability estimate: any-order trifecta / first-four
+            # hit rate. Uses the Harville model (bets.py) — the mathematically
+            # correct derivation from win probabilities, which accounts for
+            # the fact that a horse can't fill two positions simultaneously.
+            # Previous code multiplied place-probs as if independent, which
+            # both massively under-estimated the hit rate (~10x low) and
+            # ignored the position-exclusivity constraint.
+            #
+            # Also emits est_dividend — the TAB-printed dividend our model
+            # expects if the picks finish in our ranked order, post-takeout.
+            # This is what shows on the dividend board; punter multiplies
+            # by 1/box_size to get their payout per $1 staked.
+            from horse_engine.bets import (
+                harville_trifecta_box_probability,
+                harville_first_four_box_probability,
+                estimate_printed_dividend,
+            )
+            tri_win_probs = [l.get("win_prob") for l in tri_legs if l.get("win_prob") is not None]
+            if len(tri_win_probs) == 3:
+                tri_combined = round(harville_trifecta_box_probability(tri_win_probs) * 100, 1)
+                tri_est_dividend = estimate_printed_dividend(tri_win_probs, bet_type="trifecta")
+            else:
+                tri_combined = None
+                tri_est_dividend = None
+            ff_win_probs = [l.get("win_prob") for l in ff_legs if l.get("win_prob") is not None]
+            if len(ff_win_probs) == 4:
+                ff_combined = round(harville_first_four_box_probability(ff_win_probs) * 100, 1)
+                ff_est_dividend = estimate_printed_dividend(ff_win_probs, bet_type="first_four")
+            else:
+                ff_combined = None
+                ff_est_dividend = None
             # Exotic alignment: compare exotic model's top-3 against win pick
             exotic_top3 = exotic_top3_map.get(runner_row.race_id, set())
             if not exotic_top3:
@@ -5034,8 +5062,10 @@ async def get_edge_picks():
             trifecta = {
                 "legs": tri_legs,
                 "combined_pct": tri_combined,
+                "est_dividend": tri_est_dividend,   # TAB-printed dividend, model-implied
                 "first_four": ff_legs if len(ff_legs) >= 4 else None,
                 "first_four_combined_pct": ff_combined,
+                "first_four_est_dividend": ff_est_dividend,
                 "exotic_alignment": exotic_alignment,
                 "source": "lab",  # mirror of BetRecommendationRow trio_only + core_top4
                 "tier": feature_tier("trifecta"),       # paywall hint — "pro"
