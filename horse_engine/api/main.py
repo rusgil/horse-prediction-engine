@@ -1734,9 +1734,14 @@ async def _seed_results_for_date(race_date: str) -> int:
 
 async def _seed_race_results_on_demand(race_ids: list[str]) -> dict[tuple, int]:
     """
-    For finished races not yet in HistoricalResultRow, fetch from RA once and persist.
+    For finished races not yet in HistoricalResultRow, seed once and persist.
     Returns {(race_id, horse_name): position} for all seeded entries.
     Only called on first page load after a race finishes — subsequent loads use DB.
+
+    Sources are OddsPro + Sportsbet only (2026-07-23) via the central
+    _seed_results_for_date — never RA, so no user page-load ever touches the
+    WAF-blocked host. Idempotent: races already in HistoricalResultRow are
+    skipped by the central seed, so re-calls are cheap.
     """
     if not race_ids:
         return {}
@@ -1760,93 +1765,23 @@ async def _seed_race_results_on_demand(race_ids: list[str]) -> dict[tuple, int]:
     unseeded = [rid for rid in race_ids if rid not in seeded_ids]
 
     if unseeded:
-        client = get_tab_client()
-        # Group unseeded race_ids by (date, venue_code)
-        venue_date_map: dict[tuple, list[str]] = {}
-        for rid in unseeded:
-            date_str, vc, _ = _parse_race_id(rid)
-            venue_date_map.setdefault((vc, date_str), []).append(rid)
-
-        for (vc, date_str), target_race_ids in venue_date_map.items():
-            slug = _meeting_slug(vc, date_str)
+        # Delegate to the central OddsPro+Sportsbet seed, one call per distinct
+        # date (it seeds the whole date and is idempotent). No RA.
+        dates = sorted({_parse_race_id(rid)[0] for rid in unseeded})
+        for date_str in dates:
             try:
-                events = await asyncio.wait_for(client.get_meeting_races(slug), timeout=20)
-                for event in events or []:
-                    rn = event.get("eventNumber")
-                    race_id = f"{date_str}_{vc}_R{rn}"
-                    if race_id not in target_race_ids:
-                        continue
-                    full_race = await asyncio.wait_for(client.get_race(slug, rn), timeout=15)
-                    if not full_race:
-                        continue
-                    rows_to_add = []
-                    for r in full_race.get("runners", []):
-                        if r.get("scratched"):
-                            continue
-                        pos = r.get("finishingPosition")
-                        if not pos or int(pos) <= 0:
-                            continue
-                        horse = r.get("runnerName", "")
-                        if not horse:
-                            continue
-                        sp = None
-                        for p in r.get("prices", []):
-                            if p.get("priceType") in ("StartingPrice", "SP"):
-                                sp = float(p.get("winPrice", 0) or 0) or None
-                                break
-                        _tab_num = None
-                        _tab_raw = r.get("runnerNumber")
-                        if _tab_raw:
-                            try:
-                                _tab_num = int(_tab_raw)
-                            except (TypeError, ValueError):
-                                _tab_num = None
-                        rows_to_add.append(HistoricalResultRow(
-                            race_id=race_id,
-                            horse_name=horse,
-                            position=int(pos),
-                            beaten_margin=float(r.get("margin", 0) or 0),
-                            winner=int(pos) == 1,
-                            placed=int(pos) <= 3,
-                            starting_price=sp,
-                            tab_number=_tab_num,
-                        ))
-                        db_positions[(race_id, _normalize_horse(horse))] = int(pos)
-                    if rows_to_add:
-                        from sqlalchemy import update as sa_update
-                        async with get_session() as session:
-                            for row in rows_to_add:
-                                # Case-insensitive existence check — the DB's
-                                # unique index is on (race_id, LOWER(horse_name)),
-                                # and _persist_live_results / prior seed attempts
-                                # can persist a differently-cased spelling of the
-                                # same horse ("COUNTY KILKENNY (IRE)" vs
-                                # "County Kilkenny (IRE)"). A case-sensitive check
-                                # would miss it, then the INSERT trips the unique
-                                # index during autoflush and rolls back the whole
-                                # batch, leaving the race with only whatever rows
-                                # got in via an earlier partial attempt. Result:
-                                # UI stuck on "Result pending" even though bits of
-                                # the field are already in HistoricalResultRow.
-                                existing = (await session.execute(
-                                    select(HistoricalResultRow.id, HistoricalResultRow.starting_price)
-                                    .where(HistoricalResultRow.race_id == row.race_id)
-                                    .where(func.lower(HistoricalResultRow.horse_name) == row.horse_name.lower())
-                                    .limit(1)
-                                )).first()
-                                if not existing:
-                                    session.add(row)
-                                elif existing.starting_price is None and row.starting_price is not None:
-                                    # Row was written by _persist_live_results without SP; fill it in now
-                                    await session.execute(
-                                        sa_update(HistoricalResultRow)
-                                        .where(HistoricalResultRow.id == existing.id)
-                                        .values(starting_price=row.starting_price)
-                                    )
-                            await session.commit()
-                        log.info("[on-demand-seed] Seeded %d results for %s", len(rows_to_add), race_id)
+                await _seed_results_for_date(date_str)
             except Exception as e:
-                log.warning("[on-demand-seed] Failed to fetch %s/%s: %s", vc, date_str, e)
+                log.warning("[on-demand-seed] central seed failed for %s: %s", date_str, e)
+
+        # Re-read the freshly seeded positions for the requested races.
+        async with get_session() as session:
+            new_rows = (await session.execute(
+                select(HistoricalResultRow.race_id, HistoricalResultRow.horse_name, HistoricalResultRow.position)
+                .where(HistoricalResultRow.race_id.in_(unseeded))
+            )).all()
+        for r in new_rows:
+            db_positions[(r.race_id, _normalize_horse(r.horse_name))] = r.position
 
     return db_positions
 
@@ -15661,23 +15596,11 @@ async def list_meetings(race_date: str = _today()):
     except Exception as e:
         log.debug("[list_meetings] DB cache read skipped: %s", e)
     client = get_tab_client()
-    # PAST DATES: skip RA entirely. Every meeting that ran that day is
-    # already in the DB (via RacePredictionRow / RunnerPredictionRow /
-    # HistoricalResultRow). Hitting RA for past dates was contributing to
-    # the ~30s past-day page-load — same class of bug as the meeting-
-    # detail + live-odds fixes shipped earlier today.
-    is_past_date = race_date < _today_aest().isoformat()
-    if is_past_date:
-        meetings = []
-    elif _ra_breaker_open(client):
-        log.info("[list_meetings] RA breaker open — using DB-only path for %s", race_date)
-        meetings = []
-    else:
-        try:
-            meetings = await client.get_meetings(race_date)
-        except Exception as e:
-            log.exception("list_meetings failed for %s", race_date)
-            meetings = []
+    # NON-RA (2026-07-23): the Lounge no longer hits RA on page load. Every
+    # meeting we enrich (all Sportsbet-booked meetings) is already in the DB
+    # via RacePredictionRow / RunnerPredictionRow, and the DB merge below builds
+    # the venue list from there. RA is reserved for the morning enrich only.
+    meetings: list = []
 
     from horse_engine.clients.weather import get_weather_for_venue
 
@@ -16157,64 +16080,45 @@ async def get_meeting(race_date: str, venue_code: str):
         })
     race_list.sort(key=lambda r: r["race_number"])
 
-    # ── Step 2: top-up with live RA data (best-effort) ───────────────────────
-    # Adds: live status for open/closed races + any races not yet enriched.
-    # For PAST dates every race is already settled, race times + names are
-    # already in the DB, and RA has nothing new to add — skip the 25s TAB
-    # call entirely. The Lounge fires this endpoint per meeting on every
-    # date click, so past-date pages were paying 25s × N meetings of pure
-    # latency for zero information gain.
+    # ── Step 2: top-up start times from Sportsbet (best-effort, non-RA) ──────
+    # RA is no longer touched here (2026-07-23). The DB already holds every
+    # enriched race (names, distances, conditions); the only live top-up we
+    # still want is accurate start times, which Sportsbet publishes and which
+    # is never WAF-blocked. Past dates are fully settled in the DB, so skip.
     ra_times: dict[str, str] = {}  # race_id → startTime, for DB back-fill
     is_past_date = race_date < _today_aest().isoformat()
     client = get_tab_client() if not is_past_date else None
-    # Respect the RA circuit breaker — when RA is confirmed down, skip the
-    # call entirely rather than paying the timeout on every request. Cuts
-    # meeting page load from 25s → <100ms when the DO proxy is unresponsive.
-    if not is_past_date and not _ra_breaker_open(client):
+    if not is_past_date:
         try:
             slug = _meeting_slug(venue_code, race_date)
-            # 25s → 6s. Even a healthy RA responds in <3s; 6s is enough
-            # headroom for a hiccup while catching real degradation fast.
-            # The Lounge fires this per meeting on every date click, so
-            # a stuck RA used to freeze the UI for the full 25s per venue.
-            raw_races = await asyncio.wait_for(client.get_meeting_races(slug), timeout=6)
-            ra_by_num = {r.get("eventNumber"): r for r in raw_races}
-            existing_nums = {r["race_number"] for r in race_list}
-            for r_num, r in ra_by_num.items():
-                race_id = f"{race_date}_{venue_code}_R{r_num}"
-                start_time = r.get("startTime")
-                if start_time:
-                    ra_times[race_id] = start_time
-                if r_num in existing_nums:
-                    for item in race_list:
-                        if item["race_number"] == r_num:
-                            item["status"] = r.get("status")
-                            if not item["race_name"]:   item["race_name"]   = r.get("name")
-                            if not item["distance"]:    item["distance"]    = r.get("distance")
-                            if not item["scheduled_time"]: item["scheduled_time"] = start_time
-                            if not item["time"]:        item["time"]        = start_time
-                            break
-                else:
-                    race_list.append({
-                        "race_id": race_id,
-                        "race_number": r_num,
-                        "race_name": r.get("name"),
-                        "distance": r.get("distance"),
-                        "scheduled_time": start_time,
-                        "time": start_time,
-                        "status": r.get("status"),
-                        "track_condition": None,
-                        "field_size": None,
-                        "prize_money": None,
-                    })
-            race_list.sort(key=lambda r: r["race_number"])
+            sb_times = await _fetch_race_times(client, slug)  # {race_number: iso}
+            for item in race_list:
+                st = sb_times.get(item["race_number"])
+                if not st:
+                    continue
+                ra_times[item["race_id"]] = st
+                if not item["scheduled_time"]: item["scheduled_time"] = st
+                if not item["time"]:           item["time"]           = st
         except Exception as e:
-            log.warning("[get_meeting] RA fallback failed for %s/%s: %s", venue_code, race_date, e)
+            log.warning("[get_meeting] Sportsbet time top-up failed for %s/%s: %s", venue_code, race_date, e)
 
     race_ids = [r["race_id"] for r in race_list]
 
-    # Seed resulted races before the main DB read so winners are available immediately
-    resulted_race_ids = {r["race_id"] for r in race_list if r.get("status") == "resulted"}
+    # Seed finished races before the main DB read so winners are available
+    # immediately. RA status is gone (2026-07-23), so "finished" is decided by
+    # start time being in the past; the seed itself is OddsPro+Sportsbet and
+    # idempotent (already-seeded races are skipped).
+    _now_utc = datetime.utcnow().replace(tzinfo=timezone.utc)
+    resulted_race_ids = set()
+    for r in race_list:
+        st = r.get("scheduled_time") or r.get("time")
+        if not st:
+            continue
+        try:
+            if datetime.fromisoformat(str(st).replace("Z", "+00:00")) < _now_utc:
+                resulted_race_ids.add(r["race_id"])
+        except (ValueError, TypeError):
+            continue
     if resulted_race_ids:
         await _seed_race_results_on_demand(list(resulted_race_ids))
 
@@ -16620,36 +16524,26 @@ async def live_odds(race_id: str):
     model_probs_src = hist_stored if (db_settled and hist_stored) else stored
     model_probs = {r.horse_name: r.win_probability or 0.0 for r in model_probs_src}
 
-    # ── Step 2: try TAB for live odds + any missing positions ────────────────
+    # ── Step 2: OddsPro live odds for still-open races ───────────────────────
+    # RA is no longer touched here (2026-07-23): live win odds come from
+    # OddsPro, which is never WAF-blocked. Positions for settled races are in
+    # HistoricalResultRow (below); an unsettled race has none yet, so we only
+    # need odds. Skip entirely for already-settled past dates — pure latency.
     ra_tote: dict[str, tuple] = {}   # horse → (current_odds, actual_position)
     ra_ok = False
     client = get_tab_client()
-    # Skip when RA breaker is open — saves the 5s timeout pain. Page falls
-    # back to DB-only positions, which is correct for settled races and
-    # acceptable degradation for unsettled.
-    # Also skip entirely for settled past races — SP + positions are
-    # already in HistoricalResultRow, so the TAB call is pure latency for
-    # zero new data. Cuts live-odds endpoint from ~5s to ~50ms for past
-    # dates. Only call TAB when the race is still open (no DB results).
-    if not db_settled and not _ra_breaker_open(client):
+    if not db_settled:
         try:
-            slug = _meeting_slug(venue_code, race_date)
-            # Timeout 15s → 5s. Was burning 15s/race-page-load when RA
-            # degraded; the result bar would either not render or arrive
-            # painfully late. 5s is enough headroom for a healthy RA.
-            raw_event = await asyncio.wait_for(client.get_race(slug, race_num), timeout=5)
-            if raw_event:
-                for r in raw_event.get("runners", []):
-                    if r.get("scratched"):
-                        continue
-                    horse = r.get("runnerName", "")
-                    tote_win = next((float(p["winPrice"]) for p in r.get("prices", []) if p.get("priceType") == "Win" and p.get("winPrice")), None)
-                    fixed_win = next((float(p["winPrice"]) for p in r.get("prices", []) if p.get("priceType") == "FixedWin" and p.get("winPrice")), None)
-                    current_odds = fixed_win or tote_win
-                    pos_raw = r.get("finishingPosition")
-                    actual_position = int(pos_raw) if pos_raw and int(pos_raw) > 0 else None
-                    ra_tote[horse] = (current_odds, actual_position)
-                ra_ok = True
+            op_odds = await _fetch_live_odds(client, race_id)  # {normalized_name: odds}
+            if op_odds:
+                # ra_tote is keyed by raw horse name downstream; map our model
+                # horses (from stored predictions) to their OddsPro price by
+                # normalised name so the merge in Step 3 lines up.
+                for hname in model_probs.keys():
+                    price = op_odds.get(_normalize_horse(hname))
+                    if price:
+                        ra_tote[hname] = (price, None)
+                ra_ok = bool(ra_tote)
         except Exception:
             pass  # use DB data only
 
