@@ -1727,7 +1727,8 @@
       const resEl = document.getElementById(`lo-res-${r.tab_number}`);
       if (resEl && live.actual_position) {
         const pos = live.actual_position;
-        const posLabel = pos === 1 ? '1st' : pos === 2 ? '2nd' : pos === 3 ? '3rd' : `${pos}th`;
+        // pos ≥ 90 is the "ran but unplaced" sentinel — never a real place.
+        const posLabel = pos === 1 ? '1st' : pos === 2 ? '2nd' : pos === 3 ? '3rd' : (pos >= 90 ? 'unplaced' : `${pos}th`);
         let cls, label;
         if (live.is_top_pick) {
           // Model pick: green if won, gold if placed, red if missed

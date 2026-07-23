@@ -1496,7 +1496,8 @@
         }
         const pos = p.actual_position;
         if (pos != null) {
-          const posLabel = pos === 1 ? '1st' : pos === 2 ? '2nd' : pos === 3 ? '3rd' : `${pos}th`;
+          // pos ≥ 90 is the "ran but unplaced" sentinel — never a real place.
+          const posLabel = pos === 1 ? '1st' : pos === 2 ? '2nd' : pos === 3 ? '3rd' : (pos >= 90 ? 'unplaced' : `${pos}th`);
           if (p.won) {
             const sp = p.sp ? ` · SP $${p.sp.toFixed(2)}` : '';
             resultBanner = `<div class="result-banner won">✓ WON · ${posLabel}${sp}</div>`;
