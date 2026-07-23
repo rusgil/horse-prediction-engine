@@ -19834,187 +19834,22 @@ async def seed_ra_results(
         }
     from sqlalchemy import delete as sa_delete
 
-    client = get_tab_client()
-    ra = client._ra
-
-    # Find all predictions for this date. Mutable is the canonical source of
-    # "which venues we predicted" — we need it to scope the venue/state lookup.
-    # History is also fetched so feature_vector_json on the new HistoricalResultRow
-    # rows can be sourced from the immutable pre-race snapshot when available
-    # (BUG-36) rather than mutable, which can carry post-race contamination for
-    # races without a snapshot.
-    async with get_session() as session:
-        pred_rows = (await session.execute(
-            select(RunnerPredictionRow)
-            .where(RunnerPredictionRow.race_id.like(f"{race_date}_%"))
-            .where(RunnerPredictionRow.cancelled.is_(False) | RunnerPredictionRow.cancelled.is_(None))
-        )).scalars().all()
-
-        hist_rows = (await session.execute(
-            select(RunnerPredictionHistoryRow)
-            .where(RunnerPredictionHistoryRow.race_id.like(f"{race_date}_%"))
-            .where(RunnerPredictionHistoryRow.enriched_json.isnot(None))
-            .where(RunnerPredictionHistoryRow.cancelled.is_(False) | RunnerPredictionHistoryRow.cancelled.is_(None))
-            .where(RunnerPredictionHistoryRow.source == "live")
-        )).scalars().all()
-
-    if not pred_rows:
-        return {"status": "ok", "seeded": 0, "detail": "no predictions for this date"}
-
-    # Index history by (race_id, normalized horse name) for fv_json lookup.
-    hist_by_key: dict[tuple[str, str], RunnerPredictionHistoryRow] = {
-        (h.race_id, _normalize_horse(h.horse_name)): h for h in hist_rows
-    }
-
-    # OddsPro-first (2026-07-23): seed finishing order from OddsPro (non-RA) so a
-    # manual reseed works even when RA is WAF-blocked. The RA loop below then
-    # only fills races OddsPro didn't cover. Same helper the cron uses.
-    _op_already: set[str] = set()
-    op_seeded = await _seed_results_from_oddspro(client, race_date, pred_rows, _op_already)
-    op_seeded += await _seed_results_from_sportsbet(race_date, pred_rows, _op_already)
-
-    # Group predictions by (venue_name, state) → list of race_ids
-    venue_state_map: dict[tuple[str, str], set[str]] = {}
-    for row in pred_rows:
-        v = (row.venue or "").strip()
-        s = (row.state or "").strip().upper()
-        if v and s:
-            venue_state_map.setdefault((v, s), set()).add(row.race_id)
-
-    seeded_total = 0
-    detail: list[dict] = []
-
-    for (venue_name, state), race_ids in venue_state_map.items():
-        # Per-venue try/except — one venue's parse failure (e.g. Geelong's
-        # 31KB abandoned-meeting page on 2026-07-10) MUST NOT crash the
-        # whole seed sweep. Was 500-ing the endpoint for every date that
-        # had any pathological RA page.
-        try:
-            ra_key, results = await ra.find_results(race_date, state, venue_name)
-        except Exception as e:
-            log.warning("[seed-ra-results] %s/%s find_results raised: %s",
-                        venue_name, state, e)
-            detail.append({"venue": venue_name, "state": state,
-                           "races_found": 0, "error": str(e)[:200]})
-            continue
-        if not results:
-            detail.append({"venue": venue_name, "state": state, "races_found": 0})
-            continue
-
-        venue_code = _parse_race_id(list(race_ids)[0])[1]
-        seeded_here = 0
-        races_detail = []
-
-        for race_num, race_data in results.items():
-            race_id = f"{race_date}_{venue_code}_R{race_num}"
-            runners = race_data.get("runners", {})  # {name_lower: {position, margin, sp}}
-            runners_with_pos = [(n, rd["position"]) for n, rd in runners.items() if rd.get("position") and rd["position"] > 0]
-            if not runners:
-                races_detail.append({"race_id": race_id, "skip": "no runners"})
-                continue
-
-            deleted = 0
-            async with get_session() as session:
-                if force:
-                    # Wipe existing rows for this race so fresh RA data replaces stale ones
-                    res = await session.execute(
-                        sa_delete(HistoricalResultRow)
-                        .where(HistoricalResultRow.race_id == race_id)
-                    )
-                    deleted = res.rowcount
-                    await session.commit()
-
-                race_seeded = 0
-                for name_lower, rd in runners.items():
-                    pos = rd.get("position")
-                    if not pos or pos <= 0:
-                        continue
-                    sp = rd.get("sp")
-                    margin = float(rd.get("margin") or 0)
-
-                    # Match by race + normalized horse name. When duplicates
-                    # exist (post-race re-enrichment can leave two rows
-                    # for the same horse — one with tab_number, one
-                    # without), prefer the one WITH tab_number so
-                    # HistoricalResultRow.tab_number populates for the
-                    # settle path. Falling back on mutable-then-history-
-                    # then-nothing.
-                    norm_name = _normalize_horse(name_lower)
-                    _matches = [p for p in pred_rows if p.race_id == race_id
-                                and _normalize_horse(p.horse_name) == norm_name]
-                    matched_pred = next(
-                        (p for p in _matches if p.tab_number is not None),
-                        _matches[0] if _matches else None,
-                    )
-                    # Fallback tab_number: if the matched mutable row has
-                    # no tab, look up in history (source="live" only).
-                    tab_from_hist = None
-                    if matched_pred is None or matched_pred.tab_number is None:
-                        matched_hist_tab = hist_by_key.get((race_id, norm_name))
-                        if matched_hist_tab and matched_hist_tab.tab_number is not None:
-                            tab_from_hist = matched_hist_tab.tab_number
-
-                    if not force:
-                        existing_at_pos = (await session.execute(
-                            select(HistoricalResultRow.horse_name)
-                            .where(HistoricalResultRow.race_id == race_id)
-                            .where(HistoricalResultRow.position == pos)
-                        )).scalars().all()
-                        if any(_normalize_horse(h) == _normalize_horse(name_lower) for h in existing_at_pos):
-                            continue
-
-                    display_name = matched_pred.horse_name if matched_pred else name_lower.title()
-                    # Prefer history's enriched_json (immutable pre-race snapshot)
-                    # over mutable's, which may be post-race-contaminated for
-                    # races without a snapshot (BUG-36).
-                    matched_hist = hist_by_key.get((race_id, _normalize_horse(name_lower)))
-                    fv_json = (matched_hist.enriched_json if matched_hist
-                               else (matched_pred.enriched_json if matched_pred else None))
-                    session.add(HistoricalResultRow(
-                        race_id=race_id,
-                        horse_name=display_name,
-                        position=pos,
-                        beaten_margin=margin,
-                        winner=pos == 1,
-                        placed=pos <= 3,
-                        starting_price=sp,
-                        # Without tab_number, _settle_bets_for_race can't
-                        # map finishing positions to bet-box tab numbers
-                        # and leaves the race in 'pending' forever.
-                        # Priority: RA's own results 'No.' column →
-                        # matched_pred.tab_number → history-row fallback.
-                        # RA is primary now because finishers can appear
-                        # in results that were not in our pre-race field
-                        # (missed enrichment, late scratchings), and
-                        # those cases previously left tab_number NULL
-                        # forever with no way to recover from our own DB.
-                        tab_number=(
-                            rd.get("tab_number")
-                            or (getattr(matched_pred, "tab_number", None)
-                                if matched_pred and matched_pred.tab_number is not None
-                                else tab_from_hist)
-                        ),
-                        feature_vector_json=fv_json,
-                    ))
-                    race_seeded += 1
-                await session.commit()
-
-            seeded_here += race_seeded
-            races_detail.append({
-                "race_id": race_id,
-                "runners_total": len(runners),
-                "runners_with_pos": len(runners_with_pos),
-                "deleted": deleted,
-                "seeded": race_seeded,
-                "winner_from_ra": runners_with_pos[0] if runners_with_pos else None,
-            })
-
-        seeded_total += seeded_here
-        detail.append({"venue": venue_name, "state": state, "ra_key": ra_key,
-                       "races_found": len(results), "seeded": seeded_here, "races": races_detail})
-
-    return {"status": "ok", "seeded": seeded_total + op_seeded,
-            "oddspro_seeded": op_seeded, "ra_seeded": seeded_total, "detail": detail}
+    # Legacy alias — delegates to the ONE central seeding function
+    # _seed_results_for_date (OddsPro → Sportsbet → RA). Kept only for its
+    # x-cron-secret + force/delete-first contract. Prefer
+    # POST /api/admin/results/{race_date}.
+    if force:
+        # Clear existing result rows for the date so wrong rows are replaced,
+        # then the central function re-seeds from OddsPro/Sportsbet/RA.
+        async with get_session() as session:
+            await session.execute(
+                sa_delete(HistoricalResultRow).where(
+                    HistoricalResultRow.race_id.like(f"{race_date}_%")
+                )
+            )
+            await session.commit()
+    seeded = await _seed_results_for_date(race_date)
+    return {"status": "ok", "seeded": seeded, "delegated_to": "_seed_results_for_date"}
 
 
 @app.post("/api/admin/patch-tab-numbers/{race_date}")
