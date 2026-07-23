@@ -2223,7 +2223,6 @@
     // Use SP for completed races, tote odds for upcoming
     const displayOdds = (result && result.sp) ? result.sp : pick.best_available_odds;
     const oddsLabel   = (result && result.sp) ? 'Starting Price' : 'Best Odds';
-    const pay = calcPayout(displayOdds, stake);
 
     // Odds threshold colouring: green ≥ $2.50, purple ≥ $3.00. Cascade so
     // purple wins on the higher band. Applies to both live BAO and SP.
@@ -2234,53 +2233,10 @@
       ? `<div class="odds-badge${oddsClass}"><span class="odds-label">${oddsLabel}</span>$${displayOdds.toFixed(2)}</div>`
       : `<div class="odds-badge" style="color:var(--text-dim)"><span class="odds-label">Odds</span>TBA</div>`;
 
-    let payoutHtml;
-    if (isPast && result) {
-      // Definitive loss requires POSITIVE evidence: we know the horse's
-      // finishing position AND it's out of the placings. Anything else
-      // — no_result flag, scratched, missing position — is "pending",
-      // not a loss. Rule: any pending result must NOT show as -$10.
-      // Fixes FALANGHINA (Morphettville R3 2026-07-11): scratched at
-      // the wire, our system didn't catch the scratch in time, so the
-      // pick shows up without a position and the fall-through was
-      // drawing a red $10 loss panel.
-      if (result.scratched) {
-        payoutHtml = `<div class="no-odds">Scratched — no bet</div>`;
-      } else if (result.no_result === true) {
-        payoutHtml = `<div class="no-odds">Result pending</div>`;
-      } else if (result.winner) {
-        // Winner — coloured chip only. Odds badge already shows the price.
-        payoutHtml = `<div class="payout-box"><div class="payout-profit-label" style="color:var(--green);font-size:1rem">✓ Won</div></div>`;
-      } else if (result.position && result.position > 3) {
-        // Confirmed miss — coloured chip only.
-        payoutHtml = `
-          <div class="payout-box" style="background:rgba(239,68,68,0.08);border-color:rgba(239,68,68,0.2);">
-            <div class="payout-profit-label" style="color:#f87171;font-size:1rem">✗ Lost</div>
-          </div>`;
-      } else if (result.placed || (result.position && result.position <= 3)) {
-        // Placed (2nd/3rd) but not the winner — the win bet didn't land, but
-        // the horse ran a place. Show an amber Placed chip so the right side
-        // MATCHES the left badge (was falling through to "Result pending",
-        // contradicting the "Placed 2nd" badge — Warrnambool R8 GOLDEN GARDEN
-        // 2026-07-23).
-        const posLbl = result.position ? ordinal(result.position) : '';
-        payoutHtml = `
-          <div class="payout-box" style="background:rgba(245,158,11,0.10);border-color:rgba(245,158,11,0.25);">
-            <div class="payout-profit-label" style="color:#f59e0b;font-size:1rem">Placed ${posLbl}</div>
-          </div>`;
-      } else {
-        // No position, not a winner, not placed, not scratched/no_result —
-        // treat as pending. Silent regression to loss was the bug.
-        payoutHtml = `<div class="no-odds">Result pending</div>`;
-      }
-    } else if (isPast) {
-      payoutHtml = `<div class="no-odds">Result pending</div>`;
-    } else {
-      // Live / upcoming: no payout math shown. The odds badge (colour
-      // coded by threshold — green ≥ $2.50, purple ≥ $3.00) carries all
-      // the value users need.
-      payoutHtml = '';
-    }
+    // The right column no longer renders a result/payout chip — the outcome
+    // is carried by the top-bar badge and the footer verdict (which names the
+    // finishing place when the pick was wrong). Removed the redundant panel
+    // 2026-07-23.
 
     const edgeHtml = (!isPast && pick.edge_pct != null && displayOdds)
       ? `<span class="${pick.edge_pct >= 0 ? 'edge-positive' : 'edge-negative'}">${pick.edge_pct >= 0 ? `Model beats market by ${pick.edge_pct}` : `Market prefers by ${Math.abs(pick.edge_pct)}`}</span>
@@ -2387,14 +2343,16 @@
           <div class="pick-right">
             ${oddsHtml}
             <div id="spark-${cardId}">${buildSparklineSvg(sparklineCache[`${pick.race_id}||${pick.horse_name}`])}</div>
-            ${payoutHtml}
           </div>
         </div>
         <div class="pick-footer">
           ${trackChip}${distChip}${stateChip}${weatherChip}${valueChip}
           ${isPast && result && !result.scratched && !result.no_result ? (() => {
             const pos = result.position;
-            const posLbl = pos === 2 ? '2nd' : pos === 3 ? '3rd' : pos ? `${pos}th` : '';
+            // pos ≥ 90 is the "unplaced" sentinel — show "✗ Did not place"
+            // with no parenthetical, but keep the real place for genuine
+            // out-of-placing finishes (e.g. "✗ Did not place (7th)").
+            const posLbl = pos === 2 ? '2nd' : pos === 3 ? '3rd' : (pos && pos < 90) ? `${pos}th` : '';
             const placed = (result.placed || (pos && pos <= 3)) && !result.winner;
             const winnerChip = (!result.winner && result.winner_name)
               ? `<span class="pick-footer-chip" style="color:var(--text-dim)">Winner: <strong style="color:var(--text-secondary)">${escHtml(result.winner_name)}</strong></span>`
@@ -2997,6 +2955,10 @@
 
   function ordinal(n) {
     if (!n) return '—';
+    // 99 (and anything ≥90) is the "ran but finished out of the placings"
+    // sentinel written by the seeder — never a real finishing position, so
+    // render it as "unplaced" rather than a nonsense "99th".
+    if (n >= 90) return 'unplaced';
     const s = ['th','st','nd','rd'], v = n % 100;
     return n + (s[(v-20)%10] || s[v] || s[0]);
   }
@@ -3075,7 +3037,7 @@
         <div class="payout-box" style="background:rgba(239,68,68,0.08);border-color:rgba(239,68,68,0.2);">
           <div class="payout-profit-label" style="color:var(--text-dim)">$${stake} loss</div>
           <div class="payout-profit" style="color:#f87171;">-$${(+stake).toFixed(2)}</div>
-          ${p.position ? `<div class="payout-return" style="color:var(--text-dim)">Finished ${ordinal(p.position)}</div>` : ''}
+          ${p.position ? `<div class="payout-return" style="color:var(--text-dim)">${p.position >= 90 ? 'Unplaced' : 'Finished ' + ordinal(p.position)}</div>` : ''}
         </div>`;
     }
 
