@@ -679,6 +679,15 @@ async def _rerank_race_after_scratch(session, race_id: str) -> bool:
 
     sw = sum((row.win_probability or 0) for row in survivors)
     sp = sum((row.place_probability or 0) for row in survivors)
+    # Win probs are a sum-to-1 distribution, so renormalising by sw is correct.
+    # Place probs are NOT — each is an independent P(top-3), and the field sum
+    # should be ≈ the number of places (3 for 8+ runners, 2 for 5-7, 1 for <5).
+    # Dividing place by sp forced the field to sum to 1.0, which deflated every
+    # place prob below its win prob (structurally impossible — P(top-3) ≥ P(top-1))
+    # and tripped place_prob_less_than_win_prob / place_prob_sum_off_from_places_count
+    # after any scratch. Scale place to this target instead, then enforce the axiom.
+    n_surv = len(survivors)
+    place_target = 3.0 if n_surv >= 8 else 2.0 if n_surv >= 5 else 1.0
 
     by_win = sorted(survivors, key=lambda r: -(r.win_probability or 0))
     by_place = sorted(survivors, key=lambda r: -(r.place_probability or 0))
@@ -695,7 +704,8 @@ async def _rerank_race_after_scratch(session, race_id: str) -> bool:
 
     for row in survivors:
         new_win = ((row.win_probability or 0) / sw) if sw > 0 else 0.0
-        new_place = ((row.place_probability or 0) / sp) if sp > 0 else 0.0
+        new_place = ((row.place_probability or 0) / sp * place_target) if sp > 0 else 0.0
+        new_place = min(max(new_place, new_win), 0.99)  # enforce P(top-3) ≥ P(top-1)
         await session.execute(
             sa_update(RunnerPredictionRow)
             .where(RunnerPredictionRow.id == row.id)
@@ -743,7 +753,8 @@ async def _rerank_race_after_scratch(session, race_id: str) -> bool:
             if surv is None:
                 continue
             new_win = ((surv.win_probability or 0) / sw) if sw > 0 else 0.0
-            new_place = ((surv.place_probability or 0) / sp) if sp > 0 else 0.0
+            new_place = ((surv.place_probability or 0) / sp * place_target) if sp > 0 else 0.0
+            new_place = min(max(new_place, new_win), 0.99)  # enforce P(top-3) ≥ P(top-1)
             await session.execute(
                 sa_update(RunnerPredictionHistoryRow)
                 .where(RunnerPredictionHistoryRow.id == hist_row.id)
