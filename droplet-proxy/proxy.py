@@ -44,6 +44,20 @@ if not PROXY_SECRET:
 
 UPSTREAM_BASE = "https://www.racingaustralia.horse"
 
+# Optional residential/mobile upstream proxy. RA WAF-blocks datacenter ASNs
+# (DigitalOcean, then Hetzner nbg1 + hel1 all 403'd), so when this is set the
+# outbound curl_cffi request to RA is tunnelled through a residential exit IP
+# and RA never sees this box's datacenter IP. Format:
+#   http://user:pass@host:port   (or socks5h://user:pass@host:port)
+# curl_cffi still performs the impersonated TLS handshake to RA through the
+# CONNECT tunnel, so the fingerprint layer is preserved. Empty = direct.
+RESIDENTIAL_PROXY_URL = os.environ.get("RESIDENTIAL_PROXY_URL", "").strip()
+_PROXIES = (
+    {"http": RESIDENTIAL_PROXY_URL, "https": RESIDENTIAL_PROXY_URL}
+    if RESIDENTIAL_PROXY_URL
+    else None
+)
+
 # Impersonation profile — curl_cffi routes each request through a libcurl
 # build that matches this browser's exact TLS ClientHello, HTTP/2 SETTINGS
 # frame ordering, and header order. Keep the UA string in sync with the
@@ -103,7 +117,9 @@ def _headers(referer: Optional[str]) -> dict:
 
 @app.get("/health")
 async def health():
-    return {"status": "ok"}
+    # residential flag is a bool only — never echo the proxy URL (it carries
+    # user:pass credentials).
+    return {"status": "ok", "residential": bool(_PROXIES)}
 
 
 @app.get("/admin/cap-status")
@@ -190,6 +206,9 @@ async def proxy(path: str, request: Request):
                     headers=_headers(referer),
                     timeout=20.0,
                     allow_redirects=True,
+                    # When set, tunnel through a residential exit IP so RA
+                    # never sees this box's (WAF-blocked) datacenter IP.
+                    proxies=_PROXIES,
                 )
         except RequestsError as e:
             raise HTTPException(status_code=502, detail=f"Upstream error: {e}")

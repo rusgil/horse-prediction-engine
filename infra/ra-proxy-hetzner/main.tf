@@ -94,9 +94,10 @@ resource "hcloud_server" "ra_proxy" {
   }
 
   user_data = templatefile("${path.module}/cloud-init.yaml.tpl", {
-    proxy_secret     = var.proxy_secret
-    proxy_hostname   = "PLACEHOLDER_HOSTNAME.sslip.io"
-    proxy_py_content = local.proxy_py_content
+    proxy_secret          = var.proxy_secret
+    residential_proxy_url = var.residential_proxy_url
+    proxy_hostname        = "PLACEHOLDER_HOSTNAME.sslip.io"
+    proxy_py_content      = local.proxy_py_content
   })
 
   lifecycle {

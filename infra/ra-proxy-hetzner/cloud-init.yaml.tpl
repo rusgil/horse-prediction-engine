@@ -36,6 +36,7 @@ write_files:
     owner: root:root
     content: |
       PROXY_SECRET=${proxy_secret}
+      RESIDENTIAL_PROXY_URL=${residential_proxy_url}
 
   # /opt/ra-proxy/proxy.py - the FastAPI proxy itself.
   # owner is root here (not ra-proxy) because write_files runs before the

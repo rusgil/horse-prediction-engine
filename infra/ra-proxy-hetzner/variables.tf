@@ -10,6 +10,13 @@ variable "proxy_secret" {
   sensitive   = true
 }
 
+variable "residential_proxy_url" {
+  description = "Optional residential/mobile upstream proxy the box tunnels its RA request through, so RA never sees this box's WAF-blocked datacenter IP. Format http://user:pass@host:port (or socks5h://...). Empty = direct. Contains credentials — keep in terraform.tfvars (gitignored)."
+  type        = string
+  sensitive   = true
+  default     = ""
+}
+
 variable "ssh_key_names" {
   description = "SSH key name(s) already registered with Hetzner (via console or hcloud CLI). Get with: hcloud ssh-key list."
   type        = list(string)
