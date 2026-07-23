@@ -601,6 +601,25 @@ async def _scheduled_pre_race_enrich():
         except Exception as e:
             log.warning("[enrich] Sportsbet allowlist skipped (keeping all meetings): %s", e)
 
+        # Hard blocklist — ALWAYS applied, independent of the Sportsbet allowlist.
+        # Some blocklisted venues are ON Sportsbet (Cannon Park is listed there as
+        # "Cairns"), so the allowlist path admits them — but they must still be
+        # skipped because OddsPro doesn't carry them, forcing a daily RA results
+        # fallback (the exact cost the blocklist exists to avoid). The allowlist
+        # is an "only these" filter; the blocklist is a "never these" filter — both
+        # apply. Without this, blocklisted venues leaked whenever Sportsbet listed
+        # them (blocklisted_venue_leaked_through_enrich, 2026-07-23).
+        if _SKIP_ENRICHMENT_VENUES:
+            def _vc_of(m: dict) -> str:
+                slug = m.get("slug", "")
+                return (slug[:-len(date_sfx)] if slug.endswith(date_sfx)
+                        else slug.split("-")[0] if slug else "").lower()
+            _pre_block = len(meetings)
+            meetings = [m for m in meetings if _vc_of(m) not in _SKIP_ENRICHMENT_VENUES]
+            if len(meetings) != _pre_block:
+                log.info("[enrich] blocklist: skipped %d blocklisted venue(s) for %s",
+                         _pre_block - len(meetings), today)
+
         # Check for abandoned meetings (dropped venues or all races closed)
         await _cancel_abandoned_meetings(client, today)
 
