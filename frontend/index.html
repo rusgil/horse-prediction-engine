@@ -1225,11 +1225,6 @@
       <button class="main-mode-pill" id="mainModeAll" onclick="setMainMode('all')">All meetings</button>
       <span class="main-mode-hint">Sharp = meetings with a high-confidence pick (≥30%)</span>
     </div>
-    <div class="sort-bar">
-      <span>Sort:</span>
-      <button class="sort-btn active" id="loungeSortWin" onclick="setLoungeSort('win')">Win</button>
-      <button class="sort-btn" id="loungeSortPlace" onclick="setLoungeSort('place')">Place</button>
-    </div>
     <div class="section-label" id="meetingsLabel">Today's Meetings</div>
     <div id="meetingsBanner"></div>
     <div class="pills-scroller">
@@ -1318,7 +1313,7 @@
     meetingStats: {}, // venue_code → {wins, total} for win% pills
     statsLoadGen: 0,  // incremented on date change to cancel stale _loadMeetingWinRate callbacks
     mainMode: 'sharp', // 'sharp' or 'all' — Sharp shows meetings with ≥30% best-pick confidence
-    loungeSort: 'win', // 'win' | 'place' — order meeting pills by best win% (default) or best place%
+    loungeSort: 'win', // 'win' | 'place' — order the race's horse list by win% (default) or place%
     showOlderDates: false, // when false, only Today/Mon/Sun shown; older 7 days behind a toggle
   };
 
@@ -1399,14 +1394,19 @@
   }
   window.setMainMode = setMainMode;
 
-  // Sort the Lounge's meeting pills by best win% (default) or best place%.
+  // Reorder the horse list for the current race by win% (default) or place%.
   function setLoungeSort(mode) {
     S.loungeSort = (mode === 'place') ? 'place' : 'win';
     const winBtn = document.getElementById('loungeSortWin');
     const placeBtn = document.getElementById('loungeSortPlace');
     if (winBtn) winBtn.classList.toggle('active', S.loungeSort === 'win');
     if (placeBtn) placeBtn.classList.toggle('active', S.loungeSort === 'place');
-    renderMeetingPills();
+    // Re-render only the runner cards — leaves the live-odds bar + verdict intact.
+    const listEl = document.getElementById('runnersList');
+    if (listEl) {
+      const race = S.races.find(r => r.race_id === S.selectedRaceId) || {};
+      listEl.innerHTML = _runnerCardsHtml(race.scheduled_time || race.time || '');
+    }
   }
   window.setLoungeSort = setLoungeSort;
 
@@ -1978,15 +1978,6 @@
           <div style="color:rgba(196,181,253,0.85);font-size:13px">Sharp thresholds weren't met by any meeting — switched to All meetings automatically.</div>
         </div>`;
     }
-    // Sort by best-pick confidence: win% (default) or place%. Meetings whose
-    // stats haven't loaded yet sink to the bottom; this re-sorts as each
-    // meeting's stats land (renderMeetingPills is re-called on stats load).
-    const _sortKey = S.loungeSort === 'place' ? 'maxPlace' : 'maxConf';
-    meetings = meetings.slice().sort((a, b) => {
-      const av = S.meetingStats[a.venue_code]?.[_sortKey] ?? -1;
-      const bv = S.meetingStats[b.venue_code]?.[_sortKey] ?? -1;
-      return bv - av;
-    });
     meetings.forEach(m => {
       const el = document.createElement('div');
       el.className = 'pill' + (S.selectedMeeting?.venue_code === m.venue_code ? ' active' : '');
@@ -2069,11 +2060,6 @@
         const pct = r.top_win_probability ? Math.round(r.top_win_probability * 100) : 0;
         return Math.max(max, pct);
       }, 0);
-      // Best place% across the meeting's enriched races — powers the Place sort.
-      const maxPlace = enriched.reduce((max, r) => {
-        const pct = r.top_place_probability ? Math.round(r.top_place_probability * 100) : 0;
-        return Math.max(max, pct);
-      }, 0);
       const settledWithPlace = races.filter(r => r.model_placed !== null && r.model_placed !== undefined);
       // Compute BOTH all-mode and Sharp-only stats so the tile can render
       // whichever the current filter selects.
@@ -2093,7 +2079,7 @@
         sharpPlaced: sharpSettledWithPlace.filter(r => r.model_placed).length,
         sharpTotal: sharpSettled.length,
         sharpAny: sharpAny.length,
-        enriched: enriched.length, maxConf, maxPlace
+        enriched: enriched.length, maxConf
       };
 
       const statEl = document.getElementById(`pill-stat-${key}`);
@@ -2118,10 +2104,9 @@
         confEl.style.color = maxConf >= 40 ? 'var(--green)' : 'var(--gold)';
         confEl.style.display = '';
       }
-      // Re-render pills: in Sharp mode a meeting's visibility may have just
-      // changed, and in all modes the new maxConf/maxPlace re-orders the
-      // win/place sort as each meeting's stats land.
-      renderMeetingPills();
+      // When Sharp filter is on, the visibility of this meeting may have
+      // just changed (maxConf became known). Re-render to add/remove the pill.
+      if (S.mainMode === 'sharp') renderMeetingPills();
     } catch (_) {}
   }
 
@@ -2427,17 +2412,30 @@
 
   // ── Render runners ────────────────────────────────────────────────────────
 
+  // Runner cards ordered by the current sort: win% (default) or place%.
+  function _runnerCardsHtml(raceTime) {
+    const key = S.loungeSort === 'place' ? 'place_probability' : 'win_probability';
+    const sorted = S.runners.slice().sort((a, b) => (b[key] || 0) - (a[key] || 0));
+    return sorted.map((r, i) => renderRunnerCard(r, i, raceTime)).join('');
+  }
+
   function renderRunners(race) {
     if (!S.runners.length) {
       return `<div class="empty-state">No runners found for this race.</div>`;
     }
 
     const raceTime = race.scheduled_time || race.time || '';
-    const cards = S.runners.map((r, i) => renderRunnerCard(r, i, raceTime)).join('');
+    // Sort control at the top of the horse list — reorders the runners by the
+    // model's win chance (default) or place chance. Same look as Edge's Sort.
     return `
+      <div class="sort-bar">
+        <span>Sort:</span>
+        <button class="sort-btn${S.loungeSort === 'win' ? ' active' : ''}" id="loungeSortWin" onclick="setLoungeSort('win')">Win</button>
+        <button class="sort-btn${S.loungeSort === 'place' ? ' active' : ''}" id="loungeSortPlace" onclick="setLoungeSort('place')">Place</button>
+      </div>
       <div id="live-odds-bar" class="live-odds-bar" style="display:none"></div>
       <div id="model-verdict" class="model-verdict" style="display:none"></div>
-      <div class="runners-list">${cards}</div>`;
+      <div class="runners-list" id="runnersList">${_runnerCardsHtml(raceTime)}</div>`;
   }
 
   function renderRunnerCard(r, i, raceTime) {
