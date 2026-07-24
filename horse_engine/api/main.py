@@ -8971,6 +8971,95 @@ async def place_harville_backtest(
     }
 
 
+@app.get("/api/admin/bets/exotic-gate-sweep")
+async def exotic_gate_sweep(
+    days: int = 60,
+    x_cron_secret: Optional[str] = Header(None),
+):
+    """Sweep the exotic gate (top-3 win sum cutoff × field-size cutoff) against
+    the HARVILLE/win trifecta box (top-3 by win prob) on historical settled
+    races. For each gate: races passing + 3-horse box hit rate. Lets us pick a
+    gate that TIGHTENS while lifting the trifecta hit rate (sharp-only rule)."""
+    _check_admin(x_cron_secret)
+    days = max(7, min(int(days), 365))
+    cutoff = (_today_aest() - timedelta(days=days)).isoformat()
+
+    async with get_session() as session:
+        preds = (await session.execute(
+            select(
+                RunnerPredictionHistoryRow.race_id,
+                RunnerPredictionHistoryRow.tab_number,
+                RunnerPredictionHistoryRow.win_probability,
+                RunnerPredictionHistoryRow.enriched_at,
+            )
+            .where(RunnerPredictionHistoryRow.race_id >= f"{cutoff}_")
+            .where(RunnerPredictionHistoryRow.cancelled.is_(False)
+                   | RunnerPredictionHistoryRow.cancelled.is_(None))
+            .where(RunnerPredictionHistoryRow.source == "live")
+            .order_by(RunnerPredictionHistoryRow.enriched_at.desc())
+        )).fetchall()
+        results = (await session.execute(
+            select(HistoricalResultRow.race_id, HistoricalResultRow.tab_number,
+                   HistoricalResultRow.position)
+            .where(HistoricalResultRow.race_id >= f"{cutoff}_")
+            .where(HistoricalResultRow.position.in_([1, 2, 3]))
+        )).fetchall()
+
+    placed: dict[str, set] = {}
+    for r in results:
+        if r.tab_number is not None:
+            placed.setdefault(r.race_id, set()).add(r.tab_number)
+
+    by_race: dict[str, dict] = {}
+    for r in preds:
+        if r.tab_number is None:
+            continue
+        e = by_race.get(r.race_id)
+        row = (r.tab_number, float(r.win_probability or 0))
+        if e is None:
+            by_race[r.race_id] = {"at": r.enriched_at, "rows": [row]}
+        elif r.enriched_at == e["at"]:
+            e["rows"].append(row)
+
+    # per race: (top3_win_sum, field_size, box_hit) for the Harville/win box
+    scored = []
+    for rid, e in by_race.items():
+        pset = placed.get(rid)
+        rows = e["rows"]
+        if not pset or len(pset) != 3 or len(rows) < 4:
+            continue
+        by_win = sorted(rows, key=lambda x: -x[1])
+        top3_sum = sum(x[1] for x in by_win[:3])
+        box = {x[0] for x in by_win[:3]}
+        scored.append((top3_sum, len(rows), pset <= box))
+
+    top3_grid = [0.40, 0.45, 0.50, 0.55, 0.60]
+    field_grid = [8, 10, 11, 12, 24]
+    sweep = []
+    for t in top3_grid:
+        for f in field_grid:
+            passing = [hit for (s, n, hit) in scored if s <= t and n <= f]
+            cnt = len(passing)
+            hits = sum(1 for h in passing if h)
+            sweep.append({
+                "top3_sum_max_pct": int(round(t * 100)),
+                "field_max": f,
+                "races": cnt,
+                "box_hit_rate": round(hits / cnt * 100, 1) if cnt else None,
+            })
+    sweep.sort(key=lambda g: (-(g["box_hit_rate"] or 0), -g["races"]))
+    return {
+        "days": days,
+        "total_scorable_races": len(scored),
+        "box": "harville/win top-3",
+        "current_gate": {"top3_sum_max_pct": 55, "field_max": 11},
+        "sweep_sorted_by_hit_rate": sweep,
+        "note": "box_hit_rate = 3-horse win box contained all 3 placegetters. "
+                "Pick a gate that lifts hit rate while keeping a usable race count; "
+                "per sharp-only rule, only TIGHTEN vs the current 55%/11.",
+    }
+
+
 @app.get("/api/admin/bets/place-decisiveness-backtest")
 async def place_decisiveness_backtest(
     days: int = 60,
