@@ -4257,6 +4257,15 @@ def _compute_hedge(pick_odds: float, field_size: int, hedge_horses: list[dict]) 
 _TWO_FUNK_TOP2_MIN = 55.0  # rank-1 + rank-2 win sum threshold (percentage points)
 _TWO_FUNK_GAP_MIN = 10.0   # rank-2 vs rank-3 win gap threshold (pt)
 
+# Lab exotic (trifecta) gate — a race qualifies when the top-3 win sum is ≤ this
+# percentage AND the field is ≤ this size. Tightened from 55%/11 → 40%/10 on
+# 2026-07-24 after an ROI gate sweep (/api/admin/bets/exotic-gate-sweep):
+# small fields hit the box more often but pay tiny dividends, while OPEN races
+# (top-3 ≤40%) hit ~3% and pay ~$360 → +121% est ROI vs +6% at 55%/11. Sharp-
+# only rule honoured: both thresholds are tighter than before.
+_LAB_EXOTIC_TOP3_MAX = 40.0   # top-3 win sum, percentage points
+_LAB_EXOTIC_FIELD_MAX = 10    # max field size
+
 # ── Feature → membership-tier registry ─────────────────────────────────
 # Single source of truth for which feature belongs to which paid tier.
 # Used by API responses to tag returned objects with their tier so the
@@ -7010,7 +7019,7 @@ async def _build_lab_pick(today: str) -> Optional[dict]:
         sorted_active = sorted(active, key=lambda x: x[1])
         top3_sum = sum(p for p, _ in sorted_active[:3]) * 100
         field_size = len(active)
-        if top3_sum > 55 or field_size > 11:
+        if top3_sum > _LAB_EXOTIC_TOP3_MAX or field_size > _LAB_EXOTIC_FIELD_MAX:
             continue
         # Score: higher trio_hit prob (lower top3_sum = more open race
         # but the Trio strategy itself wants the model's top-3 to LAND).
@@ -7849,7 +7858,7 @@ async def funk_me_up_backtest(days: int = 7):
                 continue
             top3_sum = sum((r.win_probability or 0) for r in runners[:3]) * 100
             field = len([r for r in runners])
-            if top3_sum > 55 or field > 11:
+            if top3_sum > _LAB_EXOTIC_TOP3_MAX or field > _LAB_EXOTIC_FIELD_MAX:
                 continue
             scored.append((b, top3_sum))
         if not scored:
@@ -10545,7 +10554,7 @@ async def lab_winner_vs_loser_features(
         field_size = field_size_by_race.get(rid, 0)
         top3_sum = sum(r["win_prob"] for r in top3) * 100
         # Lab Sharp gate: top-3 ≤55% AND field ≤11
-        if top3_sum > 55 or field_size > 11:
+        if top3_sum > _LAB_EXOTIC_TOP3_MAX or field_size > _LAB_EXOTIC_FIELD_MAX:
             continue
         actual = actual_top3.get(rid)
         if not actual or len(actual) < 3:
