@@ -8980,6 +8980,84 @@ async def place_harville_backtest(
     }
 
 
+@app.get("/api/admin/bets/sharp-racenum-backtest")
+async def sharp_racenum_backtest(
+    days: int = 90,
+    x_cron_secret: Optional[str] = Header(None),
+):
+    """Backtest a race-number-aware Sharp win filter. Late races are far more
+    upset-prone (fav strike halves R1->R9), so require a HIGHER rank-1 win% to
+    qualify a late-race Sharp pick. Reports the rank-1 win rate + volume for the
+    current flat >=30% gate vs raising the late-race threshold for R>=cutoff."""
+    _check_admin(x_cron_secret)
+    days = max(14, min(int(days), 365))
+    cut = (_today_aest() - timedelta(days=days)).isoformat()
+    async with get_session() as session:
+        r1 = (await session.execute(
+            select(RunnerPredictionHistoryRow.race_id, RunnerPredictionHistoryRow.tab_number,
+                   RunnerPredictionHistoryRow.win_probability, RunnerPredictionHistoryRow.enriched_at)
+            .where(RunnerPredictionHistoryRow.race_id >= f"{cut}_")
+            .where(RunnerPredictionHistoryRow.model_rank == 1)
+            .where(RunnerPredictionHistoryRow.cancelled.is_(False)
+                   | RunnerPredictionHistoryRow.cancelled.is_(None))
+            .where(RunnerPredictionHistoryRow.source == "live")
+            .order_by(RunnerPredictionHistoryRow.enriched_at.desc())
+        )).fetchall()
+        winners = (await session.execute(
+            select(HistoricalResultRow.race_id, HistoricalResultRow.tab_number)
+            .where(HistoricalResultRow.race_id >= f"{cut}_")
+            .where(HistoricalResultRow.position == 1)
+        )).fetchall()
+    win_tab = {w.race_id: w.tab_number for w in winners}
+
+    seen: set = set()
+    races = []  # (race_num, rank1_win_prob, rank1_won)
+    for r in r1:
+        if r.race_id in seen:
+            continue
+        seen.add(r.race_id)
+        wt = win_tab.get(r.race_id)
+        if wt is None or r.tab_number is None or not r.win_probability:
+            continue
+        parts = r.race_id.split("_")
+        if len(parts) < 3:
+            continue
+        try:
+            rnum = int(parts[2].lstrip("Rr"))
+        except ValueError:
+            continue
+        races.append((rnum, float(r.win_probability), r.tab_number == wt))
+
+    def ev(early_thr, late_thr, late_cut):
+        q = [won for (rn, wp, won) in races
+             if wp >= (late_thr if rn >= late_cut else early_thr)]
+        c = len(q)
+        return {"qualifying": c, "win_rate": round(sum(q) / c * 100, 1) if c else None}
+
+    base = ev(0.30, 0.30, 99)  # current flat >=30%
+    # early (R1-6) vs late (R7+) win rate at the current gate — is late worse?
+    e = [won for (rn, wp, won) in races if wp >= 0.30 and rn < 7]
+    l = [won for (rn, wp, won) in races if wp >= 0.30 and rn >= 7]
+    grid = []
+    for lc in (6, 7, 8):
+        for lt in (0.30, 0.35, 0.40, 0.45):
+            g = ev(0.30, lt, lc)
+            grid.append({"late_cutoff": f"R{lc}+", "late_min_win_pct": int(lt * 100), **g})
+    grid.sort(key=lambda x: (-(x["win_rate"] or 0), -x["qualifying"]))
+    return {
+        "days": days, "scorable_races": len(races),
+        "current_gate_flat_30pct": base,
+        "at_30pct_gate": {
+            "early_R1_6": {"races": len(e), "win_rate": round(sum(e) / len(e) * 100, 1) if e else None},
+            "late_R7plus": {"races": len(l), "win_rate": round(sum(l) / len(l) * 100, 1) if l else None},
+        },
+        "race_aware_sweep": grid,
+        "note": "Early races stay at >=30%; late (R>=cutoff) require the higher win%. "
+                "win_rate = rank-1 pick won. Want a config that lifts win_rate without "
+                "gutting volume vs the flat 30% gate.",
+    }
+
+
 @app.get("/api/admin/analysis/upset-pattern")
 async def upset_pattern(
     days: int = 60,
