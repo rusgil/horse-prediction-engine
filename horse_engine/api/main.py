@@ -8980,6 +8980,88 @@ async def place_harville_backtest(
     }
 
 
+@app.get("/api/admin/analysis/upset-pattern")
+async def upset_pattern(
+    days: int = 60,
+    min_races: int = 20,
+    x_cron_secret: Optional[str] = Header(None),
+):
+    """Scan settled races for the winning starting-price pattern — how often a
+    short-priced favourite wins vs a longshot the market didn't back — broken
+    down by venue and race number. Surfaces statistical anomalies (e.g. a track
+    or race slot with an unusually high longshot-win rate). NOT proof of fixing;
+    a flag for where to look."""
+    _check_admin(x_cron_secret)
+    days = max(7, min(int(days), 365))
+    cutoff = (_today_aest() - timedelta(days=days)).isoformat()
+    async with get_session() as session:
+        rows = (await session.execute(
+            select(HistoricalResultRow.race_id, HistoricalResultRow.position,
+                   HistoricalResultRow.starting_price)
+            .where(HistoricalResultRow.race_id >= f"{cutoff}_")
+            .where(HistoricalResultRow.position == 1)
+            .where(HistoricalResultRow.starting_price.isnot(None))
+        )).fetchall()
+
+    from collections import defaultdict
+    def bkt(sp):
+        if sp < 3: return "fav <$3"
+        if sp < 6: return "$3-6"
+        if sp < 10: return "$6-10"
+        if sp < 21: return "long $10-20"
+        return "roughie $21+"
+    dist = defaultdict(int)
+    n = fav = longshot = 0
+    by_venue = defaultdict(lambda: {"races": 0, "fav": 0, "longshot": 0, "sp_sum": 0.0})
+    by_rnum = defaultdict(lambda: {"races": 0, "fav": 0, "longshot": 0})
+    for r in rows:
+        sp = r.starting_price
+        if not sp or sp <= 0:
+            continue
+        parts = r.race_id.split("_")
+        if len(parts) < 3:
+            continue
+        venue, rnum = parts[1], parts[2]
+        n += 1
+        dist[bkt(sp)] += 1
+        is_fav = sp < 3.0
+        is_long = sp >= 10.0
+        if is_fav: fav += 1
+        if is_long: longshot += 1
+        v = by_venue[venue]; v["races"] += 1; v["sp_sum"] += sp
+        if is_fav: v["fav"] += 1
+        if is_long: v["longshot"] += 1
+        rr = by_rnum[rnum]; rr["races"] += 1
+        if is_fav: rr["fav"] += 1
+        if is_long: rr["longshot"] += 1
+
+    venues = sorted(
+        ({"venue": k, "races": d["races"],
+          "fav_win_pct": round(d["fav"] / d["races"] * 100, 1),
+          "longshot_win_pct": round(d["longshot"] / d["races"] * 100, 1),
+          "avg_winning_sp": round(d["sp_sum"] / d["races"], 1)}
+         for k, d in by_venue.items() if d["races"] >= min_races),
+        key=lambda x: -x["longshot_win_pct"])
+    rnums = sorted(
+        ({"race": k, "races": d["races"],
+          "fav_win_pct": round(d["fav"] / d["races"] * 100, 1),
+          "longshot_win_pct": round(d["longshot"] / d["races"] * 100, 1)}
+         for k, d in by_rnum.items() if d["races"] >= min_races),
+        key=lambda x: x["race"])
+    return {
+        "days": days, "races_scored": n,
+        "overall": {
+            "fav_win_pct_lt_$3": round(fav / n * 100, 1) if n else None,
+            "longshot_win_pct_gte_$10": round(longshot / n * 100, 1) if n else None,
+            "winning_sp_distribution_pct": {k: round(v / n * 100, 1) for k, v in dist.items()},
+        },
+        "venues_by_longshot_rate": venues,
+        "by_race_number": rnums,
+        "note": "fav = winner SP < $3; longshot = winner SP >= $10. High longshot-win "
+                "rate at a venue/slot is a STATISTICAL FLAG, not proof of anything.",
+    }
+
+
 @app.get("/api/admin/bets/exotic-gate-sweep")
 async def exotic_gate_sweep(
     days: int = 60,
