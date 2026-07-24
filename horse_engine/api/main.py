@@ -9058,6 +9058,73 @@ async def sharp_racenum_backtest(
     }
 
 
+@app.get("/api/admin/analysis/fav-by-price")
+async def fav_by_price(
+    days: int = 90,
+    x_cron_secret: Optional[str] = Header(None),
+):
+    """WHY do favourites fade late? Test the 'weaker favourites late' hypothesis:
+    favourite win rate CONDITIONED on the favourite's own SP band, split early
+    (R1-5) vs late (R6+). If a $2-3 fav wins the same % early and late, the fade
+    is pure composition (favourites are just longer-priced late), not a late-race
+    curse. Also shows the share of races that even HAVE a short (<$3) fav by half."""
+    _check_admin(x_cron_secret)
+    days = max(30, min(int(days), 365))
+    cut = (_today_aest() - timedelta(days=days)).isoformat()
+    async with get_session() as session:
+        rows = (await session.execute(
+            select(HistoricalResultRow.race_id, HistoricalResultRow.position,
+                   HistoricalResultRow.starting_price, HistoricalResultRow.race_number)
+            .where(HistoricalResultRow.race_id >= f"{cut}_")
+            .where(HistoricalResultRow.starting_price.isnot(None))
+        )).fetchall()
+
+    from collections import defaultdict
+    by_race = defaultdict(list)
+    for r in rows:
+        by_race[r.race_id].append(r)
+
+    def band(sp):
+        return "$1-2" if sp < 2 else "$2-3" if sp < 3 else "$3-4" if sp < 4 else "$4-6" if sp < 6 else "$6+"
+    agg = defaultdict(lambda: {"n": 0, "wins": 0})
+    seg_short = {"early_R1-5": {"races": 0, "short_fav": 0}, "late_R6+": {"races": 0, "short_fav": 0}}
+    for rid, rs in by_race.items():
+        priced = [x for x in rs if x.starting_price and x.starting_price > 1]
+        if len(priced) < 4:
+            continue
+        fav = min(priced, key=lambda x: x.starting_price)
+        rn = fav.race_number
+        if not rn:
+            try:
+                rn = int(rid.split("_")[2].lstrip("Rr"))
+            except (ValueError, IndexError):
+                continue
+        seg = "late_R6+" if rn >= 6 else "early_R1-5"
+        agg[(band(fav.starting_price), seg)]["n"] += 1
+        if fav.position == 1:
+            agg[(band(fav.starting_price), seg)]["wins"] += 1
+        seg_short[seg]["races"] += 1
+        if fav.starting_price < 3:
+            seg_short[seg]["short_fav"] += 1
+
+    out: dict = {}
+    for (b, seg), d in agg.items():
+        if d["n"] < 15:
+            continue
+        out.setdefault(b, {})[seg] = {"races": d["n"], "fav_win_pct": round(d["wins"] / d["n"] * 100, 1)}
+    short_share = {seg: {"races": v["races"],
+                         "pct_with_sub_$3_fav": round(v["short_fav"] / v["races"] * 100, 1) if v["races"] else None}
+                   for seg, v in seg_short.items()}
+    return {
+        "days": days,
+        "fav_win_by_own_price_band": out,
+        "share_of_races_with_short_fav": short_share,
+        "note": "If fav_win_pct within a price band is ~equal early vs late, the fade is "
+                "pure composition (favourites are longer-priced/weaker late), NOT a late "
+                "curse. short_fav share dropping late = fewer strong favs late.",
+    }
+
+
 @app.get("/api/admin/analysis/fav-fade-by-tier")
 async def fav_fade_by_tier(
     days: int = 90,
