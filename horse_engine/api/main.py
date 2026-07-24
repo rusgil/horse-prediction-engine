@@ -8903,6 +8903,7 @@ async def place_harville_backtest(
             e["rows"].append(row)
 
     n = cur_hit = harv_hit = winfav_hit = agree = 0
+    box_n = cur_box_hit = harv_box_hit = gated_n = cur_box_gated = harv_box_gated = 0
     for rid, e in by_race.items():
         pset = placed.get(rid)
         rows = e["rows"]
@@ -8926,15 +8927,47 @@ async def place_harville_backtest(
         if cur_top[0] == best[0]:
             agree += 1
 
-    pct = lambda k: round(k / n * 100, 1) if n else None
+        # 3-horse trifecta BOX hit: does the box contain ALL 3 placegetters?
+        # Current box = top-3 by trained place prob; Harville box = top-3 by win
+        # prob (Harville top-3 is monotonic in win, so this is the Harville box).
+        # 'gated' mirrors the Lab Sharp exotic filter (top-3 win sum ≤55%,
+        # field ≤11) — the subset actually bet.
+        if len(pset) == 3:
+            box_n += 1
+            cur_box = {r[0] for r in sorted(rows, key=lambda x: -x[2])[:3]}
+            harv_box = {r[0] for r in sorted(rows, key=lambda x: -x[1])[:3]}
+            gated = (sum(sorted(wins, reverse=True)[:3]) <= 0.55) and (len(rows) <= 11)
+            if pset <= cur_box:
+                cur_box_hit += 1
+            if pset <= harv_box:
+                harv_box_hit += 1
+            if gated:
+                gated_n += 1
+                if pset <= cur_box:
+                    cur_box_gated += 1
+                if pset <= harv_box:
+                    harv_box_gated += 1
+
+    pct = lambda k, d=n: round(k / d * 100, 1) if d else None
     return {
         "days": days, "races_scored": n,
-        "current_place_pick_top3_rate": pct(cur_hit),
-        "harville_place_pick_top3_rate": pct(harv_hit),
-        "win_favourite_top3_rate": pct(winfav_hit),
-        "methods_agree_on_pick_pct": pct(agree),
-        "note": "Rate = the method's #1 place pick finished top-3. Higher is better. "
-                "Harville's #1 place pick is usually the win favourite by construction.",
+        "single_pick": {
+            "current_place_pick_top3_rate": pct(cur_hit),
+            "harville_place_pick_top3_rate": pct(harv_hit),
+            "win_favourite_top3_rate": pct(winfav_hit),
+            "methods_agree_on_pick_pct": pct(agree),
+        },
+        "trifecta_box_hit": {
+            "races": box_n,
+            "current_place_box_hit_rate": pct(cur_box_hit, box_n),
+            "harville_win_box_hit_rate": pct(harv_box_hit, box_n),
+            "gated_races": gated_n,
+            "gated_current_place_box_hit_rate": pct(cur_box_gated, gated_n),
+            "gated_harville_win_box_hit_rate": pct(harv_box_gated, gated_n),
+        },
+        "note": "single_pick rate = #1 place pick finished top-3. box_hit rate = "
+                "the 3-horse box contained ALL 3 placegetters (any order). 'gated' = "
+                "Lab Sharp filter (top-3 win sum ≤55%, field ≤11). Higher is better.",
     }
 
 
