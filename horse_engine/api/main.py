@@ -9058,6 +9058,143 @@ async def sharp_racenum_backtest(
     }
 
 
+@app.get("/api/admin/analysis/late-longshot-refine")
+async def late_longshot_refine(
+    days: int = 90,
+    x_cron_secret: Optional[str] = Header(None),
+):
+    """(1) Refinement sweep: which slice of late (R6+) $8+ longshots carries the
+    +EV edge — odds band, race openness (top-3 win sum), barrier, our place-model
+    rank. (2) Track-degradation test: is the late-race favourite fade about the
+    GOING (only on soft/heavy tracks that degrade) or purely market/odds (present
+    even on firm/good tracks)?"""
+    _check_admin(x_cron_secret)
+    days = max(30, min(int(days), 365))
+    cut = (_today_aest() - timedelta(days=days)).isoformat()
+    async with get_session() as session:
+        hist = (await session.execute(
+            select(RunnerPredictionHistoryRow.race_id, RunnerPredictionHistoryRow.tab_number,
+                   RunnerPredictionHistoryRow.win_probability, RunnerPredictionHistoryRow.best_available_odds,
+                   RunnerPredictionHistoryRow.overlay, RunnerPredictionHistoryRow.place_model_rank,
+                   RunnerPredictionHistoryRow.barrier, RunnerPredictionHistoryRow.race_number,
+                   RunnerPredictionHistoryRow.field_size, RunnerPredictionHistoryRow.track_condition,
+                   RunnerPredictionHistoryRow.enriched_at)
+            .where(RunnerPredictionHistoryRow.race_id >= f"{cut}_")
+            .where(RunnerPredictionHistoryRow.cancelled.is_(False)
+                   | RunnerPredictionHistoryRow.cancelled.is_(None))
+            .where(RunnerPredictionHistoryRow.source == "live")
+            .order_by(RunnerPredictionHistoryRow.enriched_at.desc())
+        )).fetchall()
+        res = (await session.execute(
+            select(HistoricalResultRow.race_id, HistoricalResultRow.tab_number,
+                   HistoricalResultRow.position)
+            .where(HistoricalResultRow.race_id >= f"{cut}_")
+        )).fetchall()
+
+    pos = {(r.race_id, r.tab_number): r.position for r in res if r.tab_number is not None}
+    settled = {r.race_id for r in res}
+    seen: set = set()
+    by_race: dict = {}
+    for h in hist:
+        if h.tab_number is None or h.race_id not in settled:
+            continue
+        k = (h.race_id, h.tab_number)
+        if k in seen:
+            continue
+        seen.add(k)
+        p = pos.get(k)
+        if p is None:
+            continue
+        d = {"wp": float(h.win_probability or 0), "odds": h.best_available_odds,
+             "ov": h.overlay or 0.0, "prank": h.place_model_rank, "barrier": h.barrier,
+             "rn": h.race_number, "fs": h.field_size, "tc": h.track_condition or "",
+             "won": p == 1}
+        by_race.setdefault(h.race_id, []).append(d)
+
+    # attach race-level top3 win sum; flatten runners
+    runners = []
+    for rid, rs in by_race.items():
+        t3 = sum(sorted((x["wp"] for x in rs), reverse=True)[:3])
+        for x in rs:
+            x["top3"] = t3
+            runners.append(x)
+
+    def roi(items):
+        n = len(items)
+        if not n:
+            return {"bets": 0, "win_pct": None, "roi_pct": None}
+        ret = sum(x["odds"] for x in items if x["won"] and x["odds"])
+        w = sum(1 for x in items if x["won"])
+        return {"bets": n, "win_pct": round(w / n * 100, 1), "roi_pct": round((ret - n) / n * 100, 1)}
+
+    # ---- (1) refinement sweep on late (R6+) $8+ longshots ----
+    late_ls = [x for x in runners if x["rn"] and x["rn"] >= 6 and x["odds"] and x["odds"] >= 8]
+    def band(o):
+        return "$8-15" if o < 15 else "$15-25" if o < 25 else "$25+"
+    def bar(b):
+        return "1-4" if b and b <= 4 else "5-8" if b and b <= 8 else "9+" if b else "?"
+    def openb(t):
+        return "open<=40" if t <= 0.40 else "mid40-55" if t <= 0.55 else "tight>55"
+    from collections import defaultdict
+    by_odds = defaultdict(list); by_bar = defaultdict(list); by_open = defaultdict(list); by_prank = defaultdict(list)
+    for x in late_ls:
+        by_odds[band(x["odds"])].append(x)
+        by_bar[bar(x["barrier"])].append(x)
+        by_open[openb(x["top3"])].append(x)
+        by_prank["place_top4" if (x["prank"] and x["prank"] <= 4) else "place_5+"].append(x)
+    # best concentrated combo: open race AND odds $8-20
+    combo = [x for x in late_ls if x["top3"] <= 0.40 and x["odds"] <= 20]
+
+    # ---- (2) track-degradation test ----
+    def wet(tc):
+        t = (tc or "").lower()
+        return "wet" if ("soft" in t or "heavy" in t) else "dry" if ("good" in t or "firm" in t) else "?"
+    # per race the market fav = shortest odds; its win rate early vs late by going.
+    fav_rows = []
+    for rid, rs in by_race.items():
+        priced = [x for x in rs if x["odds"] and x["odds"] > 1]
+        if not priced:
+            continue
+        fav = min(priced, key=lambda x: x["odds"])
+        fav_rows.append(fav)
+    track = {}
+    for g in ("dry", "wet"):
+        e = [x for x in fav_rows if wet(x["tc"]) == g and x["rn"] and x["rn"] <= 5]
+        l = [x for x in fav_rows if wet(x["tc"]) == g and x["rn"] and x["rn"] >= 6]
+        track[g] = {"early_R1_5_fav_win": roi(e)["win_pct"], "early_n": len(e),
+                    "late_R6plus_fav_win": roi(l)["win_pct"], "late_n": len(l)}
+    # does going worsen through the card? mean rating by race number
+    import re as _re
+    def rating(tc):
+        m = _re.search(r"(\d+)", tc or "")
+        return int(m.group(1)) if m else None
+    rn_rating = defaultdict(list)
+    for rid, rs in by_race.items():
+        if rs and rs[0]["rn"]:
+            rt = rating(rs[0]["tc"])
+            if rt:
+                rn_rating[rs[0]["rn"]].append(rt)
+    going_by_race = {f"R{k}": round(sum(v) / len(v), 2) for k, v in sorted(rn_rating.items()) if k and len(v) >= 10}
+
+    return {
+        "days": days, "runners_scored": len(runners),
+        "refinement_late_longshots": {
+            "by_odds_band": {k: roi(v) for k, v in by_odds.items()},
+            "by_openness": {k: roi(v) for k, v in by_open.items()},
+            "by_barrier": {k: roi(v) for k, v in by_bar.items()},
+            "by_place_rank": {k: roi(v) for k, v in by_prank.items()},
+            "concentrated_open_and_$8-20": roi(combo),
+        },
+        "track_degradation": {
+            "fav_win_early_vs_late_by_going": track,
+            "mean_track_rating_by_race_number": going_by_race,
+        },
+        "note": "Refinement: back $8+ R6+ runners flat-stake; find the +ROI slice. "
+                "Track test: if the early->late fav fade shows on DRY (good/firm) tracks too, "
+                "it's market/odds not going. rating rising R1->R8 would indicate degradation.",
+    }
+
+
 @app.get("/api/admin/analysis/late-race-deepdive")
 async def late_race_deepdive(
     days: int = 90,
