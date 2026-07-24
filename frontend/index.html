@@ -207,6 +207,27 @@
       color: var(--text-dim); margin-bottom: 10px;
     }
 
+    /* Sort bar — matches the Edge page's Sort control (.sort-bar/.sort-btn) */
+    .sort-bar {
+      display: flex; align-items: center; gap: 8px;
+      margin-bottom: 14px;
+      font-size: 0.75rem; color: var(--text-dim);
+    }
+    .sort-btn {
+      background: var(--bg-elevated);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      color: var(--text-secondary);
+      padding: 4px 12px;
+      font-size: 0.75rem;
+      cursor: pointer;
+      transition: background 0.15s, border-color 0.15s, color 0.15s;
+    }
+    .sort-btn.active {
+      background: rgba(59,130,246,0.12);
+      border-color: rgba(59,130,246,0.35);
+      color: #60a5fa;
+    }
     .main-mode-row {
       display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
       margin-bottom: 12px; padding: 8px 12px;
@@ -1204,11 +1225,10 @@
       <button class="main-mode-pill" id="mainModeAll" onclick="setMainMode('all')">All meetings</button>
       <span class="main-mode-hint">Sharp = meetings with a high-confidence pick (≥30%)</span>
     </div>
-    <div class="main-mode-row">
-      <span class="main-mode-label">Sort</span>
-      <button class="main-mode-pill active" id="loungeSortWin" onclick="setLoungeSort('win')">Win</button>
-      <button class="main-mode-pill" id="loungeSortPlace" onclick="setLoungeSort('place')">Place</button>
-      <span class="main-mode-hint">Orders meetings by their best win or place pick</span>
+    <div class="sort-bar">
+      <span>Sort:</span>
+      <button class="sort-btn active" id="loungeSortWin" onclick="setLoungeSort('win')">Win</button>
+      <button class="sort-btn" id="loungeSortPlace" onclick="setLoungeSort('place')">Place</button>
     </div>
     <div class="section-label" id="meetingsLabel">Today's Meetings</div>
     <div id="meetingsBanner"></div>
