@@ -1209,7 +1209,8 @@ class RacingAustraliaClient:
             soup = BeautifulSoup(html, "html.parser")
             meetings = []
             from urllib.parse import unquote
-            for link in soup.find_all("a", href=re.compile(r"(Acceptances|Results\.aspx)")):
+            all_meeting_links = soup.find_all("a", href=re.compile(r"(Acceptances|Results\.aspx)"))
+            for link in all_meeting_links:
                 href = link.get("href", "")
                 m = re.search(r"Key=([^&\"]+)", href)
                 if not m:
@@ -1236,6 +1237,26 @@ class RacingAustraliaClient:
                     "rail_position": "",
                     "date": race_date,
                 })
+
+            # Soft-block guard (2026-07-25): a genuine RA calendar page always
+            # carries meeting links for the surrounding week. Zero links at all
+            # means we got a 200 WAF/interstitial page, NOT an empty racing day
+            # — do NOT cache that as a legit empty for 6h. That is exactly what
+            # blanked the whole Saturday card: during a brief residential-proxy
+            # wobble the non-Darwin states each returned a 200 with no links,
+            # parsed to [], and cached empty for 6h, so the running process
+            # served "only Darwin" and never re-fetched. Short-TTL it (5 min,
+            # matching the failure path) so the next enrich re-fetches with a
+            # fresh IP, and skip the DB persist. An empty page that DOES carry
+            # links for other dates is a real no-racing day → cache normally.
+            if not meetings and not all_meeting_links:
+                log.warning(
+                    "Calendar for %s returned 200 with zero meeting links "
+                    "(soft-block?) — caching empty for 5 min only, not persisting",
+                    cache_key,
+                )
+                self._calendar_cache[cache_key] = (datetime.utcnow() - timedelta(seconds=3300), [])
+                return []
 
             self._calendar_cache[cache_key] = (datetime.utcnow(), meetings)
             date_compact = race_date.replace("-", "")
@@ -1279,6 +1300,22 @@ class RacingAustraliaClient:
         return parsed
 
     # ── Public API ────────────────────────────────────────────────────────────
+
+    def purge_calendar_cache(self, race_date: str | None = None) -> int:
+        """Drop in-memory calendar cache entries so the next get_meetings
+        re-fetches from RA. Recovers from a poisoned empty cache after a
+        proxy/residential wobble without waiting out the 6h TTL or restarting
+        the process. Cache keys are ``"{race_date}:{state}"``; a None race_date
+        clears the whole cache. Returns the number of keys dropped."""
+        if race_date is None:
+            n = len(self._calendar_cache)
+            self._calendar_cache.clear()
+            return n
+        prefix = f"{race_date}:"
+        keys = [k for k in self._calendar_cache if k.startswith(prefix)]
+        for k in keys:
+            self._calendar_cache.pop(k, None)
+        return len(keys)
 
     async def get_meetings(self, race_date: str | None = None) -> list[dict]:
         d = race_date or date.today().isoformat()

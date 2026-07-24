@@ -12769,6 +12769,17 @@ async def admin_bust_meetings_cache(
     _check_admin(x_cron_secret)
     _validate_date(race_date)
     _invalidate_meeting_caches(race_date)
+    # Also drop the in-memory RA per-state calendar cache. _invalidate_meeting_caches
+    # and the DB delete below only reach the API-layer meeting caches — NOT the
+    # RacingAustraliaClient's own 6h calendar cache. A proxy soft-block during a
+    # residential-IP wobble can poison that with an empty list, blanking the card
+    # until the 6h TTL or a full restart (2026-07-25 Saturday-card incident). This
+    # is what makes the docstring's "poisoned with an empty response" claim true.
+    cal_purged = 0
+    try:
+        cal_purged = get_tab_client().purge_calendar_cache(race_date)
+    except Exception as e:
+        log.warning("[bust] RA calendar cache purge failed for %s: %s", race_date, e)
     # Also drop the persistent DB cache row — the in-memory pop alone left the
     # stale venue list served for up to the DB TTL (2026-07-24).
     from sqlalchemy import delete as sa_delete
@@ -12777,7 +12788,7 @@ async def admin_bust_meetings_cache(
             sa_delete(ResponseCacheRow).where(ResponseCacheRow.cache_key == f"meetings:{race_date}")
         )
         await session.commit()
-    return {"ok": True, "date": race_date}
+    return {"ok": True, "date": race_date, "calendar_cache_purged": cal_purged}
 
 
 @app.get("/api/admin/cancelled-today")

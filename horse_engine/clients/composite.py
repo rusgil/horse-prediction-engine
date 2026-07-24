@@ -48,6 +48,9 @@ class CompositeClient:
     async def get_meetings(self, race_date: str | None = None) -> list[dict]:
         return await self._ra.get_meetings(race_date)
 
+    def purge_calendar_cache(self, race_date: str | None = None) -> int:
+        return self._ra.purge_calendar_cache(race_date)
+
     async def get_meeting_by_slug(self, slug: str) -> dict | None:
         return await self._ra.get_meeting_by_slug(slug)
 
