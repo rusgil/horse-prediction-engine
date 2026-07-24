@@ -9021,7 +9021,12 @@ async def exotic_gate_sweep(
         elif r.enriched_at == e["at"]:
             e["rows"].append(row)
 
-    # per race: (top3_win_sum, field_size, box_hit) for the Harville/win box
+    # per race: (top3_win_sum, field_size, box_hit, est_trifecta_dividend).
+    # est_div is the model's Harville dividend for the top-3 order — it shrinks
+    # for favourite-laden small fields, which is exactly the "small field pays
+    # less" effect. Real TAB dividends aren't stored, so this is a proxy (and
+    # likely conservative: a box also wins on upset orderings that pay MORE).
+    from horse_engine.bets import estimate_printed_dividend as _est_div
     scored = []
     for rid, e in by_race.items():
         pset = placed.get(rid)
@@ -9029,34 +9034,43 @@ async def exotic_gate_sweep(
         if not pset or len(pset) != 3 or len(rows) < 4:
             continue
         by_win = sorted(rows, key=lambda x: -x[1])
-        top3_sum = sum(x[1] for x in by_win[:3])
+        top3_win = [x[1] for x in by_win[:3]]
+        top3_sum = sum(top3_win)
         box = {x[0] for x in by_win[:3]}
-        scored.append((top3_sum, len(rows), pset <= box))
+        div = _est_div(top3_win, "trifecta") or 0.0
+        scored.append((top3_sum, len(rows), pset <= box, div))
 
     top3_grid = [0.40, 0.45, 0.50, 0.55, 0.60]
     field_grid = [8, 10, 11, 12, 24]
+    _BOX_COST = 6.0  # 3-horse box = 6 ordered combos at $1 each
     sweep = []
     for t in top3_grid:
         for f in field_grid:
-            passing = [hit for (s, n, hit) in scored if s <= t and n <= f]
+            passing = [(hit, div) for (s, n, hit, div) in scored if s <= t and n <= f]
             cnt = len(passing)
-            hits = sum(1 for h in passing if h)
+            hits = sum(1 for h, _ in passing if h)
+            ret = sum(div for h, div in passing if h)   # payout only when the box hits
+            cost = _BOX_COST * cnt
             sweep.append({
                 "top3_sum_max_pct": int(round(t * 100)),
                 "field_max": f,
                 "races": cnt,
                 "box_hit_rate": round(hits / cnt * 100, 1) if cnt else None,
+                "est_roi_pct": round((ret - cost) / cost * 100, 1) if cost else None,
+                "avg_div_on_hit": round(ret / hits, 1) if hits else None,
             })
-    sweep.sort(key=lambda g: (-(g["box_hit_rate"] or 0), -g["races"]))
+    sweep.sort(key=lambda g: (-(g["est_roi_pct"] if g["est_roi_pct"] is not None else -1e9),
+                              -g["races"]))
     return {
         "days": days,
         "total_scorable_races": len(scored),
         "box": "harville/win top-3",
         "current_gate": {"top3_sum_max_pct": 55, "field_max": 11},
-        "sweep_sorted_by_hit_rate": sweep,
-        "note": "box_hit_rate = 3-horse win box contained all 3 placegetters. "
-                "Pick a gate that lifts hit rate while keeping a usable race count; "
-                "per sharp-only rule, only TIGHTEN vs the current 55%/11.",
+        "sweep_sorted_by_est_roi": sweep,
+        "note": "est_roi_pct uses the model's Harville trifecta dividend (real TAB "
+                "dividends not stored). avg_div_on_hit = mean estimated $ dividend when "
+                "the box lands. Small fields hit more but pay less — ROI is the metric. "
+                "Sharp rule: only TIGHTEN vs current 55%/11.",
     }
 
 
