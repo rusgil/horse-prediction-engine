@@ -248,7 +248,7 @@ async def proxy(path: str, request: Request):
                 resp = await session.get(
                     upstream_url,
                     headers=_headers(referer),
-                    timeout=20.0,
+                    timeout=40.0,
                     allow_redirects=True,
                 )
             except RequestsError as e:
