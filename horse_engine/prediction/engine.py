@@ -28,6 +28,7 @@ from horse_engine.pedigree.sire_profiles import (
     get_wet_track_pedigree_score,
     parse_condition_category,
 )
+from horse_engine.bets import harville_horse_top_n
 from horse_engine.prediction.features import build_feature_vector
 from horse_engine.prediction.model import HorseModel, PlaceModel, ExoticModel
 
@@ -584,11 +585,23 @@ def predict_race(race: Race, model: HorseModel, venue_calibration: dict[str, flo
     else:
         _run_market_shrinkage(predictions, trace)
 
-    # Enforce P(top-3) ≥ P(top-1) per horse — a mathematical axiom for
-    # the same horse in the same race. If any calibration step made
-    # win_prob higher than place_prob (small-field heuristic edge case
-    # or null-market cap boosting the ratio), lift place to match.
-    for p, plc in zip(predictions, place_probs_list):
+    # Place probability. The standalone place model was outputting near-uniform
+    # values (~3/N for every runner), so its RANKING was noise — the win
+    # favourite could rank mid-pack to place (Grafton R9, 2026-07-24). When
+    # place_harville_weight > 0 we blend in a Harville P(top-3) derived from the
+    # (already sharp) final WIN probs, so place tracks win strength and the
+    # ranking is coherent. Weight 0 = pure trained model (default, off until
+    # backtested per feedback_model_release_process).
+    from horse_engine.config import settings as _pf_settings
+    _hw = float(getattr(_pf_settings, "place_harville_weight", 0.0) or 0.0)
+    _win_vec = [max(p.win_prob or 0.0, 0.0) for p in predictions] if _hw > 0 else None
+    # Enforce P(top-3) ≥ P(top-1) per horse — a mathematical axiom for the same
+    # horse in the same race.
+    for idx, (p, plc) in enumerate(zip(predictions, place_probs_list)):
+        if _hw > 0:
+            others = _win_vec[:idx] + _win_vec[idx + 1:]
+            harv = harville_horse_top_n(_win_vec[idx], others, 3)
+            plc = _hw * harv + (1.0 - _hw) * plc
         if plc < p.win_prob:
             plc = p.win_prob
         p.place_prob = round(min(plc, 0.99), 4)

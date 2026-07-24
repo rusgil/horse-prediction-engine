@@ -59,6 +59,16 @@ class Settings(BaseSettings):
     benter_alpha: float = 0.0
     benter_beta: float = 0.0
 
+    # Harville place probability (2026-07-24): derive P(top-3) for each runner
+    # from the field's WIN probs via bets.harville_horse_top_n, instead of the
+    # standalone place model (which was outputting near-uniform values, making
+    # the win favourite rank mid-pack to place — Grafton R9). Blend weight:
+    #   0.0 = pure trained place model (current behaviour, DEFAULT — off until
+    #         backtested per [[feedback_model_release_process]])
+    #   1.0 = pure Harville-from-win
+    # Set PLACE_HARVILLE_WEIGHT on Railway to enable, as a deliberate release.
+    place_harville_weight: float = 0.0
+
     # Betfair clients were removed 2026-06-13. RA + OddsPro cover everything
     # the model trains on; the Betfair-derived features (steam_60, steam_30,
     # drift_flag, odds_velocity, late_money, odds_movement_norm) ablated to
