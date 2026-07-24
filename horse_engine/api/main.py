@@ -9058,6 +9058,75 @@ async def sharp_racenum_backtest(
     }
 
 
+@app.get("/api/admin/analysis/fav-fade-by-tier")
+async def fav_fade_by_tier(
+    days: int = 90,
+    x_cron_secret: Optional[str] = Header(None),
+):
+    """Does the late-race favourite fade / overbetting apply to metro AND country?
+    Splits the SP-favourite's win% and market edge (win% - implied%) by prize-money
+    tier (metro/provincial/country) x early(R1-5) vs late(R6+). Negative edge =
+    market OVERBETS the favourite. Answers whether the effect is universal or
+    concentrated in thin country markets."""
+    _check_admin(x_cron_secret)
+    days = max(30, min(int(days), 365))
+    cut = (_today_aest() - timedelta(days=days)).isoformat()
+    async with get_session() as session:
+        rows = (await session.execute(
+            select(HistoricalResultRow.race_id, HistoricalResultRow.position,
+                   HistoricalResultRow.starting_price, HistoricalResultRow.prize_money,
+                   HistoricalResultRow.race_number)
+            .where(HistoricalResultRow.race_id >= f"{cut}_")
+            .where(HistoricalResultRow.starting_price.isnot(None))
+        )).fetchall()
+
+    from collections import defaultdict
+    by_race = defaultdict(list)
+    for r in rows:
+        by_race[r.race_id].append(r)
+
+    def tier(pm):
+        if not pm: return "unknown"
+        if pm >= 80000: return "metro >=$80k"
+        if pm >= 30000: return "provincial $30-80k"
+        return "country <$30k"
+
+    agg = defaultdict(lambda: {"n": 0, "wins": 0, "impl": 0.0})
+    for rid, rs in by_race.items():
+        priced = [x for x in rs if x.starting_price and x.starting_price > 1]
+        if len(priced) < 4:
+            continue
+        fav = min(priced, key=lambda x: x.starting_price)
+        rn = fav.race_number
+        if not rn:
+            try:
+                rn = int(rid.split("_")[2].lstrip("Rr"))
+            except (ValueError, IndexError):
+                continue
+        seg = "late_R6+" if rn >= 6 else "early_R1-5"
+        k = (tier(fav.prize_money), seg)
+        a = agg[k]
+        a["n"] += 1
+        if fav.position == 1:
+            a["wins"] += 1
+        a["impl"] += 1.0 / fav.starting_price
+
+    out: dict = {}
+    for (t, seg), d in agg.items():
+        if d["n"] < 20:
+            continue
+        wr = d["wins"] / d["n"]; im = d["impl"] / d["n"]
+        out.setdefault(t, {})[seg] = {"races": d["n"], "fav_win_pct": round(wr * 100, 1),
+                                      "implied_pct": round(im * 100, 1),
+                                      "edge_vs_market_pp": round((wr - im) * 100, 1)}
+    return {
+        "days": days, "tiers": out,
+        "note": "favourite = lowest SP. edge_vs_market_pp<0 = market OVERBETS the fav "
+                "(wins less than its odds imply). Compare early-vs-late within each tier, "
+                "and metro vs country — is the late overbetting universal or country-only?",
+    }
+
+
 @app.get("/api/admin/analysis/late-longshot-refine")
 async def late_longshot_refine(
     days: int = 90,
