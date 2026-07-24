@@ -9058,6 +9058,117 @@ async def sharp_racenum_backtest(
     }
 
 
+@app.get("/api/admin/analysis/late-race-deepdive")
+async def late_race_deepdive(
+    days: int = 90,
+    x_cron_secret: Optional[str] = Header(None),
+):
+    """Deep dive on late-card upsets. Decomposes the favourite-fade by FIELD SIZE
+    (is it the clock or just bigger fields?), tests MARKET CALIBRATION by race
+    number (does the late market overbet favourites = exploitable inefficiency?),
+    and measures whether our model's positive-overlay longshots beat the market
+    late (the edge to pick the $41ers)."""
+    _check_admin(x_cron_secret)
+    days = max(30, min(int(days), 365))
+    cut = (_today_aest() - timedelta(days=days)).isoformat()
+    async with get_session() as session:
+        hist = (await session.execute(
+            select(RunnerPredictionHistoryRow.race_id, RunnerPredictionHistoryRow.tab_number,
+                   RunnerPredictionHistoryRow.market_rank, RunnerPredictionHistoryRow.best_available_odds,
+                   RunnerPredictionHistoryRow.overlay, RunnerPredictionHistoryRow.field_size,
+                   RunnerPredictionHistoryRow.race_number, RunnerPredictionHistoryRow.enriched_at)
+            .where(RunnerPredictionHistoryRow.race_id >= f"{cut}_")
+            .where(RunnerPredictionHistoryRow.cancelled.is_(False)
+                   | RunnerPredictionHistoryRow.cancelled.is_(None))
+            .where(RunnerPredictionHistoryRow.source == "live")
+            .order_by(RunnerPredictionHistoryRow.enriched_at.desc())
+        )).fetchall()
+        res = (await session.execute(
+            select(HistoricalResultRow.race_id, HistoricalResultRow.tab_number,
+                   HistoricalResultRow.position)
+            .where(HistoricalResultRow.race_id >= f"{cut}_")
+        )).fetchall()
+
+    pos = {(r.race_id, r.tab_number): r.position for r in res if r.tab_number is not None}
+    settled = {r.race_id for r in res}
+    seen: set = set()
+    R = []  # runners
+    for h in hist:
+        if h.tab_number is None or h.race_id not in settled:
+            continue
+        k = (h.race_id, h.tab_number)
+        if k in seen:
+            continue
+        seen.add(k)
+        p = pos.get(k)
+        if p is None:
+            continue
+        R.append({"rn": h.race_number, "fs": h.field_size, "mrank": h.market_rank,
+                  "odds": h.best_available_odds, "ov": h.overlay or 0.0, "won": p == 1})
+
+    from collections import defaultdict
+
+    def wr(items):
+        n = len(items)
+        return (n, round(sum(1 for r in items if r["won"]) / n * 100, 1) if n else None)
+
+    # H1 — favourite (market_rank==1) win rate by field size, and early vs late
+    # WITHIN small (fs<=9) and big (fs>=12) fields (controls for field size).
+    def fb(fs):
+        if not fs: return None
+        return "<=7" if fs <= 7 else "8-9" if fs <= 9 else "10-11" if fs <= 11 else "12-13" if fs <= 13 else "14+"
+    favs = [r for r in R if r["mrank"] == 1]
+    by_field = {}
+    for b in ["<=7", "8-9", "10-11", "12-13", "14+"]:
+        c, w = wr([r for r in favs if fb(r["fs"]) == b])
+        by_field[b] = {"races": c, "fav_win_pct": w}
+    def seg(items, small):
+        band = (lambda fs: fs and fs <= 9) if small else (lambda fs: fs and fs >= 12)
+        e = wr([r for r in items if band(r["fs"]) and r["rn"] and r["rn"] <= 5])
+        l = wr([r for r in items if band(r["fs"]) and r["rn"] and r["rn"] >= 6])
+        return {"early_R1_5": {"races": e[0], "fav_win_pct": e[1]},
+                "late_R6plus": {"races": l[0], "fav_win_pct": l[1]}}
+    field_control = {"small_field_fs<=9": seg(favs, True), "big_field_fs>=12": seg(favs, False)}
+
+    # H2 — market calibration by race number: fav actual win% vs mean implied%.
+    cal = []
+    by_rn = defaultdict(list)
+    for r in favs:
+        if r["odds"] and r["odds"] > 1:
+            by_rn[r["rn"]].append(r)
+    for rn in sorted(k for k in by_rn if k):
+        f = by_rn[rn]; n = len(f)
+        win = sum(1 for r in f if r["won"]) / n
+        impl = sum(1.0 / r["odds"] for r in f) / n
+        cal.append({"race": f"R{rn}", "fav_bets": n, "fav_win_pct": round(win * 100, 1),
+                    "market_implied_pct": round(impl * 100, 1),
+                    "edge_vs_market_pp": round((win - impl) * 100, 1)})
+
+    # H3 — back $8+ horses: pos vs neg overlay, win% + flat-stake ROI, early vs late.
+    def roi(items):
+        n = len(items)
+        if not n: return {"bets": 0, "win_pct": None, "roi_pct": None}
+        ret = sum(r["odds"] for r in items if r["won"] and r["odds"])
+        win = sum(1 for r in items if r["won"])
+        return {"bets": n, "win_pct": round(win / n * 100, 1), "roi_pct": round((ret - n) / n * 100, 1)}
+    edge = {}
+    for label, when in (("early_R1_5", lambda rn: rn and rn <= 5), ("late_R6plus", lambda rn: rn and rn >= 6)):
+        ls = [r for r in R if r["odds"] and r["odds"] >= 8 and when(r["rn"])]
+        edge[label] = {"pos_overlay": roi([r for r in ls if r["ov"] > 0]),
+                       "neg_overlay": roi([r for r in ls if r["ov"] <= 0])}
+
+    return {
+        "days": days, "runners_scored": len(R),
+        "H1_field_size": {"fav_win_by_field_size": by_field, "fav_win_field_controlled": field_control},
+        "H2_market_calibration_by_race": cal,
+        "H3_longshot_overlay_edge": edge,
+        "note": "H1: if fav-fade persists early-vs-late WITHIN a field band, it's not just "
+                "field size. H2: edge_vs_market_pp<0 = market OVERBETS favourites (inefficient/"
+                "exploitable). H3: back $8+ runners flat-stake; pos-overlay = our model rates it "
+                "above market. roi_pct>0 = profitable.",
+    }
+
+
 @app.get("/api/admin/analysis/upset-pattern")
 async def upset_pattern(
     days: int = 60,
