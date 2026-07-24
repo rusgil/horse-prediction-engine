@@ -9122,10 +9122,11 @@ async def late_longshot_refine(
     def roi(items):
         n = len(items)
         if not n:
-            return {"bets": 0, "win_pct": None, "roi_pct": None}
+            return {"bets": 0, "wins": 0, "win_pct": None, "roi_pct": None}
         ret = sum(x["odds"] for x in items if x["won"] and x["odds"])
         w = sum(1 for x in items if x["won"])
-        return {"bets": n, "win_pct": round(w / n * 100, 1), "roi_pct": round((ret - n) / n * 100, 1)}
+        return {"bets": n, "wins": w, "win_pct": round(w / n * 100, 1),
+                "roi_pct": round((ret - n) / n * 100, 1)}
 
     # ---- (1) refinement sweep on late (R6+) $8+ longshots ----
     late_ls = [x for x in runners if x["rn"] and x["rn"] >= 6 and x["odds"] and x["odds"] >= 8]
@@ -9144,6 +9145,13 @@ async def late_longshot_refine(
         by_prank["place_top4" if (x["prank"] and x["prank"] <= 4) else "place_5+"].append(x)
     # best concentrated combo: open race AND odds $8-20
     combo = [x for x in late_ls if x["top3"] <= 0.40 and x["odds"] <= 20]
+    # CONTROL: same barrier slice on EARLY (R1-5) longshots. If inside barriers
+    # also print here, the edge is "inside barriers win" (general), not a
+    # late-specific market inefficiency.
+    early_ls = [x for x in runners if x["rn"] and x["rn"] <= 5 and x["odds"] and x["odds"] >= 8]
+    by_bar_early = defaultdict(list)
+    for x in early_ls:
+        by_bar_early[bar(x["barrier"])].append(x)
 
     # ---- (2) track-degradation test ----
     def wet(tc):
@@ -9181,7 +9189,8 @@ async def late_longshot_refine(
         "refinement_late_longshots": {
             "by_odds_band": {k: roi(v) for k, v in by_odds.items()},
             "by_openness": {k: roi(v) for k, v in by_open.items()},
-            "by_barrier": {k: roi(v) for k, v in by_bar.items()},
+            "by_barrier_LATE": {k: roi(v) for k, v in by_bar.items()},
+            "by_barrier_EARLY_control": {k: roi(v) for k, v in by_bar_early.items()},
             "by_place_rank": {k: roi(v) for k, v in by_prank.items()},
             "concentrated_open_and_$8-20": roi(combo),
         },
