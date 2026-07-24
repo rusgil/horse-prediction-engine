@@ -8844,6 +8844,100 @@ async def backtest_formula(
     return summary
 
 
+@app.get("/api/admin/bets/place-harville-backtest")
+async def place_harville_backtest(
+    days: int = 60,
+    x_cron_secret: Optional[str] = Header(None),
+):
+    """Backtest the Harville-from-win place probability vs the trained place
+    model on historical settled races, to validate place_harville_weight
+    before enabling it (feedback_model_release_process).
+
+    Metric: does the #1 place pick actually finish top-3? Computed for the
+    current place model (max stored place_probability) and for a Harville
+    P(top-3) recomputed from each race's stored WIN probs. Also reports the
+    place-rate of the WIN favourite's top-3 finish and how often the two
+    methods pick the same #1 place horse."""
+    _check_admin(x_cron_secret)
+    days = max(7, min(int(days), 365))
+    cutoff = (_today_aest() - timedelta(days=days)).isoformat()
+    from horse_engine.bets import harville_horse_top_n as _hv
+
+    async with get_session() as session:
+        preds = (await session.execute(
+            select(
+                RunnerPredictionHistoryRow.race_id,
+                RunnerPredictionHistoryRow.tab_number,
+                RunnerPredictionHistoryRow.win_probability,
+                RunnerPredictionHistoryRow.place_probability,
+                RunnerPredictionHistoryRow.enriched_at,
+            )
+            .where(RunnerPredictionHistoryRow.race_id >= f"{cutoff}_")
+            .where(RunnerPredictionHistoryRow.cancelled.is_(False)
+                   | RunnerPredictionHistoryRow.cancelled.is_(None))
+            .where(RunnerPredictionHistoryRow.source == "live")
+            .order_by(RunnerPredictionHistoryRow.enriched_at.desc())
+        )).fetchall()
+        results = (await session.execute(
+            select(HistoricalResultRow.race_id, HistoricalResultRow.tab_number,
+                   HistoricalResultRow.position)
+            .where(HistoricalResultRow.race_id >= f"{cutoff}_")
+            .where(HistoricalResultRow.position.in_([1, 2, 3]))
+        )).fetchall()
+
+    placed: dict[str, set] = {}
+    for r in results:
+        if r.tab_number is not None:
+            placed.setdefault(r.race_id, set()).add(r.tab_number)
+
+    # Keep only the latest snapshot's runners per race (rows come enriched_at desc).
+    by_race: dict[str, dict] = {}
+    for r in preds:
+        if r.tab_number is None:
+            continue
+        row = (r.tab_number, float(r.win_probability or 0), float(r.place_probability or 0))
+        e = by_race.get(r.race_id)
+        if e is None:
+            by_race[r.race_id] = {"at": r.enriched_at, "rows": [row]}
+        elif r.enriched_at == e["at"]:
+            e["rows"].append(row)
+
+    n = cur_hit = harv_hit = winfav_hit = agree = 0
+    for rid, e in by_race.items():
+        pset = placed.get(rid)
+        rows = e["rows"]
+        if not pset or len(rows) < 4:
+            continue
+        n += 1
+        wins = [x[1] for x in rows]
+        cur_top = max(rows, key=lambda x: x[2])       # highest trained place prob
+        if cur_top[0] in pset:
+            cur_hit += 1
+        win_fav = max(rows, key=lambda x: x[1])        # highest win prob
+        if win_fav[0] in pset:
+            winfav_hit += 1
+        best = None; best_h = -1.0
+        for i, x in enumerate(rows):
+            h = _hv(x[1], wins[:i] + wins[i + 1:], 3)
+            if h > best_h:
+                best_h, best = h, x
+        if best[0] in pset:
+            harv_hit += 1
+        if cur_top[0] == best[0]:
+            agree += 1
+
+    pct = lambda k: round(k / n * 100, 1) if n else None
+    return {
+        "days": days, "races_scored": n,
+        "current_place_pick_top3_rate": pct(cur_hit),
+        "harville_place_pick_top3_rate": pct(harv_hit),
+        "win_favourite_top3_rate": pct(winfav_hit),
+        "methods_agree_on_pick_pct": pct(agree),
+        "note": "Rate = the method's #1 place pick finished top-3. Higher is better. "
+                "Harville's #1 place pick is usually the win favourite by construction.",
+    }
+
+
 @app.get("/api/admin/bets/place-decisiveness-backtest")
 async def place_decisiveness_backtest(
     days: int = 60,
