@@ -5666,6 +5666,7 @@ async def get_edge_yesterday(for_date: Optional[str] = Query(None, alias="date")
             "race_id": p.race_id,
             "venue": venue_code,
             "race_number": race_num,
+            "scheduled_time": p.scheduled_time,
             "horse_name": p.horse_name,
             "jockey": p.jockey,
             "trainer": p.trainer,

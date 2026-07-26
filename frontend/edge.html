@@ -1919,6 +1919,12 @@
       <span id="ystDateLabel" style="font-size:0.82rem;color:var(--text-dim);flex:1;text-align:center"></span>
       <button id="ystNext" onclick="shiftYesterdayDate(1)" style="background:var(--bg-elevated);border:1px solid var(--border);color:var(--text-secondary);border-radius:6px;padding:5px 12px;cursor:pointer;font-size:0.85rem">Next →</button>
     </div>
+    <div class="sort-bar">
+      <span>Sort:</span>
+      <button class="sort-btn active" id="ystSortReturn" onclick="setYesterdaySort('return')">Best return</button>
+      <button class="sort-btn" id="ystSortTime" onclick="setYesterdaySort('time')">Time</button>
+      <button class="sort-btn" id="ystSortRace" onclick="setYesterdaySort('race')">Race #</button>
+    </div>
     <div id="yesterdayContent">
       <div class="loading">
         <div class="loading-spinner"></div>
@@ -2810,6 +2816,29 @@
   let resultsMap = {};
   let yesterdayLoaded = false;
   let yesterdayData = null;
+  let yesterdaySortMode = 'return';   // 'return' | 'time' | 'race'
+  function setYesterdaySort(mode) {
+    yesterdaySortMode = mode;
+    document.getElementById('ystSortReturn').classList.toggle('active', mode === 'return');
+    document.getElementById('ystSortTime').classList.toggle('active',   mode === 'time');
+    document.getElementById('ystSortRace').classList.toggle('active',   mode === 'race');
+    if (yesterdayData) renderYesterdayContent(yesterdayData, 10);
+  }
+  // Sort yesterday's picks for display (stats are order-independent):
+  //   return → biggest winning payout first;  time → chronological by jump;
+  //   race   → by race number only (all R1s, then R2s… ignoring meeting).
+  function _sortYesterdayPicks(picks) {
+    const t = p => p.scheduled_time || p.race_id || '';
+    const arr = picks.slice();
+    if (yesterdaySortMode === 'time') {
+      arr.sort((a, b) => t(a).localeCompare(t(b)));
+    } else if (yesterdaySortMode === 'race') {
+      arr.sort((a, b) => (a.race_number || 0) - (b.race_number || 0) || t(a).localeCompare(t(b)));
+    } else {
+      arr.sort((a, b) => (b.payout || 0) - (a.payout || 0) || t(a).localeCompare(t(b)));
+    }
+    return arr;
+  }
   let weatherByCode = {};
 
   let trackRecordLoaded = false;
@@ -3443,7 +3472,7 @@
           <div class="pnl-cell-label">Unplaced</div>
         </div>
       </div>
-      ${shownPicks.map(p => renderYesterdayCard(p, stake)).join('')}`;
+      ${_sortYesterdayPicks(shownPicks).map(p => renderYesterdayCard(p, stake)).join('')}`;
   }
 
   async function load() {
