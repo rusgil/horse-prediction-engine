@@ -1711,7 +1711,19 @@
     S.liveOdds = {};
   }
 
+  // Field-size-aware paid-place rule (TAB): 8+ starters pay top-3, 5-7 pay
+  // top-2, ≤4 pay win-only. `starters` unknown → legacy top-3. Position ≥90 is
+  // the "ran but unplaced" sentinel and never places.
+  function isPaidPlace(pos, starters) {
+    if (!pos || pos < 1 || pos >= 90) return false;
+    if (!starters) return pos <= 3;
+    if (starters >= 8) return pos <= 3;
+    if (starters >= 5) return pos <= 2;
+    return pos === 1;
+  }
   function updateLiveOddsDisplay(data) {
+    // Starters for the paid-place rule = runners with a real finishing position.
+    const _loStarters = (data?.runners || []).filter(x => x.actual_position >= 1).length;
     const fetchedAt = typeof data === 'string' ? data : data?.fetched_at;
     const settled = data?.settled;
     const modelCorrect = data?.model_correct;
@@ -1770,11 +1782,11 @@
         let cls, label;
         if (live.is_top_pick) {
           // Model pick: green if won, gold if placed, red if missed
-          cls = pos === 1 ? 'pick-won' : pos <= 3 ? 'pick-placed' : 'pick-miss';
+          cls = pos === 1 ? 'pick-won' : isPaidPlace(pos, _loStarters) ? 'pick-placed' : 'pick-miss';
           label = pos === 1 ? `✓ Model pick — ${posLabel}` : `Model pick — ${posLabel}`;
         } else {
           // Other runners: winner shown in gold, placed in gold, rest dim
-          cls = pos === 1 ? 'won' : pos <= 3 ? 'placed' : 'unplaced';
+          cls = pos === 1 ? 'won' : isPaidPlace(pos, _loStarters) ? 'placed' : 'unplaced';
           label = pos === 1 ? `${posLabel} Winner` : posLabel;
         }
         resEl.textContent = label;
@@ -2229,10 +2241,11 @@
     const rows = completed.map(race => {
       const topPick = (race.top_pick || '').toLowerCase();
       const runners = race.runners || [];
+      const _rsStarters = race.starters || runners.length;
       const finishers = runners.slice(0, 4).map((r, i) => {
         const nameLower = r.name.toLowerCase();
         const isPick = topPick && nameLower === topPick;
-        const cls = r.position === 1 ? 'win' : r.position <= 3 ? 'place' : '';
+        const cls = r.position === 1 ? 'win' : isPaidPlace(r.position, _rsStarters) ? 'place' : '';
         const pickCls = isPick ? ' pick' : '';
         const posLabel = r.position === 1 ? '1st' : r.position === 2 ? '2nd' : r.position === 3 ? '3rd' : `${r.position}th`;
         const sp = r.sp ? ` <span class="result-sp">$${r.sp.toFixed(1)}</span>` : '';

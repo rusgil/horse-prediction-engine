@@ -101,7 +101,9 @@ from horse_engine.bets import (
     harville_top3_probability as _harville_top3_prob,
     is_hit as _bet_is_hit_typed,
     is_metro_venue as _is_metro_venue,
+    is_paid_place as _is_paid_place,
     is_trifecta_hit as _bet_is_hit,
+    paid_place_slots as _paid_place_slots,
 )
 from horse_engine.bookmakers import sportsbet_features as _sb
 from horse_engine.models.enriched import EnrichedRunner
@@ -4944,6 +4946,14 @@ async def get_edge_picks():
         finished_race_ids = list({p["race_id"] for p in finished_picks})
         db_positions = await _seed_race_results_on_demand(finished_race_ids)
         seeded_race_ids: set[str] = {rid for (rid, _) in db_positions}
+        # Starters per finished race (for the field-size-aware paid-place rule).
+        # db_positions holds every runner in the race — finishers + the
+        # position-99 ran-markers — so counting valid positions = the starter
+        # count. 8+ → top-3, 5-7 → top-2, ≤4 → win-only.
+        from collections import Counter as _Counter
+        _edge_starters: dict[str, int] = _Counter(
+            rid for (rid, _n), pos in db_positions.items() if pos and 1 <= pos < 100
+        )
 
         # Fetch SP for finished picks
         async with get_session() as session:
@@ -4966,7 +4976,7 @@ async def get_edge_picks():
             if pos is not None:
                 p["actual_position"] = pos
                 p["won"] = pos == 1
-                p["placed"] = pos <= 3
+                p["placed"] = _is_paid_place(pos, _edge_starters.get(p["race_id"]))
                 p["sp"] = db_sp.get(_pk)
             # 2 Funk: annotate partner position + quinella hit so the card
             # can celebrate when both rank-1 and rank-2 fill the placings.
@@ -5537,6 +5547,17 @@ async def get_edge_yesterday(for_date: Optional[str] = Query(None, alias="date")
         )
         hr_rows = hr_result.scalars().all()
 
+    # Starters per race (venue_code, race_num) for the field-size-aware paid-place
+    # rule — count every runner with a real finishing position (finishers + the
+    # position-99 ran-markers = everyone who jumped). 8+ → top-3, 5-7 → top-2,
+    # ≤4 → win-only.
+    from collections import Counter as _Counter
+    _yst_starters: dict[tuple, int] = _Counter()
+    for hr in hr_rows:
+        if hr.position and 1 <= hr.position < 100:
+            _, _vc, _rn = _parse_race_id(hr.race_id)
+            _yst_starters[(_vc, _rn)] += 1
+
     # Key: (venue_code, race_num, horse_name) → result dict
     all_results: dict = {}
     seeded_race_ids: set[str] = {hr.race_id for hr in hr_rows}
@@ -5547,7 +5568,7 @@ async def get_edge_yesterday(for_date: Optional[str] = Query(None, alias="date")
             "position": pos,
             "sp": hr.starting_price,
             "winner": pos == 1,
-            "placed": bool(pos and pos <= 3),
+            "placed": _is_paid_place(pos, _yst_starters.get((venue_code, race_num))),
             "scratched": False,
         }
 
@@ -5581,7 +5602,7 @@ async def get_edge_yesterday(for_date: Optional[str] = Query(None, alias="date")
         else:
             profit = -stake
 
-        placed = r.get("placed", False) or bool(position and position <= 3 and not scratched)
+        placed = bool(r.get("placed")) and not scratched
 
         # Find the actual race winner when our pick didn't win
         winner_name = None
@@ -7278,6 +7299,21 @@ async def _resolve_play_outcome(play: dict, target_date: str) -> dict:
             "tab": tab, "horse_name": name, "sp": sp,
         }
 
+    # Starters per race for the field-size-aware paid-place rule (8+ → top-3,
+    # 5-7 → top-2, ≤4 → win-only). `results` above only holds the top 4, so we
+    # count the full finished field separately — without it a place leg that
+    # ran 3rd in a 6-runner field would wrongly pay (TAB pays only 2 places).
+    async with get_session() as session:
+        starter_rows = (await session.execute(
+            select(HistoricalResultRow.race_id, func.count())
+            .where(HistoricalResultRow.race_id.like(f"{target_date}_%"))
+            .where(HistoricalResultRow.position.isnot(None))
+            .where(HistoricalResultRow.position > 0)
+            .where(HistoricalResultRow.position < 100)
+            .group_by(HistoricalResultRow.race_id)
+        )).fetchall()
+    starters_by_race: dict[str, int] = {rid: n for rid, n in starter_rows}
+
     def horse_pos(rid: str, horse_name: str) -> Optional[int]:
         slots = results.get(rid) or {}
         tgt = _normalize_horse(horse_name or "")
@@ -7293,7 +7329,7 @@ async def _resolve_play_outcome(play: dict, target_date: str) -> dict:
         rid = play["race_id"]
         pos = horse_pos(rid, play["horse_name"])
         won = pos == 1
-        placed = pos in (1, 2, 3)
+        placed = _is_paid_place(pos, starters_by_race.get(rid))
         sp = (results.get(rid) or {}).get(pos, {}).get("sp") if pos else None
         if kind == "lock":
             profit = (BASE * (sp - 1)) if won and sp else (-BASE if pos is not None else 0)
@@ -7382,7 +7418,7 @@ async def _resolve_play_outcome(play: dict, target_date: str) -> dict:
                 "race_id": l["race_id"],
                 "horse_name": l["horse_name"],
                 "position": pos,
-                "hit": pos is not None and pos <= 3,
+                "hit": _is_paid_place(pos, starters_by_race.get(l["race_id"])),
             })
         all_hit = all(h["hit"] for h in leg_hits) if leg_hits else False
         any_pos_known = any(h["position"] is not None for h in leg_hits)
@@ -7404,7 +7440,7 @@ async def _resolve_play_outcome(play: dict, target_date: str) -> dict:
     if kind == "banker":
         rid = play["race_id"]
         pos = horse_pos(rid, play["horse_name"])
-        placed = pos is not None and pos <= 3
+        placed = _is_paid_place(pos, starters_by_race.get(rid))
         odds = play.get("place_odds_est") or 0
         profit = BASE * odds - BASE if placed else (-BASE if pos is not None else 0)
         return {
@@ -16467,15 +16503,29 @@ async def get_track_record():
         s = (s or "").strip().lower()
         return s.startswith("soft") or s.startswith("heavy")
 
+    # Starters per race for the field-size-aware paid-place rule (8+ → top-3,
+    # 5-7 → top-2, ≤4 → win-only). Backtest races: count rows in bt_rows (one
+    # per runner). Live races: count result rows in hr_map (finishers + the
+    # position-99 ran-markers = every starter). Unknown field size falls back
+    # to legacy top-3 inside _is_paid_place. This is a user-facing stat only —
+    # the stored `placed` column stays top-3 (place-model label + career feature).
+    from collections import Counter as _Counter
+    _bt_starters: dict[str, int] = _Counter(r.race_id for r in bt_rows)
+    _hr_starters: dict[str, int] = _Counter(
+        rid for (rid, _n), rr in hr_map.items()
+        if rr.position and 1 <= rr.position < 100
+    )
+
     unified = []
     for r in bt_rows:
         if r.win_probability is not None:
             pos = r.actual_position
             hr_bt = hr_map.get((r.race_id, r.horse_name))
+            starters = _bt_starters.get(r.race_id) or _hr_starters.get(r.race_id)
             unified.append({
                 "win_prob": r.win_probability,
                 "winner": bool(r.winner),
-                "placed": bool(pos and pos <= 3),
+                "placed": _is_paid_place(pos, starters),
                 "off_going": _is_off_going(hr_bt.track_condition if hr_bt else ""),
             })
     for r in live_rows:
@@ -16490,10 +16540,11 @@ async def get_track_record():
             except Exception:
                 going = ""
             off = _is_off_going(going) or _is_off_going(hr.track_condition)
+            starters = _hr_starters.get(hr.race_id) or _bt_starters.get(hr.race_id)
             unified.append({
                 "win_prob": r.win_probability,
                 "winner": hr.position == 1,
-                "placed": bool(hr.position and hr.position <= 3),
+                "placed": _is_paid_place(hr.position, starters),
                 "off_going": off,
             })
 
@@ -17177,10 +17228,18 @@ async def get_meeting(race_date: str, venue_code: str):
         # so the meeting-tile Sharp count matches /api/performance
         # (which requires the pick's horse to have finished).
         finished_horses: dict[str, set] = {}
-        for r in hr_all.scalars().all():
+        # First pass: starters per race (runners with a real finishing position)
+        # for the field-size-aware paid-place rule (8+ → top-3, 5-7 → top-2,
+        # ≤4 → win-only). Then build the placers set from paid places only.
+        _all_hr = hr_all.scalars().all()
+        from collections import Counter as _Counter
+        _gm_starters: dict[str, int] = _Counter(
+            r.race_id for r in _all_hr if r.position and 1 <= r.position < 100
+        )
+        for r in _all_hr:
             if r.position == 1:
                 winners[r.race_id] = r.horse_name
-            if r.position <= 3:
+            if _is_paid_place(r.position, _gm_starters.get(r.race_id)):
                 placers.setdefault(r.race_id, set()).add(r.horse_name)
             if r.position and r.position > 0:
                 finished_horses.setdefault(r.race_id, set()).add(
@@ -17579,7 +17638,9 @@ async def live_odds(race_id: str):
     scale = 1.0 / total_implied if total_implied > 0 else 1.0
 
     winner_name = next((h for h, _, pos in all_tote if pos == 1), None)
-    placed_names = {h for h, _, pos in all_tote if pos and pos <= 3}
+    # Starters = runners with a real finishing position, for the paid-place rule.
+    _lo_starters = sum(1 for _, _, pos in all_tote if pos and 1 <= pos < 100)
+    placed_names = {h for h, _, pos in all_tote if _is_paid_place(pos, _lo_starters)}
     settled = bool(winner_name) or db_settled
     # Completed races: history rank 1 is the genuine pre-race pick.
     # Upcoming races: use mutable (latest enrichment).
@@ -20408,14 +20469,22 @@ async def get_meeting_results(race_date: str, venue_code: str):
                 seen.add(r.race_id)
                 top_picks[r.race_id] = r.horse_name
 
+        # Fallback starter count per race (full non-cancelled predicted field),
+        # used when OddsPro's 'ran' list is absent.
+        from collections import Counter as _Counter
+        _op_pred_counts: dict[str, int] = _Counter(p.race_id for p in pred_rows)
+
         races_out = []
         for race_num in sorted(op_results_map.keys()):
             race_id = f"{race_date}_{venue_code}_R{race_num}"
             finishers = op_results_map[race_num].get("finishers", [])
+            # Starters for the paid-place rule: prefer OddsPro's 'ran' list
+            # (everyone who jumped); fall back to the predicted-field count.
+            _op_starters = len(op_results_map[race_num].get("ran", []) or []) or _op_pred_counts.get(race_id)
             winner = finishers[0]["name"] if finishers else None
             top_pick = top_picks.get(race_id) or ""
             norm_pick = _normalize_horse(top_pick)
-            placed_norm = {_normalize_horse(f["name"]) for f in finishers if f["position"] <= 3}
+            placed_norm = {_normalize_horse(f["name"]) for f in finishers if _is_paid_place(f["position"], _op_starters)}
             model_correct = (norm_pick == _normalize_horse(winner)) if (norm_pick and winner) else None
             model_placed = (norm_pick in placed_norm) if norm_pick else None
             races_out.append({
@@ -20425,6 +20494,7 @@ async def get_meeting_results(race_date: str, venue_code: str):
                 "has_result": bool(finishers),
                 "model_correct": model_correct,
                 "model_placed": model_placed,
+                "starters": _op_starters,
                 "top_pick": top_pick or None,
                 "runners": [
                     {"position": f["position"], "name": f["name"].upper(),
@@ -20530,7 +20600,12 @@ async def get_meeting_results(race_date: str, venue_code: str):
         # Normalize both sides to strip country codes (NZ, FR, IRE etc.) before comparing
         norm_pick = _normalize_horse(top_pick)
         model_correct = (_normalize_horse(norm_pick) == _normalize_horse(winner)) if (norm_pick and winner) else None
-        model_placed = (norm_pick in {_normalize_horse(n) for n, rd in runners_sorted if rd["position"] <= 3}) if norm_pick else None
+        # Field-size-aware paid place: runners_sorted is the full finished field.
+        _res_starters = len(runners_sorted)
+        model_placed = (norm_pick in {
+            _normalize_horse(n) for n, rd in runners_sorted
+            if _is_paid_place(rd["position"], _res_starters)
+        }) if norm_pick else None
 
         races_out.append({
             "race_number": race_num,
@@ -20539,6 +20614,7 @@ async def get_meeting_results(race_date: str, venue_code: str):
             "has_result": bool(runners_sorted),
             "model_correct": model_correct,
             "model_placed": model_placed,
+            "starters": _res_starters,
             "top_pick": top_picks.get(race_id),
             "runners": [
                 {
@@ -23082,6 +23158,12 @@ async def performance_summary(
     for r in hr_rows:
         if r.position == 1:
             winners[r.race_id] = r.horse_name
+    # Starters per race (runners with a real finishing position) for the
+    # field-size-aware paid-place rule: 8+ → top-3, 5-7 → top-2, ≤4 → win-only.
+    from collections import Counter as _Counter
+    _perf_starters: dict[str, int] = _Counter(
+        r.race_id for r in hr_rows if r.position and 1 <= r.position < 100
+    )
 
     # result races per date (for display — total_races_ran field)
     result_race_ids_by_date: dict[str, set] = {}
@@ -23133,7 +23215,7 @@ async def performance_summary(
         })
         d["races"] += 1
         act_won = _normalize_horse(pick.horse_name) == _normalize_horse(winner)
-        act_placed = bool(actual.position and actual.position <= 3) or act_won
+        act_placed = _is_paid_place(actual.position, _perf_starters.get(race_id)) or act_won
         if act_won:
             d["wins"] += 1
         if act_placed:
@@ -23232,7 +23314,7 @@ async def performance_summary(
                 sm_races += 1
                 if _normalize_horse(pick.horse_name) == _normalize_horse(winner):
                     sm_wins += 1
-                if actual.position <= 3:
+                if _is_paid_place(actual.position, _perf_starters.get(rid)):
                     sm_placed += 1
             row["sharp_meeting_races"] = sm_races
             row["sharp_meeting_wins"] = sm_wins
@@ -23289,6 +23371,8 @@ async def tier_grade_best_window(
 
     winners = {r.race_id: _normalize_horse(r.horse_name or "") for r in hr_rows if r.position == 1}
     result_by_key = {(r.race_id, _normalize_horse(r.horse_name)): r for r in hr_rows}
+    from collections import Counter as _Counter
+    _tg_starters = _Counter(r.race_id for r in hr_rows if r.position and 1 <= r.position < 100)
 
     top_picks: dict[str, RunnerPredictionHistoryRow] = {}
     for p in pred_rows:
@@ -23312,7 +23396,7 @@ async def tier_grade_best_window(
         if not actual or not actual.position or actual.position <= 0:
             continue
         won = _normalize_horse(pick.horse_name) == w
-        placed = bool(actual.position <= 3) or won
+        placed = _is_paid_place(actual.position, _tg_starters.get(rid)) or won
         sp = float(actual.starting_price) if actual.starting_price else None
         entries.append((rid[:10], pick.is_sharp is True, won, placed, sp))
     entries.sort(key=lambda e: e[0])  # oldest first for the sliding window
@@ -23499,6 +23583,8 @@ async def performance_tier_grade(sample_size: int = Query(500, ge=100, le=2000))
 
     winners = {r.race_id: r.horse_name for r in hr_rows if r.position == 1}
     result_by_key = {(r.race_id, _normalize_horse(r.horse_name)): r for r in hr_rows}
+    from collections import Counter as _Counter
+    _tg_starters = _Counter(r.race_id for r in hr_rows if r.position and 1 <= r.position < 100)
 
     # Pre-compute per-race stats so window aggregation is a linear filter pass.
     # Fields: race_date, is_sharp, won, placed, sp, bao, overlay, model_win_prob
@@ -23513,7 +23599,7 @@ async def performance_tier_grade(sample_size: int = Query(500, ge=100, le=2000))
         if not actual or not actual.position or actual.position <= 0:
             continue
         won = _normalize_horse(pick.horse_name) == _normalize_horse(winner)
-        placed = bool(actual.position <= 3) or won
+        placed = _is_paid_place(actual.position, _tg_starters.get(race_id)) or won
         sp = float(actual.starting_price) if actual.starting_price else None
         bao = float(pick.best_available_odds) if pick.best_available_odds else None
         overlay = float(pick.overlay) if pick.overlay else 0.0
@@ -24183,6 +24269,8 @@ async def performance_by_venue(days: int = Query(30, ge=1, le=90)):
         top_picks = {p.race_id: p for p in pred_result.scalars().all()}
 
     result_by_key = {(r.race_id, _normalize_horse(r.horse_name)): r for r in hr_rows}
+    from collections import Counter as _Counter
+    _bv_starters = _Counter(r.race_id for r in hr_rows if r.position and 1 <= r.position < 100)
     by_venue: dict[str, dict] = {}
     for race_id, pick in top_picks.items():
         _, venue, _ = _parse_race_id(race_id)
@@ -24194,7 +24282,7 @@ async def performance_by_venue(days: int = Query(30, ge=1, le=90)):
         by_venue[venue]["races"] += 1
         if result.winner:
             by_venue[venue]["wins"] += 1
-        if result.position and result.position <= 3:
+        if _is_paid_place(result.position, _bv_starters.get(race_id)):
             by_venue[venue]["placed"] += 1
 
     venues = sorted([

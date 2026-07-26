@@ -594,6 +594,44 @@ def is_trifecta_hit(box_horses: list[int], actual_top3: list[int]) -> bool:
     return all(t in box_set for t in actual_top3[:3])
 
 
+# ── Paid-place rule (user-facing place statistics only) ─────────────────────────
+# Standard Australian TAB place-dividend terms key off the number of STARTERS:
+#   8+ starters   → 3 places paid (top-3)
+#   5-7 starters  → 2 places paid (top-2)
+#   ≤4 starters   → win-only, no place market (only a win "collects")
+# This is used ONLY for user-facing place %/badges — NOT for the stored `placed`
+# column, which stays top-3 because it is the place-model training label
+# (requires exactly 3 placed per race) and the career-place feature. Keep those
+# two worlds separate: model = top-3, punter-facing stat = field-size-aware.
+
+def paid_place_slots(starters) -> int:
+    """Number of finishing positions that collect a place dividend for a field
+    of `starters` runners. Returns 3 when starters is unknown (legacy top-3)."""
+    if starters is None:
+        return 3
+    try:
+        s = int(starters)
+    except (TypeError, ValueError):
+        return 3
+    if s >= 8:
+        return 3
+    if s >= 5:
+        return 2
+    return 0  # ≤4: win-only, no place market
+
+
+def is_paid_place(position, starters) -> bool:
+    """True if `position` collects a place dividend given the field size.
+    Position 99 (ran-but-unplaced sentinel), 0, None, or negatives are never a
+    place. For ≤4-starter (win-only) fields only the winner counts."""
+    if not position or position <= 0 or position >= 90:
+        return False
+    slots = paid_place_slots(starters)
+    if slots == 0:
+        return position == 1
+    return position <= slots
+
+
 def is_first_four_hit(box_horses: list[int], actual_top4: list[int]) -> bool:
     """Top-4 finishers must all be in the box (order doesn't matter)."""
     if len(actual_top4) < 4:

@@ -2196,11 +2196,12 @@
         resultBadge = `<span class="pick-badge-standard" style="background:var(--bg-elevated);color:var(--text-dim);border-color:var(--border);">Scratched</span>`;
       } else if (result.winner) {
         resultBadge = `<span class="pick-badge-standard" style="background:var(--green-dim);color:var(--green);border-color:rgba(34,197,94,0.25);">✓ Correct</span>`;
-      } else if (result.placed || (result.position && result.position <= 3)) {
+      } else if (result.placed) {
+        // Backend `placed` is field-size-aware (8+ → top-3, 5-7 → top-2, ≤4 → win-only).
         const posLbl = result.position ? ordinal(result.position) : '';
         resultBadge = `<span class="pick-badge-standard" style="background:rgba(245,158,11,0.12);color:#f59e0b;border-color:rgba(245,158,11,0.35);">Placed ${posLbl}</span>`;
-      } else if (result.position && result.position > 3) {
-        // Genuine miss — we have an actual position and it's not in the placings.
+      } else if (result.position) {
+        // Genuine miss — we have an actual position and it's not a paid place.
         resultBadge = `<span class="pick-badge-standard" style="background:rgba(239,68,68,0.10);color:#f87171;border-color:rgba(239,68,68,0.25);">✗ Wrong</span>`;
       } else {
         // Defensive: no clear signal either way — keep pending rather
@@ -2353,13 +2354,13 @@
             // with no parenthetical, but keep the real place for genuine
             // out-of-placing finishes (e.g. "✗ Did not place (7th)").
             const posLbl = pos === 2 ? '2nd' : pos === 3 ? '3rd' : (pos && pos < 90) ? `${pos}th` : '';
-            const placed = (result.placed || (pos && pos <= 3)) && !result.winner;
+            const placed = result.placed && !result.winner;
             const winnerChip = (!result.winner && result.winner_name)
               ? `<span class="pick-footer-chip" style="color:var(--text-dim)">Winner: <strong style="color:var(--text-secondary)">${escHtml(result.winner_name)}</strong></span>`
               : '';
             if (result.winner) return `<span class="pick-verdict correct">✓ Won</span>`;
             if (placed) return `<span class="pick-verdict" style="background:rgba(245,158,11,0.10);color:#f59e0b;border-color:rgba(245,158,11,0.25);">~ Placed${posLbl ? ' ' + posLbl : ''}</span>${winnerChip}`;
-            if (pos && pos > 3) {
+            if (pos) {
               return `<span class="pick-verdict wrong">✗ Did not place${posLbl ? ' (' + posLbl + ')' : ''}</span>${winnerChip}`;
             }
             // No position — pending, not a miss. Prevents "Did not
@@ -2676,8 +2677,8 @@
       let dayPnlBar = '';
       if (settledPicks.length > 0) {
         const sWins   = settledPicks.filter(p => results[p.race_id].winner).length;
-        const sPlaced = settledPicks.filter(p => { const r = results[p.race_id]; return (r.placed || (r.position && r.position <= 3)) && !r.winner; }).length;
-        const sLoss   = settledPicks.filter(p => { const r = results[p.race_id]; return !r.winner && !(r.placed || (r.position && r.position <= 3)); }).length;
+        const sPlaced = settledPicks.filter(p => { const r = results[p.race_id]; return r.placed && !r.winner; }).length;
+        const sLoss   = settledPicks.filter(p => { const r = results[p.race_id]; return !r.winner && !r.placed; }).length;
         const sPnl    = +settledPicks.reduce((s, p) => { const r = results[p.race_id]; return s + (r.winner && r.sp ? r.sp * stake - stake : -stake); }, 0).toFixed(2);
         const pnlCls  = sPnl >= 0 ? 'pnl-positive' : 'pnl-negative';
         const pnlSign = sPnl >= 0 ? '+' : '';
@@ -2965,7 +2966,7 @@
 
   function renderYesterdayCard(p, stake) {
     const isWin = p.winner;
-    const isPlaced = (p.placed || (p.position && p.position <= 3)) && !isWin;
+    const isPlaced = p.placed && !isWin;
     const isLoss = !isWin && !isPlaced && !p.scratched && !p.no_result;
     const barW = Math.min(100, (p.model_pct / 70) * 100);
     const barColor = isWin ? 'var(--green)' : isPlaced ? '#f59e0b' : 'var(--text-dim)';
@@ -3401,7 +3402,7 @@
     if (ystLbl && yesterdayViewDate) ystLbl.textContent = `${fmtDate(yesterdayViewDate)} — ${winRate}% win`;
 
     const wins   = activePicks.filter(p => p.winner).length;
-    const placed = activePicks.filter(p => (p.placed || (p.position && p.position <= 3)) && !p.winner).length;
+    const placed = activePicks.filter(p => p.placed && !p.winner).length;
     const losses = activePicks.filter(p => !p.winner && !p.placed).length;
     const placeRate = activePicks.length ? +((wins + placed) / activePicks.length * 100).toFixed(1) : 0;
     const premiumCount = shownPicks.filter(p => {
