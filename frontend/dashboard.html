@@ -1273,20 +1273,20 @@
             <div class="chart-card">
               <div class="chart-card-title">Win Rate %</div>
               <div style="display:flex;gap:12px;margin-bottom:10px;font-size:0.7rem;color:var(--text-dim)">
-                <span><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:rgba(34,197,94,0.6);margin-right:4px;vertical-align:middle"></span>≥ 50% — on target</span>
-                <span><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:rgba(239,68,68,0.4);margin-right:4px;vertical-align:middle"></span>&lt; 50% — below target</span>
+                <span><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:rgba(34,197,94,0.6);margin-right:4px;vertical-align:middle"></span>≥ 30% — on target</span>
+                <span><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:rgba(239,68,68,0.4);margin-right:4px;vertical-align:middle"></span>&lt; 30% — below target</span>
               </div>
               <div class="chart-wrap"><canvas id="winRateChart"></canvas></div>
             </div>
             <div class="chart-card">
-              <div class="chart-card-title">Value Bet P&amp;L — $10 per race</div>
+              <div class="chart-card-title">Value Bet P&amp;L — units (odds-based)</div>
               <div style="display:flex;gap:12px;margin-bottom:10px;font-size:0.7rem;color:var(--text-dim)">
                 <span><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:rgba(59,130,246,0.6);margin-right:4px;vertical-align:middle"></span>Profitable day</span>
                 <span><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:rgba(239,68,68,0.4);margin-right:4px;vertical-align:middle"></span>Loss day</span>
               </div>
               <div class="chart-wrap"><canvas id="pnlChart"></canvas></div>
               <div style="font-size:0.68rem;color:var(--text-dim);margin-top:10px;line-height:1.5;">
-                Net profit or loss if you placed $10 on every race where the model beats the market (minimum $3.00 odds). Hover a bar to see how many races that covered. Scale for other stakes: $5/race ÷ 2, $20/race × 2.
+                Net units won/lost if you staked 1 unit on every race where the model beats the market (minimum $3.00 odds), with winners paid at their actual odds (SP − 1) and losers − 1. Stake-agnostic — multiply by your $/bet for dollars (e.g. +2u = +$20 at $10/bet). Hover a bar to see how many races that covered.
               </div>
             </div>
           </div>
@@ -1583,13 +1583,16 @@ export CRON_SECRET='&lt;your CRON_SECRET&gt;'
         const tierHot     = days.map(d => d.tier_hot || 0);
         const tierHigh    = days.map(d => d.tier_high || 0);
         const tierStrong  = days.map(d => d.tier_strong || 0);
-        const roiRates    = days.map(d => +(d.value_pnl * 10).toFixed(2));
+        // Odds-based P&L in stake-units: value_pnl already sums (SP − 1) for
+        // winners and − 1 for losers, so it IS the per-1-unit odds-weighted
+        // result. Show it directly — no flat $10-stake scaling.
+        const roiRates    = days.map(d => +(d.value_pnl ?? 0).toFixed(2));
 
         new Chart(document.getElementById('winRateChart'), {
           type: 'bar',
           data: {
             labels,
-            datasets: [{ data: winRates, backgroundColor: winRates.map(v => v >= 50 ? 'rgba(34,197,94,0.6)' : 'rgba(239,68,68,0.4)'), borderRadius: 4 }]
+            datasets: [{ data: winRates, backgroundColor: winRates.map(v => v >= 30 ? 'rgba(34,197,94,0.6)' : 'rgba(239,68,68,0.4)'), borderRadius: 4 }]
           },
           options: {
             ...chartDefaults,
@@ -1610,7 +1613,7 @@ export CRON_SECRET='&lt;your CRON_SECRET&gt;'
           options: {
             ...chartDefaults,
             plugins: { ...chartDefaults.plugins, tooltip: { callbacks: {
-              label: ctx => `P&L: $${ctx.parsed.y} (at $10/race)`,
+              label: ctx => `P&L: ${ctx.parsed.y >= 0 ? '+' : ''}${ctx.parsed.y}u per $1 staked`,
               afterLabel: ctx => {
                 const i = ctx.dataIndex;
                 const lines = [`Value bets: ${valueBets[i]}`];
@@ -1621,7 +1624,7 @@ export CRON_SECRET='&lt;your CRON_SECRET&gt;'
                 return lines;
               },
             }}},
-            scales: { ...chartDefaults.scales, y: { ...chartDefaults.scales.y, ticks: { ...chartDefaults.scales.y.ticks, callback: v => '$' + v } } }
+            scales: { ...chartDefaults.scales, y: { ...chartDefaults.scales.y, ticks: { ...chartDefaults.scales.y.ticks, callback: v => v + 'u' } } }
           }
         });
       }
