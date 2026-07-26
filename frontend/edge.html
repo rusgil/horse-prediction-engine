@@ -1921,7 +1921,7 @@
     </div>
     <div class="sort-bar">
       <span>Sort:</span>
-      <button class="sort-btn active" id="ystSortReturn" onclick="setYesterdaySort('return')">Best return</button>
+      <button class="sort-btn active" id="ystSortReturn" onclick="setYesterdaySort('return')">Best return ↓</button>
       <button class="sort-btn" id="ystSortTime" onclick="setYesterdaySort('time')">Time</button>
       <button class="sort-btn" id="ystSortRace" onclick="setYesterdaySort('race')">Race #</button>
     </div>
@@ -2817,27 +2817,69 @@
   let yesterdayLoaded = false;
   let yesterdayData = null;
   let yesterdaySortMode = 'return';   // 'return' | 'time' | 'race'
+  let yesterdaySortDir = 1;           // 1 = default order; a 2nd click on the
+                                      // active button flips to -1 (inverted).
+  const _YST_SORT_LABELS = { return: 'Best return', time: 'Time', race: 'Race #' };
   function setYesterdaySort(mode) {
-    yesterdaySortMode = mode;
-    document.getElementById('ystSortReturn').classList.toggle('active', mode === 'return');
-    document.getElementById('ystSortTime').classList.toggle('active',   mode === 'time');
-    document.getElementById('ystSortRace').classList.toggle('active',   mode === 'race');
+    // Re-clicking the active sort inverts the list; switching sort resets to
+    // that sort's default direction.
+    if (mode === yesterdaySortMode) yesterdaySortDir = -yesterdaySortDir;
+    else { yesterdaySortMode = mode; yesterdaySortDir = 1; }
+    [['return', 'ystSortReturn'], ['time', 'ystSortTime'], ['race', 'ystSortRace']].forEach(([m, id]) => {
+      const btn = document.getElementById(id);
+      if (!btn) return;
+      const active = m === yesterdaySortMode;
+      btn.classList.toggle('active', active);
+      // Arrow reflects value direction: 'return' defaults high→low (↓); time &
+      // race default low→high (↑). Flips with yesterdaySortDir.
+      let arrow = '';
+      if (active) {
+        const descDefault = (m === 'return');
+        const asc = descDefault ? (yesterdaySortDir === -1) : (yesterdaySortDir === 1);
+        arrow = asc ? ' ↑' : ' ↓';
+      }
+      btn.textContent = _YST_SORT_LABELS[m] + arrow;
+    });
     if (yesterdayData) renderYesterdayContent(yesterdayData, 10);
   }
   // Sort yesterday's picks for display (stats are order-independent):
   //   return → biggest winning payout first;  time → chronological by jump;
   //   race   → by race number only (all R1s, then R2s… ignoring meeting).
+  // scheduled_time is a tz-aware ISO string (offsets vary: AEST/ACST/AWST), so
+  // compare by parsed epoch, NOT string, to order by the true instant. Picks
+  // with no stored time (rare — e.g. an RA-recovery day) fall back to race #.
+  // yesterdaySortDir multiplies the comparator so a 2nd click inverts the list.
   function _sortYesterdayPicks(picks) {
-    const t = p => p.scheduled_time || p.race_id || '';
     const arr = picks.slice();
+    const ep   = p => { const t = p.scheduled_time ? Date.parse(p.scheduled_time) : NaN; return Number.isNaN(t) ? null : t; };
+    const rnum = p => (p.race_number || 0);
+    let cmp;
     if (yesterdaySortMode === 'time') {
-      arr.sort((a, b) => t(a).localeCompare(t(b)));
+      cmp = (a, b) => {
+        const ea = ep(a), eb = ep(b);
+        if (ea != null && eb != null) return ea - eb;
+        if (ea != null) return -1;                 // known times first
+        if (eb != null) return 1;
+        return rnum(a) - rnum(b);                   // both unknown → race-number proxy
+      };
     } else if (yesterdaySortMode === 'race') {
-      arr.sort((a, b) => (a.race_number || 0) - (b.race_number || 0) || t(a).localeCompare(t(b)));
+      cmp = (a, b) => (rnum(a) - rnum(b)) || ((ep(a) ?? 0) - (ep(b) ?? 0));
     } else {
-      arr.sort((a, b) => (b.payout || 0) - (a.payout || 0) || t(a).localeCompare(t(b)));
+      cmp = (a, b) => ((b.payout || 0) - (a.payout || 0)) || ((ep(a) ?? Infinity) - (ep(b) ?? Infinity));
     }
+    arr.sort((a, b) => yesterdaySortDir * cmp(a, b));
     return arr;
+  }
+  // Format a tz-aware ISO race time to the TRACK-local post time (e.g. 12:10pm),
+  // using the wall-clock part of the string (not the viewer's timezone).
+  function _fmtRaceTime(iso) {
+    if (!iso) return '';
+    const m = /T(\d{2}):(\d{2})/.exec(iso);
+    if (!m) return '';
+    let h = +m[1]; const min = m[2];
+    const ap = h >= 12 ? 'pm' : 'am';
+    h = h % 12; if (h === 0) h = 12;
+    return `${h}:${min}${ap}`;
   }
   let weatherByCode = {};
 
@@ -3113,6 +3155,7 @@
             <span class="venue-name">${escHtml(p.venue)}</span>
             <span class="sep">·</span>
             <span>R${p.race_number}</span>
+            ${p.scheduled_time ? `<span class="sep">·</span><span>${_fmtRaceTime(p.scheduled_time)}</span>` : ''}
           </div>
         </div>
         <div class="pick-body">
