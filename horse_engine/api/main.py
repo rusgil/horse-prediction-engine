@@ -23733,12 +23733,17 @@ def _is_better(candidate: dict, current: dict | None) -> bool:
     return candidate["win_pct"] > current["win_pct"]
 
 
-async def _scheduled_refresh_about_stats():
+async def _scheduled_refresh_about_stats(force: bool = False):
     """Weekly: compute the current best-window Sharp stats and publish them if
     they're materially better than what's currently in the ResponseCacheRow.
-    Serves the About page's 5-tier scale section."""
+    Serves the About page's 5-tier scale section.
+
+    force=True bypasses the never-regress `_is_better` gate — used when a
+    correctness fix (e.g. the field-size-aware paid-place rule) legitimately
+    LOWERS a published figure and we must republish the honest number rather
+    than keep a stale, inflated one."""
     global _published_tier_grade_cache
-    log.info("[refresh-about-stats] Running weekly refresh")
+    log.info("[refresh-about-stats] Running %s refresh", "FORCED" if force else "weekly")
     try:
         # Reuse the tier-grade endpoint's computation by calling it directly.
         # It's idempotent and cached — safe to call from cron.
@@ -23769,7 +23774,7 @@ async def _scheduled_refresh_about_stats():
                 except Exception:
                     current = None
 
-            if not _is_better(candidate, current):
+            if not force and not _is_better(candidate, current):
                 log.info(
                     "[refresh-about-stats] Skipping — candidate not better than published. "
                     "cand=%s%%win/%s%%place  published=%s%%win/%s%%place",
@@ -23777,6 +23782,13 @@ async def _scheduled_refresh_about_stats():
                     (current or {}).get("win_pct"), (current or {}).get("place_pct")
                 )
                 return
+            if force and not _is_better(candidate, current):
+                log.warning(
+                    "[refresh-about-stats] FORCE-publishing a non-improvement "
+                    "(correctness override): cand=%s%%win/%s%%place  was=%s%%win/%s%%place",
+                    candidate["win_pct"], candidate["place_pct"],
+                    (current or {}).get("win_pct"), (current or {}).get("place_pct")
+                )
 
             payload = json.dumps(candidate)
             if row:
@@ -23827,13 +23839,22 @@ async def performance_tier_grade_published():
 
 
 @app.post("/api/admin/refresh-about-stats-now")
-async def admin_refresh_about_stats_now(x_cron_secret: Optional[str] = Header(None)):
-    """Force-run the weekly refresh immediately. Useful for the initial
-    publish (before the first Sunday cron fires) and for verifying the
-    'better-only' comparator during development."""
+async def admin_refresh_about_stats_now(
+    force: bool = False,
+    x_cron_secret: Optional[str] = Header(None),
+):
+    """Run the weekly refresh immediately. Useful for the initial publish
+    (before the first Sunday cron fires) and for verifying the 'better-only'
+    comparator during development. `force=true` bypasses the never-regress
+    gate — use only when a correctness fix legitimately lowers the number."""
     _check_admin(x_cron_secret)
-    await _scheduled_refresh_about_stats()
-    return {"ok": True}
+    await _scheduled_refresh_about_stats(force=force)
+    async with get_session() as session:
+        row = (await session.execute(
+            select(ResponseCacheRow).where(ResponseCacheRow.cache_key == _PUBLISHED_TIER_GRADE_KEY)
+        )).scalar_one_or_none()
+    published = json.loads(row.payload_json) if row and row.payload_json else None
+    return {"ok": True, "forced": force, "published": published}
 
 
 @app.get("/api/admin/backtest-win")

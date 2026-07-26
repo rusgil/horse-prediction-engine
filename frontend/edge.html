@@ -321,7 +321,7 @@
       border-radius: var(--radius-lg);
       margin-bottom: 12px;
       overflow: hidden;
-      transition: border-color 0.15s;
+      transition: border-color 0.15s, box-shadow 0.15s;
       position: relative;
     }
     .pick-card:hover { border-color: rgba(34,197,94,0.3); }
@@ -329,6 +329,12 @@
     .pick-card.hot:hover { border-color: var(--gold); }
     .pick-card.premium { border-color: rgba(168,85,247,0.4); }
     .pick-card.premium:hover { border-color: var(--purple); }
+    /* Yesterday result cards — highlight the border on hover by outcome:
+       green = won, amber = placed, red = loss. Defined after the .hot/.premium
+       hover rules so a won card (which also carries .hot) resolves to green. */
+    .pick-card.yr-won:hover    { border-color: var(--green); box-shadow: 0 0 0 1px var(--green), 0 4px 16px rgba(34,197,94,0.18); }
+    .pick-card.yr-placed:hover { border-color: #f59e0b;      box-shadow: 0 0 0 1px #f59e0b, 0 4px 16px rgba(245,158,11,0.18); }
+    .pick-card.yr-loss:hover   { border-color: #f87171;      box-shadow: 0 0 0 1px #f87171, 0 4px 16px rgba(239,68,68,0.16); }
     .pick-card.premium .pick-horse-name { color: var(--purple-bright); }
     .pick-card.premium .payout-box { background: var(--purple-dim); border-color: var(--purple-mid); }
     .pick-card.premium .payout-profit { color: var(--purple-bright); }
@@ -3071,7 +3077,7 @@
       : '';
 
     return `
-      <div class="pick-card ${isWin ? 'hot' : ''}" style="${isPlaced ? 'border-color:rgba(245,158,11,0.25);' : isLoss ? 'border-color:rgba(239,68,68,0.2);' : ''}${(p.scratched || p.no_result) ? 'opacity:0.55;' : ''}">
+      <div class="pick-card ${isWin ? 'hot' : ''} ${isWin ? 'yr-won' : isPlaced ? 'yr-placed' : isLoss ? 'yr-loss' : ''}" style="${isPlaced ? 'border-color:rgba(245,158,11,0.25);' : isLoss ? 'border-color:rgba(239,68,68,0.2);' : ''}${(p.scratched || p.no_result) ? 'opacity:0.55;' : ''}">
         <div class="pick-card-top-bar">
           ${badge}
           <div class="pick-race-ref">
