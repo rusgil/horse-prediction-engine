@@ -1921,7 +1921,7 @@
     </div>
     <div class="sort-bar">
       <span>Sort:</span>
-      <button class="sort-btn active" id="ystSortReturn" onclick="setYesterdaySort('return')">Best return ↓</button>
+      <button class="sort-btn active" id="ystSortBest" onclick="setYesterdaySort('best')">Best Pick ↓</button>
       <button class="sort-btn" id="ystSortTime" onclick="setYesterdaySort('time')">Time</button>
       <button class="sort-btn" id="ystSortRace" onclick="setYesterdaySort('race')">Race #</button>
     </div>
@@ -2816,25 +2816,25 @@
   let resultsMap = {};
   let yesterdayLoaded = false;
   let yesterdayData = null;
-  let yesterdaySortMode = 'return';   // 'return' | 'time' | 'race'
+  let yesterdaySortMode = 'best';     // 'best' | 'time' | 'race'
   let yesterdaySortDir = 1;           // 1 = default order; a 2nd click on the
                                       // active button flips to -1 (inverted).
-  const _YST_SORT_LABELS = { return: 'Best return', time: 'Time', race: 'Race #' };
+  const _YST_SORT_LABELS = { best: 'Best Pick', time: 'Time', race: 'Race #' };
   function setYesterdaySort(mode) {
     // Re-clicking the active sort inverts the list; switching sort resets to
     // that sort's default direction.
     if (mode === yesterdaySortMode) yesterdaySortDir = -yesterdaySortDir;
     else { yesterdaySortMode = mode; yesterdaySortDir = 1; }
-    [['return', 'ystSortReturn'], ['time', 'ystSortTime'], ['race', 'ystSortRace']].forEach(([m, id]) => {
+    [['best', 'ystSortBest'], ['time', 'ystSortTime'], ['race', 'ystSortRace']].forEach(([m, id]) => {
       const btn = document.getElementById(id);
       if (!btn) return;
       const active = m === yesterdaySortMode;
       btn.classList.toggle('active', active);
-      // Arrow reflects value direction: 'return' defaults high→low (↓); time &
+      // Arrow reflects value direction: 'best' defaults high→low (↓); time &
       // race default low→high (↑). Flips with yesterdaySortDir.
       let arrow = '';
       if (active) {
-        const descDefault = (m === 'return');
+        const descDefault = (m === 'best');
         const asc = descDefault ? (yesterdaySortDir === -1) : (yesterdaySortDir === 1);
         arrow = asc ? ' ↑' : ' ↓';
       }
@@ -2843,8 +2843,9 @@
     if (yesterdayData) renderYesterdayContent(yesterdayData, 10);
   }
   // Sort yesterday's picks for display (stats are order-independent):
-  //   return → biggest winning payout first;  time → chronological by jump;
-  //   race   → by race number only (all R1s, then R2s… ignoring meeting).
+  //   best → premium first, then model confidence desc (matches Upcoming's
+  //          "Best Pick");  time → chronological by jump;  race → by race
+  //          number only (all R1s, then R2s… ignoring meeting).
   // scheduled_time is a tz-aware ISO string (offsets vary: AEST/ACST/AWST), so
   // compare by parsed epoch, NOT string, to order by the true instant. Picks
   // with no stored time (rare — e.g. an RA-recovery day) fall back to race #.
@@ -2853,6 +2854,10 @@
     const arr = picks.slice();
     const ep   = p => { const t = p.scheduled_time ? Date.parse(p.scheduled_time) : NaN; return Number.isNaN(t) ? null : t; };
     const rnum = p => (p.race_number || 0);
+    // Yesterday premium = same rule as the summary strip / Upcoming, but using
+    // SP (yesterday picks carry sp, not best_available_odds/edge_pct).
+    const prem = p => (p.model_pct >= 29.5 && p.sp && p.sp >= 3.0
+                       && (p.model_pct - (100 / p.sp)) > 5) ? 1 : 0;
     let cmp;
     if (yesterdaySortMode === 'time') {
       cmp = (a, b) => {
@@ -2865,7 +2870,7 @@
     } else if (yesterdaySortMode === 'race') {
       cmp = (a, b) => (rnum(a) - rnum(b)) || ((ep(a) ?? 0) - (ep(b) ?? 0));
     } else {
-      cmp = (a, b) => ((b.payout || 0) - (a.payout || 0)) || ((ep(a) ?? Infinity) - (ep(b) ?? Infinity));
+      cmp = (a, b) => (prem(b) - prem(a)) || ((b.model_pct || 0) - (a.model_pct || 0));
     }
     arr.sort((a, b) => yesterdaySortDir * cmp(a, b));
     return arr;
