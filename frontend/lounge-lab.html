@@ -184,10 +184,6 @@
   .watch-btn:hover { border-color: var(--mint); color: var(--mint); }
   .watch-btn .wb-src { font-weight: 600; color: var(--text-3); }
 
-  .tier-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; flex-shrink: 0; }
-  .tier-dot.hot    { background: var(--hot); box-shadow: 0 0 6px var(--hot); }
-  .tier-dot.high   { background: var(--blue); }
-  .tier-dot.strong { background: var(--strong); }
 
   .res { font-weight: 800; font-size: 0.8rem; }
   .res.win { color: var(--mint); }
@@ -415,7 +411,7 @@
   .brace .mid .pk { font-weight: 700; font-size: 0.86rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .brace .mid .pk.ghost { color: var(--text-3); font-weight: 500; font-size: 0.76rem; }
   .brace .mid .sub { font-size: 0.68rem; color: var(--text-3); margin-top: 1px; }
-  .brace .right { display: flex; align-items: center; gap: 8px; }
+  .brace .right { display: flex; flex-direction: column; align-items: flex-end; gap: 5px; }
   @media (max-width: 860px) {
     .rail-layout { grid-template-columns: 1fr; }
     .rail { position: static; max-height: none; display: flex; overflow-x: auto; border-radius: 12px; }
@@ -976,7 +972,7 @@
         </div>
         <div class="right">
           ${!done ? barsHtml(r.top_win_probability, r.top_place_probability) : ''}
-          ${tier && !done ? `<span class="tier-dot ${tier.dot}" title="${tier.label}"></span>` : ''}
+          ${tier && !done ? `<span class="chip ${tier.cls}">${tier.label}</span>` : ''}
         </div>
       </div>`;
     }).join('');
