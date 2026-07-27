@@ -17552,17 +17552,32 @@ async def get_meeting(race_date: str, venue_code: str):
 
     enriched = bool(enriched_rows)
 
+    def _pick_ran(race_id: str, pick: str) -> bool:
+        """False when the top pick has no finishing position (scratched on
+        race day / missing from the results field). Such races are EXCLUDED
+        by /api/performance — returning None below keeps the tiles' dots and
+        counts consistent with the day stats, so a member hand-counting the
+        board matches the published % (2026-07-26: 12 scratched-pick races
+        showed ✗ on tiles while the day stat correctly skipped them → users
+        counted 21/60=35% vs our 21/48=44%)."""
+        fin = finished_horses.get(race_id)
+        return bool(fin) and _normalize_horse(pick) in fin
+
     def _model_correct(race_id: str):
         pick = top_picks.get(race_id)
         winner = winners.get(race_id)
         if not pick or not winner:
             return None
+        if not _pick_ran(race_id, pick):
+            return None  # pick never ran — not a countable race
         return _normalize_horse(pick) == _normalize_horse(winner)
 
     def _model_placed(race_id: str):
         pick = top_picks.get(race_id)
         race_placers = placers.get(race_id)
         if not pick or not race_placers:
+            return None
+        if not _pick_ran(race_id, pick):
             return None
         return _normalize_horse(pick) in {_normalize_horse(h) for h in race_placers}
 

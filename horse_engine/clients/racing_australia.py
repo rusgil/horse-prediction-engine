@@ -136,14 +136,28 @@ def _ra_date(iso_date: str) -> str:
 
 _TAPETA_RE = re.compile(r"\s+Tapeta\b", re.IGNORECASE)
 
+# RA → bookmaker venue aliases. RA names the physical track, the bookie feeds
+# name the town: RA's "Pioneer Park" is Sportsbet/OddsPro's "Alice Springs".
+# Without the alias the fuzzy matchers can never connect them → no odds ever
+# merge (the meeting runs permanently blind) and no Sportsbet race times →
+# snapshot gaps (2026-07-26: the whole Pioneer Park card missing from stats).
+# Applied inside _clean_venue so the display name, the slug/race_id and every
+# downstream feed matcher inherit the alias from one choke point. The RA key
+# (used for RA URLs) keeps the original name and is unaffected. Lowercase keys.
+_VENUE_ALIASES = {
+    "pioneer park": "Alice Springs",
+}
+
+
 def _clean_venue(raw: str) -> str:
-    """Strip sponsor prefix and track-surface qualifiers for consistent slugs.
+    """Strip sponsor prefix and track-surface qualifiers for consistent slugs,
+    then apply bookmaker venue aliases (e.g. 'Pioneer Park' → 'Alice Springs').
     'Sportsbet Sandown Lakeside' → 'Sandown Lakeside'
     'Devonport Tapeta Synthetic' → 'Devonport Synthetic'
     """
     name = _SPONSOR_RE.sub("", raw).strip()
     name = _TAPETA_RE.sub("", name).strip()
-    return name
+    return _VENUE_ALIASES.get(name.lower(), name)
 
 
 def _slugify(name: str) -> str:
