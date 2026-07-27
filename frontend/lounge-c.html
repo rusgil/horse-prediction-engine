@@ -570,6 +570,23 @@
   .runner.top1 .pick-tag { background: var(--mint-dim); color: var(--mint); }
   .val-chip { background: var(--mint-dim); color: var(--mint); font-size: 0.58rem; font-weight: 800; padding: 2px 6px; border-radius: 4px; letter-spacing: 0.04em; cursor: help; }
 
+
+  /* Mobile: drill-in text a touch bigger for readability */
+  @media (max-width: 640px) {
+    .dw-title { font-size: 1.55rem; }
+    .dw-sub { font-size: 0.85rem; }
+    .runner .hn { font-size: 1.02rem; }
+    .runner .jk { font-size: 0.8rem; }
+    .runner .odds .o { font-size: 1rem; }
+    .runner .odds .ol { font-size: 0.64rem; }
+    .pbar { font-size: 0.78rem; }
+    .pbar .val { width: 48px; }
+    .dw-res-row { font-size: 0.92rem; }
+    .dw-note { font-size: 0.82rem; }
+    .pick-tag { font-size: 0.62rem; }
+    .runner .rflag { font-size: 0.68rem; }
+  }
+
   .foot { max-width: 1220px; margin: 30px auto 0; padding: 0 16px; font-size: 0.7rem; color: var(--text-3); text-align: center; }
 
   @media (prefers-reduced-motion: reduce) {
