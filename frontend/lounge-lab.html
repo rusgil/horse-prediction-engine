@@ -1022,11 +1022,7 @@
         <div class="rt num">${wallTime(r.scheduled_time)}<span class="cd ${done ? '' : (cd.urg || '')}">${done ? '' : cd.label}</span></div>
         <div class="mid">
           ${done
-            ? `<div class="pk"><span class="pk-name">${tp ? esc(tp.horse_name) : 'Our pick'}</span>${
-                r.model_correct ? '<span class="chip outcome-win">✓ WON</span>'
-                : r.model_placed ? '<span class="chip outcome-place">✓ PLACED</span>'
-                : '<span class="chip outcome-miss">✗ LOST</span>'
-              }${tp && tp.best_available_odds > 1 ? `<span class="pk-odds num">$${(+tp.best_available_odds).toFixed(2)}</span>` : ''}</div>`
+            ? `<div class="pk"><span class="pk-name">${tp ? esc(tp.horse_name) : 'Our pick'}</span>${resultMark(r)}${tp && tp.best_available_odds > 1 ? `<span class="pk-odds num">$${(+tp.best_available_odds).toFixed(2)}</span>` : ''}</div>`
             : `<div class="pk ${tp ? '' : 'ghost'}"><span class="pk-name">${tp ? esc(tp.horse_name) : (r.top_win_probability != null ? 'Tap for our pick' : 'No prediction yet')}</span>${tier ? `<span class="chip ${tier.cls}">${tier.label}</span>` : ''}${tp && tp.best_available_odds > 1 ? `<span class="pk-odds num">$${(+tp.best_available_odds).toFixed(2)}</span>` : ''}</div>`}
           <div class="sub num">${r.distance ? r.distance + 'm' : ''}${r.field_size ? ' · ' + r.field_size + ' runners' : ''}${r.is_sharp ? ` <span class="chip sharp" style="font-size:0.56rem;padding:1px 5px;margin-left:4px">🎯 SHARP</span>` : ''}</div>
         </div>
