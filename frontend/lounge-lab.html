@@ -764,6 +764,10 @@
       const d = await r.json();
       if (seq !== S.loadSeq) return;
       S.meetings = (d.meetings || d || []).filter(m => m.venue || m.venue_code);
+      // Legacy display alias: rows stored before the venue rename keep the
+      // RA-era name; show the bookmaker/town name everywhere.
+      const VENUE_DISPLAY = { 'Pioneer Park': 'Alice Springs' };
+      S.meetings.forEach(m => { if (VENUE_DISPLAY[m.venue]) m.venue = VENUE_DISPLAY[m.venue]; });
       if (!S.meetings.length) { renderEmptyAll(); return; }
       if (!S.selVenue) S.selVenue = vcOf(S.meetings[0]);
       renderAll();
