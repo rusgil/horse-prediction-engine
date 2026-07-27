@@ -599,6 +599,7 @@
   <div class="lg-item"><span class="lg-chip"><span class="res win">✓</span>&nbsp;<span class="res place">✓</span>&nbsp;<span class="res miss">✗</span></span><span><b>Finished races</b> — how our top pick went: green tick = won, amber tick = placed, ✗ = missed. We show our record, wins and losses alike.</span></div>
   <div class="lg-item"><span class="val-chip lg-chip">VALUE</span><span><b>Value</b> — our model rates the horse's chance higher than its market price implies: positive expected value at the listed odds.</span></div>
   <div class="lg-item"><span><b>% highlight</b> — win % lights up gold from 30% confidence; place % lights up blue from 50%.</span></div>
+  <div class="lg-item"><span><b>J / T %</b> — the jockey's and trainer's win strike rates: the share of their recent rides / runners that win. Typical journeyman ~10–12%, top metro riders 18–25%. Strong connections are a genuine positive signal.</span></div>
 </div>
 </section>
 
@@ -1243,7 +1244,7 @@
           <div class="hn">${esc(x.horse_name)}
             <span class="pick-tag">${i === 0 ? 'OUR PICK' : (i + 1) + ['','','ND','RD'][i + 1 <= 3 ? i + 1 : 0] + (i + 1 <= 3 ? ' PICK' : 'TH PICK')}</span>${i === 0 ? pickOutcome : ''}
             ${isVal ? '<span class="val-chip">VALUE</span>' : ''}</div>
-          <div class="jk">${esc(x.jockey || '')}${x.jockey_overall_rate != null ? ` <b>${(+x.jockey_overall_rate).toFixed(0)}%</b>` : ''}${x.trainer ? ` · T: ${esc(x.trainer)}` : ''}${x.trainer_overall_rate != null ? ` <b>${(+x.trainer_overall_rate).toFixed(0)}%</b>` : ''}</div>
+          <div class="jk">${x.jockey ? `J: ${esc(x.jockey)}` : ''}${x.jockey_overall_rate != null ? ` <b>${(+x.jockey_overall_rate).toFixed(0)}%</b>` : ''}${x.trainer ? ` · T: ${esc(x.trainer)}` : ''}${x.trainer_overall_rate != null ? ` <b>${(+x.trainer_overall_rate).toFixed(0)}%</b>` : ''}</div>
           <div class="jk">${x.barrier ? `barrier ${x.barrier}` : ''}${x.weight ? ` · ${x.weight}kg` : ''}${x.starts_last_10 != null ? ` · last ${x.starts_last_10 < 10 ? x.starts_last_10 : 10}: ${x.wins_last_10 ?? 0}W / ${x.places_last_10 ?? 0} top-3` : ''}${x.days_since_last_run != null && x.days_since_last_run < 999 ? ` · ${x.days_since_last_run}d off` : ''}</div>
           ${(x.key_flags || []).length ? `<div class="rflags">${(x.key_flags || []).slice(0, 3).map(f => `<span class="rflag">${esc(f)}</span>`).join('')}</div>` : ''}
           <div class="rbars">${barsHtml(x.win_probability, x.place_probability)}</div>
