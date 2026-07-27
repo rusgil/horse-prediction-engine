@@ -532,6 +532,21 @@
       border: 1px solid rgba(245,158,11,0.3);
       opacity: 0.85;
     }
+    .race-pill-time .rp-clock { color: var(--text-primary); font-weight: 800; }
+    .race-pill-time .rp-cd { color: #10b981; font-weight: 700; }
+    .rp-going {
+      display: inline-flex; align-items: center; margin-left: 5px;
+      font-size: 0.58rem; font-weight: 800; letter-spacing: 0.04em;
+      border-radius: 4px; padding: 1px 5px; vertical-align: 1px;
+    }
+    .rp-going.good  { background: rgba(16,185,129,0.14); color: #10b981; }
+    .rp-going.soft  { background: rgba(245,158,11,0.16); color: #f59e0b; }
+    .rp-going.heavy { background: rgba(239,68,68,0.15);  color: #ef4444; }
+    .rp-going.synth { background: rgba(96,165,250,0.15); color: #60a5fa; }
+    :root[data-theme="light"] .rp-going.good  { color: #0a7a41; }
+    :root[data-theme="light"] .rp-going.soft  { color: #a86400; }
+    :root[data-theme="light"] .rp-going.heavy { color: #c23a3a; }
+    :root[data-theme="light"] .rp-going.synth { color: #245fc4; }
     .race-pill-time {
       font-size: 0.68rem; color: var(--text-dim);
       font-weight: 600; letter-spacing: 0.02em;
@@ -2345,8 +2360,16 @@
           if (_m > 0) _cd = _m < 60 ? ` · in ${_m}m` : ` · in ${Math.floor(_m / 60)}h ${_m % 60}m`;
         }
       }
-      const _extra = `${r.distance ? ' · ' + r.distance + 'm' : ''}${r.track_condition ? ' · ' + escHtml(r.track_condition) : ''}${_cd}`;
-      el.innerHTML = `<div class="race-pill-main">R${r.race_number}${pctHtml}${placeHtml}${decisiveHtml}${dotHtml ? ' ' + dotHtml : ''}</div><span class="race-pill-time">${tStr}${_extra}</span>`;
+      // Surface chip — lab style: category word only (no 1-10 number)
+      let _goingChip = '';
+      if (r.track_condition) {
+        const _w = String(r.track_condition).trim().split(/\s+/)[0].toUpperCase();
+        const _gcls = /^HEAVY/.test(_w) ? 'heavy' : /^SOFT/.test(_w) ? 'soft'
+                    : /^SYNTH/.test(_w) ? 'synth' : 'good';
+        _goingChip = `<span class="rp-going ${_gcls}">${_w === 'SYNTHETIC' ? 'SYNTH' : _w}</span>`;
+      }
+      el.innerHTML = `<div class="race-pill-main">R${r.race_number}${pctHtml}${placeHtml}${decisiveHtml}${dotHtml ? ' ' + dotHtml : ''}</div>`
+        + `<span class="race-pill-time"><span class="rp-clock">${tStr}</span>${_cd ? `<span class="rp-cd">${_cd}</span>` : ''}${r.distance ? ' · ' + r.distance + 'm' : ''}${_goingChip}</span>`;
       el.addEventListener('click', () => selectRace(r));
       container.appendChild(el);
     });
