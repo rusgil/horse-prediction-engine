@@ -704,7 +704,8 @@
       </div>
       <div class="dsl-info"><b>${label}</b> <span class="num" style="color:var(--text-3)">${fmtDayShort(S.date)}</span>${statHtml}</div>`;
     const sl = document.getElementById('daySlider');
-    sl.oninput = () => setDate(aestToday(-(7 - +sl.value)));
+    // change (not input): load once on release, not on every notch mid-drag
+    sl.onchange = () => setDate(aestToday(-(7 - +sl.value)));
   }
 
   function fmtDayShort(iso) {
