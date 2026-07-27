@@ -3,6 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+  <script src="/theme.js"></script>
 <meta name="robots" content="noindex">
 <title>FunkyIQ — Lounge Lab</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -555,10 +556,7 @@
       <button data-v="B" role="tab">B · Race Feed</button>
       <button data-v="C" role="tab">C · Meetings</button>
     </div>
-    <div class="seg" id="themeSeg" role="radiogroup" aria-label="Colour theme">
-      <button data-t="dark" role="radio">Dark</button>
-      <button data-t="light" role="radio">Light</button>
-    </div>
+
   </div>
   <div class="date-row" id="dateRow"></div>
 </header>
@@ -614,19 +612,6 @@
     loadSeq: 0,
   };
 
-  /* ── theme ── */
-  const themeSeg = document.getElementById('themeSeg');
-  function applyTheme(t) {
-    document.documentElement.dataset.theme = t;
-    themeSeg.querySelectorAll('button').forEach(b => {
-      const on = b.dataset.t === t;
-      b.classList.toggle('on', on);
-      b.setAttribute('aria-checked', on);
-    });
-    localStorage.setItem('labTheme', t);
-  }
-  themeSeg.querySelectorAll('button').forEach(b => b.onclick = () => applyTheme(b.dataset.t));
-  applyTheme(localStorage.getItem('labTheme') || 'dark');
 
   /* ── version switcher ── */
   const verSeg = document.getElementById('verSeg');
