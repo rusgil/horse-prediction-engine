@@ -1686,7 +1686,16 @@ async def _seed_results_from_sportsbet(race_date: str, pred_rows_for_date: list,
                     for pos_idx, tab in enumerate(order, start=1):
                         placed_tabs.add(tab)
                         matched = tab_by.get(tab)
-                        display_name = matched.horse_name if matched else f"#{tab}"
+                        if not matched:
+                            # Tab has no predicted runner (late entry we never
+                            # covered). Writing a literal "#14" placeholder row
+                            # created junk names AND duplicate positions when
+                            # another source had the real horse at that spot
+                            # (Albury R7 2026-07-27: '2nd PARIAH FLYER' +
+                            # '2nd #14'), which then tripped the dedupe heal
+                            # into deleting the good row. Skip instead.
+                            continue
+                        display_name = matched.horse_name
                         if _normalize_horse(display_name) in existing_lower:
                             continue
                         session.add(HistoricalResultRow(
@@ -20443,6 +20452,28 @@ async def purge_venue_rows(
     return {"dry_run": dry_run, "race_date": race_date,
             "pred_race_ids": list(pred_ids), "hist_race_ids": list(hist_ids),
             "snapshot_race_ids": list(snap_ids), "race_meta_ids": list(meta_ids)}
+
+
+@app.delete("/api/admin/cleanup-placeholder-results")
+async def cleanup_placeholder_results(
+    x_cron_secret: Optional[str] = Header(None),
+    dry_run: bool = Query(True),
+):
+    """Delete HistoricalResultRow rows whose horse_name is a '#N' placeholder
+    (written by the pre-2026-07-27 Sportsbet seeder for unmatched tab numbers).
+    They pollute RESULT panels with junk names and duplicate positions."""
+    _check_admin(x_cron_secret)
+    from sqlalchemy import delete as sa_delete
+    async with get_session() as session:
+        rows = (await session.execute(
+            select(HistoricalResultRow.race_id, HistoricalResultRow.horse_name, HistoricalResultRow.position)
+            .where(HistoricalResultRow.horse_name.like("#%"))
+        )).fetchall()
+        if not dry_run and rows:
+            await session.execute(sa_delete(HistoricalResultRow).where(HistoricalResultRow.horse_name.like("#%")))
+            await session.commit()
+    return {"dry_run": dry_run, "n_rows": len(rows),
+            "rows": [{"race_id": r.race_id, "name": r.horse_name, "position": r.position} for r in rows[:40]]}
 
 
 @app.delete("/api/admin/purge-results/{race_date}/{venue_code}")
