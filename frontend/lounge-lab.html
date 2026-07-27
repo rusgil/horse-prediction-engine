@@ -508,7 +508,7 @@
   <div class="lg-item"><span class="chip tier-high lg-chip">⚡ HIGH</span><span><b>High confidence</b> — 36–45% win confidence, wins ~4 in 10.</span></div>
   <div class="lg-item"><span class="chip tier-strong lg-chip">STRONG</span><span><b>Strong pick</b> — 30–35% win confidence. Still well above a random pick.</span></div>
   <div class="lg-item"><span class="chip sharp lg-chip">🎯 SHARP</span><span><b>Sharp race</b> — passed our strictest quality gate. The races we back hardest.</span></div>
-  <div class="lg-item"><span class="chip going-heavy lg-chip">SURFACE: HEAVY 8</span><span><b>Track surface</b> — Firm/Good = dry, fast track. Soft or Heavy = wet track; our confidence is lower on wet tracks.</span></div>
+  <div class="lg-item"><span class="chip going-heavy lg-chip">SURFACE: HEAVY</span><span><b>Track surface</b> — Firm/Good = dry, fast track. Soft or Heavy = wet track; our confidence is lower on wet tracks.</span></div>
   <div class="lg-item"><span class="lg-chip"><span class="res win">✓</span>&nbsp;<span class="res place">~</span>&nbsp;<span class="res miss">✗</span></span><span><b>Finished races</b> — how our top pick went: won, placed, or missed. We show our record, wins and losses alike.</span></div>
   <div class="lg-item"><span class="val-chip lg-chip">VALUE</span><span><b>Value</b> — our model rates the horse's chance higher than its market price implies: positive expected value at the listed odds.</span></div>
 </div>
@@ -622,17 +622,16 @@
   }
 
   function goingInfo(tc) {
+    // Category word only — no numeric rating (e.g. "Good 4" → "SURFACE: GOOD").
     const s = (tc || '').trim();
     const l = s.toLowerCase();
-    // Official AU track rating: 1–10 moisture scale. Firm 1–2, Good 3–4,
-    // Soft 5–7, Heavy 8–10. Lower = firmer & faster, higher = wetter & slower.
-    const scale = 'The number is the official 1–10 track rating: 1 firmest/fastest → 10 wettest/slowest.';
-    if (!s) return { cls: 'going-unknown', label: 'SURFACE: TBC', tip: 'Track condition not yet declared for this meeting.' };
-    if (l.startsWith('heavy')) return { cls: 'going-heavy', label: `SURFACE: ${s.toUpperCase()}`, tip: `${s}: very rain-affected — slow, energy-sapping ground (Heavy spans 8–10). ${scale} Dry-track form often doesn't hold, so we cap our confidence tiers on heavy going.` };
-    if (l.startsWith('soft'))  return { cls: 'going-soft',  label: `SURFACE: ${s.toUpperCase()}`, tip: `${s}: rain-affected going (Soft spans 5–7). ${scale} Some horses relish it, many don't — we cap confidence tiers on soft tracks.` };
-    if (l.startsWith('synth')) return { cls: 'going-synth', label: 'SURFACE: SYNTHETIC',          tip: 'All-weather synthetic surface — consistent going, largely rain-proof.' };
-    if (l.startsWith('good') || l.startsWith('firm')) return { cls: 'going-good', label: `SURFACE: ${s.toUpperCase()}`, tip: `${s}: dry, fast track (Firm is 1–2, Good is 3–4). ${scale} Ideal racing surface and the conditions our model performs best on.` };
-    return { cls: 'going-unknown', label: `SURFACE: ${s.toUpperCase()}`, tip: s };
+    if (!s) return { cls: 'going-unknown', label: 'SURFACE: TBC' };
+    if (l.startsWith('heavy')) return { cls: 'going-heavy', label: 'SURFACE: HEAVY' };
+    if (l.startsWith('soft'))  return { cls: 'going-soft',  label: 'SURFACE: SOFT' };
+    if (l.startsWith('synth')) return { cls: 'going-synth', label: 'SURFACE: SYNTHETIC' };
+    if (l.startsWith('firm'))  return { cls: 'going-good',  label: 'SURFACE: FIRM' };
+    if (l.startsWith('good'))  return { cls: 'going-good',  label: 'SURFACE: GOOD' };
+    return { cls: 'going-unknown', label: `SURFACE: ${s.split(/\s/)[0].toUpperCase()}` };
   }
   const isOffGoing = tc => /^(soft|heavy)/i.test((tc || '').trim());
 
