@@ -111,7 +111,7 @@
 
   .date-row {
     max-width: 1220px; margin: 0 auto; padding: 0 16px 10px;
-    display: flex; align-items: center; gap: 8px; overflow-x: auto;
+    display: flex; align-items: stretch; gap: 8px; overflow-x: auto;
     scrollbar-width: none;
   }
   .date-row::-webkit-scrollbar { display: none; }
@@ -119,11 +119,12 @@
     background: var(--surface-2); border: 1px solid var(--line); color: var(--text-2);
     border-radius: 999px; padding: 5px 14px; font-size: 0.8rem; font-weight: 700;
     white-space: nowrap; flex-shrink: 0;
+    display: inline-flex; flex-direction: column; align-items: center; justify-content: center;
   }
   .date-pill.on { background: var(--surface); border-color: var(--text-3); color: var(--text); font-weight: 800; }
   .date-pill .dp-stat { font-size: 0.66rem; font-weight: 800; opacity: 0.85; margin-left: 4px; }
   .dr-sep { width: 1px; height: 20px; background: var(--line); flex-shrink: 0; margin: 0 3px; }
-  .prev-pill { display: inline-flex; align-items: center; gap: 4px; }
+  .prev-pill { flex-direction: row; align-items: center; gap: 4px; }
   .prev-pill .dp-arr {
     background: none; border: none; color: inherit; cursor: pointer;
     font-size: 0.95rem; font-weight: 800; padding: 0 3px; line-height: 1;
@@ -636,7 +637,6 @@
   <div class="lg-item"><span class="chip tier-strong lg-chip">STRONG</span><span><b>Strong pick</b> — 30–35% win confidence. Still well above a random pick.</span></div>
   <div class="lg-item"><span class="chip sharp lg-chip">🎯 SHARP</span><span><b>Sharp race</b> — passed our strictest quality gate. The races we back hardest.</span></div>
   <div class="lg-item"><span class="chip going-heavy lg-chip">SURFACE: HEAVY</span><span><b>Track surface</b> — Firm/Good = dry, fast track. Soft or Heavy = wet track; our confidence is lower on wet tracks.</span></div>
-  <div class="lg-item"><span class="lg-chip"><span class="res win">✓</span>&nbsp;<span class="res place">✓</span>&nbsp;<span class="res miss">✗</span></span><span><b>Finished races</b> — how our top pick went: green tick = won, amber tick = placed, ✗ = missed. We show our record, wins and losses alike.</span></div>
   <div class="lg-item"><span class="val-chip lg-chip">VALUE</span><span><b>Value</b> — our model rates the horse's chance higher than its market price implies: positive expected value at the listed odds.</span></div>
   <div class="lg-item"><span><b>% highlight</b> — win % lights up gold from 30% confidence; place % lights up blue from 50%.</span></div>
   <div class="lg-item"><span class="chip cf lg-chip">👑 CLEAR FAV</span><span><b>Clear favourite</b> — our top pick leads our 2nd pick by 5+ points of win probability.</span></div>
