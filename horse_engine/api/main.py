@@ -16997,6 +16997,19 @@ async def list_meetings(race_date: str = _today()):
     if seen_vc:
         log.info("list_meetings: added %d DB-only venues for %s: %s", len(seen_vc), race_date, seen_vc)
 
+    # PAST dates: only list venues we actually covered (have prediction rows).
+    # The RA calendar legitimately lists every meeting that raced — including
+    # unbettable bush/picnic tracks we never enriched or later purged
+    # (2026-07-25: Trangie Picnic etc. lingered as empty rows after their DB
+    # purge because the calendar kept re-listing them). Today/future keep the
+    # calendar view so date pills render before the morning enrich.
+    if race_date < _today_aest().isoformat():
+        _covered = {(_parse_race_id(rid)[1] or "") for rid in runner_race_ids} | set(rp_venue_meta.keys())
+        _before_f = len(items)
+        items = [it for it in items if (it.get("venue_code") or "") in _covered]
+        if len(items) != _before_f:
+            log.info("list_meetings: dropped %d uncovered past venues for %s", _before_f - len(items), race_date)
+
     # Add any DB-mass-cancelled meetings that are no longer on RA.
     # BUG-35: previously identified "cancelled venues" by "rank-1 mutable row is
     # cancelled", which fires false-positives when a single scratch happens to
