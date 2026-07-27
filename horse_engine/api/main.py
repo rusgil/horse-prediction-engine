@@ -20660,461 +20660,84 @@ async def patch_sp(race_date: str, x_cron_secret: Optional[str] = Header(None)):
 @app.get("/api/meetings/{race_date}/{venue_code}/results")
 async def get_meeting_results(race_date: str, venue_code: str):
     """
-    Return race results for a single venue.
+    Race results for a single venue — DB-ONLY (2026-07-27, user directive).
 
-    Tries OddsPro first (no RA WAF, populated live). Falls back to RA only
-    when OddsPro doesn't carry the venue (e.g. some QLD provincial tracks).
-    Seeds HistoricalResultRow so model-correct dots appear immediately.
+    Previously OddsPro-first with an RA fallback + on-demand seeding on EVERY
+    call, so plain page refreshes pinged upstreams. Result seeding is owned by
+    the crons (_scheduled_seed_results / racing-hours heal); this endpoint now
+    only reads HistoricalResultRow + the history rank-1 pick. Races not yet
+    seeded return has_result=false until the next cron pass.
     """
     _validate_date(race_date)
     _validate_venue(venue_code)
+    prefix = f"{race_date}_{venue_code}_"
+    async with get_session() as session:
+        hr_rows = (await session.execute(
+            select(HistoricalResultRow)
+            .where(HistoricalResultRow.race_id.like(prefix + "%"))
+        )).scalars().all()
+        hist_rows = (await session.execute(
+            select(RunnerPredictionHistoryRow.race_id, RunnerPredictionHistoryRow.horse_name)
+            .where(RunnerPredictionHistoryRow.race_id.like(prefix + "%"))
+            .where(RunnerPredictionHistoryRow.model_rank == 1)
+            .where(RunnerPredictionHistoryRow.cancelled.is_(False) | RunnerPredictionHistoryRow.cancelled.is_(None))
+            .where(RunnerPredictionHistoryRow.source == "live")
+            .order_by(RunnerPredictionHistoryRow.enriched_at.desc())
+        )).all()
+        _pred_counts = {rid: n for rid, n in (await session.execute(
+            select(RunnerPredictionRow.race_id, func.count())
+            .where(RunnerPredictionRow.race_id.like(prefix + "%"))
+            .where(RunnerPredictionRow.cancelled.is_(False) | RunnerPredictionRow.cancelled.is_(None))
+            .group_by(RunnerPredictionRow.race_id)
+        )).fetchall()}
 
-    from horse_engine.clients.composite import CompositeClient
-    client = get_tab_client()
-    slug = _meeting_slug(venue_code, race_date)
-
-    # ── OddsPro-first path — no RA touch ────────────────────────────────────
-    # OddsPro carries the finishing order in its meetings feed. Try it before
-    # going near RA; on a normal day this returns full results and the RA
-    # block below is skipped entirely.
-    op_results_map: dict[int, dict] = {}
-    try:
-        op_all = await client._odds.get_results(race_date)  # {track_lower: {race_num: {finishers, ran}}}
-        op_tracks = list(op_all.keys())
-        # Match our venue_code → OddsPro track name (fuzzy)
-        venue_display = venue_code.replace("-", " ").strip()
-        matched = (client._odds.find_matching_track(venue_display, op_tracks)
-                   or client._odds.find_matching_track(venue_code, op_tracks))
-        if matched:
-            op_results_map = op_all.get(matched) or op_all.get(matched.lower()) or {}
-    except Exception as e:
-        log.debug("[get_meeting_results] OddsPro pre-check failed for %s/%s: %s",
-                  race_date, venue_code, e)
-
-    # If OddsPro has finishers for at least one race, seed from OddsPro and
-    # return a response built from that data — no RA call.
-    if op_results_map:
-        async with get_session() as session:
-            pred_rows = (await session.execute(
-                select(RunnerPredictionRow)
-                .where(RunnerPredictionRow.race_id.like(f"{race_date}_{venue_code}_%"))
-                .where(RunnerPredictionRow.cancelled.is_(False) | RunnerPredictionRow.cancelled.is_(None))
-            )).scalars().all()
-            already = set(
-                (await session.execute(
-                    select(HistoricalResultRow.race_id)
-                    .where(HistoricalResultRow.race_id.like(f"{race_date}_{venue_code}_%"))
-                    .distinct()
-                )).scalars().all()
-            )
-        seeded = await _seed_results_from_oddspro(client, race_date, pred_rows, already)
-        seeded += await _seed_results_from_sportsbet(race_date, pred_rows, already)
-
-        # Load top picks for the races with results
-        races_with_results = {f"{race_date}_{venue_code}_R{n}" for n in op_results_map.keys()}
-        top_picks: dict[str, str] = {}
-        async with get_session() as session:
-            hist_rows = (await session.execute(
-                select(RunnerPredictionHistoryRow.race_id, RunnerPredictionHistoryRow.horse_name)
-                .where(RunnerPredictionHistoryRow.race_id.in_(list(races_with_results)))
-                .where(RunnerPredictionHistoryRow.model_rank == 1)
-                .where(RunnerPredictionHistoryRow.cancelled.is_(False) | RunnerPredictionHistoryRow.cancelled.is_(None))
-                .order_by(RunnerPredictionHistoryRow.enriched_at.desc())
-            )).all()
-        seen: set[str] = set()
-        for r in hist_rows:
-            if r.race_id not in seen:
-                seen.add(r.race_id)
-                top_picks[r.race_id] = r.horse_name
-
-        # Fallback starter count per race (full non-cancelled predicted field),
-        # used when OddsPro's 'ran' list is absent.
-        from collections import Counter as _Counter
-        _op_pred_counts: dict[str, int] = _Counter(p.race_id for p in pred_rows)
-
-        races_out = []
-        for race_num in sorted(op_results_map.keys()):
-            race_id = f"{race_date}_{venue_code}_R{race_num}"
-            finishers = op_results_map[race_num].get("finishers", [])
-            # Starters for the paid-place rule: prefer OddsPro's 'ran' list
-            # (everyone who jumped); fall back to the predicted-field count.
-            _op_starters = len(op_results_map[race_num].get("ran", []) or []) or _op_pred_counts.get(race_id)
-            winner = finishers[0]["name"] if finishers else None
-            top_pick = top_picks.get(race_id) or ""
-            norm_pick = _normalize_horse(top_pick)
-            placed_norm = {_normalize_horse(f["name"]) for f in finishers if _is_paid_place(f["position"], _op_starters)}
-            model_correct = (norm_pick == _normalize_horse(winner)) if (norm_pick and winner) else None
-            model_placed = (norm_pick in placed_norm) if norm_pick else None
-            races_out.append({
-                "race_number": race_num,
-                "race_id": race_id,
-                "track_condition": "",
-                "has_result": bool(finishers),
-                "model_correct": model_correct,
-                "model_placed": model_placed,
-                "starters": _op_starters,
-                "top_pick": top_pick or None,
-                "runners": [
-                    {"position": f["position"], "name": f["name"].upper(),
-                     "margin": 0, "sp": f.get("sp")}
-                    for f in finishers
-                ],
-            })
-        return {"date": race_date, "venue": venue_code, "races": races_out, "seeded": seeded}
-
-    # ── RA fallback path — only reached when OddsPro doesn't cover this venue ──
-    # Prime slug→key cache then get the RA internal key
-    await client.get_meeting_by_slug(slug)
-    ra_key = client._ra._slug_to_key.get(slug) if hasattr(client, "_ra") else None
-    if not ra_key:
-        return {"date": race_date, "venue": venue_code, "races": [], "seeded": 0}
-
-    ra_results = await client._ra.get_results(ra_key)
-    if not ra_results:
-        return {"date": race_date, "venue": venue_code, "races": [], "seeded": 0}
-
-    # Seed HistoricalResultRow from RA results
-    seeded = 0
-    races_with_results: set[str] = set()
-    for race_num, race_data in ra_results.items():
-        race_id = f"{race_date}_{venue_code}_R{race_num}"
-        for name_lower, rd in race_data.get("runners", {}).items():
-            position = rd.get("position")
-            if not position or position <= 0:
-                continue
-            # RA result names may include country codes (NZ, FR, IRE) — match on both
-            # exact name and normalized (country-code-stripped) name to avoid duplicates
-            norm_name = _normalize_horse(name_lower)
-            async with get_session() as session:
-                existing_rows = (await session.execute(
-                    select(HistoricalResultRow.horse_name)
-                    .where(HistoricalResultRow.race_id == race_id)
-                    .where(HistoricalResultRow.position == position)
-                )).scalars().all()
-                already_exists = any(
-                    _normalize_horse(h) == norm_name for h in existing_rows
-                )
-                if already_exists:
-                    races_with_results.add(race_id)
-                    continue
-                fv_result = await session.execute(
-                    select(RunnerPredictionRow)
-                    .where(RunnerPredictionRow.race_id == race_id)
-                    .where(func.lower(RunnerPredictionRow.horse_name).in_([name_lower, norm_name]))
-                    .limit(1)
-                )
-                fv_row = fv_result.scalars().first()
-                horse_name = fv_row.horse_name if fv_row else name_lower.upper()
-                session.add(HistoricalResultRow(
-                    race_id=race_id,
-                    horse_name=horse_name,
-                    position=position,
-                    beaten_margin=float(rd.get("margin") or 0),
-                    winner=position == 1,
-                    placed=position <= 3,
-                    starting_price=rd.get("sp"),
-                    # Prefer RA 'No.' column, fall back to matched prediction row.
-                    tab_number=(
-                        rd.get("tab_number")
-                        or (getattr(fv_row, "tab_number", None) if fv_row else None)
-                    ),
-                    feature_vector_json=fv_row.enriched_json if fv_row else None,
-                ))
-                await session.commit()
-                seeded += 1
-                races_with_results.add(race_id)
-
-    # Load top model picks from history — history is written once pre-race and
-    # is never overwritten, so it always holds the genuine pre-race prediction.
     top_picks: dict[str, str] = {}
-    if races_with_results:
-        async with get_session() as session:
-            hist_rows = (await session.execute(
-                select(RunnerPredictionHistoryRow.race_id, RunnerPredictionHistoryRow.horse_name,
-                       RunnerPredictionHistoryRow.enriched_at)
-                .where(RunnerPredictionHistoryRow.race_id.in_(list(races_with_results)))
-                .where(RunnerPredictionHistoryRow.model_rank == 1)
-                .where(RunnerPredictionHistoryRow.cancelled.is_(False) | RunnerPredictionHistoryRow.cancelled.is_(None))
-                .order_by(RunnerPredictionHistoryRow.enriched_at.desc())
-            )).all()
-        seen: set[str] = set()
-        for r in hist_rows:
-            if r.race_id not in seen:
-                seen.add(r.race_id)
-                top_picks[r.race_id] = r.horse_name
+    for rid, name in hist_rows:          # dedup-in-Python, latest enriched_at first
+        if rid not in top_picks:
+            top_picks[rid] = name
+    by_race: dict[str, list] = {}
+    for r in hr_rows:
+        by_race.setdefault(r.race_id, []).append(r)
 
-    # Build response
     races_out = []
-    for race_num in sorted(ra_results.keys()):
-        race_data = ra_results[race_num]
-        race_id = f"{race_date}_{venue_code}_R{race_num}"
-        runners_raw = race_data.get("runners", {})
-        runners_sorted = sorted(
-            [(name, rd) for name, rd in runners_raw.items() if rd.get("position")],
-            key=lambda x: x[1]["position"],
+    for rid, rows in sorted(by_race.items(), key=lambda kv: _parse_race_id(kv[0])[2] or 0):
+        _, _, race_num = _parse_race_id(rid)
+        positioned = sorted(
+            [r for r in rows if r.position and 1 <= r.position < 90],
+            key=lambda r: r.position,
         )
-        winner = runners_sorted[0][0] if runners_sorted else None
-        top_pick = top_picks.get(race_id) or ""
-        # Normalize both sides to strip country codes (NZ, FR, IRE etc.) before comparing
-        norm_pick = _normalize_horse(top_pick)
-        model_correct = (_normalize_horse(norm_pick) == _normalize_horse(winner)) if (norm_pick and winner) else None
-        # Field-size-aware paid place: runners_sorted is the full finished field.
-        _res_starters = len(runners_sorted)
-        model_placed = (norm_pick in {
-            _normalize_horse(n) for n, rd in runners_sorted
-            if _is_paid_place(rd["position"], _res_starters)
-        }) if norm_pick else None
-
+        counted = sum(1 for r in rows if r.position and 1 <= r.position < 100)
+        starters = max(counted, _pred_counts.get(rid) or 0) or None
+        winner = positioned[0].horse_name if positioned and positioned[0].position == 1 else None
+        top_pick = top_picks.get(rid) or ""
+        norm_pick = _normalize_horse(top_pick) if top_pick else None
+        finished = {_normalize_horse(r.horse_name) for r in rows if r.position and r.position > 0}
+        if not norm_pick or not winner or norm_pick not in finished:
+            model_correct = None   # pick scratched / result incomplete — not countable
+            model_placed = None
+        else:
+            model_correct = norm_pick == _normalize_horse(winner)
+            placed_set = {
+                _normalize_horse(r.horse_name) for r in rows
+                if _is_paid_place(r.position, starters)
+            }
+            model_placed = norm_pick in placed_set
         races_out.append({
             "race_number": race_num,
-            "race_id": race_id,
-            "track_condition": race_data.get("track_condition", ""),
-            "has_result": bool(runners_sorted),
+            "race_id": rid,
+            "track_condition": "",
+            "has_result": bool(winner),
             "model_correct": model_correct,
             "model_placed": model_placed,
-            "starters": _res_starters,
-            "top_pick": top_picks.get(race_id),
+            "starters": starters,
+            "top_pick": top_pick or None,
             "runners": [
-                {
-                    "position": rd["position"],
-                    "name": name.upper(),
-                    "margin": rd.get("margin", 0),
-                    "sp": rd.get("sp"),
-                }
-                for name, rd in runners_sorted
+                {"position": r.position, "name": (r.horse_name or "").upper(),
+                 "margin": r.beaten_margin or 0, "sp": r.starting_price}
+                for r in positioned[:8]
             ],
         })
-
-    return {"date": race_date, "venue": venue_code, "races": races_out, "seeded": seeded}
-
-
-# ── Backfill ──────────────────────────────────────────────────────────────────
-
-_backfill: dict = {"running": False, "done": False, "current": None,
-                   "completed": [], "errors": [], "meetings": 0, "races": 0, "runners": 0}
-
-
-async def _run_backfill(days: int, x_secret: Optional[str], force: bool = False, holdout_from: str = "2026-05-01"):
-    global _backfill
-    _backfill.update({"running": True, "done": False, "current": None,
-                      "completed": [], "errors": [], "meetings": 0, "races": 0, "runners": 0,
-                      "started_at": datetime.utcnow().isoformat(), "total_days": days})
-    try:
-        client = get_tab_client()
-        async with get_session() as session:
-            model = await _load_model(session)
-
-        for i in range(1, days + 1):
-            race_date = (date.today() - timedelta(days=i)).isoformat()
-            if race_date >= holdout_from:
-                log.info("[backfill] Skipping %s — holdout period (>= %s)", race_date, holdout_from)
-                continue
-            _backfill["current"] = race_date
-            if not force:
-                async with get_session() as session:
-                    already = await session.execute(
-                        select(HistoricalResultRow)
-                        .where(HistoricalResultRow.race_id.like(f"{race_date}_%"))
-                        .limit(1)
-                    )
-                    if already.scalars().first():
-                        log.info("[backfill] Skipping %s — already loaded", race_date)
-                        _backfill["completed"].append(race_date)
-                        continue
-            log.info("[backfill] Processing %s", race_date)
-            try:
-                meetings = await client.get_meetings(race_date)
-                for m in meetings:
-                    slug = m.get("slug", "")
-                    date_sfx = f"-{race_date.replace('-', '')}"
-                    venue_code = slug[:-len(date_sfx)] if slug.endswith(date_sfx) else slug.split("-")[0] if slug else ""
-                    venue_name = m.get("venue", venue_code)
-                    state = m.get("state", "")
-
-                    raw_races = await client.get_meeting_races(slug)
-                    for raw_race in raw_races:
-                        race_num = raw_race.get("eventNumber")
-                        race_id = f"{race_date}_{venue_code}_R{race_num}"
-                        full_race = await client.get_race(slug, race_num)
-                        if not full_race:
-                            continue
-                        try:
-                            race = await client.parse_race(full_race, race_date, venue_name, state)
-                            if not race.runners:
-                                continue
-
-                            # Inject SP as tote_win_odds so compute_market_features derives
-                            # correct market_rank for historical races (no live odds available).
-                            sp_by_name: dict[str, float] = {}
-                            for r in full_race.get("runners", []):
-                                if r.get("scratched"):
-                                    continue
-                                horse = (r.get("runnerName") or "").lower()
-                                for p in r.get("prices", []):
-                                    if p.get("priceType") in ("StartingPrice", "SP", "Win"):
-                                        try:
-                                            sp_val = float(p.get("winPrice") or 0)
-                                            if sp_val > 1.0 and horse not in sp_by_name:
-                                                sp_by_name[horse] = sp_val
-                                                break
-                                        except (TypeError, ValueError):
-                                            pass
-                            if sp_by_name:
-                                for runner in race.runners:
-                                    h = runner.horse_name.lower()
-                                    if h in sp_by_name and not (runner.fixed_win_odds or runner.tote_win_odds):
-                                        runner.tote_win_odds = sp_by_name[h]
-                                log.debug("[backfill] %s R%s: injected SP for %d/%d runners",
-                                          venue_code, race_num, len(sp_by_name), len(race.runners))
-
-                            async with get_session() as session:
-                                await _inject_accumulated_stats(race, session)
-                            predictions, _ = await enrich_and_predict_race(
-                                race, model
-                            )
-                            db_dicts = [_prediction_to_db_dict(p, race_id, race.scheduled_time, race=race) for p in predictions]
-                            async with get_session() as session:
-                                await save_race_predictions(session, race_id, db_dicts)
-                                # Write immutable history snapshot for training (skip if live snapshot exists)
-                                existing_hist = (await session.execute(
-                                    select(RunnerPredictionHistoryRow.id)
-                                    .where(RunnerPredictionHistoryRow.race_id == race_id)
-                                    .limit(1)
-                                )).scalar()
-                                if not existing_hist:
-                                    now = datetime.utcnow()
-                                    for p, d in zip(predictions, db_dicts):
-                                        session.add(RunnerPredictionHistoryRow(
-                                            race_id=race_id,
-                                            horse_name=d["horse_name"],
-                                            tab_number=d.get("tab_number"),
-                                            barrier=d.get("barrier"),
-                                            jockey=d.get("jockey"),
-                                            trainer=d.get("trainer"),
-                                            weight=d.get("weight"),
-                                            win_probability=d["win_probability"],
-                                            place_probability=d.get("place_probability"),
-                                            model_rank=d["model_rank"],
-                                            place_model_rank=d.get("place_model_rank"),
-                                            exotic_model_rank=d.get("exotic_model_rank"),
-                                            market_rank=d.get("market_rank"),
-                                            overlay=d.get("overlay"),
-                                            best_available_odds=d.get("best_available_odds"),
-                                            value_rating=d.get("value_rating"),
-                                            key_flags=d.get("key_flags"),
-                                            enriched_json=d.get("enriched_json"),
-                                            scheduled_time=d.get("scheduled_time"),
-                                            venue=d.get("venue"),
-                                            state=d.get("state"),
-                                            race_number=d.get("race_number"),
-                                            race_name=d.get("race_name"),
-                                            distance=d.get("distance"),
-                                            track_condition=d.get("track_condition"),
-                                            field_size=d.get("field_size"),
-                                            prize_money=d.get("prize_money"),
-                                            rail_position=d.get("rail_position"),
-                                            class_change=d.get("class_change"),
-                                            enriched_at=now,
-                                            source="backfill",
-                                        ))
-                                    await session.commit()
-                                    log.debug("[backfill] Wrote %d history rows for %s", len(predictions), race_id)
-                            # Seed actual results from runner finishing positions
-                            # Build selection lookup for rich context
-                            bf_sel_by_name = {}
-                            for sel in full_race.get("selections") or []:
-                                sel_name = ((sel.get("competitor") or {}).get("name") or "").lower()
-                                if sel_name:
-                                    bf_sel_by_name[sel_name] = sel
-                            bf_meeting = full_race.get("_meeting") or {}
-                            bf_venue = bf_meeting.get("venue") or venue_code
-                            bf_state = bf_meeting.get("state") or ""
-                            raw_race_obj = next((rr for rr in raw_races if rr.get("eventNumber") == race_num), {})
-                            bf_dist = int(raw_race_obj.get("distance") or 0) or None
-                            bf_tc = (raw_race_obj.get("trackCondition") or {})
-                            bf_cond = f"{bf_tc.get('overall','')} {bf_tc.get('rating','')}".strip() or None
-                            bf_class = raw_race_obj.get("eventClass") or None
-                            bf_field = len([rr for rr in full_race.get("runners", []) if not rr.get("scratched")]) or None
-
-                            for r in full_race.get("runners", []):
-                                if r.get("scratched"):
-                                    continue
-                                position = r.get("finishingPosition")
-                                if not position or int(position) <= 0:
-                                    continue
-                                horse = r.get("runnerName", "")
-                                beaten = float(r.get("margin", 0) or 0)
-                                sp = None
-                                for p in r.get("prices", []):
-                                    if p.get("priceType") in ("StartingPrice", "SP"):
-                                        sp = float(p.get("winPrice", 0) or 0) or None
-                                        break
-                                sel = bf_sel_by_name.get(horse.lower()) or {}
-                                jockey = (sel.get("jockey") or {}).get("name") or None
-                                trainer = (sel.get("trainer") or {}).get("name") or None
-                                barrier = int(sel.get("barrierNumber") or 0) or None
-                                tab_num = int(sel.get("competitorNumber") or 0) or None
-                                wt = float(sel.get("weight") or 0) or None
-                                comp = sel.get("competitor") or {}
-                                age = int(comp.get("age") or 0) or None
-                                sex = comp.get("sex") or None
-                                async with get_session() as session:
-                                    existing_hr = await session.execute(
-                                        select(HistoricalResultRow)
-                                        .where(HistoricalResultRow.race_id == race_id)
-                                        .where(HistoricalResultRow.horse_name == horse)
-                                        .limit(1)
-                                    )
-                                    if not existing_hr.scalars().first():
-                                        fv_q = await session.execute(
-                                            select(RunnerPredictionRow)
-                                            .where(RunnerPredictionRow.race_id == race_id)
-                                            .where(RunnerPredictionRow.horse_name == horse)
-                                            .limit(1)
-                                        )
-                                        fv_row = fv_q.scalars().first()
-                                        session.add(HistoricalResultRow(
-                                            race_id=race_id,
-                                            horse_name=horse,
-                                            position=int(position),
-                                            beaten_margin=beaten,
-                                            winner=int(position) == 1,
-                                            placed=int(position) <= 3,
-                                            starting_price=sp,
-                                            feature_vector_json=fv_row.enriched_json if fv_row else None,
-                                            jockey=jockey,
-                                            trainer=trainer,
-                                            venue=bf_venue or None,
-                                            state=bf_state or None,
-                                            distance=bf_dist,
-                                            track_condition=bf_cond,
-                                            barrier=barrier,
-                                            tab_number=tab_num,
-                                            weight=wt,
-                                            age=age,
-                                            sex=sex,
-                                            race_class=bf_class,
-                                            field_size=bf_field,
-                                            race_number=race_num,
-                                        ))
-                                        await session.commit()
-                                _backfill["runners"] += 1
-                            _backfill["races"] += 1
-                        except Exception as e:
-                            log.warning("[backfill] Race %s failed: %s", race_id, e)
-
-                    _backfill["meetings"] += 1
-                    await asyncio.sleep(random.uniform(1, 3))
-
-                _backfill["completed"].append(race_date)
-            except Exception as e:
-                log.warning("[backfill] Date %s failed: %s", race_date, e)
-                _backfill["errors"].append({"date": race_date, "error": str(e)})
-    finally:
-        _backfill.update({"running": False, "done": True, "current": None,
-                          "finished_at": datetime.utcnow().isoformat()})
-        log.info("[backfill] Done — %d meetings, %d races, %d runners",
-                 _backfill["meetings"], _backfill["races"], _backfill["runners"])
+    return {"date": race_date, "venue": venue_code, "races": races_out, "seeded": 0}
 
 
 @app.post("/api/admin/backfill")
