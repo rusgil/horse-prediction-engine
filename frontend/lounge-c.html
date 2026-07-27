@@ -562,6 +562,10 @@
   <div class="hd-row">
     <div class="brand">FunkyIQ Lounge <span class="lab-tag">C</span></div>
     <div class="hd-spacer"></div>
+    <div class="seg" id="sharpSeg" role="radiogroup" aria-label="Sharp filter">
+      <button data-s="all" role="radio">All picks</button>
+      <button data-s="sharp" role="radio">🎯 Sharp only</button>
+    </div>
     <div class="seg" id="verSeg" role="tablist" aria-label="Layout version" style="display:none">
       <button data-v="A" role="tab">A · Heat Grid</button>
       <button data-v="B" role="tab">B · Race Feed</button>
@@ -618,11 +622,27 @@
     details: {},           // venue_code -> races[]
     runners: {},           // race_id -> runners[]
     version: 'C',   // this page IS the C-meetings layout — no switcher
+    sharpOnly: localStorage.getItem('loungeCSharp') === 'sharp',
     selVenue: null,        // view C selection
     feedVenue: 'all',      // view B filter
     loadSeq: 0,
   };
 
+
+  /* ── sharp filter ── */
+  const sharpSeg = document.getElementById('sharpSeg');
+  function applySharp(mode) {
+    S.sharpOnly = mode === 'sharp';
+    localStorage.setItem('loungeCSharp', mode);
+    sharpSeg.querySelectorAll('button').forEach(b => {
+      const on = b.dataset.s === mode;
+      b.classList.toggle('on', on);
+      b.setAttribute('aria-checked', on);
+    });
+    renderC();
+  }
+  sharpSeg.querySelectorAll('button').forEach(b => b.onclick = () => applySharp(b.dataset.s));
+  applySharp(S.sharpOnly ? 'sharp' : 'all');
 
   /* ── version switcher ── */
   const verSeg = document.getElementById('verSeg');
@@ -1023,7 +1043,8 @@
     }).join('');
 
     const m = S.meetings.find(x => vcOf(x) === S.selVenue);
-    const races = S.details[S.selVenue] || [];
+    let races = S.details[S.selVenue] || [];
+    if (S.sharpOnly) races = races.filter(r => r.is_sharp === true);
     const g = goingInfo(races[0]?.track_condition);
     const raceRows = races.map(r => {
       const cd = countdown(r.scheduled_time);
@@ -1082,7 +1103,7 @@
             ${watchBtn(m?.state)}
           </div>
         </div>
-        ${raceRows || '<div style="padding:16px 18px;color:var(--text-3);font-size:0.82rem">Loading races…</div>'}
+        ${raceRows || `<div style="padding:16px 18px;color:var(--text-3);font-size:0.82rem">${S.sharpOnly && (S.details[S.selVenue] || []).length ? 'No 🎯 Sharp races at this meeting — switch to \'All picks\' to see the full card.' : 'Loading races…'}</div>`}
       </div>
     </div>`;
     el.querySelectorAll('[data-sel]').forEach(b => b.onclick = () => {
