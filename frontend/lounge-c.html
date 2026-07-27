@@ -485,7 +485,7 @@
   .brace .mid .sub .pp { font-weight: 800; color: var(--blue); }
   .brace .mid .pk.ghost { color: var(--text-3); font-weight: 500; font-size: 0.76rem; }
   .brace .mid .sub { font-size: 0.68rem; color: var(--text-3); margin-top: 1px; }
-  .brace .right { display: flex; flex-direction: column; align-items: flex-end; gap: 5px; }
+  .brace .right { display: flex; align-items: center; gap: 10px; }  /* desktop: odds beside bars */
   @media (max-width: 860px) {
     .rail-layout { grid-template-columns: 1fr; }
     .rail { position: static; max-height: none; display: flex; overflow-x: auto; border-radius: 12px; }
@@ -573,6 +573,7 @@
 
   /* Mobile: drill-in text a touch bigger for readability */
   @media (max-width: 640px) {
+    .brace .right { flex-direction: column; align-items: flex-end; gap: 3px; }
     .dw-title { font-size: 1.55rem; }
     .dw-sub { font-size: 0.85rem; }
     .runner .hn { font-size: 1.02rem; }
