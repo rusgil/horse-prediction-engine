@@ -17455,10 +17455,27 @@ async def get_meeting(race_date: str, venue_code: str):
         _gm_starters: dict[str, int] = _Counter(
             r.race_id for r in _all_hr if r.position and 1 <= r.position < 100
         )
+        # Result rows can be finishers-only (live-odds persist writes the top
+        # ~4 with no ran-markers), which made an 11-horse race look like a
+        # ≤4 field → win-only → a genuine 3rd showed ✗ instead of the amber
+        # placed tick (Ballarat R7 2026-07-27). Take the max of the counted
+        # result rows and the predicted active field so the paid-place rule
+        # sees the real field size.
+        _pred_counts: dict[str, int] = {
+            rid: n for rid, n in (await session.execute(
+                select(RunnerPredictionRow.race_id, func.count())
+                .where(RunnerPredictionRow.race_id.in_(race_ids))
+                .where(RunnerPredictionRow.cancelled.is_(False) | RunnerPredictionRow.cancelled.is_(None))
+                .group_by(RunnerPredictionRow.race_id)
+            )).fetchall()
+        }
+        def _eff_starters(rid: str):
+            n = max(_gm_starters.get(rid) or 0, _pred_counts.get(rid) or 0)
+            return n or None
         for r in _all_hr:
             if r.position == 1:
                 winners[r.race_id] = r.horse_name
-            if _is_paid_place(r.position, _gm_starters.get(r.race_id)):
+            if _is_paid_place(r.position, _eff_starters(r.race_id)):
                 placers.setdefault(r.race_id, set()).add(r.horse_name)
             if r.position and r.position > 0:
                 finished_horses.setdefault(r.race_id, set()).add(

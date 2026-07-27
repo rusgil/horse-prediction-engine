@@ -1084,7 +1084,7 @@
 
     const rs = (await fetchRunners(raceId)).filter(x => !x.cancelled)
       .sort((a, b) => (a.model_rank || 99) - (b.model_rank || 99) || (b.win_probability || 0) - (a.win_probability || 0));
-    const top = rs.slice(0, 4);
+    const top = rs;  // full field — the drawer scrolls; ranked by our model
     if (!top.length) { body.innerHTML = '<div class="empty">No runner predictions available yet for this race.</div>'; return; }
 
     const offNote = off ? `<div class="dw-note"><b>${esc(g.label)} track:</b> rain-affected going. Dry-track form is less reliable here, so our confidence tiers are capped for this race — treat these as guides, not locks.</div>` : '';
