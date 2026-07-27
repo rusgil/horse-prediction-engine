@@ -999,7 +999,6 @@
         <div class="board-head">
           <div class="t">${esc(m?.venue || '')} <span class="st">${esc(m?.state || '')}${m?.tier ? ' · ' + esc(m.tier) : ''}</span></div>
           <div class="chips">
-            <span class="chip ${g.cls}">${esc(g.label)}</span>
             ${m?.weather?.rain_mm >= 2 ? `<span class="chip wet-note">🌧 RAIN ${m.weather.rain_mm}mm</span>` : ''}
             ${m?.weather ? `<span class="chip going-unknown">${m.weather.icon || ''} ${Math.round(m.weather.temp_max ?? 0)}°</span>` : ''}
             ${watchBtn(m?.state)}
