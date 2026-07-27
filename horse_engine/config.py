@@ -80,6 +80,11 @@ class Settings(BaseSettings):
     # backtested per feedback_model_release_process). Review
     # /api/admin/backtest/blind-shrinkage then set BLIND_SHRINKAGE on Railway.
     blind_shrinkage: float = 0.0
+    # NOTE (2026-07-27): hard win/place display caps were considered after the
+    # Albury blind-race incident and deliberately REJECTED — clamping extremes
+    # would have masked the canary (a 98% place claim is what exposed the
+    # blind-race bug). Instead, extreme claims raise a nightly quality-check
+    # alert, and BLIND_SHRINKAGE calibrates the genuinely-blind races.
 
     # Betfair clients were removed 2026-06-13. RA + OddsPro cover everything
     # the model trains on; the Betfair-derived features (steam_60, steam_30,

@@ -13594,6 +13594,35 @@ async def _run_quality_check(target: str) -> dict:
             "reason": "Race snapshotted at 9am but mutable row wiped after; user may see stale data",
         })
 
+    # ── Extreme confidence claims (canary — deliberately NOT capped) ─────────
+    # A win claim ≥60% or place claim ≥95% has historically meant a broken
+    # input (blind race, odds-merge failure), not a genuine super-horse:
+    # Albury R2 2026-07-27 claimed 60%/98% blind while the real $1.95 market
+    # favourite sat ranked 7th at 0.5%. Display caps were considered and
+    # rejected — they'd have masked exactly this. Alarm instead, so extremes
+    # SURFACE in the nightly report.
+    _extreme = []
+    for r in rank1_hist:
+        _w = r.win_probability or 0
+        _pl = r.place_probability or 0
+        if _w >= 0.60 or _pl >= 0.95:
+            _extreme.append({
+                "race_id": r.race_id,
+                "horse": r.horse_name,
+                "win_pct": round(_w * 100, 1),
+                "place_pct": round(_pl * 100, 1),
+                "no_market_odds": (r.best_available_odds or 0) <= 1.0,
+            })
+    if _extreme:
+        warning.append({
+            "check": "extreme_confidence_claims",
+            "n_races": len(_extreme),
+            "examples": _extreme[:6],
+            "reason": "Rank-1 claimed win ≥60% or place ≥95% — historically a blind race "
+                      "or odds-merge failure rather than a super-horse. Check market "
+                      "coverage for these races (no_market_odds=true = model ran blind).",
+        })
+
     # ── Coverage vs "races that actually ran" (best proxy: results seeded) ──
     # Break down by venue and filter out blocklisted venues (they're
     # intentionally not enriched — flagging them as "missed" is a false
