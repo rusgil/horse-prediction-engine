@@ -787,12 +787,15 @@
   }
 
   async function fetchRunners(raceId) {
-    if (S.runners[raceId]) return S.runners[raceId];
+    // Cache only non-empty successes — caching a transient failure as []
+    // made every later click show 'no predictions' for that race.
+    if (S.runners[raceId] && S.runners[raceId].length) return S.runners[raceId];
     try {
       const res = await fetch(`${API}/api/races/${raceId}`);
-      S.runners[raceId] = res.ok ? ((await res.json()).runners || []) : [];
-    } catch { S.runners[raceId] = []; }
-    return S.runners[raceId];
+      const rs = res.ok ? ((await res.json()).runners || []) : [];
+      if (rs.length) S.runners[raceId] = rs;
+      return rs;
+    } catch { return []; }
   }
 
   // pick names for the hero + next few feed cards + selected meeting
@@ -1142,7 +1145,6 @@
     const rs = (await fetchRunners(raceId)).filter(x => !x.cancelled)
       .sort((a, b) => (a.model_rank || 99) - (b.model_rank || 99) || (b.win_probability || 0) - (a.win_probability || 0));
     const top = rs;  // full field — the drawer scrolls; ranked by our model
-    if (!top.length) { body.innerHTML = '<div class="empty">No runner predictions available yet for this race.</div>'; return; }
 
     const offNote = off ? `<div class="dw-note"><b>${esc(g.label)} track:</b> rain-affected going. Dry-track form is less reliable here, so our confidence tiers are capped for this race — treat these as guides, not locks.</div>` : '';
     const settledNote = isSettled(r) ? `<div class="dw-note" style="background:var(--surface-2);border-color:var(--line)"><b>Race finished.</b> ${r.model_correct ? 'Our top pick won this race. ✓' : r.model_placed ? 'Our top pick ran a place. ✓' : 'Our top pick missed here. ✗'} Pre-race predictions shown below.</div>` : '';
@@ -1155,7 +1157,7 @@
         .sort((a, b) => a.position - b.position) : [];
       if (fin.length) {
         const ORD = { 1: '1st', 2: '2nd', 3: '3rd', 4: '4th' };
-        const pickNorm = (top[0] && top[0].horse_name || '').toLowerCase();
+        const pickNorm = (r.top_pick || (top[0] && top[0].horse_name) || '').toLowerCase();
         resultHtml = `<div class="dw-result"><div class="dw-result-t">RESULT</div>` + fin.map(f => {
           const isPick = (f.name || '').toLowerCase() === pickNorm;
           return `<div class="dw-res-row ${f.position === 1 ? 'w' : ''} ${isPick ? 'mine' : ''}">
@@ -1165,6 +1167,12 @@
           </div>`;
         }).join('') + `</div>`;
       }
+    }
+
+    if (!top.length) {
+      body.innerHTML = resultHtml +
+        `<div class="empty" style="padding:30px 10px">No runner predictions for this race${resultHtml ? ' — result shown above' : ''}.<br><span style="font-size:0.75rem">Tap the race again to retry.</span></div>`;
+      return;
     }
 
     // Outcome chip for our predicted winner once the race is settled
