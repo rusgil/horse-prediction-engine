@@ -975,7 +975,11 @@
         <div class="where">${esc(r._venue)} <span style="color:var(--text-3)">R${r.race_number}</span>
           <span class="rmeta num">${r.distance ? r.distance + 'm' : ''}${r.field_size ? ' · ' + r.field_size + ' rnrs' : ''}</span></div>
         <div class="pick">
-          <div class="pname ${tp ? '' : 'ghost'}"><span class="pn-t">${tp ? esc(tp.horse_name) : (r.top_win_probability != null ? 'Tap for our pick' : 'No prediction yet')}</span>${tp && tp.best_available_odds > 1 ? `<span class="pk-odds num">$${(+tp.best_available_odds).toFixed(2)}</span>` : ''}</div>
+          ${(() => {
+            const nm = r.top_pick || (tp && tp.horse_name) || null;
+            const od = (r.top_pick_odds > 1 ? +r.top_pick_odds : null) || (tp && tp.best_available_odds > 1 ? +tp.best_available_odds : null);
+            return `<div class="pname ${nm ? '' : 'ghost'}"><span class="pn-t">${nm ? esc(nm) : (r.top_win_probability != null ? 'Tap for our pick' : 'No prediction yet')}</span>${od ? `<span class="pk-odds num">$${od.toFixed(2)}</span>` : ''}</div>`;
+          })()}
           ${barsHtml(r.top_win_probability, r.top_place_probability)}
         </div>
         <div class="chips">
@@ -1029,20 +1033,26 @@
       // cached) for the pick's NAME and its actual STARTING PRICE — no
       // per-race runner fetch needed, so names/odds appear immediately.
       const rr = (_resultsCache[S.selVenue] || {})[r.race_number] || null;
-      const pickName = (tp && tp.horse_name) || (rr && rr.top_pick) || null;
+      const pickName = r.top_pick || (tp && tp.horse_name) || (rr && rr.top_pick) || null;
       let pickSp = null;
       if (rr && rr.runners && pickName) {
         const f = rr.runners.find(x => (x.name || '').toLowerCase() === pickName.toLowerCase());
         if (f && f.sp) pickSp = +f.sp;
       }
-      const oddsShow = pickSp || (tp && tp.best_available_odds > 1 ? +tp.best_available_odds : null);
+      const oddsShow = pickSp
+        || (r.top_pick_odds > 1 ? +r.top_pick_odds : null)
+        || (tp && tp.best_available_odds > 1 ? +tp.best_available_odds : null);
       return `<div class="brace ${done ? resCls(r) : ''}" data-open="${esc(r.race_id)}">
         <div class="rn">R${r.race_number}</div>
         <div class="rt num">${wallTime(r.scheduled_time)}<span class="cd ${done ? '' : (cd.urg || '')}">${done ? '' : cd.label}</span></div>
         <div class="mid">
           ${done
             ? `<div class="pk"><span class="pk-name">${pickName ? esc(pickName) : 'Our pick'}</span>${resultMark(r)}${oddsShow ? `<span class="pk-odds num">$${oddsShow.toFixed(2)}</span>` : ''}</div>`
-            : `<div class="pk ${tp ? '' : 'ghost'}"><span class="pk-name">${tp ? esc(tp.horse_name) : (r.top_win_probability != null ? 'Tap for our pick' : 'No prediction yet')}</span>${tier ? `<span class="chip ${tier.cls}">${tier.label}</span>` : ''}${tp && tp.best_available_odds > 1 ? `<span class="pk-odds num">$${(+tp.best_available_odds).toFixed(2)}</span>` : ''}</div>`}
+            : (() => {
+                const nm = r.top_pick || (tp && tp.horse_name) || null;
+                const od = (r.top_pick_odds > 1 ? +r.top_pick_odds : null) || (tp && tp.best_available_odds > 1 ? +tp.best_available_odds : null);
+                return `<div class="pk ${nm ? '' : 'ghost'}"><span class="pk-name">${nm ? esc(nm) : (r.top_win_probability != null ? 'Tap for our pick' : 'No prediction yet')}</span>${tier ? `<span class="chip ${tier.cls}">${tier.label}</span>` : ''}${od ? `<span class="pk-odds num">$${od.toFixed(2)}</span>` : ''}</div>`;
+              })()}
           <div class="sub num">${r.distance ? r.distance + 'm' : ''}${r.field_size ? ' · ' + r.field_size + ' runners' : ''}${r.is_sharp ? ` <span class="chip sharp" style="font-size:0.56rem;padding:1px 5px;margin-left:4px">🎯 SHARP</span>` : ''}</div>
         </div>
         <div class="right">

@@ -17505,6 +17505,9 @@ async def get_meeting(race_date: str, venue_code: str):
         top_picks = {race_id: None for race_id in race_ids}
         top_win_probs = {race_id: None for race_id in race_ids}
         top_place_probs = {race_id: None for race_id in race_ids}
+        # Pick's best-available odds — surfaced in the payload so frontends can
+        # show name+price for EVERY race without per-race runner fetches.
+        top_pick_odds = {race_id: None for race_id in race_ids}
         # Rank-2 win prob — used to compute the decisiveness indicator
         # (>5pt gap = model has a clear favourite, not a toss-up).
         rank2_win_probs: dict[str, Optional[float]] = {race_id: None for race_id in race_ids}
@@ -17531,6 +17534,7 @@ async def get_meeting(race_date: str, venue_code: str):
                     top_picks[p.race_id] = p.horse_name
                     top_win_probs[p.race_id] = p.win_probability
                     top_place_probs[p.race_id] = p.place_probability
+                    top_pick_odds[p.race_id] = p.best_available_odds
                     # is_sharp only True if the pick's horse actually
                     # finished. A scratched Sharp pick shouldn't count
                     # toward the meeting-tile Sharp total (aligns with
@@ -17561,6 +17565,7 @@ async def get_meeting(race_date: str, venue_code: str):
                     top_picks[p.race_id] = p.horse_name
                     top_win_probs[p.race_id] = p.win_probability
                     top_place_probs[p.race_id] = p.place_probability
+                    top_pick_odds[p.race_id] = p.best_available_odds
                 elif p.model_rank == 2:
                     rank2_win_probs[p.race_id] = p.win_probability
                 top3_by_race.setdefault(p.race_id, {})[p.model_rank] = (
@@ -17643,6 +17648,8 @@ async def get_meeting(race_date: str, venue_code: str):
             "top_win_probability": top_win_probs.get(rid),
             "top_place_probability": top_place_probs.get(rid),
             "rank2_win_probability": rank2_win_probs.get(rid),
+            "top_pick": top_picks.get(rid),
+            "top_pick_odds": top_pick_odds.get(rid),
             "is_sharp": is_sharp_map.get(rid),
         })
 
