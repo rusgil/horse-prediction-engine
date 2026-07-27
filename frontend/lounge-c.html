@@ -573,8 +573,6 @@
 
   /* Mobile: drill-in text a touch bigger for readability */
   @media (max-width: 640px) {
-    .brace .mid .pk { flex-wrap: wrap; row-gap: 1px; }
-    .brace .mid .pk .pk-odds { flex-basis: 100%; font-size: 0.82rem; }
     .dw-title { font-size: 1.55rem; }
     .dw-sub { font-size: 0.85rem; }
     .runner .hn { font-size: 1.02rem; }
@@ -1143,16 +1141,17 @@
       const oddsShow = pickSp
         || (r.top_pick_odds > 1 ? +r.top_pick_odds : null)
         || (tp && tp.best_available_odds > 1 ? +tp.best_available_odds : null);
+      const rowOdds = oddsShow;   // shown under the win/place bars
       return `<div class="brace ${done ? resCls(r) : ''}" data-open="${esc(r.race_id)}">
         <div class="rn">R${r.race_number}</div>
         <div class="rt num">${wallTime(r.scheduled_time)}<span class="cd ${done ? '' : (cd.urg || '')}">${done ? '' : cd.label}</span></div>
         <div class="mid">
           ${done
-            ? `<div class="pk"><span class="pk-name">${pickName ? esc(pickName) : 'Our pick'}</span>${resultMark(r)}${oddsShow ? `<span class="pk-odds num">$${oddsShow.toFixed(2)}</span>` : ''}</div>`
+            ? `<div class="pk"><span class="pk-name">${pickName ? esc(pickName) : 'Our pick'}</span>${resultMark(r)}</div>`
             : (() => {
                 const nm = r.top_pick || (tp && tp.horse_name) || null;
                 const od = (r.top_pick_odds > 1 ? +r.top_pick_odds : null) || (tp && tp.best_available_odds > 1 ? +tp.best_available_odds : null);
-                return `<div class="pk ${nm ? '' : 'ghost'}"><span class="pk-name">${nm ? esc(nm) : (r.top_win_probability != null ? 'Tap for our pick' : 'No prediction yet')}</span>${tier ? `<span class="chip ${tier.cls}">${tier.label}</span>` : ''}${od ? `<span class="pk-odds num">$${od.toFixed(2)}</span>` : ''}</div>`;
+                return `<div class="pk ${nm ? '' : 'ghost'}"><span class="pk-name">${nm ? esc(nm) : (r.top_win_probability != null ? 'Tap for our pick' : 'No prediction yet')}</span>${tier ? `<span class="chip ${tier.cls}">${tier.label}</span>` : ''}</div>`;
               })()}
           <div class="sub num">${r.distance ? r.distance + 'm' : ''}${r.field_size ? ' · ' + r.field_size + ' runners' : ''}${(() => {
             // Decisiveness (lounge rule): rank1−rank2 gap ≥5pts = clear fav;
@@ -1166,6 +1165,7 @@
         </div>
         <div class="right">
           ${barsHtml(r.top_win_probability, r.top_place_probability)}
+          ${rowOdds ? `<div class="pk-odds num">$${rowOdds.toFixed(2)}</div>` : ''}
         </div>
       </div>`;
     }).join('');
