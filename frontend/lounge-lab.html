@@ -345,7 +345,14 @@
   .jcard .when { text-align: center; grid-row: span 2; }
   .jcard .when .clock { font-family: 'Barlow Condensed'; font-weight: 800; font-size: 1.3rem; line-height: 1; }
   .jcard .when .cd { font-size: 0.64rem; font-weight: 800; margin-top: 3px; color: var(--text-3); }
-  .jcard .when .cd.soon { color: var(--mint); }
+  /* races nearing the jump (≤15m): countdown becomes a pulsing mint pill */
+  .jcard .when .cd.soon, .brace .rt .cd.soon, .hero-top .cd.soon {
+    display: inline-block; background: var(--mint); color: var(--mint-ink);
+    border-radius: 5px; padding: 1px 6px; font-weight: 800;
+    animation: soonpulse 1.6s ease-in-out infinite;
+  }
+  @keyframes soonpulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.6; } }
+  @media (prefers-reduced-motion: reduce) { .jcard .when .cd.soon, .brace .rt .cd.soon, .hero-top .cd.soon { animation: none; } }
   .jcard .where {
     font-family: 'Barlow Condensed'; font-weight: 700; font-size: 1.05rem;
     display: flex; align-items: center; gap: 7px; flex-wrap: wrap; min-width: 0;
@@ -417,7 +424,7 @@
   .brace .rn { font-family: 'Barlow Condensed'; font-weight: 800; font-size: 1rem; color: var(--text-3); }
   .brace .rt { font-size: 0.8rem; font-weight: 700; }
   .brace .rt .cd { display: block; font-size: 0.62rem; color: var(--text-3); font-weight: 700; }
-  .brace .rt .cd.soon { color: var(--mint); }
+  .brace .rt .cd.soon { margin-top: 2px; }
   .brace .mid { min-width: 0; }
   .brace .mid .pk { font-weight: 700; font-size: 0.86rem; display: flex; align-items: center; gap: 6px; min-width: 0; }
   .brace .mid .pk .pk-name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -907,7 +914,7 @@
           ${hero.is_sharp ? `<span class="chip sharp">🎯 SHARP</span>` : ''}
           ${tier ? `<span class="chip ${tier.cls}">${tier.label}</span>` : ''}
           ${watchBtn(hero._state)}
-          <div class="clockbox"><div class="clock num">${wallTime(hero.scheduled_time)}</div><div class="cd">${cd.label}</div></div>
+          <div class="clockbox"><div class="clock num">${wallTime(hero.scheduled_time)}</div><div class="cd ${cd.soon ? 'soon' : ''}">${cd.label}</div></div>
         </div>
         <div class="hero-picks">${picksHtml}</div>
         <div class="hero-note">Our top ${rs.length || 3} for this race — tap for the full breakdown.</div>
