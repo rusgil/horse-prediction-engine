@@ -122,10 +122,13 @@
   }
   .date-pill.on { background: var(--mint); border-color: var(--mint); color: var(--mint-ink); }
   .date-pill .dp-stat { font-size: 0.66rem; font-weight: 800; opacity: 0.85; margin-left: 4px; }
-  .dslider { display: flex; align-items: center; gap: 9px; flex: 1; max-width: 340px; }
-  .dslider .dsl-end { font-size: 0.66rem; font-weight: 700; color: var(--text-3); flex-shrink: 0; }
-  .dslider input[type="range"] { flex: 1; accent-color: var(--mint); cursor: pointer; }
-  .dsl-info { font-size: 0.8rem; white-space: nowrap; }
+  .prev-pill { display: inline-flex; align-items: center; gap: 4px; }
+  .prev-pill .dp-arr {
+    background: none; border: none; color: inherit; cursor: pointer;
+    font-size: 0.95rem; font-weight: 800; padding: 0 3px; line-height: 1;
+  }
+  .prev-pill .dp-arr:disabled { opacity: 0.3; cursor: default; }
+  .prev-pill .dp-mid { background: none; border: none; color: inherit; font: inherit; font-weight: 700; cursor: pointer; padding: 0; }
   .dp-acc { font-weight: 800; font-size: 0.76rem; }
   .dp-acc.elite { color: #c084fc; text-shadow: 0 0 6px rgba(192,132,252,0.35); }
   .dp-acc.great { color: #60a5fa; }
@@ -686,32 +689,35 @@
 
   function buildDateRow() {
     const row = document.getElementById('dateRow');
-    const todayIso = aestToday(0);
-    let offset = Math.round((Date.parse(todayIso) - Date.parse(S.date)) / 86400000);
-    if (!(offset >= 0 && offset <= 7)) offset = 0;   // slider covers today..-7
-    const label = offset === 0 ? 'Today' : offset === 1 ? 'Yesterday' : dowName(S.date);
-    const st = offset > 0 ? S.perfByDate[S.date] : null;
-    // Original-lounge accuracy colour bands (elite/great/good/ok/bad)
-    const accCls = st ? (st.wins === 0 ? 'bad' : st.pct >= 38 ? 'elite' : st.pct >= 30 ? 'great'
-                        : st.pct >= 22 ? 'good' : st.pct >= 15 ? 'ok' : 'bad') : '';
-    const statHtml = st
-      ? ` · <span class="dp-acc ${accCls} num">Win ${st.pct}% (${st.wins}/${st.races})</span> · <span class="dp-acc ${accCls} num">Plc ${st.placePct}%</span>`
-      : '';
+    const today = aestToday(0), yest = aestToday(-1);
+    const off = Math.round((Date.parse(today) - Date.parse(S.date)) / 86400000);
+    if (S.prevOffset == null) S.prevOffset = 2;
+    if (off >= 2 && off <= 7) S.prevOffset = off;      // keep arrow pill in sync
+    const prevIso = aestToday(-S.prevOffset);
+    const accFor = d => {
+      const st = S.perfByDate[d];
+      if (!st) return '';
+      const cls = st.wins === 0 ? 'bad' : st.pct >= 38 ? 'elite' : st.pct >= 30 ? 'great'
+                : st.pct >= 22 ? 'good' : st.pct >= 15 ? 'ok' : 'bad';
+      return ` <span class="dp-acc ${cls} num">Win ${st.pct}% · Plc ${st.placePct}%</span>`;
+    };
     row.innerHTML = `
-      <div class="dslider">
-        <span class="dsl-end num">-7d</span>
-        <input type="range" id="daySlider" min="0" max="7" step="1" value="${7 - offset}" aria-label="Day (slide left for earlier days)">
-        <span class="dsl-end num">Today</span>
-      </div>
-      <div class="dsl-info"><b>${label}</b> <span class="num" style="color:var(--text-3)">${fmtDayShort(S.date)}</span>${statHtml}</div>`;
-    const sl = document.getElementById('daySlider');
-    // change (not input): load once on release, not on every notch mid-drag
-    sl.onchange = () => setDate(aestToday(-(7 - +sl.value)));
+      <button class="date-pill ${S.date === today ? 'on' : ''}" data-d="${today}">Today</button>
+      <button class="date-pill ${S.date === yest ? 'on' : ''}" data-d="${yest}">Yesterday${accFor(yest)}</button>
+      <span class="date-pill prev-pill ${off >= 2 ? 'on' : ''}">
+        <button class="dp-arr" id="dpBack" title="Earlier day" ${S.prevOffset >= 7 ? 'disabled' : ''}>‹</button>
+        <button class="dp-mid" data-d="${prevIso}">${dowName(prevIso).slice(0, 3)} ${fmtDayShort(prevIso)}${accFor(prevIso)}</button>
+        <button class="dp-arr" id="dpFwd" title="Later day" ${S.prevOffset <= 2 ? 'disabled' : ''}>›</button>
+      </span>`;
+    row.querySelectorAll('[data-d]').forEach(b => b.onclick = () => setDate(b.dataset.d));
+    document.getElementById('dpBack').onclick = () => { S.prevOffset = Math.min(7, S.prevOffset + 1); setDate(aestToday(-S.prevOffset)); };
+    document.getElementById('dpFwd').onclick  = () => { S.prevOffset = Math.max(2, S.prevOffset - 1); setDate(aestToday(-S.prevOffset)); };
   }
 
   function fmtDayShort(iso) {
     return new Date(iso + 'T12:00:00').toLocaleDateString('en-AU', { day: 'numeric', month: 'short' });
   }
+
   function setDate(d) {
     if (d === S.date) return;
     S.date = d;
