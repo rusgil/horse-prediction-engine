@@ -290,6 +290,10 @@
   .cell.heat-strong .in { background: var(--strong-dim); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--strong) 30%, transparent); }
   .cell.heat-strong .t  { color: var(--strong); }
   .cell.done .t { color: var(--text-3); font-weight: 500; }
+  .cell .sub .cell-tier { font-size: 0.48rem; font-weight: 800; letter-spacing: 0.03em; margin-left: 3px; }
+  .cell .sub .cell-tier.hot    { color: var(--hot); }
+  .cell .sub .cell-tier.high   { color: var(--blue); }
+  .cell .sub .cell-tier.strong { color: var(--strong); }
   .cell.blank { cursor: default; }
   .cell.blank:hover { filter: none; }
   .heat-legend {
@@ -876,7 +880,11 @@
           done ? resCls(r) : '',
           !done && tier ? tier.heat : '',
         ].join(' ');
-        const sub = done ? resultMark(r) : (r.is_sharp ? '🎯' : '&nbsp;');
+        // History cells keep their pre-race confidence label beside the result
+        const tierWord = tier ? tier.label.replace(/[^A-Za-z]/g, '') : '';
+        const sub = done
+          ? resultMark(r) + (tierWord ? `<span class="cell-tier ${tier.dot}">${tierWord}</span>` : '')
+          : (r.is_sharp ? '🎯' : '&nbsp;');
         return `<td class="cell ${cls}" data-open="${esc(r.race_id)}" title="${esc(m.venue)} R${r.race_number}">
           <div class="in"><div class="t num">${wallTime(r.scheduled_time)}</div><div class="sub">${sub}</div></div></td>`;
       }).join('');
