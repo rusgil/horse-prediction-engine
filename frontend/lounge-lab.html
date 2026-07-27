@@ -290,8 +290,6 @@
   .cell.heat-strong .in { background: var(--strong-dim); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--strong) 30%, transparent); }
   .cell.heat-strong .t  { color: var(--strong); }
   .cell.done .t { color: var(--text-3); font-weight: 500; }
-  .cell.next .in { box-shadow: inset 0 0 0 2px var(--mint); }
-  .cell.next .t { color: var(--mint); font-weight: 800; }
   .cell.blank { cursor: default; }
   .cell.blank:hover { filter: none; }
   .heat-legend {
@@ -864,11 +862,6 @@
     const maxR = Math.max(1, ...S.meetings.map(m => (S.details[vcOf(m)] || []).length));
     const head = Array.from({ length: maxR }, (_, i) => `<th>R${i + 1}</th>`).join('');
 
-    // next-to-jump across the whole day gets the mint ring
-    const upcoming = allRaces().filter(r => !countdown(r.scheduled_time).past)
-      .sort((a, b) => (epochOf(a.scheduled_time) ?? 9e15) - (epochOf(b.scheduled_time) ?? 9e15));
-    const nextId = upcoming[0]?.race_id;
-
     const rows = S.meetings.map(m => {
       const vc = vcOf(m);
       const races = S.details[vc];
@@ -882,7 +875,6 @@
           done ? 'done' : '',
           done ? resCls(r) : '',
           !done && tier ? tier.heat : '',
-          r.race_id === nextId ? 'next' : '',
         ].join(' ');
         const sub = done ? resultMark(r) : (r.is_sharp ? '🎯' : '&nbsp;');
         return `<td class="cell ${cls}" data-open="${esc(r.race_id)}" title="${esc(m.venue)} R${r.race_number}">
@@ -904,7 +896,6 @@
         <span><span class="sw" style="background:var(--hot-dim);box-shadow:inset 0 0 0 1px var(--hot)"></span>Hot pick race</span>
         <span><span class="sw" style="background:var(--blue-dim);box-shadow:inset 0 0 0 1px var(--blue)"></span>High confidence</span>
         <span><span class="sw" style="background:var(--strong-dim);box-shadow:inset 0 0 0 1px var(--strong)"></span>Strong pick</span>
-        <span><span class="sw" style="box-shadow:inset 0 0 0 2px var(--mint)"></span>Next to jump</span>
         <span>🎯 Sharp race</span>
         <span><span class="res win">✓</span>/<span class="res place">✓</span>/<span class="res miss">✗</span> our pick's result (green won · amber placed)</span>
       </div>
