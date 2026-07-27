@@ -107,6 +107,12 @@
     transition: background 0.15s, color 0.15s; letter-spacing: 0.01em;
   }
   .seg button.on { background: var(--surface); color: var(--text); box-shadow: 0 1px 5px rgba(0,0,0,0.3); }
+  .seg .seg-link {
+    display: inline-flex; align-items: center; text-decoration: none;
+    color: var(--mint); font-weight: 700; font-size: 0.78rem;
+    padding: 6px 13px; border-radius: 8px; letter-spacing: 0.01em;
+  }
+  .seg .seg-link:hover { background: var(--surface); }
   :root[data-theme="light"] .seg button.on { box-shadow: 0 1px 4px rgba(22,32,46,0.15); }
 
   .date-row {
@@ -555,6 +561,7 @@
       <button data-v="A" role="tab">A · Heat Grid</button>
       <button data-v="B" role="tab">B · Race Feed</button>
       <button data-v="C" role="tab">C · Meetings</button>
+      <a href="/lounge-c.html" class="seg-link" role="tab" title="The C layout with full lounge detail — opens its own page">Lounge C ↗</a>
     </div>
 
   </div>
