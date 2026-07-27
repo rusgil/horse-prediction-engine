@@ -122,6 +122,7 @@
   }
   .date-pill.on { background: var(--surface); border-color: var(--text-3); color: var(--text); font-weight: 800; }
   .date-pill .dp-stat { font-size: 0.66rem; font-weight: 800; opacity: 0.85; margin-left: 4px; }
+  .dr-sep { width: 1px; height: 20px; background: var(--line); flex-shrink: 0; margin: 0 3px; }
   .prev-pill { display: inline-flex; align-items: center; gap: 4px; }
   .prev-pill .dp-arr {
     background: none; border: none; color: inherit; cursor: pointer;
@@ -702,13 +703,14 @@
       return ` <span class="dp-acc ${cls} num">Win ${st.pct}% · Plc ${st.placePct}%</span>`;
     };
     row.innerHTML = `
+      <button class="date-pill ${S.date === yest ? 'on' : ''}" data-d="${yest}">Yesterday${accFor(yest)}</button>
+      <button class="date-pill ${S.date === today ? 'on' : ''}" data-d="${today}">Today</button>
+      <span class="dr-sep"></span>
       <span class="date-pill prev-pill ${off >= 2 ? 'on' : ''}">
         <button class="dp-arr" id="dpBack" title="Earlier day" ${S.prevOffset >= 7 ? 'disabled' : ''}>‹</button>
         <button class="dp-mid" data-d="${prevIso}">${dowName(prevIso).slice(0, 3)} ${fmtDayShort(prevIso)}${accFor(prevIso)}</button>
         <button class="dp-arr" id="dpFwd" title="Later day" ${S.prevOffset <= 2 ? 'disabled' : ''}>›</button>
-      </span>
-      <button class="date-pill ${S.date === yest ? 'on' : ''}" data-d="${yest}">Yesterday${accFor(yest)}</button>
-      <button class="date-pill ${S.date === today ? 'on' : ''}" data-d="${today}">Today</button>`;
+      </span>`;
     row.querySelectorAll('[data-d]').forEach(b => b.onclick = () => setDate(b.dataset.d));
     document.getElementById('dpBack').onclick = () => { S.prevOffset = Math.min(7, S.prevOffset + 1); setDate(aestToday(-S.prevOffset)); };
     document.getElementById('dpFwd').onclick  = () => { S.prevOffset = Math.max(2, S.prevOffset - 1); setDate(aestToday(-S.prevOffset)); };
