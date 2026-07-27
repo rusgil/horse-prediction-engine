@@ -110,9 +110,8 @@
   :root[data-theme="light"] .seg button.on { box-shadow: 0 1px 4px rgba(22,32,46,0.15); }
 
   .date-row {
-    max-width: 1220px; margin: 0 auto; padding: 0 16px 10px;
     display: flex; align-items: center; gap: 8px; overflow-x: auto;
-    scrollbar-width: none;
+    scrollbar-width: none; margin-left: 14px; min-width: 0;
   }
   .date-row::-webkit-scrollbar { display: none; }
   .date-pill {
@@ -120,7 +119,7 @@
     border-radius: 999px; padding: 5px 14px; font-size: 0.8rem; font-weight: 700;
     white-space: nowrap; flex-shrink: 0;
   }
-  .date-pill.on { background: var(--mint); border-color: var(--mint); color: var(--mint-ink); }
+  .date-pill.on { background: var(--surface); border-color: var(--text-3); color: var(--text); font-weight: 800; }
   .date-pill .dp-stat { font-size: 0.66rem; font-weight: 800; opacity: 0.85; margin-left: 4px; }
   .prev-pill { display: inline-flex; align-items: center; gap: 4px; }
   .prev-pill .dp-arr {
@@ -582,6 +581,7 @@
 <header>
   <div class="hd-row">
     <div class="brand">FunkyIQ Lounge <span class="lab-tag">C</span></div>
+    <div class="date-row" id="dateRow"></div>
     <div class="hd-spacer"></div>
     <div class="seg" id="verSeg" role="tablist" aria-label="Layout version" style="display:none">
       <button data-v="A" role="tab">A · Heat Grid</button>
@@ -590,7 +590,6 @@
     </div>
 
   </div>
-  <div class="date-row" id="dateRow"></div>
 </header>
 
 <div class="day-strip" id="dayStrip"></div>
