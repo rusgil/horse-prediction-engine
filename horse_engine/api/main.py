@@ -20405,11 +20405,22 @@ async def purge_trial_rows(x_cron_secret: Optional[str] = Header(None), dry_run:
 
 
 @app.delete("/api/admin/purge-venue/{venue_code}")
-async def purge_venue_rows(venue_code: str, x_cron_secret: Optional[str] = Header(None), dry_run: bool = Query(True)):
-    """Delete all RunnerPredictionRow + HistoricalResultRow entries for a venue_code slug."""
+async def purge_venue_rows(
+    venue_code: str,
+    x_cron_secret: Optional[str] = Header(None),
+    dry_run: bool = Query(True),
+    race_date: Optional[str] = Query(None, description="Scope to one date (YYYY-MM-DD); omit = ALL dates"),
+):
+    """Delete a venue's rows across all four tables (predictions, race meta,
+    history snapshots, results). `race_date` scopes to one day — use it when a
+    venue has legitimate history on other dates (Atherton/Longreach have real
+    TAB-covered results on past dates that feed career/jockey aggregates;
+    only the junk date should go). Dry-run by default."""
     _check_admin(x_cron_secret)
+    if race_date:
+        _validate_date(race_date)
     from sqlalchemy import delete as sa_delete
-    pattern = f"%_{venue_code}_%"
+    pattern = f"{race_date}_{venue_code}_%" if race_date else f"%_{venue_code}_%"
     async with get_session() as session:
         pred_ids = (await session.execute(
             select(RunnerPredictionRow.race_id).where(RunnerPredictionRow.race_id.like(pattern)).distinct()
@@ -20417,13 +20428,21 @@ async def purge_venue_rows(venue_code: str, x_cron_secret: Optional[str] = Heade
         hist_ids = (await session.execute(
             select(HistoricalResultRow.race_id).where(HistoricalResultRow.race_id.like(pattern)).distinct()
         )).scalars().all()
+        snap_ids = (await session.execute(
+            select(RunnerPredictionHistoryRow.race_id).where(RunnerPredictionHistoryRow.race_id.like(pattern)).distinct()
+        )).scalars().all()
+        meta_ids = (await session.execute(
+            select(RacePredictionRow.race_id).where(RacePredictionRow.race_id.like(pattern)).distinct()
+        )).scalars().all()
         if not dry_run:
-            if pred_ids:
-                await session.execute(sa_delete(RunnerPredictionRow).where(RunnerPredictionRow.race_id.like(pattern)))
-            if hist_ids:
-                await session.execute(sa_delete(HistoricalResultRow).where(HistoricalResultRow.race_id.like(pattern)))
+            for _model in (RunnerPredictionRow, HistoricalResultRow, RunnerPredictionHistoryRow, RacePredictionRow):
+                await session.execute(sa_delete(_model).where(_model.race_id.like(pattern)))
             await session.commit()
-    return {"dry_run": dry_run, "pred_race_ids": list(pred_ids), "hist_race_ids": list(hist_ids)}
+    if not dry_run and race_date:
+        _invalidate_meeting_caches(race_date)
+    return {"dry_run": dry_run, "race_date": race_date,
+            "pred_race_ids": list(pred_ids), "hist_race_ids": list(hist_ids),
+            "snapshot_race_ids": list(snap_ids), "race_meta_ids": list(meta_ids)}
 
 
 @app.delete("/api/admin/purge-results/{race_date}/{venue_code}")
