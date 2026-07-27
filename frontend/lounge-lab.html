@@ -422,6 +422,7 @@
   .dw-grab { width: 40px; height: 4px; border-radius: 2px; background: var(--line); margin: 0 auto 12px; }
   @media (min-width: 900px) { .dw-grab { display: none; } }
   .dw-title { font-family: 'Barlow Condensed'; font-weight: 800; font-size: 1.4rem; display: flex; align-items: center; gap: 9px; padding-right: 36px; }
+  .dw-title .dw-rnum { font-weight: 800; color: var(--mint); }
   .dw-sub { font-size: 0.76rem; color: var(--text-3); margin-top: 3px; }
   .dw-chips { display: flex; gap: 5px; margin-top: 9px; flex-wrap: wrap; }
   .dw-close {
@@ -984,7 +985,7 @@
     const g = goingInfo(r.track_condition);
     const off = isOffGoing(r.track_condition);
     const tier = tierOf(r.top_win_probability, off);
-    document.getElementById('dwTitle').textContent = `${r._venue} — Race ${r.race_number}`;
+    document.getElementById('dwTitle').innerHTML = `${esc(r._venue)} <b class="dw-rnum">R${r.race_number}</b>`;
     document.getElementById('dwSub').innerHTML =
       `${esc(r.race_name || '')}${r.race_name ? ' · ' : ''}<span class="num">${r.distance ? r.distance + 'm · ' : ''}${wallTime(r.scheduled_time)}${r.field_size ? ' · ' + r.field_size + ' runners' : ''}</span>`;
     document.getElementById('dwChips').innerHTML =
