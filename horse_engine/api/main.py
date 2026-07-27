@@ -13973,30 +13973,30 @@ async def _run_quality_check(target: str) -> dict:
     # starves the snapshot job of race times. SB 403'd Railway for ~a week
     # with no alert: this check makes the outage land in the morning report.
     try:
-        import httpx as _httpx_sb
-        async with _httpx_sb.AsyncClient(timeout=12) as _sbc:
-            _sb_resp = await _sbc.get(
-                f"https://www.sportsbet.com.au/apigw/sportsbook-racing/Sportsbook/Racing/AllRacing/{target}",
-                headers={"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"},
-            )
-        if _sb_resp.status_code != 200:
+        # Probe through the REAL client path (_fetch_allracing) so the check
+        # honours SPORTSBET_PROXY_URL — a direct probe would false-alarm 403
+        # while the proxied client is healthy. 15-min client cache applies,
+        # which is fine: the check reports what enrichment actually sees.
+        from horse_engine.clients.sportsbet_schedule import _fetch_allracing as _sb_fetch
+        _sb_data = await _sb_fetch(target)
+        if _sb_data is None:
             warning.append({
                 "check": "sportsbet_allowlist_down",
-                "status": _sb_resp.status_code,
-                "reason": "Sportsbet AllRacing is blocking us — the enrichment allowlist is "
-                          "failing OPEN, so every RA meeting (incl. unbettable bush/picnic "
-                          "tracks) gets enriched and listed, and the snapshot job has no "
-                          "Sportsbet race times. Picks still work; the meeting list is noisy "
-                          "and blind-meeting risk rises.",
-                "remediation": "SB currently requires an AU-residential source. Options: AU-geo "
-                               "residential proxy for the SB fetch, or an alternative allowlist "
-                               "source. Interim: expect bush meetings in the Lounge.",
+                "reason": "Sportsbet AllRacing unreachable via the client path — the "
+                          "enrichment allowlist is failing OPEN, so every RA meeting "
+                          "(incl. unbettable bush/picnic tracks) gets enriched and "
+                          "listed, and the snapshot job has no Sportsbet race times. "
+                          "Picks still work; the meeting list is noisy and "
+                          "blind-meeting risk rises.",
+                "remediation": "SB requires an AU-residential source: check "
+                               "SPORTSBET_PROXY_URL on Railway (webshare '-AU-rotate' "
+                               "username) and webshare credit. Interim: expect bush "
+                               "meetings in the Lounge.",
             })
     except Exception as _sbe:
         warning.append({
             "check": "sportsbet_allowlist_down",
-            "status": 0,
-            "reason": f"Sportsbet AllRacing unreachable ({type(_sbe).__name__}) — allowlist failing open; see check docs.",
+            "reason": f"Sportsbet probe errored ({type(_sbe).__name__}) — allowlist likely failing open; see check docs.",
         })
 
     # ── Pending picks older than 24h — RA never published or we lost the race ──
