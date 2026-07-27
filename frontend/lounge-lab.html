@@ -519,6 +519,14 @@
   .runner .odds { text-align: right; flex-shrink: 0; }
   .runner .odds .o { font-weight: 800; font-size: 0.9rem; }
   .runner .odds .ol { font-size: 0.58rem; color: var(--text-3); text-transform: uppercase; letter-spacing: 0.07em; }
+  .dw-result { border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; margin-bottom: 13px; }
+  .dw-result-t { font-family: 'Barlow Condensed'; font-weight: 700; font-size: 0.8rem; letter-spacing: 0.1em; color: var(--text-3); margin-bottom: 6px; }
+  .dw-res-row { display: flex; align-items: center; gap: 9px; padding: 3px 0; font-size: 0.84rem; }
+  .dw-res-row .pos { width: 30px; color: var(--text-3); font-weight: 800; font-size: 0.72rem; }
+  .dw-res-row .nm { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+  .dw-res-row.w .nm { color: var(--mint); font-weight: 800; }
+  .dw-res-row.mine .nm { text-decoration: underline; text-underline-offset: 3px; }
+  .dw-res-row .sp { font-weight: 800; color: var(--text-2); }
   .pick-tag { background: var(--surface-2); color: var(--text-2); font-size: 0.56rem; font-weight: 800; padding: 2px 6px; border-radius: 4px; letter-spacing: 0.06em; }
   .chip.outcome-win   { background: var(--mint-dim);  color: var(--mint);  border-color: var(--mint); }
   .chip.outcome-place { background: var(--amber-dim); color: var(--amber); border-color: var(--amber); }
@@ -1074,6 +1082,18 @@
   ovl.onclick = closeDrawer;
   document.addEventListener('keydown', e => { if (e.key === 'Escape') closeDrawer(); });
 
+  const _resultsCache = {};   // "vc" -> {race_number: resultRace}
+  async function fetchVenueResults(vc) {
+    if (_resultsCache[vc]) return _resultsCache[vc];
+    try {
+      const res = await fetch(`${API}/api/meetings/${S.date}/${vc}/results`);
+      const d = res.ok ? await res.json() : {};
+      _resultsCache[vc] = {};
+      for (const rr of (d.races || [])) _resultsCache[vc][rr.race_number] = rr;
+    } catch { _resultsCache[vc] = {}; }
+    return _resultsCache[vc];
+  }
+
   async function openRace(raceId) {
     const r = allRaces().find(x => x.race_id === raceId);
     if (!r) return;
@@ -1098,19 +1118,40 @@
 
     const offNote = off ? `<div class="dw-note"><b>${esc(g.label)} track:</b> rain-affected going. Dry-track form is less reliable here, so our confidence tiers are capped for this race — treat these as guides, not locks.</div>` : '';
     const settledNote = isSettled(r) ? `<div class="dw-note" style="background:var(--surface-2);border-color:var(--line)"><b>Race finished.</b> ${r.model_correct ? 'Our top pick won this race. ✓' : r.model_placed ? 'Our top pick ran a place. ✓' : 'Our top pick missed here. ✗'} Pre-race predictions shown below.</div>` : '';
+    // Finishing order (1st-4th) for settled races — who actually won
+    let resultHtml = '';
+    if (isSettled(r)) {
+      const vres = await fetchVenueResults(r._vc);
+      const rr = vres[r.race_number];
+      const fin = (rr && rr.runners) ? rr.runners.filter(x => x.position >= 1 && x.position <= 4)
+        .sort((a, b) => a.position - b.position) : [];
+      if (fin.length) {
+        const ORD = { 1: '1st', 2: '2nd', 3: '3rd', 4: '4th' };
+        const pickNorm = (top[0] && top[0].horse_name || '').toLowerCase();
+        resultHtml = `<div class="dw-result"><div class="dw-result-t">RESULT</div>` + fin.map(f => {
+          const isPick = (f.name || '').toLowerCase() === pickNorm;
+          return `<div class="dw-res-row ${f.position === 1 ? 'w' : ''} ${isPick ? 'mine' : ''}">
+            <span class="pos num">${ORD[f.position]}</span>
+            <span class="nm">${esc(f.name)}${isPick ? ' <span class="pick-tag">OUR PICK</span>' : ''}</span>
+            ${f.sp ? `<span class="sp num">$${(+f.sp).toFixed(2)}</span>` : ''}
+          </div>`;
+        }).join('') + `</div>`;
+      }
+    }
+
     // Outcome chip for our predicted winner once the race is settled
     const pickOutcome = isSettled(r)
       ? (r.model_correct ? '<span class="chip outcome-win">✓ WIN</span>'
          : r.model_placed ? '<span class="chip outcome-place">✓ PLACE</span>'
          : '<span class="chip outcome-miss">✗ LOST</span>')
       : '';
-    body.innerHTML = offNote + settledNote + top.map((x, i) => {
+    body.innerHTML = offNote + settledNote + resultHtml + top.map((x, i) => {
       const isVal = (x.overlay || 0) > 0.05 && (x.best_available_odds || 0) >= 3;
       return `<div class="runner ${i === 0 ? 'top1' : ''}">
         <div class="saddle num">${x.tab_number ?? '–'}</div>
         <div class="info">
           <div class="hn">${esc(x.horse_name)}
-            <span class="pick-tag">${i === 0 ? 'OUR PICK' : '#' + (i + 1)}</span>${i === 0 ? pickOutcome : ''}
+            <span class="pick-tag">${i === 0 ? 'OUR PICK' : (i + 1) + ['','','ND','RD'][i + 1 <= 3 ? i + 1 : 0] + (i + 1 <= 3 ? ' PICK' : 'TH PICK')}</span>${i === 0 ? pickOutcome : ''}
             ${isVal ? '<span class="val-chip">VALUE</span>' : ''}</div>
           <div class="jk">${esc(x.jockey || '')}${x.barrier ? ` · barrier ${x.barrier}` : ''}</div>
           <div class="rbars">${barsHtml(x.win_probability, x.place_probability)}</div>
