@@ -23,6 +23,7 @@
     --mint-dim: rgba(56,224,123,0.13);
     --amber: #f5a623;
     --amber-dim: rgba(245,166,35,0.14);
+    --gold: #f5c842;
     --blue: #60a5fa;
     --blue-dim: rgba(96,165,250,0.14);
     --hot: #fb923c;
@@ -47,6 +48,7 @@
     --mint-dim: rgba(14,158,83,0.11);
     --amber: #b97400;
     --amber-dim: rgba(185,116,0,0.12);
+    --gold: #9c7c00;
     --blue: #2563c9;
     --blue-dim: rgba(37,99,201,0.10);
     --hot: #d95f0e;
@@ -198,14 +200,14 @@
   .pbar .lbl { width: 30px; color: var(--text-3); font-weight: 700; flex-shrink: 0; letter-spacing: 0.04em; }
   .pbar .track { flex: 1; height: 5px; border-radius: 3px; background: var(--surface-2); overflow: hidden; display: block; }
   .pbar .fill { display: block; height: 100%; border-radius: 3px; }
-  .pbar .fill.win { background: var(--mint); }
-  .pbar .fill.place { background: var(--amber); }
+  /* Original-Lounge colour language: win = gold, place = blue */
+  .pbar .fill.win { background: var(--gold); }
+  .pbar .fill.place { background: var(--blue); }
   .pbar .val { width: 40px; text-align: right; font-weight: 800; color: var(--text); }
-  /* % graded by greatness — same ramp as the tiers */
-  .pbar .val.v-hot    { color: var(--hot); }
-  .pbar .val.v-high   { color: var(--blue); }
-  .pbar .val.v-strong { color: var(--strong); }
-  .pbar .val.v-dim    { color: var(--text-3); font-weight: 700; }
+  /* % highlight — win from 30%, place from 50%; otherwise dim */
+  .pbar .val.v-win { color: var(--gold); }
+  .pbar .val.v-plc { color: var(--blue); }
+  .pbar .val.v-dim { color: var(--text-3); font-weight: 700; }
 
   /* ── Layout shell ───────────────────────────────────────── */
   main { max-width: 1220px; margin: 0 auto; padding: 14px 16px 90px; }
@@ -526,7 +528,7 @@
   <div class="lg-item"><span class="chip going-heavy lg-chip">SURFACE: HEAVY</span><span><b>Track surface</b> — Firm/Good = dry, fast track. Soft or Heavy = wet track; our confidence is lower on wet tracks.</span></div>
   <div class="lg-item"><span class="lg-chip"><span class="res win">✓</span>&nbsp;<span class="res place">~</span>&nbsp;<span class="res miss">✗</span></span><span><b>Finished races</b> — how our top pick went: won, placed, or missed. We show our record, wins and losses alike.</span></div>
   <div class="lg-item"><span class="val-chip lg-chip">VALUE</span><span><b>Value</b> — our model rates the horse's chance higher than its market price implies: positive expected value at the listed odds.</span></div>
-  <div class="lg-item"><span class="lg-chip num" style="font-weight:800"><span style="color:var(--hot)">48%</span> <span style="color:var(--blue)">39%</span> <span style="color:var(--strong)">31%</span></span><span><b>% colours</b> — brighter = stronger rating. Win lights up from 30% confidence; place from 50%.</span></div>
+  <div class="lg-item"><span class="lg-chip num" style="font-weight:800"><span style="color:var(--gold)">34%</span> <span style="color:var(--blue)">62%</span></span><span><b>% highlight</b> — win % lights up gold from 30% confidence; place % lights up blue from 50%.</span></div>
 </div>
 </section>
 
@@ -680,16 +682,14 @@
     if (r.model_correct === false) return '<span class="res miss">✗</span>';
     return '';
   }
-  // Colour-grade a % by band: [top, mid, base] → hot / high / strong / dim.
-  // Win uses the tier thresholds (46/36/30 — 30+ is highlighted, matching the
-  // original Lounge); place uses 80/65/50.
-  const bandCls = (v, b) => v >= b[0] ? 'v-hot' : v >= b[1] ? 'v-high' : v >= b[2] ? 'v-strong' : 'v-dim';
+  // Simple highlight, matching the original Lounge: win % lights up (gold)
+  // from 30% confidence, place % (blue) from 50%; otherwise dimmed.
   function barsHtml(winP, placeP) {
     const w = pc(winP), p = pc(placeP);
     if (w == null) return `<div style="font-size:0.68rem;color:var(--text-3)">No prediction yet</div>`;
     return `<div class="pbar-pair">
-      <div class="pbar"><span class="lbl">WIN</span><span class="track"><span class="fill win" style="width:${Math.min(100, w)}%"></span></span><span class="val num ${bandCls(w, [46, 36, 30])}">${w}%</span></div>
-      ${p != null ? `<div class="pbar"><span class="lbl">PLC</span><span class="track"><span class="fill place" style="width:${Math.min(100, p)}%"></span></span><span class="val num ${bandCls(p, [80, 65, 50])}">${p}%</span></div>` : ''}
+      <div class="pbar"><span class="lbl">WIN</span><span class="track"><span class="fill win" style="width:${Math.min(100, w)}%"></span></span><span class="val num ${w >= 30 ? 'v-win' : 'v-dim'}">${w}%</span></div>
+      ${p != null ? `<div class="pbar"><span class="lbl">PLC</span><span class="track"><span class="fill place" style="width:${Math.min(100, p)}%"></span></span><span class="val num ${p >= 50 ? 'v-plc' : 'v-dim'}">${p}%</span></div>` : ''}
     </div>`;
   }
 
