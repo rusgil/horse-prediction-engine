@@ -34,10 +34,18 @@ _TTL_SECONDS = 900  # re-fetch at most every 15 min (results update through the 
 _raw_cache: dict[str, tuple[datetime, dict]] = {}   # date -> (ts, raw AllRacing json)
 
 
+# Historical venue aliases: RA-era venue codes whose bookmaker feed name
+# differs (RA "Pioneer Park" = feed "Alice Springs"). New enrichments use the
+# aliased name at the RA client, but HISTORICAL race_ids keep the old code —
+# aliasing here lets result seeding/matching heal old dates too.
+_NORM_ALIASES = {"pioneerpark": "alicesprings"}
+
+
 def _norm(s: str) -> str:
     """Collapse a track name to letters+digits for fuzzy matching:
     'Sandown Hillside' → 'sandownhillside', 'eagle-farm' → 'eaglefarm'."""
-    return re.sub(r"[^a-z0-9]", "", (s or "").lower())
+    n = re.sub(r"[^a-z0-9]", "", (s or "").lower())
+    return _NORM_ALIASES.get(n, n)
 
 
 async def _fetch_allracing(date: str) -> dict | None:

@@ -258,7 +258,11 @@ class OddsProClient:
         def norm(s: str) -> str:
             return s.lower().replace('-', ' ').strip()
 
+        # Historical venue aliases (see sportsbet_schedule._NORM_ALIASES):
+        # old race_ids keep the RA-era code, the feed names the town.
+        _ALIASES = {"pioneer park": "alice springs"}
         venue_norm = norm(venue)
+        venue_norm = _ALIASES.get(venue_norm, venue_norm)
         for t in tracks:
             if norm(t) == venue_norm:
                 return t
