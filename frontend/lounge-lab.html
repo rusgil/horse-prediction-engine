@@ -186,15 +186,25 @@
 
 
   /* Settled-race outcome borders: green = win, amber = place, red = loss */
-  .jcard.res-win   { border: 2px solid color-mix(in srgb, var(--mint)  75%, var(--line)); }
-  .jcard.res-place { border: 2px solid color-mix(in srgb, var(--amber) 75%, var(--line)); }
-  .jcard.res-miss  { border: 2px solid color-mix(in srgb, var(--red)   65%, var(--line)); }
-  .brace.res-win   { box-shadow: inset 5px 0 0 var(--mint); }
-  .brace.res-place { box-shadow: inset 5px 0 0 var(--amber); }
-  .brace.res-miss  { box-shadow: inset 5px 0 0 var(--red); }
-  .cell.done.res-win .in   { box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--mint)  70%, transparent); }
-  .cell.done.res-place .in { box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--amber) 70%, transparent); }
-  .cell.done.res-miss .in  { box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--red)   55%, transparent); }
+  .jcard.res-win   { border-color: color-mix(in srgb, var(--mint)  55%, var(--line)); }
+  .jcard.res-place { border-color: color-mix(in srgb, var(--amber) 55%, var(--line)); }
+  .jcard.res-miss  { border-color: color-mix(in srgb, var(--red)   45%, var(--line)); }
+  .brace.res-win   { box-shadow: inset 3px 0 0 var(--mint); }
+  .brace.res-place { box-shadow: inset 3px 0 0 var(--amber); }
+  .brace.res-miss  { box-shadow: inset 3px 0 0 var(--red); }
+  .cell.done.res-win .in   { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--mint)  55%, transparent); }
+  .cell.done.res-place .in { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--amber) 55%, transparent); }
+  .cell.done.res-miss .in  { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--red)   40%, transparent); }
+  /* light theme: thicker + stronger — the slim borders wash out on white */
+  :root[data-theme="light"] .jcard.res-win   { border: 2px solid color-mix(in srgb, var(--mint)  75%, var(--line)); }
+  :root[data-theme="light"] .jcard.res-place { border: 2px solid color-mix(in srgb, var(--amber) 75%, var(--line)); }
+  :root[data-theme="light"] .jcard.res-miss  { border: 2px solid color-mix(in srgb, var(--red)   65%, var(--line)); }
+  :root[data-theme="light"] .brace.res-win   { box-shadow: inset 5px 0 0 var(--mint); }
+  :root[data-theme="light"] .brace.res-place { box-shadow: inset 5px 0 0 var(--amber); }
+  :root[data-theme="light"] .brace.res-miss  { box-shadow: inset 5px 0 0 var(--red); }
+  :root[data-theme="light"] .cell.done.res-win .in   { box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--mint)  70%, transparent); }
+  :root[data-theme="light"] .cell.done.res-place .in { box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--amber) 70%, transparent); }
+  :root[data-theme="light"] .cell.done.res-miss .in  { box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--red)   55%, transparent); }
 
   .res { font-weight: 800; font-size: 0.8rem; }
   .res.win { color: var(--mint); }
