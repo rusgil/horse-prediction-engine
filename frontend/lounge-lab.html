@@ -516,6 +516,9 @@
   .runner .odds .o { font-weight: 800; font-size: 0.9rem; }
   .runner .odds .ol { font-size: 0.58rem; color: var(--text-3); text-transform: uppercase; letter-spacing: 0.07em; }
   .pick-tag { background: var(--surface-2); color: var(--text-2); font-size: 0.56rem; font-weight: 800; padding: 2px 6px; border-radius: 4px; letter-spacing: 0.06em; }
+  .chip.outcome-win   { background: var(--mint-dim);  color: var(--mint);  border-color: var(--mint); }
+  .chip.outcome-place { background: var(--amber-dim); color: var(--amber); border-color: var(--amber); }
+  .chip.outcome-miss  { background: var(--red-dim);   color: var(--red); }
   .runner.top1 .pick-tag { background: var(--mint-dim); color: var(--mint); }
   .val-chip { background: var(--mint-dim); color: var(--mint); font-size: 0.58rem; font-weight: 800; padding: 2px 6px; border-radius: 4px; letter-spacing: 0.04em; cursor: help; }
 
@@ -1090,13 +1093,19 @@
 
     const offNote = off ? `<div class="dw-note"><b>${esc(g.label)} track:</b> rain-affected going. Dry-track form is less reliable here, so our confidence tiers are capped for this race — treat these as guides, not locks.</div>` : '';
     const settledNote = isSettled(r) ? `<div class="dw-note" style="background:var(--surface-2);border-color:var(--line)"><b>Race finished.</b> ${r.model_correct ? 'Our top pick won this race. ✓' : r.model_placed ? 'Our top pick ran a place. ✓' : 'Our top pick missed here. ✗'} Pre-race predictions shown below.</div>` : '';
+    // Outcome chip for our predicted winner once the race is settled
+    const pickOutcome = isSettled(r)
+      ? (r.model_correct ? '<span class="chip outcome-win">✓ WIN</span>'
+         : r.model_placed ? '<span class="chip outcome-place">✓ PLACE</span>'
+         : '<span class="chip outcome-miss">✗ LOST</span>')
+      : '';
     body.innerHTML = offNote + settledNote + top.map((x, i) => {
       const isVal = (x.overlay || 0) > 0.05 && (x.best_available_odds || 0) >= 3;
       return `<div class="runner ${i === 0 ? 'top1' : ''}">
         <div class="saddle num">${x.tab_number ?? '–'}</div>
         <div class="info">
           <div class="hn">${esc(x.horse_name)}
-            <span class="pick-tag">${i === 0 ? 'OUR PICK' : '#' + (i + 1)}</span>
+            <span class="pick-tag">${i === 0 ? 'OUR PICK' : '#' + (i + 1)}</span>${i === 0 ? pickOutcome : ''}
             ${isVal ? '<span class="val-chip">VALUE</span>' : ''}</div>
           <div class="jk">${esc(x.jockey || '')}${x.barrier ? ` · barrier ${x.barrier}` : ''}</div>
           <div class="rbars">${barsHtml(x.win_probability, x.place_probability)}</div>
