@@ -411,6 +411,7 @@
   .brace .mid .pk { font-weight: 700; font-size: 0.86rem; display: flex; align-items: center; gap: 6px; min-width: 0; }
   .brace .mid .pk .pk-name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .brace .mid .pk .chip { flex-shrink: 0; }
+  .brace .mid .pk .pk-odds { flex-shrink: 0; font-size: 0.78rem; font-weight: 800; color: var(--text-2); }
   .brace .mid .pk.ghost { color: var(--text-3); font-weight: 500; font-size: 0.76rem; }
   .brace .mid .sub { font-size: 0.68rem; color: var(--text-3); margin-top: 1px; }
   .brace .right { display: flex; flex-direction: column; align-items: flex-end; gap: 5px; }
@@ -967,7 +968,7 @@
         <div class="mid">
           ${done
             ? `<div class="pk">${resultMark(r)} <span style="color:var(--text-2);font-weight:600">${r.model_correct ? 'Our pick won' : r.model_placed ? 'Our pick placed' : 'Our pick missed'}</span></div>`
-            : `<div class="pk ${tp ? '' : 'ghost'}"><span class="pk-name">${tp ? esc(tp.horse_name) : (r.top_win_probability != null ? 'Tap for our pick' : 'No prediction yet')}</span>${tier ? `<span class="chip ${tier.cls}">${tier.label}</span>` : ''}</div>`}
+            : `<div class="pk ${tp ? '' : 'ghost'}"><span class="pk-name">${tp ? esc(tp.horse_name) : (r.top_win_probability != null ? 'Tap for our pick' : 'No prediction yet')}</span>${tier ? `<span class="chip ${tier.cls}">${tier.label}</span>` : ''}${tp && tp.best_available_odds > 1 ? `<span class="pk-odds num">$${(+tp.best_available_odds).toFixed(2)}</span>` : ''}</div>`}
           <div class="sub num">${r.distance ? r.distance + 'm' : ''}${r.field_size ? ' · ' + r.field_size + ' runners' : ''}${r.is_sharp ? ' · 🎯 Sharp' : ''}</div>
         </div>
         <div class="right">
