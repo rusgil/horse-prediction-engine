@@ -185,6 +185,17 @@
   .watch-btn .wb-src { font-weight: 600; color: var(--text-3); }
 
 
+  /* Settled-race outcome borders: green = win, amber = place, red = loss */
+  .jcard.res-win   { border-color: color-mix(in srgb, var(--mint)  55%, var(--line)); }
+  .jcard.res-place { border-color: color-mix(in srgb, var(--amber) 55%, var(--line)); }
+  .jcard.res-miss  { border-color: color-mix(in srgb, var(--red)   45%, var(--line)); }
+  .brace.res-win   { box-shadow: inset 3px 0 0 var(--mint); }
+  .brace.res-place { box-shadow: inset 3px 0 0 var(--amber); }
+  .brace.res-miss  { box-shadow: inset 3px 0 0 var(--red); }
+  .cell.done.res-win .in   { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--mint)  55%, transparent); }
+  .cell.done.res-place .in { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--amber) 55%, transparent); }
+  .cell.done.res-miss .in  { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--red)   40%, transparent); }
+
   .res { font-weight: 800; font-size: 0.8rem; }
   .res.win { color: var(--mint); }
   .res.place { color: var(--amber); }
@@ -675,6 +686,10 @@
     return null;
   }
   const isSettled = r => r.model_correct !== null && r.model_correct !== undefined;
+  // Outcome class for settled races — drives the green/amber/red borders.
+  const resCls = r => r.model_correct === true ? 'res-win'
+    : (r.model_correct === false && r.model_placed === true) ? 'res-place'
+    : r.model_correct === false ? 'res-miss' : '';
   function resultMark(r) {
     if (r.model_correct === true)  return '<span class="res win">✓</span>';
     if (r.model_correct === false && r.model_placed === true) return '<span class="res place">✓</span>';
@@ -817,6 +832,7 @@
         const tier = tierOf(r.top_win_probability, isOffGoing(r.track_condition));
         const cls = [
           done ? 'done' : '',
+          done ? resCls(r) : '',
           !done && tier ? tier.heat : '',
           r.race_id === nextId ? 'next' : '',
         ].join(' ');
@@ -904,7 +920,7 @@
       const tier = tierOf(r.top_win_probability, off);
       const tp = topPickOf(r.race_id);
       const done = isSettled(r);
-      return `<div class="jcard ${settledCard ? 'settled' : ''}" data-open="${esc(r.race_id)}">
+      return `<div class="jcard ${settledCard ? 'settled' : ''} ${done ? resCls(r) : ''}" data-open="${esc(r.race_id)}">
         <div class="when">
           <div class="clock num">${wallTime(r.scheduled_time)}</div>
           <div class="cd ${cd.soon ? 'soon' : ''}">${done ? resultMark(r) : (cd.label || (settledCard ? 'done' : ''))}</div>
@@ -962,7 +978,7 @@
       const off = isOffGoing(r.track_condition);
       const tier = tierOf(r.top_win_probability, off);
       const tp = topPickOf(r.race_id);
-      return `<div class="brace" data-open="${esc(r.race_id)}">
+      return `<div class="brace ${done ? resCls(r) : ''}" data-open="${esc(r.race_id)}">
         <div class="rn">R${r.race_number}</div>
         <div class="rt num">${wallTime(r.scheduled_time)}<span class="cd ${cd.soon ? 'soon' : ''}">${done ? '' : cd.label}</span></div>
         <div class="mid">
