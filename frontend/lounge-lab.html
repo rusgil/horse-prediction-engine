@@ -1062,7 +1062,7 @@
           <div class="sub num">${r.distance ? r.distance + 'm' : ''}${r.field_size ? ' · ' + r.field_size + ' runners' : ''}${r.is_sharp ? ` <span class="chip sharp" style="font-size:0.56rem;padding:1px 5px;margin-left:4px">🎯 SHARP</span>` : ''}</div>
         </div>
         <div class="right">
-          ${!done ? barsHtml(r.top_win_probability, r.top_place_probability) : ''}
+          ${barsHtml(r.top_win_probability, r.top_place_probability)}
         </div>
       </div>`;
     }).join('');
