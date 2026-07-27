@@ -26404,6 +26404,32 @@ async def admin_isotonic_reject(
     return {"ok": True, "rejected": candidate_id}
 
 
+@app.post("/api/admin/isotonic-candidate/{candidate_id}/demote")
+async def admin_isotonic_demote(
+    candidate_id: int,
+    note: str = Query("", description="Optional reviewer note"),
+    x_cron_secret: Optional[str] = Header(None),
+):
+    """Demote an ACTIVE curve back to 'archived' — the undo for a mistaken
+    promotion. (2026-07-27: isotonic #2 was promoted at 868 samples against
+    the ~10k gate; the loader is hard-disabled so it was inert, but a stale
+    active row would be silently picked up whenever the loader is re-enabled
+    — the plateau-incident failure mode.) Leaving NO active curve is safe:
+    predict_race treats it as identity."""
+    _check_admin(x_cron_secret)
+    async with get_session() as session:
+        row = await session.get(WinCalibrationCurveRow, candidate_id)
+        if row is None:
+            raise HTTPException(status_code=404, detail=f"No calibration row {candidate_id}")
+        if row.status != "active":
+            raise HTTPException(status_code=409, detail=f"Row {candidate_id} is {row.status!r}, not 'active'")
+        row.status = "archived"
+        row.reviewed_at = datetime.utcnow()
+        row.reviewed_note = note or "demoted via admin endpoint"
+        await session.commit()
+    return {"ok": True, "demoted": candidate_id}
+
+
 @app.get("/api/admin/isotonic-candidate/{candidate_id}")
 async def admin_isotonic_get(
     candidate_id: int,
