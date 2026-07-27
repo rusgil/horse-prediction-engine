@@ -2737,6 +2737,9 @@
     }
     allDates.forEach((d, i) => {
       if (!picksByDate[d]) {
+        // Only today's empty state renders (it explains a blank page).
+        // Future days with no picks yet are pure noise — skip them.
+        if (d !== todayStr) return;
         const label = d === todayStr ? 'Today' : d === tomorrowStr ? 'Tomorrow' : fmtDate(d).split(',')[0];
         html += `
           <div class="day-group">

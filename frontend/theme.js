@@ -85,6 +85,13 @@
     ':root[data-theme="light"] .brand-bar-logo { color: #8a6a00; }',
     ':root[data-theme="light"] .brand-bar-dot { background: #9c7500; }',
     ':root[data-theme="light"] .brand-bar-subtitle { color: #5d6b80; }',
+    /* light mode: card borders read too thin on white — thicken + darken.
+       Outcome-coloured borders (res-win/place/miss) keep their colours:
+       we only darken the DEFAULT border and bump widths. */
+    ':root[data-theme="light"] .pick-card, :root[data-theme="light"] .runner-card, :root[data-theme="light"] .jcard, :root[data-theme="light"] .mc, :root[data-theme="light"] .hero { border-width: 1.5px; }',
+    ':root[data-theme="light"] .pick-card:not([class*="res-"]) { border-color: #b7c2cf; }',
+    ':root[data-theme="light"] .jcard:not([class*="res-"]) { border-color: #b7c2cf; }',
+    ':root[data-theme="light"] .runner-card { border-color: #b7c2cf; }',
     /* toggle control — works on both themes */
     '.fiq-theme-toggle {',
     '  display: inline-flex; align-items: center; gap: 2px; margin-left: 10px;',
