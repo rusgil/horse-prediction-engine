@@ -121,6 +121,9 @@
     white-space: nowrap; flex-shrink: 0;
   }
   .date-pill.on { background: var(--mint); border-color: var(--mint); color: var(--mint-ink); }
+  .date-pill .dp-stat { font-size: 0.66rem; font-weight: 800; opacity: 0.85; margin-left: 4px; }
+  .ds-best { cursor: pointer; }
+  .ds-best:hover b { text-decoration: underline; }
   .date-input {
     background: var(--surface-2); border: 1px solid var(--line); color: var(--text-2);
     border-radius: 999px; padding: 4px 12px; font-size: 0.8rem; font-family: inherit;
@@ -641,7 +644,7 @@
     });
     renderC();
   }
-  sharpSeg.querySelectorAll('button').forEach(b => b.onclick = () => applySharp(b.dataset.s));
+  sharpSeg.querySelectorAll('button').forEach(b => b.onclick = () => { applySharp(b.dataset.s); loadPerf(); });
   applySharp(S.sharpOnly ? 'sharp' : 'all');
 
   /* ── version switcher ── */
@@ -660,6 +663,19 @@
     return d.toLocaleDateString('en-CA', { timeZone: 'Australia/Sydney' });
   }
   const dowName = iso => new Date(iso + 'T12:00:00').toLocaleDateString('en-AU', { weekday: 'long' });
+  S.perfByDate = {};
+  async function loadPerf() {
+    try {
+      const res = await fetch(`${API}/api/performance?days=10${S.sharpOnly ? '&sharp=true' : ''}`);
+      const d = res.ok ? await res.json() : {};
+      S.perfByDate = {};
+      for (const day of (d.summary || [])) {
+        if (day.races) S.perfByDate[day.date] = { wins: day.wins, races: day.races, pct: Math.round((day.win_rate || 0) * 100) };
+      }
+    } catch (e) { S.perfByDate = {}; }
+    buildDateRow();
+  }
+
   function buildDateRow() {
     const row = document.getElementById('dateRow');
     const pills = [
@@ -669,9 +685,12 @@
       { d: aestToday(2),  label: dowName(aestToday(2)) },
     ];
     const isPill = pills.some(p => p.d === S.date);
-    row.innerHTML = pills.map(p =>
-      `<button class="date-pill ${p.d === S.date ? 'on' : ''}" data-d="${p.d}">${p.label}</button>`
-    ).join('') + `<input type="date" class="date-input ${isPill ? '' : 'on'}" id="dateInput" value="${S.date}" aria-label="Pick a date">`;
+    const _today = aestToday(0);
+    row.innerHTML = pills.map(p => {
+      const st = p.d < _today ? S.perfByDate[p.d] : null;
+      const statTxt = st ? ` <span class="dp-stat num">${st.wins}/${st.races} · ${st.pct}%</span>` : '';
+      return `<button class="date-pill ${p.d === S.date ? 'on' : ''}" data-d="${p.d}">${p.label}${statTxt}</button>`;
+    }).join('') + `<input type="date" class="date-input ${isPill ? '' : 'on'}" id="dateInput" value="${S.date}" aria-label="Pick a date">`;
     row.querySelectorAll('.date-pill').forEach(b => b.onclick = () => setDate(b.dataset.d));
     document.getElementById('dateInput').onchange = e => { if (e.target.value) setDate(e.target.value); };
   }
@@ -857,18 +876,25 @@
     const races = allRaces();
     const settled = races.filter(isSettled);
     const el = document.getElementById('dayStrip');
-    if (!settled.length) { el.classList.remove('show'); return; }
+    // Best pick of the day — highest claimed win% with a known pick name
+    const cand = races.filter(r => r.top_pick && r.top_win_probability != null);
+    const best = cand.length ? cand.reduce((a, b) => (b.top_win_probability > a.top_win_probability ? b : a)) : null;
+    if (!settled.length && !best) { el.classList.remove('show'); return; }
     const wins = settled.filter(r => r.model_correct === true).length;
     const placed = settled.filter(r => r.model_correct === false && r.model_placed === true).length;
-    const pct = Math.round(wins / settled.length * 100);
-    const placePct = Math.round((wins + placed) / settled.length * 100);
-    el.innerHTML = `
+    const pct = settled.length ? Math.round(wins / settled.length * 100) : 0;
+    const placePct = settled.length ? Math.round((wins + placed) / settled.length * 100) : 0;
+    const statsHtml = settled.length ? `
       <div class="ds-stat"><b class="num">${settled.length}</b> settled</div>
       <div class="ds-divider"></div>
       <div class="ds-stat"><b class="g num">${wins}</b> picks won <span class="num">(${pct}%)</span></div>
       <div class="ds-divider"></div>
-      <div class="ds-stat"><b class="a num">${placed}</b> more placed <span class="num">(${placePct}% placed incl. wins)</span></div>`;
+      <div class="ds-stat"><b class="a num">${placed}</b> more placed <span class="num">(${placePct}% placed incl. wins)</span></div>` : '';
+    const bestHtml = best ? `${settled.length ? '<div class="ds-divider"></div>' : ''}
+      <div class="ds-stat ds-best" data-open="${esc(best.race_id)}">⭐ Best pick:&nbsp;<b>${esc(best.top_pick)}</b>&nbsp;<span class="num">${esc(best._venue)} R${best.race_number} · ${Math.round(best.top_win_probability * 100)}%${best.top_pick_odds > 1 ? ' · $' + (+best.top_pick_odds).toFixed(2) : ''}</span>&nbsp;${isSettled(best) ? resultMark(best) : ''}</div>` : '';
+    el.innerHTML = statsHtml + bestHtml;
     el.classList.add('show');
+    el.querySelectorAll('[data-open]').forEach(n => n.onclick = () => openRace(n.dataset.open));
   }
 
   /* ── render all ── */
@@ -1237,6 +1263,7 @@
   buildDateRow();
   applyVersion('C');
   loadAll();
+  loadPerf();
 })();
 </script>
 </body>
