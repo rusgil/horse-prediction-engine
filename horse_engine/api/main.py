@@ -13965,6 +13965,40 @@ async def _run_quality_check(target: str) -> dict:
             "reason": f"Couldn't run URL health checks: {type(e).__name__}: {str(e)[:120]}",
         })
 
+    # ── Sportsbet allowlist health (2026-07-27) ──────────────────────────────
+    # The enrichment allowlist FAILS OPEN when Sportsbet is unreachable — by
+    # design (an SB hiccup must not blank the card) — but a SUSTAINED block
+    # silently floods the site with unbettable bush/picnic meetings (Trangie
+    # Picnic / Middlemount / Julia Creek etc., Saturday 2026-07-26) and
+    # starves the snapshot job of race times. SB 403'd Railway for ~a week
+    # with no alert: this check makes the outage land in the morning report.
+    try:
+        import httpx as _httpx_sb
+        async with _httpx_sb.AsyncClient(timeout=12) as _sbc:
+            _sb_resp = await _sbc.get(
+                f"https://www.sportsbet.com.au/apigw/sportsbook-racing/Sportsbook/Racing/AllRacing/{target}",
+                headers={"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36"},
+            )
+        if _sb_resp.status_code != 200:
+            warning.append({
+                "check": "sportsbet_allowlist_down",
+                "status": _sb_resp.status_code,
+                "reason": "Sportsbet AllRacing is blocking us — the enrichment allowlist is "
+                          "failing OPEN, so every RA meeting (incl. unbettable bush/picnic "
+                          "tracks) gets enriched and listed, and the snapshot job has no "
+                          "Sportsbet race times. Picks still work; the meeting list is noisy "
+                          "and blind-meeting risk rises.",
+                "remediation": "SB currently requires an AU-residential source. Options: AU-geo "
+                               "residential proxy for the SB fetch, or an alternative allowlist "
+                               "source. Interim: expect bush meetings in the Lounge.",
+            })
+    except Exception as _sbe:
+        warning.append({
+            "check": "sportsbet_allowlist_down",
+            "status": 0,
+            "reason": f"Sportsbet AllRacing unreachable ({type(_sbe).__name__}) — allowlist failing open; see check docs.",
+        })
+
     # ── Pending picks older than 24h — RA never published or we lost the race ──
     if stale_hours > 24 and n_pending > 0:
         critical.append({
