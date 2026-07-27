@@ -3090,6 +3090,72 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+
+# ── Site rule (LEGAL, 2026-07-27): no predicted probability is ever DISPLAYED
+# above 90%. A published "98% place" leaves no room for "it still can lose" if
+# a member bets big on the strength of it and it misses. This middleware caps
+# the prediction-probability fields in every user-facing JSON response —
+# fraction scale (≤1.0) capped at 0.90, percent scale (1–100) at 90.0 — so
+# every current AND future public endpoint inherits the rule automatically.
+# Admin endpoints (/api/admin/*) are exempt: the nightly extreme-confidence
+# canary, calibration and backtests must keep seeing true magnitudes, and the
+# DB stores raw values untouched. Historical FACT rates (win_rate on settled
+# samples etc.) are deliberately not in the key set — capping a factual 10/10
+# would misstate the record; the rule targets forward-looking claims.
+_PROB_CAP_KEYS = frozenset({
+    "win_probability", "place_probability",
+    "top_win_probability", "top_place_probability", "rank2_win_probability",
+    "model_win_prob", "model_pct", "place_pct", "win_pct",
+    "partner_win_pct", "implied_prob", "market_implied_pct",
+    "combined_pct", "first_four_combined_pct",
+})
+_PROB_CAP_PREFIXES = (
+    "/api/meetings", "/api/races", "/api/edge", "/api/track-record",
+    "/api/lounge", "/api/funk", "/api/hotseat", "/api/performance",
+)
+
+
+def _cap_probs_in(obj) -> None:
+    if isinstance(obj, dict):
+        for k, v in obj.items():
+            if isinstance(v, (dict, list)):
+                _cap_probs_in(v)
+            elif k in _PROB_CAP_KEYS and isinstance(v, (int, float)) and not isinstance(v, bool):
+                if 0 < v <= 1.0 and v > 0.90:
+                    obj[k] = 0.90
+                elif 1.0 < v <= 100.0 and v > 90.0:
+                    obj[k] = 90.0
+    elif isinstance(obj, list):
+        for item in obj:
+            _cap_probs_in(item)
+
+
+@app.middleware("http")
+async def _display_prob_cap(request, call_next):
+    response = await call_next(request)
+    path = request.url.path
+    if path.startswith("/api/admin") or not path.startswith(_PROB_CAP_PREFIXES):
+        return response
+    if not (response.headers.get("content-type") or "").startswith("application/json"):
+        return response
+    try:
+        body = b"".join([chunk async for chunk in response.body_iterator])
+    except Exception:
+        return response
+    try:
+        data = json.loads(body)
+        _cap_probs_in(data)
+        new_body = json.dumps(data).encode()
+    except Exception:
+        new_body = body
+    from starlette.responses import Response as _StarletteResponse
+    headers = dict(response.headers)
+    headers.pop("content-length", None)
+    return _StarletteResponse(
+        content=new_body, status_code=response.status_code,
+        headers=headers, media_type="application/json",
+    )
+
 # CORS — was allow_origins=["*"] without credentials which was fine for
 # admin token-header calls. Membership auth (Phase 1, 2026-07-20) needs
 # credentialed cross-origin requests (Vercel-hosted frontend →
