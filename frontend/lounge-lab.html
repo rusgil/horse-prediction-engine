@@ -345,9 +345,12 @@
   .jcard .when { text-align: center; grid-row: span 2; }
   .jcard .when .clock { font-family: 'Barlow Condensed'; font-weight: 800; font-size: 1.3rem; line-height: 1; }
   .jcard .when .cd { font-size: 0.64rem; font-weight: 800; margin-top: 3px; color: var(--text-3); }
-  /* races nearing the jump (≤15m): countdown becomes a pulsing mint pill */
+  /* countdown colour ladder: green while far out → amber inside the hour →
+     pulsing red pill at ≤15m */
+  .jcard .when .cd.far,  .brace .rt .cd.far,  .hero-top .cd.far  { color: var(--mint); }
+  .jcard .when .cd.hour, .brace .rt .cd.hour, .hero-top .cd.hour { color: var(--amber); }
   .jcard .when .cd.soon, .brace .rt .cd.soon, .hero-top .cd.soon {
-    display: inline-block; background: var(--mint); color: var(--mint-ink);
+    display: inline-block; background: var(--red); color: #fff;
     border-radius: 5px; padding: 1px 6px; font-weight: 800;
     animation: soonpulse 1.6s ease-in-out infinite;
   }
@@ -644,16 +647,18 @@
     return `${h}:${mi}${ap}`;
   }
   const epochOf = iso => { const t = iso ? Date.parse(iso) : NaN; return Number.isNaN(t) ? null : t; };
+  // urg drives the countdown colour ladder: far (green) → hour (amber) →
+  // soon ≤15m (pulsing red pill).
   function countdown(iso) {
     const t = epochOf(iso);
-    if (t == null) return { label: '', soon: false, past: false };
+    if (t == null) return { label: '', soon: false, past: false, urg: '' };
     const diff = t - Date.now();
-    if (diff <= 0) return { label: diff > -35 * 60000 ? 'resulting' : '', soon: false, past: true };
+    if (diff <= 0) return { label: diff > -35 * 60000 ? 'resulting' : '', soon: false, past: true, urg: '' };
     const m = Math.floor(diff / 60000);
-    if (m < 60) return { label: `in ${m}m`, soon: m <= 15, past: false };
+    if (m < 60) return { label: `in ${m}m`, soon: m <= 15, past: false, urg: m <= 15 ? 'soon' : 'hour' };
     const h = Math.floor(m / 60);
-    if (h < 24) return { label: `in ${h}h ${m % 60}m`, soon: false, past: false };
-    return { label: `in ${Math.floor(h / 24)}d`, soon: false, past: false };
+    if (h < 24) return { label: `in ${h}h ${m % 60}m`, soon: false, past: false, urg: 'far' };
+    return { label: `in ${Math.floor(h / 24)}d`, soon: false, past: false, urg: 'far' };
   }
 
   function goingInfo(tc) {
@@ -914,7 +919,7 @@
           ${hero.is_sharp ? `<span class="chip sharp">🎯 SHARP</span>` : ''}
           ${tier ? `<span class="chip ${tier.cls}">${tier.label}</span>` : ''}
           ${watchBtn(hero._state)}
-          <div class="clockbox"><div class="clock num">${wallTime(hero.scheduled_time)}</div><div class="cd ${cd.soon ? 'soon' : ''}">${cd.label}</div></div>
+          <div class="clockbox"><div class="clock num">${wallTime(hero.scheduled_time)}</div><div class="cd ${cd.urg || ''}">${cd.label}</div></div>
         </div>
         <div class="hero-picks">${picksHtml}</div>
         <div class="hero-note">Our top ${rs.length || 3} for this race — tap for the full breakdown.</div>
@@ -931,7 +936,7 @@
       return `<div class="jcard ${settledCard ? 'settled' : ''} ${done ? resCls(r) : ''}" data-open="${esc(r.race_id)}">
         <div class="when">
           <div class="clock num">${wallTime(r.scheduled_time)}</div>
-          <div class="cd ${cd.soon ? 'soon' : ''}">${done ? resultMark(r) : (cd.label || (settledCard ? 'done' : ''))}</div>
+          <div class="cd ${done ? '' : (cd.urg || '')}">${done ? resultMark(r) : (cd.label || (settledCard ? 'done' : ''))}</div>
         </div>
         <div class="where">${esc(r._venue)} <span style="color:var(--text-3)">R${r.race_number}</span>
           <span class="rmeta num">${r.distance ? r.distance + 'm' : ''}${r.field_size ? ' · ' + r.field_size + ' rnrs' : ''}</span></div>
@@ -988,7 +993,7 @@
       const tp = topPickOf(r.race_id);
       return `<div class="brace ${done ? resCls(r) : ''}" data-open="${esc(r.race_id)}">
         <div class="rn">R${r.race_number}</div>
-        <div class="rt num">${wallTime(r.scheduled_time)}<span class="cd ${cd.soon ? 'soon' : ''}">${done ? '' : cd.label}</span></div>
+        <div class="rt num">${wallTime(r.scheduled_time)}<span class="cd ${done ? '' : (cd.urg || '')}">${done ? '' : cd.label}</span></div>
         <div class="mid">
           ${done
             ? `<div class="pk">${resultMark(r)} <span style="color:var(--text-2);font-weight:600">${r.model_correct ? 'Our pick won' : r.model_placed ? 'Our pick placed' : 'Our pick missed'}</span></div>`
