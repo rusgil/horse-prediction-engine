@@ -610,6 +610,7 @@
   <div class="lg-item"><span class="lg-chip"><span class="res win">✓</span>&nbsp;<span class="res place">✓</span>&nbsp;<span class="res miss">✗</span></span><span><b>Finished races</b> — how our top pick went: green tick = won, amber tick = placed, ✗ = missed. We show our record, wins and losses alike.</span></div>
   <div class="lg-item"><span class="val-chip lg-chip">VALUE</span><span><b>Value</b> — our model rates the horse's chance higher than its market price implies: positive expected value at the listed odds.</span></div>
   <div class="lg-item"><span><b>% highlight</b> — win % lights up gold from 30% confidence; place % lights up blue from 50%.</span></div>
+  <div class="lg-item"><span class="chip cf lg-chip">👑 CLEAR FAV</span><span><b>Clear favourite</b> — our top pick leads our 2nd pick by 5+ points of win probability. Historically much more reliable than a ⚖️ TOSS-UP (gap under 2 points). Not the same as 🎯 Sharp, which is the race-quality gate.</span></div>
   <div class="lg-item"><span><b>J / T %</b> — the jockey's and trainer's win strike rates: the share of their recent rides / runners that win. Typical journeyman ~10–12%, top metro riders 18–25%. Strong connections are a genuine positive signal.</span></div>
 </div>
 </section>
@@ -1131,7 +1132,7 @@
             // <2pts with a 25%+ pick = toss-up.
             if (r.top_win_probability == null || r.rank2_win_probability == null) return '';
             const gap = (r.top_win_probability - r.rank2_win_probability) * 100;
-            if (gap >= 5) return ` <span class="chip cf" style="font-size:0.56rem;padding:1px 5px;margin-left:4px">🎯 CLEAR FAV</span>`;
+            if (gap >= 5) return ` <span class="chip cf" style="font-size:0.56rem;padding:1px 5px;margin-left:4px">👑 CLEAR FAV</span>`;
             if (gap < 2 && r.top_win_probability >= 0.25) return ` <span class="chip tu" style="font-size:0.56rem;padding:1px 5px;margin-left:4px">⚖️ TOSS-UP</span>`;
             return '';
           })()}${r.is_sharp ? ` <span class="chip sharp" style="font-size:0.56rem;padding:1px 5px;margin-left:4px">🎯 SHARP</span>` : ''}</div>
