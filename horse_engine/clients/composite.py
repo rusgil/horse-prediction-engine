@@ -33,9 +33,19 @@ async def _empty_dict() -> dict:
     return {}
 
 
+_APOS_TRANS = str.maketrans("", "", "'’‘`´")
+
+
 def _normalize(name: str) -> str:
-    """Lowercase + strip country codes for name matching."""
-    return re.sub(r'\s*\([^)]+\)', '', name).strip().lower()
+    """Lowercase + strip country codes + strip apostrophes for name matching.
+
+    RA writes curly apostrophes (CHIP’N’DALE), OddsPro straight (CHIP'N'DALE)
+    — the variants must collapse to the same key or the odds merge silently
+    misses those runners (they show odds=0 / market-blind even when the
+    market is up; Albury 2026-07-27)."""
+    s = re.sub(r'\s*\([^)]+\)', '', name or '')
+    s = s.translate(_APOS_TRANS)
+    return re.sub(r'\s+', ' ', s).strip().lower()
 
 
 class CompositeClient:
@@ -90,6 +100,12 @@ class CompositeClient:
         )
         full_market = meeting_odds.get((op_track or "").lower(), {}) if op_track else {}
 
+        # Re-key the OddsPro maps through _normalize so apostrophe/spacing
+        # variants (RA curly vs OddsPro straight) hit. Keys arrive as plain
+        # .lower() from the client; lookups below always use _normalize.
+        odds_map = {(rn, _normalize(nm)): v for (rn, nm), v in (odds_map or {}).items()}
+        full_market = {(rn, _normalize(nm)): v for (rn, nm), v in (full_market or {}).items()}
+
         race_results: dict[str, dict] = (ra_results.get(race_number) or {}).get("runners", {})
 
         # ── Odds priority for each runner:
@@ -100,7 +116,7 @@ class CompositeClient:
             name_raw = (sel.get("competitor") or {}).get("name", "")
             name = name_raw.lower()
             name_norm = _normalize(name_raw)
-            op = odds_map.get((race_number, name), {})
+            op = odds_map.get((race_number, name_norm), {})
             ra = race_results.get(name, {})
 
             if not sel.get("topToteWin"):
@@ -108,7 +124,7 @@ class CompositeClient:
                     sel["topToteWin"] = op.get("currentBestOdds")
                     sel["_odds_opening"] = op.get("firstPrice")
                 else:
-                    fm_price = full_market.get((race_number, name)) or full_market.get((race_number, name_norm))
+                    fm_price = full_market.get((race_number, name_norm))
                     if fm_price and fm_price > 1.0:
                         sel["topToteWin"] = fm_price
 
@@ -123,7 +139,7 @@ class CompositeClient:
             if (sel.get("status") or "").upper() == "SCRATCHED":
                 continue
             name = (sel.get("competitor") or {}).get("name", "")
-            op = odds_map.get((race_number, name.lower()), {})
+            op = odds_map.get((race_number, _normalize(name)), {})
             ra = race_results.get(name.lower(), {})
             best = op.get("currentBestOdds") or sel.get("topToteWin") or ra.get("sp")
             runners_out.append({

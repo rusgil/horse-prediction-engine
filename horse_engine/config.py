@@ -69,6 +69,18 @@ class Settings(BaseSettings):
     # Set PLACE_HARVILLE_WEIGHT on Railway to enable, as a deliberate release.
     place_harville_weight: float = 0.0
 
+    # Blind-race shrinkage (2026-07-27): when a race has NO market odds at
+    # prediction time ("blind" — late-market country meetings like Monday
+    # Albury), the form-only model is over-confident (Albury R2: 60% claimed
+    # on a horse while the $1.95 market favourite sat ranked 7th at 0.5%).
+    # λ blends every win prob toward the field mean, mass- and rank-
+    # preserving: p_i ← (1-λ)·p_i + λ·(mass/n). Ordering, top-1 pick and
+    # win-rate are untouched; only the probability MAGNITUDES (tier badges,
+    # Sharp gates, Harville place) are tempered. 0 = off (default until
+    # backtested per feedback_model_release_process). Review
+    # /api/admin/backtest/blind-shrinkage then set BLIND_SHRINKAGE on Railway.
+    blind_shrinkage: float = 0.0
+
     # Betfair clients were removed 2026-06-13. RA + OddsPro cover everything
     # the model trains on; the Betfair-derived features (steam_60, steam_30,
     # drift_flag, odds_velocity, late_money, odds_movement_norm) ablated to

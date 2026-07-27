@@ -2347,6 +2347,64 @@ async def _snapshot_prerace_predictions() -> int:
         )
         rows = pred_result.scalars().all()
 
+    # BUG-44 (2026-07-27): blind-snapshot refresh. BUG-43's T-2h window still
+    # freezes a race at the FIRST hourly tick inside its window — and on
+    # late-market meetings (Monday country: bookies price ~60-90min out) that
+    # tick can land before OddsPro has the meeting, permanently freezing an
+    # odds-less ("blind") snapshot even though the 15-min pre-race enrich later
+    # fills mutable with odds. Albury R2 2026-07-27: blind 60% on WISER frozen
+    # while the $1.95 market favourite sat ranked 7th at 0.5%. History remains
+    # write-once AFTER the jump; here we allow a pre-jump UPGRADE only when the
+    # existing snapshot is blind and mutable now carries real odds: delete the
+    # blind rows and let the normal write path below re-snapshot from mutable
+    # (ranks copied verbatim per FIX-O, time guard still applies).
+    _mut_max_odds: dict[str, float] = {}
+    for r in rows:
+        if (r.best_available_odds or 0) > (_mut_max_odds.get(r.race_id) or 0):
+            _mut_max_odds[r.race_id] = r.best_available_odds or 0
+    if already_set:
+        from sqlalchemy import delete as _sa_delete
+        async with get_session() as session:
+            _hist_odds = (await session.execute(
+                select(RunnerPredictionHistoryRow.race_id,
+                       func.max(RunnerPredictionHistoryRow.best_available_odds))
+                .where(RunnerPredictionHistoryRow.race_id.like(f"{today}_%"))
+                .group_by(RunnerPredictionHistoryRow.race_id)
+            )).fetchall()
+            _blind_hist = {rid for rid, mx in _hist_odds if (mx or 0) <= 1.0}
+            _sched_by_race: dict[str, datetime] = {}
+            for r in rows:
+                if r.race_id in _sched_by_race:
+                    continue
+                sched = sched_map.get(r.race_id)
+                if sched is None and r.scheduled_time:
+                    try:
+                        sched = datetime.fromisoformat(str(r.scheduled_time).replace("Z", "+00:00")).replace(tzinfo=None)
+                    except (ValueError, TypeError):
+                        sched = None
+                if sched:
+                    _sched_by_race[r.race_id] = sched
+            _refreshed = 0
+            for rid in list(_blind_hist):
+                if rid not in already_set:
+                    continue
+                sched = _sched_by_race.get(rid)
+                # Pre-jump only, and only inside the snapshot window so the
+                # write path below re-writes the race in this same run — never
+                # leave a race with no snapshot at all.
+                if not sched or sched <= now_utc or sched - now_utc > timedelta(hours=2):
+                    continue
+                if (_mut_max_odds.get(rid) or 0) <= 1.0:
+                    continue  # mutable still blind — nothing better to freeze
+                await session.execute(_sa_delete(RunnerPredictionHistoryRow)
+                                      .where(RunnerPredictionHistoryRow.race_id == rid))
+                already_set.discard(rid)
+                _refreshed += 1
+            if _refreshed:
+                await session.commit()
+                log.info("[snapshot] BUG-44 blind refresh: re-snapshotting %d race(s) whose "
+                         "frozen history had no odds but mutable now does", _refreshed)
+
     # Group by race — skip races already in history OR that have already started.
     # The time guard (BUG-01 fix) prevents post-race mutable state from being
     # snapshotted as if it were a pre-race prediction.
@@ -4064,9 +4122,16 @@ def _parse_race_id(race_id: str) -> tuple[str, str, int | None]:
 
 _COUNTRY_CODE_RE = re.compile(r"\s*\([A-Za-z]{2,3}\)\s*$")
 
+_APOS_TRANS = str.maketrans("", "", "'’‘`´")
+
+
 def _normalize_horse(name: str) -> str:
-    """Lowercase and strip country code suffixes like (FR), (NZ), (IRE), (Nz) for consistent matching."""
-    return _COUNTRY_CODE_RE.sub("", name).lower().strip()
+    """Lowercase, strip country code suffixes like (FR), (NZ), (IRE), and strip
+    apostrophes (curly or straight — RA writes CHIP’N’DALE, OddsPro
+    CHIP'N'DALE) for consistent matching. Without the apostrophe strip,
+    odds merges and result settlement silently miss those horses."""
+    s = _COUNTRY_CODE_RE.sub("", name or "").translate(_APOS_TRANS).lower().strip()
+    return re.sub(r"\s+", " ", s)
 
 
 # Cache meeting start times + live odds for 5 min
@@ -23856,6 +23921,103 @@ async def admin_refresh_about_stats_now(
         )).scalar_one_or_none()
     published = json.loads(row.payload_json) if row and row.payload_json else None
     return {"ok": True, "forced": force, "published": published}
+
+
+@app.get("/api/admin/backtest/blind-shrinkage")
+async def backtest_blind_shrinkage(
+    days: int = 90,
+    x_cron_secret: Optional[str] = Header(None),
+):
+    """Sweep the BLIND_SHRINKAGE λ over historical BLIND races (no market odds
+    on any runner at snapshot time). Shrinkage is rank-preserving, so the top-1
+    pick and win rate are IDENTICAL at every λ — the question is probability
+    calibration: does tempering the magnitudes make the claimed win % match
+    reality? Reports per-λ log-loss (winner), rank-1 Brier, and tier-bucket
+    counts + actual win rates so the λ that aligns claimed-vs-actual is
+    visible. Release process: review this, then set BLIND_SHRINKAGE on
+    Railway — no auto-promotion."""
+    _check_admin(x_cron_secret)
+    import math
+    cutoff = (_today_aest() - timedelta(days=days)).isoformat()
+    async with get_session() as session:
+        hist = (await session.execute(
+            select(RunnerPredictionHistoryRow)
+            .where(RunnerPredictionHistoryRow.race_id >= cutoff)
+            .where(RunnerPredictionHistoryRow.source == "live")
+            .where(RunnerPredictionHistoryRow.cancelled.is_(False) | RunnerPredictionHistoryRow.cancelled.is_(None))
+            .where(RunnerPredictionHistoryRow.win_probability.isnot(None))
+            .order_by(RunnerPredictionHistoryRow.enriched_at.desc())
+        )).scalars().all()
+        hr_rows = (await session.execute(
+            select(HistoricalResultRow.race_id, HistoricalResultRow.horse_name,
+                   HistoricalResultRow.position)
+            .where(HistoricalResultRow.race_id >= cutoff)
+        )).fetchall()
+    winners = {r.race_id: _normalize_horse(r.horse_name) for r in hr_rows if r.position == 1}
+
+    # Latest snapshot per (race, horse) — dedup-in-Python per FIX-S.
+    seen: set[tuple] = set()
+    races: dict[str, list] = {}
+    for row in hist:
+        k = (row.race_id, _normalize_horse(row.horse_name))
+        if k in seen:
+            continue
+        seen.add(k)
+        races.setdefault(row.race_id, []).append(row)
+
+    blind: list[tuple[str, list]] = []
+    sighted = 0
+    for rid, rws in races.items():
+        if rid not in winners or len(rws) < 2:
+            continue
+        if max((r.best_available_odds or 0) for r in rws) > 1.0:
+            sighted += 1
+            continue
+        blind.append((rid, rws))
+
+    lambdas = [0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7]
+    sweep = []
+    for lam in lambdas:
+        ll = br = 0.0
+        n = 0
+        tiers = {t: {"races": 0, "wins": 0} for t in ("hot", "high", "strong", "sub30")}
+        for rid, rws in blind:
+            probs = [max(r.win_probability or 0.0, 1e-4) for r in rws]
+            mean = sum(probs) / len(probs)
+            adj = [(1 - lam) * p + lam * mean for p in probs]
+            widx = next((i for i, r in enumerate(rws)
+                         if _normalize_horse(r.horse_name) == winners[rid]), None)
+            if widx is None:
+                continue  # winner not in our field (name mismatch / late entry)
+            s = sum(adj) or 1.0
+            ll += -math.log(max(adj[widx] / s, 1e-6))
+            top_i = max(range(len(adj)), key=lambda i: adj[i])
+            p1 = adj[top_i]           # absolute (mass-preserved) — what tiers see
+            won = 1 if top_i == widx else 0
+            br += (p1 - won) ** 2
+            tier = ("hot" if p1 >= 0.46 else "high" if p1 >= 0.36
+                    else "strong" if p1 >= 0.30 else "sub30")
+            tiers[tier]["races"] += 1
+            tiers[tier]["wins"] += won
+            n += 1
+        for t in tiers.values():
+            t["win_pct"] = round(t["wins"] / t["races"] * 100, 1) if t["races"] else None
+        sweep.append({
+            "lambda": lam,
+            "races": n,
+            "winner_log_loss": round(ll / n, 4) if n else None,
+            "rank1_brier": round(br / n, 4) if n else None,
+            "tiers": tiers,
+        })
+    return {
+        "days": days,
+        "blind_races": len(blind),
+        "sighted_races_excluded": sighted,
+        "note": "rank-preserving: top-1 pick & win rate identical across lambda; "
+                "judge by winner_log_loss / rank1_brier and whether tier win_pct "
+                "matches the tier's claimed band",
+        "sweep": sweep,
+    }
 
 
 @app.get("/api/admin/backtest-win")

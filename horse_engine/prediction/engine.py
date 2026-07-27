@@ -585,6 +585,31 @@ def predict_race(race: Race, model: HorseModel, venue_calibration: dict[str, flo
     else:
         _run_market_shrinkage(predictions, trace)
 
+    # Blind-race shrinkage (2026-07-27): when NO runner in the field has market
+    # odds (late-market country meetings — the market simply isn't up yet), the
+    # form-only model runs uncalibrated and over-confident (Albury R2
+    # 2026-07-27: 60% claimed while the $1.95 market favourite sat ranked 7th
+    # at 0.5%). When BLIND_SHRINKAGE > 0, blend every win prob toward the
+    # field mean — mass-preserving and rank-preserving, so the pick order and
+    # win-rate metrics are untouched while the magnitudes that drive tier
+    # badges, Sharp gating and Harville place are tempered. Market detection
+    # uses best_available_odds only: market_implied_prob defaults to 1/N when
+    # odds are missing, so it cannot distinguish blind from sighted.
+    from horse_engine.config import settings as _bs_settings
+    _bs = float(getattr(_bs_settings, "blind_shrinkage", 0.0) or 0.0)
+    if _bs > 0 and len(predictions) >= 2:
+        _has_market = any(
+            (getattr(p.enriched, "best_available_odds", 0) or 0) > 1.0
+            for p in predictions
+        )
+        if not _has_market:
+            _mass = sum(p.win_prob for p in predictions)
+            _mean = _mass / len(predictions)
+            for p in predictions:
+                p.win_prob = round((1.0 - _bs) * p.win_prob + _bs * _mean, 4)
+                if trace is not None and p.runner.horse_name in trace:
+                    trace[p.runner.horse_name]["after_blind_shrinkage"] = p.win_prob
+
     # Place probability. The standalone place model was outputting near-uniform
     # values (~3/N for every runner), so its RANKING was noise — the win
     # favourite could rank mid-pack to place (Grafton R9, 2026-07-24). When
