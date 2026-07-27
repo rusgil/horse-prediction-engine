@@ -344,6 +344,7 @@
   .hrunner .nm { flex: 1; min-width: 0; }
   .hrunner .nm .h { font-weight: 700; font-size: 0.9rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .hrunner .nm .j { font-size: 0.68rem; color: var(--text-3); }
+  .hrunner .hodds { font-weight: 800; font-size: 0.82rem; flex-shrink: 0; }
   .hrunner .bars { width: 200px; flex-shrink: 0; }
   @media (max-width: 560px) { .hrunner .bars { width: 150px; } }
 
@@ -384,13 +385,16 @@
     font-weight: 700; font-size: 0.84rem; white-space: nowrap; overflow: hidden;
     text-overflow: ellipsis; max-width: 160px; margin-left: auto; margin-bottom: 5px;
   }
+  .jcard .pick .pname { display: flex; align-items: center; gap: 6px; justify-content: flex-end; }
+  .jcard .pick .pname .pn-t { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .jcard .pick .pname .pk-odds { flex-shrink: 0; font-size: 0.76rem; font-weight: 800; color: var(--text-2); }
   .jcard .pick .pname.ghost { color: var(--text-3); font-weight: 500; font-size: 0.74rem; }
   .jcard.settled { opacity: 0.75; }
   .jcard.settled:hover { opacity: 1; }
   @media (max-width: 640px) {
     .jcard { grid-template-columns: 56px 1fr; }
     .jcard .pick { grid-row: auto; grid-column: 2; text-align: left; margin-top: 4px; }
-    .jcard .pick .pname { margin-left: 0; }
+    .jcard .pick .pname { margin-left: 0; justify-content: flex-start; }
     .jcard .when { grid-row: span 3; }
     /* smaller time numerals on mobile */
     .jcard .when .clock { font-size: 1.02rem; }
@@ -926,6 +930,7 @@
         <div class="hrunner ${i === 0 ? 'top1' : ''}">
           <div class="saddle num">${x.tab_number ?? '–'}</div>
           <div class="nm"><div class="h">${esc(x.horse_name)}</div><div class="j">${esc(x.jockey || '')}</div></div>
+          ${x.best_available_odds > 1 ? `<div class="hodds num">$${(+x.best_available_odds).toFixed(2)}</div>` : ''}
           <div class="bars">${barsHtml(x.win_probability, x.place_probability)}</div>
         </div>`).join('')
         : `<div style="padding:10px 0;color:var(--text-3);font-size:0.8rem">Loading our top 3…</div>`;
@@ -962,7 +967,7 @@
         <div class="where">${esc(r._venue)} <span style="color:var(--text-3)">R${r.race_number}</span>
           <span class="rmeta num">${r.distance ? r.distance + 'm' : ''}${r.field_size ? ' · ' + r.field_size + ' rnrs' : ''}</span></div>
         <div class="pick">
-          <div class="pname ${tp ? '' : 'ghost'}">${tp ? esc(tp.horse_name) : (r.top_win_probability != null ? 'Tap for our pick' : 'No prediction yet')}</div>
+          <div class="pname ${tp ? '' : 'ghost'}"><span class="pn-t">${tp ? esc(tp.horse_name) : (r.top_win_probability != null ? 'Tap for our pick' : 'No prediction yet')}</span>${tp && tp.best_available_odds > 1 ? `<span class="pk-odds num">$${(+tp.best_available_odds).toFixed(2)}</span>` : ''}</div>
           ${barsHtml(r.top_win_probability, r.top_place_probability)}
         </div>
         <div class="chips">
@@ -1017,9 +1022,13 @@
         <div class="rt num">${wallTime(r.scheduled_time)}<span class="cd ${done ? '' : (cd.urg || '')}">${done ? '' : cd.label}</span></div>
         <div class="mid">
           ${done
-            ? `<div class="pk">${resultMark(r)} <span class="pk-name">${tp ? esc(tp.horse_name) : (r.model_correct ? 'Our pick won' : r.model_placed ? 'Our pick placed' : 'Our pick missed')}</span>${tp && tp.best_available_odds > 1 ? `<span class="pk-odds num">$${(+tp.best_available_odds).toFixed(2)}</span>` : ''}</div>`
+            ? `<div class="pk"><span class="pk-name">${tp ? esc(tp.horse_name) : 'Our pick'}</span>${
+                r.model_correct ? '<span class="chip outcome-win">✓ WON</span>'
+                : r.model_placed ? '<span class="chip outcome-place">✓ PLACED</span>'
+                : '<span class="chip outcome-miss">✗ LOST</span>'
+              }${tp && tp.best_available_odds > 1 ? `<span class="pk-odds num">$${(+tp.best_available_odds).toFixed(2)}</span>` : ''}</div>`
             : `<div class="pk ${tp ? '' : 'ghost'}"><span class="pk-name">${tp ? esc(tp.horse_name) : (r.top_win_probability != null ? 'Tap for our pick' : 'No prediction yet')}</span>${tier ? `<span class="chip ${tier.cls}">${tier.label}</span>` : ''}${tp && tp.best_available_odds > 1 ? `<span class="pk-odds num">$${(+tp.best_available_odds).toFixed(2)}</span>` : ''}</div>`}
-          <div class="sub num">${r.distance ? r.distance + 'm' : ''}${r.field_size ? ' · ' + r.field_size + ' runners' : ''}${done && tp ? ` · our pick ${r.model_correct ? 'won' : r.model_placed ? 'placed' : 'missed'}` : ''}${r.is_sharp ? ` <span class="chip sharp" style="font-size:0.56rem;padding:1px 5px;margin-left:4px">🎯 SHARP</span>` : ''}</div>
+          <div class="sub num">${r.distance ? r.distance + 'm' : ''}${r.field_size ? ' · ' + r.field_size + ' runners' : ''}${r.is_sharp ? ` <span class="chip sharp" style="font-size:0.56rem;padding:1px 5px;margin-left:4px">🎯 SHARP</span>` : ''}</div>
         </div>
         <div class="right">
           ${!done ? barsHtml(r.top_win_probability, r.top_place_probability) : ''}
