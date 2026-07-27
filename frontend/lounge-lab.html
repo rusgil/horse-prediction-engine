@@ -166,7 +166,7 @@
   .chip.going-heavy { background: var(--red-dim);   color: var(--red); }
   .chip.going-synth { background: var(--blue-dim);  color: var(--blue); }
   .chip.going-unknown { background: var(--surface-2); color: var(--text-3); }
-  .chip.sharp { background: var(--mint-dim); color: var(--mint); border-color: color-mix(in srgb, var(--mint) 40%, transparent); }
+  .chip.sharp { background: var(--mint-dim); color: var(--mint); border-color: var(--mint); }
   .chip.tier-hot    { background: var(--hot-dim);   color: var(--hot); }
   .chip.tier-high   { background: var(--blue-dim);  color: var(--blue); }
   .chip.tier-strong { background: var(--strong-dim); color: var(--strong); }
@@ -199,6 +199,9 @@
   .jcard.res-win:hover   { border-color: var(--mint); }
   .jcard.res-place:hover { border-color: var(--amber); }
   .jcard.res-miss:hover  { border-color: var(--red); }
+  .brace.res-win:hover   { background: var(--mint-dim); }
+  .brace.res-place:hover { background: var(--amber-dim); }
+  .brace.res-miss:hover  { background: var(--red-dim); }
   /* light theme: thicker + stronger — the slim borders wash out on white */
   :root[data-theme="light"] .jcard.res-win   { border: 2px solid color-mix(in srgb, var(--mint)  75%, var(--line)); }
   :root[data-theme="light"] .jcard.res-place { border: 2px solid color-mix(in srgb, var(--amber) 75%, var(--line)); }
