@@ -1057,7 +1057,6 @@
     document.getElementById('dwSub').innerHTML =
       `${esc(r.race_name || '')}${r.race_name ? ' · ' : ''}<span class="num">${r.distance ? r.distance + 'm · ' : ''}${wallTime(r.scheduled_time)}${r.field_size ? ' · ' + r.field_size + ' runners' : ''}</span>`;
     document.getElementById('dwChips').innerHTML =
-      `<span class="chip ${g.cls}">${esc(g.label)}</span>` +
       (r.is_sharp ? `<span class="chip sharp">🎯 SHARP</span>` : '') +
       (tier ? `<span class="chip ${tier.cls}">${tier.label}</span>` : '') +
       watchBtn(r._state);
