@@ -110,8 +110,9 @@
   :root[data-theme="light"] .seg button.on { box-shadow: 0 1px 4px rgba(22,32,46,0.15); }
 
   .date-row {
+    max-width: 1220px; margin: 0 auto; padding: 0 16px 10px;
     display: flex; align-items: center; gap: 8px; overflow-x: auto;
-    scrollbar-width: none; margin-left: 14px; min-width: 0;
+    scrollbar-width: none;
   }
   .date-row::-webkit-scrollbar { display: none; }
   .date-pill {
@@ -581,7 +582,6 @@
 <header>
   <div class="hd-row">
     <div class="brand">FunkyIQ Lounge <span class="lab-tag">C</span></div>
-    <div class="date-row" id="dateRow"></div>
     <div class="hd-spacer"></div>
     <div class="seg" id="verSeg" role="tablist" aria-label="Layout version" style="display:none">
       <button data-v="A" role="tab">A · Heat Grid</button>
@@ -590,6 +590,7 @@
     </div>
 
   </div>
+  <div class="date-row" id="dateRow"></div>
 </header>
 
 <div class="day-strip" id="dayStrip"></div>
@@ -701,13 +702,13 @@
       return ` <span class="dp-acc ${cls} num">Win ${st.pct}% · Plc ${st.placePct}%</span>`;
     };
     row.innerHTML = `
-      <button class="date-pill ${S.date === today ? 'on' : ''}" data-d="${today}">Today</button>
-      <button class="date-pill ${S.date === yest ? 'on' : ''}" data-d="${yest}">Yesterday${accFor(yest)}</button>
       <span class="date-pill prev-pill ${off >= 2 ? 'on' : ''}">
         <button class="dp-arr" id="dpBack" title="Earlier day" ${S.prevOffset >= 7 ? 'disabled' : ''}>‹</button>
         <button class="dp-mid" data-d="${prevIso}">${dowName(prevIso).slice(0, 3)} ${fmtDayShort(prevIso)}${accFor(prevIso)}</button>
         <button class="dp-arr" id="dpFwd" title="Later day" ${S.prevOffset <= 2 ? 'disabled' : ''}>›</button>
-      </span>`;
+      </span>
+      <button class="date-pill ${S.date === yest ? 'on' : ''}" data-d="${yest}">Yesterday${accFor(yest)}</button>
+      <button class="date-pill ${S.date === today ? 'on' : ''}" data-d="${today}">Today</button>`;
     row.querySelectorAll('[data-d]').forEach(b => b.onclick = () => setDate(b.dataset.d));
     document.getElementById('dpBack').onclick = () => { S.prevOffset = Math.min(7, S.prevOffset + 1); setDate(aestToday(-S.prevOffset)); };
     document.getElementById('dpFwd').onclick  = () => { S.prevOffset = Math.max(2, S.prevOffset - 1); setDate(aestToday(-S.prevOffset)); };
