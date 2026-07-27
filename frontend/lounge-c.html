@@ -1102,7 +1102,7 @@
                 const od = (r.top_pick_odds > 1 ? +r.top_pick_odds : null) || (tp && tp.best_available_odds > 1 ? +tp.best_available_odds : null);
                 return `<div class="pk ${nm ? '' : 'ghost'}"><span class="pk-name">${nm ? esc(nm) : (r.top_win_probability != null ? 'Tap for our pick' : 'No prediction yet')}</span>${tier ? `<span class="chip ${tier.cls}">${tier.label}</span>` : ''}${od ? `<span class="pk-odds num">$${od.toFixed(2)}</span>` : ''}</div>`;
               })()}
-          <div class="sub num">${r.top_win_probability != null ? `Win <span class="wp">${Math.round(r.top_win_probability * 100)}%</span>` : ''}${r.top_place_probability != null ? ` · Plc <span class="pp">${Math.round(r.top_place_probability * 100)}%</span>` : ''}${r.distance ? ' · ' + r.distance + 'm' : ''}${r.field_size ? ' · ' + r.field_size + ' runners' : ''}${(() => {
+          <div class="sub num">${r.distance ? r.distance + 'm' : ''}${r.field_size ? ' · ' + r.field_size + ' runners' : ''}${(() => {
             // Decisiveness (lounge rule): rank1−rank2 gap ≥5pts = clear fav;
             // <2pts with a 25%+ pick = toss-up.
             if (r.top_win_probability == null || r.rank2_win_probability == null) return '';
