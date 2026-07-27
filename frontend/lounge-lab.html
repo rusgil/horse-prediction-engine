@@ -294,6 +294,14 @@
     white-space: nowrap; flex-shrink: 0;
   }
   .vchip.on { background: var(--mint); border-color: var(--mint); color: var(--mint-ink); }
+  /* surface word inside a venue chip, coloured by going */
+  .vchip .vg { font-size: 0.58rem; font-weight: 800; margin-left: 6px; letter-spacing: 0.04em; }
+  .vchip .vg.going-good  { color: var(--mint); }
+  .vchip .vg.going-soft  { color: var(--amber); }
+  .vchip .vg.going-heavy { color: var(--red); }
+  .vchip .vg.going-synth { color: var(--blue); }
+  .vchip .vg.going-unknown { color: var(--text-3); }
+  .vchip.on .vg { color: inherit; opacity: 0.85; }
 
   .hero {
     background: var(--surface); border: 1px solid color-mix(in srgb, var(--mint) 45%, var(--line));
@@ -873,7 +881,11 @@
     let races = allRaces().sort((a, b) => (epochOf(a.scheduled_time) ?? 9e15) - (epochOf(b.scheduled_time) ?? 9e15));
     const chips = `<div class="venue-chips">
       <button class="vchip ${S.feedVenue === 'all' ? 'on' : ''}" data-fv="all">All meetings</button>
-      ${S.meetings.map(m => `<button class="vchip ${S.feedVenue === vcOf(m) ? 'on' : ''}" data-fv="${esc(vcOf(m))}">${esc(m.venue)}</button>`).join('')}
+      ${S.meetings.map(m => {
+        const mg = goingInfo((S.details[vcOf(m)] || [])[0]?.track_condition);
+        const gWord = mg.label === 'SURFACE: TBC' ? '' : mg.label.replace('SURFACE: ', '');
+        return `<button class="vchip ${S.feedVenue === vcOf(m) ? 'on' : ''}" data-fv="${esc(vcOf(m))}">${esc(m.venue)}${gWord ? `<span class="vg ${mg.cls}">${gWord}</span>` : ''}</button>`;
+      }).join('')}
     </div>`;
     if (S.feedVenue !== 'all') races = races.filter(r => r._vc === S.feedVenue);
 
