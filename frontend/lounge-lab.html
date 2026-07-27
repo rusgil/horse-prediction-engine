@@ -138,17 +138,16 @@
   .ds-divider { width: 1px; height: 18px; background: var(--line); }
 
   /* ── Legend ─────────────────────────────────────────────── */
-  .legend-toggle { max-width: 1220px; margin: 8px auto 0; padding: 0 16px; }
-  .legend-toggle button {
-    background: none; border: none; color: var(--text-3); font-size: 0.74rem;
-    display: inline-flex; align-items: center; gap: 6px; padding: 2px 0;
+  .key { max-width: 1220px; margin: 34px auto 0; padding: 0 16px; }
+  .key-title {
+    font-family: 'Barlow Condensed'; font-weight: 700; font-size: 1rem;
+    color: var(--text-3); letter-spacing: 0.1em; text-transform: uppercase;
+    border-top: 1px solid var(--line); padding-top: 18px; margin-bottom: 12px;
   }
   .legend-box {
-    max-width: 1220px; margin: 8px auto 0; padding: 14px 16px;
-    display: none; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
     gap: 12px 22px;
   }
-  .legend-box.open { display: grid; }
   .lg-item { font-size: 0.77rem; color: var(--text-2); display: flex; gap: 9px; align-items: flex-start; }
   .lg-item b { color: var(--text); font-weight: 700; }
   .lg-chip { flex-shrink: 0; margin-top: 1px; }
@@ -172,15 +171,6 @@
   .chip.wet-note { background: var(--amber-dim); color: var(--amber); }
   .mcell .wx { font-size: 0.72rem; color: var(--text-3); }
   .rail-item .rv .wx { margin-left: auto; font-size: 0.72rem; color: var(--text-3); font-family: 'Barlow'; font-weight: 500; }
-  .chip[data-tip] { cursor: help; position: relative; }
-  .chip[data-tip]:hover::after, .chip[data-tip]:focus::after {
-    content: attr(data-tip);
-    position: absolute; left: 50%; bottom: calc(100% + 7px); transform: translateX(-50%);
-    background: var(--surface-2); color: var(--text); border: 1px solid var(--line);
-    font-size: 0.7rem; font-weight: 500; letter-spacing: 0; line-height: 1.45;
-    padding: 8px 11px; border-radius: 9px; width: 220px; white-space: normal;
-    box-shadow: var(--shadow); z-index: 60; pointer-events: none;
-  }
 
   .tier-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; flex-shrink: 0; }
   .tier-dot.hot    { background: var(--hot); box-shadow: 0 0 6px var(--hot); }
@@ -493,21 +483,25 @@
 
 <div class="day-strip" id="dayStrip"></div>
 
-<div class="legend-toggle"><button id="legendBtn" aria-expanded="false">ⓘ What do the badges mean? ▾</button></div>
-<div class="legend-box" id="legendBox">
-  <div class="lg-item"><span class="chip tier-hot lg-chip">🔥 HOT</span><span><b>Hot pick</b> — model ≥46% win confidence. Our strongest tier: historically wins ~1 in 2.</span></div>
-  <div class="lg-item"><span class="chip tier-high lg-chip">⚡ HIGH</span><span><b>High confidence</b> — 36–45% win confidence, wins ~4 in 10.</span></div>
-  <div class="lg-item"><span class="chip tier-strong lg-chip">STRONG</span><span><b>Strong pick</b> — 30–35% win confidence. Still well above a random pick.</span></div>
-  <div class="lg-item"><span class="chip sharp lg-chip">🎯 SHARP</span><span><b>Sharp race</b> — passed our strictest quality gate. The races we back hardest.</span></div>
-  <div class="lg-item"><span class="chip going-heavy lg-chip">SURFACE: HEAVY 8</span><span><b>Track surface</b> — the official 1–10 rating: Firm 1–2 and Good 3–4 (green) are dry and fast; Soft 5–7 (amber) and Heavy 8–10 (red) are rain-affected. Lower number = firmer and faster. Form is less reliable on wet going, so we cap our confidence tiers there.</span></div>
-  <div class="lg-item"><span class="lg-chip"><span class="res win">✓</span>&nbsp;<span class="res place">~</span>&nbsp;<span class="res miss">✗</span></span><span><b>Finished races</b> — how our top pick went: won, placed, or missed. We show our record, wins and losses alike.</span></div>
-</div>
 
 <main>
   <div class="view" id="viewA"><div class="loading"><div class="spin"></div>Loading meetings…</div></div>
   <div class="view" id="viewB"><div class="loading"><div class="spin"></div>Loading meetings…</div></div>
   <div class="view" id="viewC"><div class="loading"><div class="spin"></div>Loading meetings…</div></div>
 </main>
+
+<section class="key">
+  <div class="key-title">Key — what the badges mean</div>
+<div class="legend-box">
+  <div class="lg-item"><span class="chip tier-hot lg-chip">🔥 HOT</span><span><b>Hot pick</b> — model ≥46% win confidence. Our strongest tier: historically wins ~1 in 2.</span></div>
+  <div class="lg-item"><span class="chip tier-high lg-chip">⚡ HIGH</span><span><b>High confidence</b> — 36–45% win confidence, wins ~4 in 10.</span></div>
+  <div class="lg-item"><span class="chip tier-strong lg-chip">STRONG</span><span><b>Strong pick</b> — 30–35% win confidence. Still well above a random pick.</span></div>
+  <div class="lg-item"><span class="chip sharp lg-chip">🎯 SHARP</span><span><b>Sharp race</b> — passed our strictest quality gate. The races we back hardest.</span></div>
+  <div class="lg-item"><span class="chip going-heavy lg-chip">SURFACE: HEAVY 8</span><span><b>Track surface</b> — the official 1–10 rating: Firm 1–2 and Good 3–4 (green) are dry and fast; Soft 5–7 (amber) and Heavy 8–10 (red) are rain-affected. Lower number = firmer and faster. Form is less reliable on wet going, so we cap our confidence tiers there.</span></div>
+  <div class="lg-item"><span class="lg-chip"><span class="res win">✓</span>&nbsp;<span class="res place">~</span>&nbsp;<span class="res miss">✗</span></span><span><b>Finished races</b> — how our top pick went: won, placed, or missed. We show our record, wins and losses alike.</span></div>
+  <div class="lg-item"><span class="val-chip lg-chip">VALUE</span><span><b>Value</b> — our model rates the horse's chance higher than its market price implies: positive expected value at the listed odds.</span></div>
+</div>
+</section>
 
 <div class="foot">Experimental UI lab — live data, three layouts. The regular Lounge is unchanged.</div>
 
@@ -550,15 +544,6 @@
   }
   themeSeg.querySelectorAll('button').forEach(b => b.onclick = () => applyTheme(b.dataset.t));
   applyTheme(localStorage.getItem('labTheme') || 'dark');
-
-  /* ── legend ── */
-  const legendBtn = document.getElementById('legendBtn');
-  legendBtn.onclick = () => {
-    const box = document.getElementById('legendBox');
-    const open = box.classList.toggle('open');
-    legendBtn.setAttribute('aria-expanded', open);
-    legendBtn.textContent = open ? 'ⓘ What do the badges mean? ▴' : 'ⓘ What do the badges mean? ▾';
-  };
 
   /* ── version switcher ── */
   const verSeg = document.getElementById('verSeg');
@@ -800,7 +785,7 @@
         <td class="mcell">
           <div class="vname">${esc(m.venue)} <span class="st">${esc(m.state || '')}</span></div>
           <div class="vmeta">
-            <span class="chip ${g.cls}" data-tip="${esc(g.tip)}" tabindex="0">${esc(g.label)}</span>
+            <span class="chip ${g.cls}">${esc(g.label)}</span>
             ${m.weather ? `<span class="wx">${m.weather.icon || ''} ${Math.round(m.weather.temp_max ?? 0)}°</span>` : ''}
           </div>
         </td>${cells}</tr>`;
@@ -859,7 +844,7 @@
             <div class="where">${esc(hero._venue)} <small>R${hero.race_number}</small></div>
             <div class="meta num">${hero.distance ? hero.distance + 'm · ' : ''}${hero.field_size ? hero.field_size + ' runners · ' : ''}<span></span></div>
           </div>
-          <span class="chip ${g.cls}" data-tip="${esc(g.tip)}" tabindex="0">${esc(g.label)}</span>
+          <span class="chip ${g.cls}">${esc(g.label)}</span>
           ${hero.is_sharp ? `<span class="chip sharp">🎯 SHARP</span>` : ''}
           ${tier ? `<span class="chip ${tier.cls}">${tier.label}</span>` : ''}
           <div class="clockbox"><div class="clock num">${wallTime(hero.scheduled_time)}</div><div class="cd">${cd.label}</div></div>
@@ -888,8 +873,8 @@
           ${barsHtml(r.top_win_probability, r.top_place_probability)}
         </div>
         <div class="chips">
-          <span class="chip ${g.cls}" data-tip="${esc(g.tip)}" tabindex="0">${esc(g.label)}</span>
-          ${r.is_sharp ? `<span class="chip sharp" data-tip="Passed our strictest quality gate — the races we back hardest." tabindex="0">🎯 SHARP</span>` : ''}
+          <span class="chip ${g.cls}">${esc(g.label)}</span>
+          ${r.is_sharp ? `<span class="chip sharp">🎯 SHARP</span>` : ''}
           ${tier ? `<span class="chip ${tier.cls}">${tier.label}</span>` : ''}
         </div>
       </div>`;
@@ -957,8 +942,8 @@
         <div class="board-head">
           <div class="t">${esc(m?.venue || '')} <span class="st">${esc(m?.state || '')}${m?.tier ? ' · ' + esc(m.tier) : ''}</span></div>
           <div class="chips">
-            <span class="chip ${g.cls}" data-tip="${esc(g.tip)}" tabindex="0">${esc(g.label)}</span>
-            ${m?.weather?.rain_mm >= 2 ? `<span class="chip wet-note" data-tip="Meaningful rain forecast — the track may deteriorate through the day." tabindex="0">🌧 RAIN ${m.weather.rain_mm}mm</span>` : ''}
+            <span class="chip ${g.cls}">${esc(g.label)}</span>
+            ${m?.weather?.rain_mm >= 2 ? `<span class="chip wet-note">🌧 RAIN ${m.weather.rain_mm}mm</span>` : ''}
             ${m?.weather ? `<span class="chip going-unknown">${m.weather.icon || ''} ${Math.round(m.weather.temp_max ?? 0)}°</span>` : ''}
           </div>
         </div>
@@ -1003,7 +988,7 @@
     document.getElementById('dwSub').innerHTML =
       `${esc(r.race_name || '')}${r.race_name ? ' · ' : ''}<span class="num">${r.distance ? r.distance + 'm · ' : ''}${wallTime(r.scheduled_time)}${r.field_size ? ' · ' + r.field_size + ' runners' : ''}</span>`;
     document.getElementById('dwChips').innerHTML =
-      `<span class="chip ${g.cls}" data-tip="${esc(g.tip)}" tabindex="0">${esc(g.label)}</span>` +
+      `<span class="chip ${g.cls}">${esc(g.label)}</span>` +
       (r.is_sharp ? `<span class="chip sharp">🎯 SHARP</span>` : '') +
       (tier ? `<span class="chip ${tier.cls}">${tier.label}</span>` : '');
     const body = document.getElementById('dwBody');
@@ -1024,7 +1009,7 @@
         <div class="info">
           <div class="hn">${esc(x.horse_name)}
             <span class="pick-tag">${i === 0 ? 'OUR PICK' : '#' + (i + 1)}</span>
-            ${isVal ? '<span class="val-chip" data-tip="Our model rates this horse\'s chance higher than the market price implies — positive expected value." tabindex="0">VALUE</span>' : ''}</div>
+            ${isVal ? '<span class="val-chip">VALUE</span>' : ''}</div>
           <div class="jk">${esc(x.jockey || '')}${x.barrier ? ` · barrier ${x.barrier}` : ''}</div>
           <div class="rbars">${barsHtml(x.win_probability, x.place_probability)}</div>
         </div>
