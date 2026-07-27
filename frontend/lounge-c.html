@@ -457,6 +457,10 @@
   .brace .mid .pk .pk-name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .brace .mid .pk .chip { flex-shrink: 0; }
   .brace .mid .pk .pk-odds { flex-shrink: 0; font-size: 0.78rem; font-weight: 800; color: var(--text-2); }
+  .chip.cf { background: var(--gold-dim, rgba(245,200,66,0.14)); color: var(--gold, #f5c842); flex-shrink: 0; }
+  .chip.tu { background: var(--surface-2); color: var(--text-2); flex-shrink: 0; }
+  .brace .mid .sub .wp { font-weight: 800; color: var(--gold, #f5c842); }
+  .brace .mid .sub .pp { font-weight: 800; color: var(--blue); }
   .brace .mid .pk.ghost { color: var(--text-3); font-weight: 500; font-size: 0.76rem; }
   .brace .mid .sub { font-size: 0.68rem; color: var(--text-3); margin-top: 1px; }
   .brace .right { display: flex; flex-direction: column; align-items: flex-end; gap: 5px; }
@@ -1051,7 +1055,15 @@
                 const od = (r.top_pick_odds > 1 ? +r.top_pick_odds : null) || (tp && tp.best_available_odds > 1 ? +tp.best_available_odds : null);
                 return `<div class="pk ${nm ? '' : 'ghost'}"><span class="pk-name">${nm ? esc(nm) : (r.top_win_probability != null ? 'Tap for our pick' : 'No prediction yet')}</span>${tier ? `<span class="chip ${tier.cls}">${tier.label}</span>` : ''}${od ? `<span class="pk-odds num">$${od.toFixed(2)}</span>` : ''}</div>`;
               })()}
-          <div class="sub num">${r.distance ? r.distance + 'm' : ''}${r.field_size ? ' · ' + r.field_size + ' runners' : ''}${r.is_sharp ? ` <span class="chip sharp" style="font-size:0.56rem;padding:1px 5px;margin-left:4px">🎯 SHARP</span>` : ''}</div>
+          <div class="sub num">${r.top_win_probability != null ? `Win <span class="wp">${Math.round(r.top_win_probability * 100)}%</span>` : ''}${r.top_place_probability != null ? ` · Plc <span class="pp">${Math.round(r.top_place_probability * 100)}%</span>` : ''}${r.distance ? ' · ' + r.distance + 'm' : ''}${r.field_size ? ' · ' + r.field_size + ' runners' : ''}${(() => {
+            // Decisiveness (lounge rule): rank1−rank2 gap ≥5pts = clear fav;
+            // <2pts with a 25%+ pick = toss-up.
+            if (r.top_win_probability == null || r.rank2_win_probability == null) return '';
+            const gap = (r.top_win_probability - r.rank2_win_probability) * 100;
+            if (gap >= 5) return ` <span class="chip cf" style="font-size:0.56rem;padding:1px 5px;margin-left:4px">🎯 CLEAR FAV</span>`;
+            if (gap < 2 && r.top_win_probability >= 0.25) return ` <span class="chip tu" style="font-size:0.56rem;padding:1px 5px;margin-left:4px">⚖️ TOSS-UP</span>`;
+            return '';
+          })()}${r.is_sharp ? ` <span class="chip sharp" style="font-size:0.56rem;padding:1px 5px;margin-left:4px">🎯 SHARP</span>` : ''}</div>
         </div>
         <div class="right">
           ${barsHtml(r.top_win_probability, r.top_place_probability)}
