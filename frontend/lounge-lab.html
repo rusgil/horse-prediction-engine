@@ -1025,12 +1025,23 @@
       const off = isOffGoing(r.track_condition);
       const tier = tierOf(r.top_win_probability, off);
       const tp = topPickOf(r.race_id);
+      // Settled rows: prefer the venue-results payload (one fetch per meeting,
+      // cached) for the pick's NAME and its actual STARTING PRICE — no
+      // per-race runner fetch needed, so names/odds appear immediately.
+      const rr = (_resultsCache[S.selVenue] || {})[r.race_number] || null;
+      const pickName = (tp && tp.horse_name) || (rr && rr.top_pick) || null;
+      let pickSp = null;
+      if (rr && rr.runners && pickName) {
+        const f = rr.runners.find(x => (x.name || '').toLowerCase() === pickName.toLowerCase());
+        if (f && f.sp) pickSp = +f.sp;
+      }
+      const oddsShow = pickSp || (tp && tp.best_available_odds > 1 ? +tp.best_available_odds : null);
       return `<div class="brace ${done ? resCls(r) : ''}" data-open="${esc(r.race_id)}">
         <div class="rn">R${r.race_number}</div>
         <div class="rt num">${wallTime(r.scheduled_time)}<span class="cd ${done ? '' : (cd.urg || '')}">${done ? '' : cd.label}</span></div>
         <div class="mid">
           ${done
-            ? `<div class="pk"><span class="pk-name">${tp ? esc(tp.horse_name) : 'Our pick'}</span>${resultMark(r)}${tp && tp.best_available_odds > 1 ? `<span class="pk-odds num">$${(+tp.best_available_odds).toFixed(2)}</span>` : ''}</div>`
+            ? `<div class="pk"><span class="pk-name">${pickName ? esc(pickName) : 'Our pick'}</span>${resultMark(r)}${oddsShow ? `<span class="pk-odds num">$${oddsShow.toFixed(2)}</span>` : ''}</div>`
             : `<div class="pk ${tp ? '' : 'ghost'}"><span class="pk-name">${tp ? esc(tp.horse_name) : (r.top_win_probability != null ? 'Tap for our pick' : 'No prediction yet')}</span>${tier ? `<span class="chip ${tier.cls}">${tier.label}</span>` : ''}${tp && tp.best_available_odds > 1 ? `<span class="pk-odds num">$${(+tp.best_available_odds).toFixed(2)}</span>` : ''}</div>`}
           <div class="sub num">${r.distance ? r.distance + 'm' : ''}${r.field_size ? ' · ' + r.field_size + ' runners' : ''}${r.is_sharp ? ` <span class="chip sharp" style="font-size:0.56rem;padding:1px 5px;margin-left:4px">🎯 SHARP</span>` : ''}</div>
         </div>
@@ -1060,6 +1071,13 @@
       prefetchSelected();
     });
     bindOpen(el);
+    // Load the meeting's results once so settled rows show pick names + SPs
+    const _vcNow = S.selVenue;
+    if (!_resultsCache[_vcNow] && (S.details[_vcNow] || []).some(isSettled)) {
+      fetchVenueResults(_vcNow).then(() => {
+        if (S.version === 'C' && S.selVenue === _vcNow) renderC();
+      });
+    }
   }
   async function prefetchSelected() {
     const seq = S.loadSeq;
