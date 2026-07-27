@@ -142,6 +142,7 @@
   :root[data-theme="light"] .dp-acc.bad   { color: #c23a3a; }
   .seg.seg-sm button { padding: 3px 10px; font-size: 0.72rem; }
   .ds-best { cursor: pointer; }
+  .ds-best b { font-family: 'Barlow', system-ui, sans-serif; font-size: 0.95rem; font-weight: 800; }
   .ds-best:hover b { text-decoration: underline; }
   .date-input {
     background: var(--surface-2); border: 1px solid var(--line); color: var(--text-2);
@@ -574,6 +575,8 @@
   /* Mobile: drill-in text a touch bigger for readability */
   @media (max-width: 640px) {
     .brace .right { flex-direction: column; align-items: flex-end; gap: 3px; }
+    .date-pill .dp-acc { display: block; margin-left: 0; margin-top: 2px; font-size: 0.68rem; }
+    .prev-pill .dp-mid .dp-acc { display: block; }
     .dw-title { font-size: 1.55rem; }
     .dw-sub { font-size: 0.85rem; }
     .runner .hn { font-size: 1.02rem; }
