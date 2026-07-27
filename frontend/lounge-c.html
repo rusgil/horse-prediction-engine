@@ -122,6 +122,7 @@
   }
   .date-pill.on { background: var(--mint); border-color: var(--mint); color: var(--mint-ink); }
   .date-pill .dp-stat { font-size: 0.66rem; font-weight: 800; opacity: 0.85; margin-left: 4px; }
+  .seg.seg-sm button { padding: 3px 10px; font-size: 0.72rem; }
   .ds-best { cursor: pointer; }
   .ds-best:hover b { text-decoration: underline; }
   .date-input {
@@ -565,10 +566,6 @@
   <div class="hd-row">
     <div class="brand">FunkyIQ Lounge <span class="lab-tag">C</span></div>
     <div class="hd-spacer"></div>
-    <div class="seg" id="sharpSeg" role="radiogroup" aria-label="Sharp filter">
-      <button data-s="all" role="radio">All picks</button>
-      <button data-s="sharp" role="radio">🎯 Sharp only</button>
-    </div>
     <div class="seg" id="verSeg" role="tablist" aria-label="Layout version" style="display:none">
       <button data-v="A" role="tab">A · Heat Grid</button>
       <button data-v="B" role="tab">B · Race Feed</button>
@@ -633,20 +630,14 @@
   };
 
 
-  /* ── sharp filter ── */
-  const sharpSeg = document.getElementById('sharpSeg');
+  /* ── sharp filter (lives in the day strip, right of Best pick) ── */
   function applySharp(mode) {
     S.sharpOnly = mode === 'sharp';
     localStorage.setItem('loungeCSharp', mode);
-    sharpSeg.querySelectorAll('button').forEach(b => {
-      const on = b.dataset.s === mode;
-      b.classList.toggle('on', on);
-      b.setAttribute('aria-checked', on);
-    });
     renderC();
+    renderDayStrip();
+    loadPerf();
   }
-  sharpSeg.querySelectorAll('button').forEach(b => b.onclick = () => { applySharp(b.dataset.s); loadPerf(); });
-  applySharp(S.sharpOnly ? 'sharp' : 'all');
 
   /* ── version switcher ── */
   const verSeg = document.getElementById('verSeg');
@@ -880,7 +871,7 @@
     // Best pick of the day — highest claimed win% with a known pick name
     const cand = races.filter(r => r.top_pick && r.top_win_probability != null);
     const best = cand.length ? cand.reduce((a, b) => (b.top_win_probability > a.top_win_probability ? b : a)) : null;
-    if (!settled.length && !best) { el.classList.remove('show'); return; }
+    // strip always shows — it hosts the Sharp filter
     const wins = settled.filter(r => r.model_correct === true).length;
     const placed = settled.filter(r => r.model_correct === false && r.model_placed === true).length;
     const pct = settled.length ? Math.round(wins / settled.length * 100) : 0;
@@ -893,9 +884,16 @@
       <div class="ds-stat"><b class="a num">${placed}</b> more placed <span class="num">(${placePct}% placed incl. wins)</span></div>` : '';
     const bestHtml = best ? `${settled.length ? '<div class="ds-divider"></div>' : ''}
       <div class="ds-stat ds-best" data-open="${esc(best.race_id)}">⭐ Best pick:&nbsp;<b>${esc(best.top_pick)}</b>&nbsp;<span class="num">${esc(best._venue)} R${best.race_number} · ${Math.round(best.top_win_probability * 100)}%${best.top_pick_odds > 1 ? ' · $' + (+best.top_pick_odds).toFixed(2) : ''}</span>&nbsp;${isSettled(best) ? resultMark(best) : ''}</div>` : '';
-    el.innerHTML = statsHtml + bestHtml;
+    const sharpHtml = `
+      <div class="ds-divider"></div>
+      <span class="seg seg-sm" role="radiogroup" aria-label="Sharp filter">
+        <button data-s="all" class="${S.sharpOnly ? '' : 'on'}">All picks</button>
+        <button data-s="sharp" class="${S.sharpOnly ? 'on' : ''}">🎯 Sharp only</button>
+      </span>`;
+    el.innerHTML = statsHtml + bestHtml + sharpHtml;
     el.classList.add('show');
     el.querySelectorAll('[data-open]').forEach(n => n.onclick = () => openRace(n.dataset.open));
+    el.querySelectorAll('[data-s]').forEach(b => b.onclick = () => applySharp(b.dataset.s));
   }
 
   /* ── render all ── */
