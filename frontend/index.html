@@ -1247,7 +1247,7 @@
       <div class="pills-row" id="racePills"></div>
       <div class="pills-fade-right"></div>
     </div>
-    <div class="info-bar" id="infoBar"></div>
+    <div class="info-bar" id="infoBar" style="display:none"></div>
   </div>
 
   <!-- Results summary (today only, populated after race data loads) -->
@@ -2134,7 +2134,7 @@
     renderMeetingPills();
     document.getElementById('racesSection').style.display = '';
     document.getElementById('raceContent').innerHTML = renderLoadingHTML('Loading races&hellip;');
-    document.getElementById('infoBar').innerHTML = renderInfoBar(m);
+    document.getElementById('infoBar').innerHTML = '';  // info bar removed 2026-07-28
 
     try {
       const data = await fetchMeeting(S.date, m.venue_code);
@@ -2334,11 +2334,27 @@
         ? ` <span class="race-pill-tossup" title="Toss-up — rank-1 and rank-2 within 2pts. Historical win rate drops to ~13%.">⚖️ Toss-up</span>`
         : '';
       const tStr = r.scheduled_time || r.time ? formatTime(r.scheduled_time || r.time) : 'time not avail.';
-      el.innerHTML = `<div class="race-pill-main">R${r.race_number}${pctHtml}${placeHtml}${decisiveHtml}${dotHtml ? ' ' + dotHtml : ''}</div><span class="race-pill-time">${tStr}</span>`;
+      // Distance · surface · live countdown on the pill (replaces the old
+      // info bar below the pills — removed 2026-07-28).
+      const _iso = r.scheduled_time || r.time;
+      let _cd = '';
+      if (_iso) {
+        const _t = Date.parse(_iso);
+        if (!Number.isNaN(_t)) {
+          const _m = Math.floor((_t - Date.now()) / 60000);
+          if (_m > 0) _cd = _m < 60 ? ` · in ${_m}m` : ` · in ${Math.floor(_m / 60)}h ${_m % 60}m`;
+        }
+      }
+      const _extra = `${r.distance ? ' · ' + r.distance + 'm' : ''}${r.track_condition ? ' · ' + escHtml(r.track_condition) : ''}${_cd}`;
+      el.innerHTML = `<div class="race-pill-main">R${r.race_number}${pctHtml}${placeHtml}${decisiveHtml}${dotHtml ? ' ' + dotHtml : ''}</div><span class="race-pill-time">${tStr}${_extra}</span>`;
       el.addEventListener('click', () => selectRace(r));
       container.appendChild(el);
     });
   }
+
+  setInterval(() => {
+    try { if (S.selectedMeeting && (S.races || []).length) renderRacePills(); } catch (e) {}
+  }, 60000);
 
   async function selectRace(race) {
     stopLiveOddsPolling();
@@ -2355,8 +2371,9 @@
       ${race.field_size ? `<span class="info-chip">${escHtml(String(race.field_size))} runners</span>` : ''}
       ${startTime ? `<span class="info-chip countdown" id="race-countdown">…</span>` : ''}
     `;
-    document.getElementById('infoBar').innerHTML = renderInfoBar(S.selectedMeeting) + raceInfo;
-    if (startTime) startCountdown(startTime);
+    // Info bar removed (2026-07-28) — its countdown/distance/surface now
+    // live on the race pills above; venue/date context is on the meeting tile.
+    document.getElementById('infoBar').innerHTML = '';
 
     document.getElementById('raceContent').innerHTML = renderLoadingHTML('Loading predictions&hellip;');
 
