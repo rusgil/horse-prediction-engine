@@ -172,6 +172,16 @@
   .mcell .wx { font-size: 0.72rem; color: var(--text-3); }
   .rail-item .rv .wx { margin-left: auto; font-size: 0.72rem; color: var(--text-3); font-family: 'Barlow'; font-weight: 500; }
 
+  .watch-btn {
+    display: inline-flex; align-items: center; gap: 4px; text-decoration: none;
+    font-size: 0.68rem; font-weight: 800; letter-spacing: 0.02em;
+    border-radius: 6px; padding: 3px 9px; white-space: nowrap;
+    background: var(--surface-2); border: 1px solid var(--line); color: var(--text-2);
+    transition: border-color 0.15s, color 0.15s;
+  }
+  .watch-btn:hover { border-color: var(--mint); color: var(--mint); }
+  .watch-btn .wb-src { font-weight: 600; color: var(--text-3); }
+
   .tier-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; flex-shrink: 0; }
   .tier-dot.hot    { background: var(--hot); box-shadow: 0 0 6px var(--hot); }
   .tier-dot.high   { background: var(--blue); }
@@ -498,7 +508,7 @@
   <div class="lg-item"><span class="chip tier-high lg-chip">⚡ HIGH</span><span><b>High confidence</b> — 36–45% win confidence, wins ~4 in 10.</span></div>
   <div class="lg-item"><span class="chip tier-strong lg-chip">STRONG</span><span><b>Strong pick</b> — 30–35% win confidence. Still well above a random pick.</span></div>
   <div class="lg-item"><span class="chip sharp lg-chip">🎯 SHARP</span><span><b>Sharp race</b> — passed our strictest quality gate. The races we back hardest.</span></div>
-  <div class="lg-item"><span class="chip going-heavy lg-chip">SURFACE: HEAVY 8</span><span><b>Track surface</b> — the official 1–10 rating: Firm 1–2 and Good 3–4 (green) are dry and fast; Soft 5–7 (amber) and Heavy 8–10 (red) are rain-affected. Lower number = firmer and faster. Form is less reliable on wet going, so we cap our confidence tiers there.</span></div>
+  <div class="lg-item"><span class="chip going-heavy lg-chip">SURFACE: HEAVY 8</span><span><b>Track surface</b> — green = good, dry track. Amber/red = soft or heavy (wet) track; our confidence is lower on wet tracks.</span></div>
   <div class="lg-item"><span class="lg-chip"><span class="res win">✓</span>&nbsp;<span class="res place">~</span>&nbsp;<span class="res miss">✗</span></span><span><b>Finished races</b> — how our top pick went: won, placed, or missed. We show our record, wins and losses alike.</span></div>
   <div class="lg-item"><span class="val-chip lg-chip">VALUE</span><span><b>Value</b> — our model rates the horse's chance higher than its market price implies: positive expected value at the listed odds.</span></div>
 </div>
@@ -625,6 +635,20 @@
     return { cls: 'going-unknown', label: `SURFACE: ${s.toUpperCase()}`, tip: s };
   }
   const isOffGoing = tc => /^(soft|heavy)/i.test((tc || '').trim());
+
+  // Official live-vision deep links by state. Race vision is rights-locked in
+  // AU (no embeddable players), so we link out to the free/official stream
+  // for the meeting's state in a new tab.
+  function streamFor(state) {
+    const s = (state || '').toUpperCase();
+    if (s === 'VIC' || s === 'SA') return { name: 'Racing.com', url: 'https://www.racing.com/watch' };
+    if (s === 'NSW' || s === 'ACT') return { name: 'Racing NSW', url: 'https://www.racingnsw.com.au/watch-live/' };
+    if (s === 'WA') return { name: 'TABtouch', url: 'https://www.tabtouch.com.au/racing' };
+    return { name: 'Sky Racing', url: 'https://www.skyracing.com.au/' };
+  }
+  const watchBtn = (state, small) =>
+    `<a class="watch-btn ${small ? 'sm' : ''}" href="${streamFor(state).url}" target="_blank" rel="noopener"
+        onclick="event.stopPropagation()">📺 Watch <span class="wb-src">· ${streamFor(state).name}</span></a>`;
 
   function tierOf(winProb, off) {
     if (winProb == null) return null;
@@ -848,6 +872,7 @@
           <span class="chip ${g.cls}">${esc(g.label)}</span>
           ${hero.is_sharp ? `<span class="chip sharp">🎯 SHARP</span>` : ''}
           ${tier ? `<span class="chip ${tier.cls}">${tier.label}</span>` : ''}
+          ${watchBtn(hero._state)}
           <div class="clockbox"><div class="clock num">${wallTime(hero.scheduled_time)}</div><div class="cd">${cd.label}</div></div>
         </div>
         <div class="hero-picks">${picksHtml}</div>
@@ -946,6 +971,7 @@
             <span class="chip ${g.cls}">${esc(g.label)}</span>
             ${m?.weather?.rain_mm >= 2 ? `<span class="chip wet-note">🌧 RAIN ${m.weather.rain_mm}mm</span>` : ''}
             ${m?.weather ? `<span class="chip going-unknown">${m.weather.icon || ''} ${Math.round(m.weather.temp_max ?? 0)}°</span>` : ''}
+            ${watchBtn(m?.state)}
           </div>
         </div>
         ${raceRows || '<div style="padding:16px 18px;color:var(--text-3);font-size:0.82rem">Loading races…</div>'}
@@ -991,7 +1017,8 @@
     document.getElementById('dwChips').innerHTML =
       `<span class="chip ${g.cls}">${esc(g.label)}</span>` +
       (r.is_sharp ? `<span class="chip sharp">🎯 SHARP</span>` : '') +
-      (tier ? `<span class="chip ${tier.cls}">${tier.label}</span>` : '');
+      (tier ? `<span class="chip ${tier.cls}">${tier.label}</span>` : '') +
+      watchBtn(r._state);
     const body = document.getElementById('dwBody');
     body.innerHTML = '<div class="loading"><div class="spin"></div>Loading predictions…</div>';
     drawer.classList.add('open'); ovl.classList.add('open');
