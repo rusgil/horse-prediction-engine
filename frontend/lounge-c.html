@@ -122,6 +122,20 @@
   }
   .date-pill.on { background: var(--mint); border-color: var(--mint); color: var(--mint-ink); }
   .date-pill .dp-stat { font-size: 0.66rem; font-weight: 800; opacity: 0.85; margin-left: 4px; }
+  .dslider { display: flex; align-items: center; gap: 9px; flex: 1; max-width: 340px; }
+  .dslider .dsl-end { font-size: 0.66rem; font-weight: 700; color: var(--text-3); flex-shrink: 0; }
+  .dslider input[type="range"] { flex: 1; accent-color: var(--mint); cursor: pointer; }
+  .dsl-info { font-size: 0.8rem; white-space: nowrap; }
+  .dp-acc { font-weight: 800; font-size: 0.76rem; }
+  .dp-acc.elite { color: #c084fc; text-shadow: 0 0 6px rgba(192,132,252,0.35); }
+  .dp-acc.great { color: #60a5fa; }
+  .dp-acc.good  { color: #10b981; }
+  .dp-acc.ok    { color: var(--gold, #b8901f); }
+  .dp-acc.bad   { color: #f87171; }
+  :root[data-theme="light"] .dp-acc.elite { color: #7c3aed; text-shadow: none; }
+  :root[data-theme="light"] .dp-acc.great { color: #245fc4; }
+  :root[data-theme="light"] .dp-acc.good  { color: #0a7a41; }
+  :root[data-theme="light"] .dp-acc.bad   { color: #c23a3a; }
   .seg.seg-sm button { padding: 3px 10px; font-size: 0.72rem; }
   .ds-best { cursor: pointer; }
   .ds-best:hover b { text-decoration: underline; }
@@ -662,7 +676,8 @@
       const d = res.ok ? await res.json() : {};
       S.perfByDate = {};
       for (const day of (d.summary || [])) {
-        if (day.races) S.perfByDate[day.date] = { wins: day.wins, races: day.races, pct: Math.round((day.win_rate || 0) * 100) };
+        if (day.races) S.perfByDate[day.date] = { wins: day.wins, races: day.races,
+          pct: Math.round((day.win_rate || 0) * 100), placePct: Math.round((day.place_rate || 0) * 100) };
       }
     } catch (e) { S.perfByDate = {}; }
     buildDateRow();
@@ -670,21 +685,30 @@
 
   function buildDateRow() {
     const row = document.getElementById('dateRow');
-    const pills = [
-      { d: aestToday(-1), label: 'Yesterday' },
-      { d: aestToday(0),  label: 'Today' },
-      { d: aestToday(1),  label: 'Tomorrow' },
-      { d: aestToday(2),  label: dowName(aestToday(2)) },
-    ];
-    const isPill = pills.some(p => p.d === S.date);
-    const _today = aestToday(0);
-    row.innerHTML = pills.map(p => {
-      const st = p.d < _today ? S.perfByDate[p.d] : null;
-      const statTxt = st ? ` <span class="dp-stat num">${st.wins}/${st.races} · ${st.pct}%</span>` : '';
-      return `<button class="date-pill ${p.d === S.date ? 'on' : ''}" data-d="${p.d}">${p.label}${statTxt}</button>`;
-    }).join('') + `<input type="date" class="date-input ${isPill ? '' : 'on'}" id="dateInput" value="${S.date}" aria-label="Pick a date">`;
-    row.querySelectorAll('.date-pill').forEach(b => b.onclick = () => setDate(b.dataset.d));
-    document.getElementById('dateInput').onchange = e => { if (e.target.value) setDate(e.target.value); };
+    const todayIso = aestToday(0);
+    let offset = Math.round((Date.parse(todayIso) - Date.parse(S.date)) / 86400000);
+    if (!(offset >= 0 && offset <= 7)) offset = 0;   // slider covers today..-7
+    const label = offset === 0 ? 'Today' : offset === 1 ? 'Yesterday' : dowName(S.date);
+    const st = offset > 0 ? S.perfByDate[S.date] : null;
+    // Original-lounge accuracy colour bands (elite/great/good/ok/bad)
+    const accCls = st ? (st.wins === 0 ? 'bad' : st.pct >= 38 ? 'elite' : st.pct >= 30 ? 'great'
+                        : st.pct >= 22 ? 'good' : st.pct >= 15 ? 'ok' : 'bad') : '';
+    const statHtml = st
+      ? ` · <span class="dp-acc ${accCls} num">Win ${st.pct}% (${st.wins}/${st.races})</span> · <span class="dp-acc ${accCls} num">Plc ${st.placePct}%</span>`
+      : '';
+    row.innerHTML = `
+      <div class="dslider">
+        <span class="dsl-end num">-7d</span>
+        <input type="range" id="daySlider" min="0" max="7" step="1" value="${7 - offset}" aria-label="Day (slide left for earlier days)">
+        <span class="dsl-end num">Today</span>
+      </div>
+      <div class="dsl-info"><b>${label}</b> <span class="num" style="color:var(--text-3)">${fmtDayShort(S.date)}</span>${statHtml}</div>`;
+    const sl = document.getElementById('daySlider');
+    sl.oninput = () => setDate(aestToday(-(7 - +sl.value)));
+  }
+
+  function fmtDayShort(iso) {
+    return new Date(iso + 'T12:00:00').toLocaleDateString('en-AU', { day: 'numeric', month: 'short' });
   }
   function setDate(d) {
     if (d === S.date) return;
