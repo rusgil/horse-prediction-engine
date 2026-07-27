@@ -43,14 +43,25 @@ def _norm(s: str) -> str:
 async def _fetch_allracing(date: str) -> dict | None:
     """Fetch (and 15-min cache) the raw Sportsbet AllRacing payload for `date`.
     One call feeds both the meeting allowlist and the results backup. None on
-    failure."""
+    failure.
+
+    SPORTSBET_PROXY_URL (2026-07-27): Sportsbet started 403-ing every
+    non-AU-residential source (~2026-07-20) — Railway, Hetzner, and generic
+    residential exits all blocked; only Australian residential IPs pass.
+    Webshare supports country targeting via the username: swap '-rotate' for
+    '-AU-rotate' in the residential proxy URL and set it as
+    SPORTSBET_PROXY_URL on Railway. Unset → direct (fine if SB ever unblocks
+    datacenter IPs; fail-open behaviour unchanged either way)."""
     cached = _raw_cache.get(date)
     if cached and (datetime.utcnow() - cached[0]).total_seconds() < _TTL_SECONDS:
         return cached[1]
+    import os
+    _proxy = os.getenv("SPORTSBET_PROXY_URL") or None
     try:
         async with httpx.AsyncClient(
             headers={"User-Agent": _UA, "Accept": "application/json"},
-            timeout=15.0,
+            timeout=25.0 if _proxy else 15.0,
+            proxy=_proxy,
         ) as client:
             resp = await client.get(_URL.format(date=date))
             resp.raise_for_status()
