@@ -524,7 +524,7 @@
   <div class="lg-item"><span class="chip tier-strong lg-chip">STRONG</span><span><b>Strong pick</b> — 30–35% win confidence. Still well above a random pick.</span></div>
   <div class="lg-item"><span class="chip sharp lg-chip">🎯 SHARP</span><span><b>Sharp race</b> — passed our strictest quality gate. The races we back hardest.</span></div>
   <div class="lg-item"><span class="chip going-heavy lg-chip">SURFACE: HEAVY</span><span><b>Track surface</b> — Firm/Good = dry, fast track. Soft or Heavy = wet track; our confidence is lower on wet tracks.</span></div>
-  <div class="lg-item"><span class="lg-chip"><span class="res win">✓</span>&nbsp;<span class="res place">~</span>&nbsp;<span class="res miss">✗</span></span><span><b>Finished races</b> — how our top pick went: won, placed, or missed. We show our record, wins and losses alike.</span></div>
+  <div class="lg-item"><span class="lg-chip"><span class="res win">✓</span>&nbsp;<span class="res place">✓</span>&nbsp;<span class="res miss">✗</span></span><span><b>Finished races</b> — how our top pick went: green tick = won, amber tick = placed, ✗ = missed. We show our record, wins and losses alike.</span></div>
   <div class="lg-item"><span class="val-chip lg-chip">VALUE</span><span><b>Value</b> — our model rates the horse's chance higher than its market price implies: positive expected value at the listed odds.</span></div>
   <div class="lg-item"><span><b>% highlight</b> — win % lights up gold from 30% confidence; place % lights up blue from 50%.</span></div>
 </div>
@@ -676,7 +676,7 @@
   const isSettled = r => r.model_correct !== null && r.model_correct !== undefined;
   function resultMark(r) {
     if (r.model_correct === true)  return '<span class="res win">✓</span>';
-    if (r.model_correct === false && r.model_placed === true) return '<span class="res place">~</span>';
+    if (r.model_correct === false && r.model_placed === true) return '<span class="res place">✓</span>';
     if (r.model_correct === false) return '<span class="res miss">✗</span>';
     return '';
   }
@@ -841,7 +841,7 @@
         <span><span class="sw" style="background:var(--strong-dim);box-shadow:inset 0 0 0 1px var(--strong)"></span>Strong pick</span>
         <span><span class="sw" style="box-shadow:inset 0 0 0 2px var(--mint)"></span>Next to jump</span>
         <span>🎯 Sharp race</span>
-        <span><span class="res win">✓</span>/<span class="res place">~</span>/<span class="res miss">✗</span> our pick's result</span>
+        <span><span class="res win">✓</span>/<span class="res place">✓</span>/<span class="res miss">✗</span> our pick's result (green won · amber placed)</span>
       </div>
       <div class="hint">Cell colour = how strongly our model rates its top pick in that race. Tap any race for the win &amp; place predictions.</div>`;
     const gw = el.querySelector('.grid-wrap');
@@ -886,7 +886,6 @@
             <div class="where">${esc(hero._venue)} <small>R${hero.race_number}</small></div>
             <div class="meta num">${hero.distance ? hero.distance + 'm · ' : ''}${hero.field_size ? hero.field_size + ' runners · ' : ''}<span></span></div>
           </div>
-          <span class="chip ${g.cls}">${esc(g.label)}</span>
           ${hero.is_sharp ? `<span class="chip sharp">🎯 SHARP</span>` : ''}
           ${tier ? `<span class="chip ${tier.cls}">${tier.label}</span>` : ''}
           ${watchBtn(hero._state)}
@@ -916,7 +915,6 @@
           ${barsHtml(r.top_win_probability, r.top_place_probability)}
         </div>
         <div class="chips">
-          <span class="chip ${g.cls}">${esc(g.label)}</span>
           ${r.is_sharp ? `<span class="chip sharp">🎯 SHARP</span>` : ''}
           ${tier ? `<span class="chip ${tier.cls}">${tier.label}</span>` : ''}
         </div>
@@ -1045,7 +1043,7 @@
     if (!top.length) { body.innerHTML = '<div class="empty">No runner predictions available yet for this race.</div>'; return; }
 
     const offNote = off ? `<div class="dw-note"><b>${esc(g.label)} track:</b> rain-affected going. Dry-track form is less reliable here, so our confidence tiers are capped for this race — treat these as guides, not locks.</div>` : '';
-    const settledNote = isSettled(r) ? `<div class="dw-note" style="background:var(--surface-2);border-color:var(--line)"><b>Race finished.</b> ${r.model_correct ? 'Our top pick won this race. ✓' : r.model_placed ? 'Our top pick ran a place. ~' : 'Our top pick missed here. ✗'} Pre-race predictions shown below.</div>` : '';
+    const settledNote = isSettled(r) ? `<div class="dw-note" style="background:var(--surface-2);border-color:var(--line)"><b>Race finished.</b> ${r.model_correct ? 'Our top pick won this race. ✓' : r.model_placed ? 'Our top pick ran a place. ✓' : 'Our top pick missed here. ✗'} Pre-race predictions shown below.</div>` : '';
     body.innerHTML = offNote + settledNote + top.map((x, i) => {
       const isVal = (x.overlay || 0) > 0.05 && (x.best_available_odds || 0) >= 3;
       return `<div class="runner ${i === 0 ? 'top1' : ''}">
