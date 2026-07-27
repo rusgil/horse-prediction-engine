@@ -1,0 +1,1210 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+  <script src="/theme.js"></script>
+<meta name="robots" content="noindex">
+<title>FunkyIQ — Lounge C</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700;800&family=Barlow:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+  /* ── Tokens ─────────────────────────────────────────────── */
+  :root {
+    --bg: #0a0d13;
+    --surface: #121722;
+    --surface-2: #1a2130;
+    --line: #232c3d;
+    --text: #e8ecf4;
+    --text-2: #a7b1c2;
+    --text-3: #6b7688;
+    --mint: #38e07b;
+    --mint-ink: #06220f;
+    --mint-dim: rgba(56,224,123,0.13);
+    --amber: #f5a623;
+    --amber-dim: rgba(245,166,35,0.14);
+    --gold: #f5c842;
+    --blue: #60a5fa;
+    --blue-dim: rgba(96,165,250,0.14);
+    --hot: #fb923c;
+    --hot-dim: rgba(251,146,60,0.16);
+    --strong: #f472b6;
+    --strong-dim: rgba(244,114,182,0.13);
+    --red: #f87171;
+    --red-dim: rgba(248,113,113,0.13);
+    --shadow: 0 10px 30px rgba(0,0,0,0.45);
+    --radius: 14px;
+  }
+  :root[data-theme="light"] {
+    --bg: #f2f4f7;
+    --surface: #ffffff;
+    --surface-2: #eaeef3;
+    --line: #d9e0e8;
+    --text: #16202e;
+    --text-2: #46536b;
+    --text-3: #84919f;
+    --mint: #0e9e53;
+    --mint-ink: #ffffff;
+    --mint-dim: rgba(14,158,83,0.11);
+    --amber: #b97400;
+    --amber-dim: rgba(185,116,0,0.12);
+    --gold: #9c7c00;
+    --blue: #2563c9;
+    --blue-dim: rgba(37,99,201,0.10);
+    --hot: #d95f0e;
+    --hot-dim: rgba(217,95,14,0.13);
+    --strong: #bb2d7f;
+    --strong-dim: rgba(187,45,127,0.10);
+    --red: #cf4444;
+    --red-dim: rgba(207,68,68,0.10);
+    --shadow: 0 8px 22px rgba(22,32,46,0.09);
+  }
+
+  * { margin:0; padding:0; box-sizing:border-box; }
+  html { -webkit-text-size-adjust: 100%; scroll-behavior: smooth; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Barlow', system-ui, sans-serif;
+    font-size: 15px;
+    line-height: 1.45;
+    min-height: 100vh;
+    transition: background 0.25s, color 0.25s;
+  }
+  button { font-family: inherit; cursor: pointer; }
+  .num { font-variant-numeric: tabular-nums; }
+
+  /* ── Header ─────────────────────────────────────────────── */
+  header {
+    position: sticky; top: 0; z-index: 40;
+    background: color-mix(in srgb, var(--bg) 86%, transparent);
+    backdrop-filter: blur(12px);
+    border-bottom: 1px solid var(--line);
+  }
+  .hd-row {
+    max-width: 1220px; margin: 0 auto; padding: 10px 16px;
+    display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  }
+  .brand {
+    font-family: 'Barlow Condensed'; font-weight: 800; font-size: 1.35rem;
+    letter-spacing: 0.02em; display: flex; align-items: baseline; gap: 7px;
+    white-space: nowrap;
+  }
+  .brand .lab-tag {
+    font-size: 0.6rem; font-family: 'Barlow'; font-weight: 800;
+    letter-spacing: 0.14em; color: var(--mint); border: 1px solid var(--mint);
+    border-radius: 4px; padding: 1px 6px; transform: translateY(-2px);
+  }
+  .hd-spacer { flex: 1; }
+  .seg {
+    display: inline-flex; background: var(--surface-2); border: 1px solid var(--line);
+    border-radius: 10px; padding: 3px; gap: 2px;
+  }
+  .seg button {
+    background: none; border: none; color: var(--text-2);
+    font-weight: 700; font-size: 0.78rem; padding: 6px 13px; border-radius: 8px;
+    transition: background 0.15s, color 0.15s; letter-spacing: 0.01em;
+  }
+  .seg button.on { background: var(--surface); color: var(--text); box-shadow: 0 1px 5px rgba(0,0,0,0.3); }
+  :root[data-theme="light"] .seg button.on { box-shadow: 0 1px 4px rgba(22,32,46,0.15); }
+
+  .date-row {
+    max-width: 1220px; margin: 0 auto; padding: 0 16px 10px;
+    display: flex; align-items: center; gap: 8px; overflow-x: auto;
+    scrollbar-width: none;
+  }
+  .date-row::-webkit-scrollbar { display: none; }
+  .date-pill {
+    background: var(--surface-2); border: 1px solid var(--line); color: var(--text-2);
+    border-radius: 999px; padding: 5px 14px; font-size: 0.8rem; font-weight: 700;
+    white-space: nowrap; flex-shrink: 0;
+  }
+  .date-pill.on { background: var(--mint); border-color: var(--mint); color: var(--mint-ink); }
+  .date-input {
+    background: var(--surface-2); border: 1px solid var(--line); color: var(--text-2);
+    border-radius: 999px; padding: 4px 12px; font-size: 0.8rem; font-family: inherit;
+    flex-shrink: 0; color-scheme: dark;
+  }
+  :root[data-theme="light"] .date-input { color-scheme: light; }
+
+  /* ── Day summary strip ──────────────────────────────────── */
+  .day-strip {
+    max-width: 1220px; margin: 12px auto 0; padding: 0 16px;
+    display: none; align-items: center; gap: 14px; flex-wrap: wrap;
+  }
+  .day-strip.show { display: flex; }
+  .ds-stat { display: flex; align-items: baseline; gap: 6px; font-size: 0.78rem; color: var(--text-3); }
+  .ds-stat b { font-family: 'Barlow Condensed'; font-size: 1.25rem; color: var(--text); font-weight: 800; }
+  .ds-stat b.g { color: var(--mint); }
+  .ds-stat b.a { color: var(--amber); }
+  .ds-divider { width: 1px; height: 18px; background: var(--line); }
+
+  /* ── Legend ─────────────────────────────────────────────── */
+  .key { max-width: 1220px; margin: 34px auto 0; padding: 0 16px; }
+  .key-title {
+    font-family: 'Barlow Condensed'; font-weight: 700; font-size: 1rem;
+    color: var(--text-3); letter-spacing: 0.1em; text-transform: uppercase;
+    border-top: 1px solid var(--line); padding-top: 18px; margin-bottom: 12px;
+  }
+  .legend-box {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+    gap: 12px 22px;
+  }
+  .lg-item { font-size: 0.77rem; color: var(--text-2); display: flex; gap: 9px; align-items: flex-start; }
+  .lg-item b { color: var(--text); font-weight: 700; }
+  .lg-chip { flex-shrink: 0; margin-top: 1px; }
+
+  /* ── Chips & badges ─────────────────────────────────────── */
+  .chip {
+    display: inline-flex; align-items: center; gap: 4px;
+    font-size: 0.66rem; font-weight: 800; letter-spacing: 0.03em;
+    border-radius: 5px; padding: 2px 7px; white-space: nowrap;
+    border: 1px solid transparent;
+  }
+  .chip.going-good  { background: var(--mint-dim);  color: var(--mint); }
+  .chip.going-soft  { background: var(--amber-dim); color: var(--amber); }
+  .chip.going-heavy { background: var(--red-dim);   color: var(--red); }
+  .chip.going-synth { background: var(--blue-dim);  color: var(--blue); }
+  .chip.going-unknown { background: var(--surface-2); color: var(--text-3); }
+  .chip.sharp { background: var(--mint-dim); color: var(--mint); border-color: var(--mint); }
+  .chip.tier-hot    { background: var(--hot-dim);   color: var(--hot); }
+  .chip.tier-high   { background: var(--blue-dim);  color: var(--blue); }
+  .chip.tier-strong { background: var(--strong-dim); color: var(--strong); }
+  .chip.wet-note { background: var(--amber-dim); color: var(--amber); }
+  .mcell .wx { font-size: 0.72rem; color: var(--text-3); }
+  .rail-item .rv .wx { margin-left: auto; font-size: 0.72rem; color: var(--text-3); font-family: 'Barlow'; font-weight: 500; }
+
+  .watch-btn {
+    display: inline-flex; align-items: center; gap: 4px; text-decoration: none;
+    font-size: 0.68rem; font-weight: 800; letter-spacing: 0.02em;
+    border-radius: 6px; padding: 3px 9px; white-space: nowrap;
+    background: var(--surface-2); border: 1px solid var(--line); color: var(--text-2);
+    transition: border-color 0.15s, color 0.15s;
+  }
+  .watch-btn:hover { border-color: var(--mint); color: var(--mint); }
+  .watch-btn .wb-src { font-weight: 600; color: var(--text-3); }
+
+
+  /* Settled-race outcome borders: green = win, amber = place, red = loss */
+  .jcard.res-win   { border-color: color-mix(in srgb, var(--mint)  55%, var(--line)); }
+  .jcard.res-place { border-color: color-mix(in srgb, var(--amber) 55%, var(--line)); }
+  .jcard.res-miss  { border-color: color-mix(in srgb, var(--red)   45%, var(--line)); }
+  .brace.res-win   { box-shadow: inset 3px 0 0 var(--mint); }
+  .brace.res-place { box-shadow: inset 3px 0 0 var(--amber); }
+  .brace.res-miss  { box-shadow: inset 3px 0 0 var(--red); }
+  .cell.done.res-win .in   { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--mint)  55%, transparent); }
+  .cell.done.res-place .in { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--amber) 55%, transparent); }
+  .cell.done.res-miss .in  { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--red)   40%, transparent); }
+  /* settled cards keep their outcome colour on hover (generic hover is mint) */
+  .jcard.res-win:hover   { border-color: var(--mint); }
+  .jcard.res-place:hover { border-color: var(--amber); }
+  .jcard.res-miss:hover  { border-color: var(--red); }
+  .brace.res-win:hover   { background: var(--mint-dim); }
+  .brace.res-place:hover { background: var(--amber-dim); }
+  .brace.res-miss:hover  { background: var(--red-dim); }
+  /* light theme: thicker + stronger — the slim borders wash out on white */
+  :root[data-theme="light"] .jcard.res-win   { border: 2px solid color-mix(in srgb, var(--mint)  75%, var(--line)); }
+  :root[data-theme="light"] .jcard.res-place { border: 2px solid color-mix(in srgb, var(--amber) 75%, var(--line)); }
+  :root[data-theme="light"] .jcard.res-miss  { border: 2px solid color-mix(in srgb, var(--red)   65%, var(--line)); }
+  :root[data-theme="light"] .brace.res-win   { box-shadow: inset 5px 0 0 var(--mint); }
+  :root[data-theme="light"] .brace.res-place { box-shadow: inset 5px 0 0 var(--amber); }
+  :root[data-theme="light"] .brace.res-miss  { box-shadow: inset 5px 0 0 var(--red); }
+  :root[data-theme="light"] .cell.done.res-win .in   { box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--mint)  70%, transparent); }
+  :root[data-theme="light"] .cell.done.res-place .in { box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--amber) 70%, transparent); }
+  :root[data-theme="light"] .cell.done.res-miss .in  { box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--red)   55%, transparent); }
+
+  .res { font-weight: 800; font-size: 0.8rem; }
+  .res.win { color: var(--mint); }
+  .res.place { color: var(--amber); }
+  .res.miss { color: var(--text-3); }
+
+  /* prediction bars — TRUE scale, the number carries precision */
+  .pbar-pair { display: flex; flex-direction: column; gap: 4px; min-width: 130px; }
+  .pbar { display: flex; align-items: center; gap: 7px; font-size: 0.7rem; }
+  .pbar .lbl { width: 30px; color: var(--text-3); font-weight: 700; flex-shrink: 0; letter-spacing: 0.04em; }
+  .pbar .track { flex: 1; height: 5px; border-radius: 3px; background: var(--surface-2); overflow: hidden; display: block; }
+  .pbar .fill { display: block; height: 100%; border-radius: 3px; }
+  /* Original-Lounge colour language: win = gold, place = blue */
+  .pbar .fill.win { background: var(--gold); }
+  .pbar .fill.place { background: var(--blue); }
+  .pbar .val { width: 40px; text-align: right; font-weight: 800; color: var(--text); }
+  /* % highlight — win from 30%, place from 50%; otherwise dim */
+  .pbar .val.v-win { color: var(--gold); }
+  .pbar .val.v-plc { color: var(--blue); }
+  .pbar .val.v-dim { color: var(--text-3); font-weight: 700; }
+
+  /* ── Layout shell ───────────────────────────────────────── */
+  main { max-width: 1220px; margin: 0 auto; padding: 14px 16px 90px; }
+  .view { display: none; }
+  .view.on { display: block; }
+  .loading { text-align: center; color: var(--text-3); padding: 60px 0; font-size: 0.85rem; }
+  .spin {
+    width: 22px; height: 22px; border: 2px solid var(--line); border-top-color: var(--mint);
+    border-radius: 50%; margin: 0 auto 12px; animation: spin 0.8s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .empty { text-align: center; color: var(--text-3); padding: 60px 20px; }
+  .empty .big { font-size: 2rem; margin-bottom: 8px; }
+  .hint { font-size: 0.68rem; color: var(--text-3); margin-top: 9px; }
+
+  /* ── View A: Confidence heat grid ───────────────────────── */
+  .grid-wrap {
+    background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius);
+    overflow-x: auto; box-shadow: var(--shadow);
+  }
+  table.race-grid { border-collapse: collapse; width: 100%; min-width: 740px; }
+  .race-grid th, .race-grid td { padding: 0; }
+  .race-grid thead th {
+    font-family: 'Barlow Condensed'; font-weight: 700; font-size: 0.8rem;
+    color: var(--text-3); text-align: center; padding: 10px 4px 8px;
+    border-bottom: 1px solid var(--line); letter-spacing: 0.08em;
+  }
+  .race-grid thead th:first-child { text-align: left; padding-left: 14px; }
+  .race-grid tbody tr { border-bottom: 1px solid var(--line); }
+  .race-grid tbody tr:last-child { border-bottom: none; }
+  .mcell {
+    position: sticky; left: 0; background: var(--surface); z-index: 2;
+    padding: 10px 12px 10px 14px !important; min-width: 172px; max-width: 215px;
+    border-right: 1px solid var(--line);
+  }
+  .mcell .vname {
+    font-family: 'Barlow Condensed'; font-weight: 700; font-size: 1.04rem;
+    display: flex; align-items: center; gap: 7px;
+  }
+  .mcell .vname .st { font-size: 0.6rem; color: var(--text-3); font-family: 'Barlow'; font-weight: 800; }
+  .mcell .vmeta { display: flex; gap: 5px; margin-top: 5px; flex-wrap: wrap; align-items: center; }
+  .cell {
+    text-align: center; min-width: 64px; padding: 7px 3px !important;
+    cursor: pointer; transition: filter 0.12s; position: relative;
+  }
+  .cell:hover { filter: brightness(1.25); }
+  :root[data-theme="light"] .cell:hover { filter: brightness(0.96); }
+  .cell .in { border-radius: 7px; padding: 4px 2px 5px; margin: 0 2px; }
+  .cell .t { font-size: 0.78rem; font-weight: 700; color: var(--text-2); }
+  .cell .sub { font-size: 0.64rem; margin-top: 1px; min-height: 14px; display:flex; align-items:center; justify-content:center; gap:3px; }
+  /* heat tints — the core idea: cell colour = our confidence */
+  .cell.heat-hot .in    { background: var(--hot-dim);  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--hot) 45%, transparent); }
+  .cell.heat-hot .t     { color: var(--hot); }
+  .cell.heat-high .in   { background: var(--blue-dim); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--blue) 35%, transparent); }
+  .cell.heat-high .t    { color: var(--blue); }
+  .cell.heat-strong .in { background: var(--strong-dim); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--strong) 30%, transparent); }
+  .cell.heat-strong .t  { color: var(--strong); }
+  .cell.done .t { color: var(--text-3); font-weight: 500; }
+  .cell .sub .cell-tier { font-size: 0.48rem; font-weight: 800; letter-spacing: 0.03em; margin-left: 3px; }
+  .cell .sub .cell-tier.hot    { color: var(--hot); }
+  .cell .sub .cell-tier.high   { color: var(--blue); }
+  .cell .sub .cell-tier.strong { color: var(--strong); }
+  .cell.blank { cursor: default; }
+  .cell.blank:hover { filter: none; }
+  .heat-legend {
+    display: flex; gap: 14px; flex-wrap: wrap; align-items: center;
+    font-size: 0.7rem; color: var(--text-3); margin-top: 10px; padding: 0 2px;
+  }
+  .heat-legend .sw { width: 13px; height: 13px; border-radius: 4px; display: inline-block; vertical-align: -2px; margin-right: 5px; }
+
+  /* ── View B: Race day feed ──────────────────────────────── */
+  .venue-chips {
+    display: flex; gap: 7px; overflow-x: auto; padding: 2px 2px 12px; scrollbar-width: none;
+  }
+  .venue-chips::-webkit-scrollbar { display: none; }
+  .vchip {
+    background: var(--surface); border: 1px solid var(--line); color: var(--text-2);
+    border-radius: 999px; padding: 5px 13px; font-size: 0.76rem; font-weight: 700;
+    white-space: nowrap; flex-shrink: 0;
+  }
+  .vchip.on { background: var(--mint); border-color: var(--mint); color: var(--mint-ink); }
+
+  .hero {
+    background: var(--surface); border: 1px solid color-mix(in srgb, var(--mint) 45%, var(--line));
+    border-radius: var(--radius); box-shadow: var(--shadow); overflow: hidden; margin-bottom: 18px;
+    cursor: pointer;
+  }
+  .hero-top {
+    display: flex; align-items: center; gap: 14px; padding: 15px 18px 13px;
+    border-bottom: 1px solid var(--line); flex-wrap: wrap;
+  }
+  .hero-top .tag {
+    font-size: 0.62rem; font-weight: 800; letter-spacing: 0.12em; color: var(--mint);
+    border: 1px solid var(--mint); border-radius: 4px; padding: 2px 7px;
+  }
+  .hero-top .where { font-family: 'Barlow Condensed'; font-weight: 800; font-size: 1.5rem; }
+  .hero-top .where small { color: var(--text-3); font-size: 1.05rem; }
+  .hero-top .meta { font-size: 0.74rem; color: var(--text-3); }
+  .hero-top .clockbox { margin-left: auto; text-align: right; }
+  .hero-top .clock { font-family: 'Barlow Condensed'; font-weight: 800; font-size: 1.7rem; line-height: 1; }
+  .hero-top .cd { font-size: 0.7rem; font-weight: 800; color: var(--mint); }
+  .hero-picks { padding: 6px 18px 12px; }
+  .hero-note { padding: 0 18px 14px; font-size: 0.72rem; color: var(--text-3); }
+  .hrunner { display: flex; align-items: center; gap: 12px; padding: 9px 0; border-bottom: 1px solid var(--line); }
+  .hrunner:last-child { border-bottom: none; }
+  .hrunner .saddle {
+    width: 28px; height: 28px; border-radius: 7px; background: var(--surface-2);
+    display: grid; place-items: center; font-weight: 800; font-size: 0.82rem; flex-shrink: 0;
+    font-family: 'Barlow Condensed';
+  }
+  .hrunner.top1 .saddle { background: var(--mint); color: var(--mint-ink); }
+  .hrunner .nm { flex: 1; min-width: 0; }
+  .hrunner .nm .h { font-weight: 700; font-size: 0.9rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .hrunner .nm .j { font-size: 0.68rem; color: var(--text-3); }
+  .hrunner .hodds { font-weight: 800; font-size: 0.82rem; flex-shrink: 0; }
+  .hrunner .bars { width: 200px; flex-shrink: 0; }
+  @media (max-width: 560px) { .hrunner .bars { width: 150px; } }
+
+  .feed-sec-title {
+    font-family: 'Barlow Condensed'; font-weight: 700; font-size: 1rem;
+    color: var(--text-3); letter-spacing: 0.1em; text-transform: uppercase;
+    margin: 20px 2px 10px;
+  }
+  .jcard {
+    background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius);
+    padding: 12px 15px; margin-bottom: 9px;
+    display: grid; grid-template-columns: 64px 1fr auto; gap: 4px 14px; align-items: center;
+    cursor: pointer; transition: border-color 0.15s; box-shadow: var(--shadow);
+  }
+  .jcard:hover { border-color: var(--mint); }
+  .jcard .when { text-align: center; grid-row: span 2; }
+  .jcard .when .clock { font-family: 'Barlow Condensed'; font-weight: 800; font-size: 1.3rem; line-height: 1; }
+  .jcard .when .cd { font-size: 0.64rem; font-weight: 800; margin-top: 3px; color: var(--text-3); }
+  /* countdown colour ladder: green while far out → amber inside the hour →
+     pulsing red pill at ≤15m */
+  .jcard .when .cd.far,  .brace .rt .cd.far,  .hero-top .cd.far  { color: var(--mint); }
+  .jcard .when .cd.hour, .brace .rt .cd.hour, .hero-top .cd.hour { color: var(--amber); }
+  .jcard .when .cd.soon, .brace .rt .cd.soon, .hero-top .cd.soon {
+    display: inline-block; background: var(--red); color: #fff;
+    border-radius: 5px; padding: 1px 6px; font-weight: 800;
+    animation: soonpulse 1.6s ease-in-out infinite;
+  }
+  @keyframes soonpulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.6; } }
+  @media (prefers-reduced-motion: reduce) { .jcard .when .cd.soon, .brace .rt .cd.soon, .hero-top .cd.soon { animation: none; } }
+  .jcard .where {
+    font-family: 'Barlow Condensed'; font-weight: 700; font-size: 1.05rem;
+    display: flex; align-items: center; gap: 7px; flex-wrap: wrap; min-width: 0;
+  }
+  .jcard .where .rmeta { font-family: 'Barlow'; font-size: 0.7rem; color: var(--text-3); font-weight: 500; }
+  .jcard .chips { display: flex; gap: 5px; flex-wrap: wrap; align-self: start; }
+  .jcard .pick { grid-row: span 2; text-align: right; min-width: 140px; }
+  .jcard .pick .pname {
+    font-weight: 700; font-size: 0.84rem; white-space: nowrap; overflow: hidden;
+    text-overflow: ellipsis; max-width: 160px; margin-left: auto; margin-bottom: 5px;
+  }
+  .jcard .pick .pname { display: flex; align-items: center; gap: 6px; justify-content: flex-end; }
+  .jcard .pick .pname .pn-t { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .jcard .pick .pname .pk-odds { flex-shrink: 0; font-size: 0.76rem; font-weight: 800; color: var(--text-2); }
+  .jcard .pick .pname.ghost { color: var(--text-3); font-weight: 500; font-size: 0.74rem; }
+  .jcard.settled { opacity: 0.75; }
+  .jcard.settled:hover { opacity: 1; }
+  @media (max-width: 640px) {
+    .jcard { grid-template-columns: 56px 1fr; }
+    .jcard .pick { grid-row: auto; grid-column: 2; text-align: left; margin-top: 4px; }
+    .jcard .pick .pname { margin-left: 0; justify-content: flex-start; }
+    .jcard .when { grid-row: span 3; }
+    /* smaller time numerals on mobile */
+    .jcard .when .clock { font-size: 1.02rem; }
+    .hero-top .clock { font-size: 1.3rem; }
+    /* heat grid: slim the meeting column — smaller surface chip, weather
+       icon wraps to its own line under the chip */
+    .mcell { min-width: 116px; max-width: 132px; padding: 8px 8px 8px 10px !important; }
+    .mcell .vname { font-size: 0.88rem; }
+    .mcell .vmeta { flex-direction: column; align-items: flex-start; gap: 3px; }
+    .mcell .vmeta .chip { font-size: 0.54rem; padding: 1px 5px; letter-spacing: 0.02em; }
+    .mcell .wx { font-size: 0.66rem; }
+  }
+
+  /* ── View C: Meetings rail ──────────────────────────────── */
+  .rail-layout { display: grid; grid-template-columns: 285px 1fr; gap: 16px; align-items: start; }
+  .rail {
+    background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius);
+    box-shadow: var(--shadow); overflow: hidden; position: sticky; top: 108px;
+    max-height: calc(100vh - 130px); overflow-y: auto;
+  }
+  .rail-item {
+    width: 100%; text-align: left; background: none; border: none; color: var(--text);
+    padding: 12px 14px; border-bottom: 1px solid var(--line); display: block;
+    transition: background 0.12s; border-left: 3px solid transparent;
+  }
+  .rail-item:last-child { border-bottom: none; }
+  .rail-item:hover { background: var(--surface-2); }
+  .rail-item.on { background: var(--surface-2); border-left-color: var(--mint); }
+  .rail-item .rv { font-family: 'Barlow Condensed'; font-weight: 700; font-size: 1.08rem; display: flex; align-items: center; gap: 7px; }
+  .rail-item .rv .st { font-size: 0.6rem; color: var(--text-3); font-family: 'Barlow'; font-weight: 800; }
+  .rail-item .rmeta { display: flex; gap: 5px; margin-top: 5px; align-items: center; flex-wrap: wrap; }
+  .rail-item .prog { font-size: 0.66rem; color: var(--text-3); font-weight: 700; }
+  .rail-item .progbar { height: 3px; border-radius: 2px; background: var(--surface-2); margin-top: 7px; overflow: hidden; }
+  .rail-item .progbar .pf { height: 100%; background: var(--mint); border-radius: 2px; }
+
+  .board {
+    background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius);
+    box-shadow: var(--shadow); overflow: hidden;
+  }
+  .board-head { padding: 15px 18px 12px; border-bottom: 1px solid var(--line); }
+  .board-head .t { font-family: 'Barlow Condensed'; font-weight: 800; font-size: 1.5rem; display: flex; align-items: baseline; gap: 9px; flex-wrap: wrap; }
+  .board-head .t .st { font-size: 0.72rem; color: var(--text-3); font-family: 'Barlow'; font-weight: 800; }
+  .board-head .chips { display: flex; gap: 5px; margin-top: 8px; flex-wrap: wrap; }
+  .brace {
+    display: grid; grid-template-columns: 30px 60px 1fr auto; gap: 12px; align-items: center;
+    padding: 11px 18px; border-bottom: 1px solid var(--line); cursor: pointer;
+    transition: background 0.12s;
+  }
+  .brace:last-child { border-bottom: none; }
+  .brace:hover { background: var(--surface-2); }
+  .brace .rn { font-family: 'Barlow Condensed'; font-weight: 800; font-size: 1rem; color: var(--text-3); }
+  .brace .rt { font-size: 0.8rem; font-weight: 700; }
+  .brace .rt .cd { display: block; font-size: 0.62rem; color: var(--text-3); font-weight: 700; }
+  .brace .rt .cd.soon { margin-top: 2px; }
+  .brace .mid { min-width: 0; }
+  .brace .mid .pk { font-weight: 700; font-size: 0.86rem; display: flex; align-items: center; gap: 6px; min-width: 0; }
+  .brace .mid .pk .pk-name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .brace .mid .pk .chip { flex-shrink: 0; }
+  .brace .mid .pk .pk-odds { flex-shrink: 0; font-size: 0.78rem; font-weight: 800; color: var(--text-2); }
+  .brace .mid .pk.ghost { color: var(--text-3); font-weight: 500; font-size: 0.76rem; }
+  .brace .mid .sub { font-size: 0.68rem; color: var(--text-3); margin-top: 1px; }
+  .brace .right { display: flex; flex-direction: column; align-items: flex-end; gap: 5px; }
+  @media (max-width: 860px) {
+    .rail-layout { grid-template-columns: 1fr; }
+    .rail { position: static; max-height: none; display: flex; overflow-x: auto; border-radius: 12px; }
+    .rail-item { min-width: 180px; border-bottom: none; border-right: 1px solid var(--line); border-left: none; border-top: 3px solid transparent; }
+    .rail-item.on { border-top-color: var(--mint); border-left: none; }
+    .brace { grid-template-columns: 26px 56px 1fr auto; padding: 11px 13px; gap: 8px; }
+  }
+
+  /* ── Race drawer ────────────────────────────────────────── */
+  .overlay {
+    position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: 90;
+    opacity: 0; pointer-events: none; transition: opacity 0.2s;
+  }
+  .overlay.open { opacity: 1; pointer-events: auto; }
+  .drawer {
+    position: fixed; z-index: 95; background: var(--surface);
+    border: 1px solid var(--line); box-shadow: var(--shadow);
+    display: flex; flex-direction: column;
+    left: 0; right: 0; bottom: 0; border-radius: 18px 18px 0 0;
+    max-height: 80vh; transform: translateY(105%); transition: transform 0.25s ease;
+  }
+  .drawer.open { transform: translateY(0); }
+  @media (min-width: 900px) {
+    .drawer {
+      left: auto; top: 0; bottom: 0; right: 0; width: 430px;
+      border-radius: 0; max-height: none; transform: translateX(105%);
+    }
+    .drawer.open { transform: translateX(0); }
+  }
+  .dw-head { padding: 16px 18px 12px; border-bottom: 1px solid var(--line); flex-shrink: 0; position: relative; }
+  .dw-grab { width: 40px; height: 4px; border-radius: 2px; background: var(--line); margin: 0 auto 12px; }
+  @media (min-width: 900px) { .dw-grab { display: none; } }
+  .dw-title { font-family: 'Barlow Condensed'; font-weight: 800; font-size: 1.4rem; display: flex; align-items: center; gap: 9px; padding-right: 36px; }
+  .dw-title .dw-rnum { font-weight: 800; color: var(--mint); }
+  .dw-sub { font-size: 0.76rem; color: var(--text-3); margin-top: 3px; }
+  .dw-chips { display: flex; gap: 5px; margin-top: 9px; flex-wrap: wrap; }
+  .dw-close {
+    position: absolute; top: 14px; right: 14px; background: var(--surface-2);
+    border: 1px solid var(--line); color: var(--text-2); width: 30px; height: 30px;
+    border-radius: 8px; font-size: 0.9rem;
+  }
+  .dw-body { overflow-y: auto; padding: 14px 18px 28px; }
+  .dw-note {
+    font-size: 0.74rem; color: var(--text-2); background: var(--amber-dim);
+    border: 1px solid color-mix(in srgb, var(--amber) 30%, transparent);
+    border-radius: 9px; padding: 9px 12px; margin-bottom: 13px; line-height: 1.5;
+  }
+  .runner { display: flex; gap: 12px; padding: 12px 0; border-bottom: 1px solid var(--line); align-items: center; }
+  .runner:last-child { border-bottom: none; }
+  .runner .saddle {
+    width: 30px; height: 30px; border-radius: 8px; background: var(--surface-2);
+    display: grid; place-items: center; font-weight: 800; font-size: 0.85rem;
+    flex-shrink: 0; font-family: 'Barlow Condensed';
+  }
+  .runner.top1 .saddle { background: var(--mint); color: var(--mint-ink); }
+  .runner .info { flex: 1; min-width: 0; }
+  .runner .hn { font-weight: 700; font-size: 0.92rem; display: flex; align-items: center; gap: 7px; flex-wrap: wrap; }
+  .runner .jk { font-size: 0.7rem; color: var(--text-3); margin-top: 1px; }
+  .runner .jk b { color: var(--gold, #b8901f); font-weight: 700; }
+  .runner .rflags { display: flex; gap: 4px; flex-wrap: wrap; margin-top: 5px; }
+  .runner .rflag {
+    font-size: 0.6rem; font-weight: 700; color: var(--text-2);
+    background: var(--surface-2); border: 1px solid var(--line);
+    border-radius: 4px; padding: 1px 6px;
+  }
+  .runner .rbars { margin-top: 7px; max-width: 300px; }
+  .runner .odds { text-align: right; flex-shrink: 0; }
+  .runner .odds .o { font-weight: 800; font-size: 0.9rem; }
+  .runner .odds .ol { font-size: 0.58rem; color: var(--text-3); text-transform: uppercase; letter-spacing: 0.07em; }
+  .dw-result { border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; margin-bottom: 13px; }
+  .dw-result-t { font-family: 'Barlow Condensed'; font-weight: 700; font-size: 0.8rem; letter-spacing: 0.1em; color: var(--text-3); margin-bottom: 6px; }
+  .dw-res-row { display: flex; align-items: center; gap: 9px; padding: 3px 0; font-size: 0.84rem; }
+  .dw-res-row .pos { width: 30px; color: var(--text-3); font-weight: 800; font-size: 0.72rem; }
+  .dw-res-row .nm { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 600; }
+  .dw-res-row.w .nm { color: var(--mint); font-weight: 800; }
+  .dw-res-row.mine .nm { text-decoration: underline; text-underline-offset: 3px; }
+  .dw-res-row .sp { font-weight: 800; color: var(--text-2); }
+  .pick-tag { background: var(--surface-2); color: var(--text-2); font-size: 0.56rem; font-weight: 800; padding: 2px 6px; border-radius: 4px; letter-spacing: 0.06em; }
+  .chip.outcome-win   { background: var(--mint-dim);  color: var(--mint);  border-color: var(--mint); }
+  .chip.outcome-place { background: var(--amber-dim); color: var(--amber); border-color: var(--amber); }
+  .chip.outcome-miss  { background: var(--red-dim);   color: var(--red); }
+  .runner.top1 .pick-tag { background: var(--mint-dim); color: var(--mint); }
+  .val-chip { background: var(--mint-dim); color: var(--mint); font-size: 0.58rem; font-weight: 800; padding: 2px 6px; border-radius: 4px; letter-spacing: 0.04em; cursor: help; }
+
+  .foot { max-width: 1220px; margin: 30px auto 0; padding: 0 16px; font-size: 0.7rem; color: var(--text-3); text-align: center; }
+
+  @media (prefers-reduced-motion: reduce) {
+    .spin { animation: none; }
+    html { scroll-behavior: auto; }
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="hd-row">
+    <div class="brand">FunkyIQ Lounge <span class="lab-tag">C</span></div>
+    <div class="hd-spacer"></div>
+    <div class="seg" id="verSeg" role="tablist" aria-label="Layout version" style="display:none">
+      <button data-v="A" role="tab">A · Heat Grid</button>
+      <button data-v="B" role="tab">B · Race Feed</button>
+      <button data-v="C" role="tab">C · Meetings</button>
+    </div>
+
+  </div>
+  <div class="date-row" id="dateRow"></div>
+</header>
+
+<div class="day-strip" id="dayStrip"></div>
+
+
+<main>
+  <div class="view" id="viewA"><div class="loading"><div class="spin"></div>Loading meetings…</div></div>
+  <div class="view" id="viewB"><div class="loading"><div class="spin"></div>Loading meetings…</div></div>
+  <div class="view" id="viewC"><div class="loading"><div class="spin"></div>Loading meetings…</div></div>
+</main>
+
+<section class="key">
+  <div class="key-title">Key — what the badges mean</div>
+<div class="legend-box">
+  <div class="lg-item"><span class="chip tier-hot lg-chip">🔥 HOT</span><span><b>Hot pick</b> — model ≥46% win confidence. Our strongest tier: historically wins ~1 in 2.</span></div>
+  <div class="lg-item"><span class="chip tier-high lg-chip">⚡ HIGH</span><span><b>High confidence</b> — 36–45% win confidence, wins ~4 in 10.</span></div>
+  <div class="lg-item"><span class="chip tier-strong lg-chip">STRONG</span><span><b>Strong pick</b> — 30–35% win confidence. Still well above a random pick.</span></div>
+  <div class="lg-item"><span class="chip sharp lg-chip">🎯 SHARP</span><span><b>Sharp race</b> — passed our strictest quality gate. The races we back hardest.</span></div>
+  <div class="lg-item"><span class="chip going-heavy lg-chip">SURFACE: HEAVY</span><span><b>Track surface</b> — Firm/Good = dry, fast track. Soft or Heavy = wet track; our confidence is lower on wet tracks.</span></div>
+  <div class="lg-item"><span class="lg-chip"><span class="res win">✓</span>&nbsp;<span class="res place">✓</span>&nbsp;<span class="res miss">✗</span></span><span><b>Finished races</b> — how our top pick went: green tick = won, amber tick = placed, ✗ = missed. We show our record, wins and losses alike.</span></div>
+  <div class="lg-item"><span class="val-chip lg-chip">VALUE</span><span><b>Value</b> — our model rates the horse's chance higher than its market price implies: positive expected value at the listed odds.</span></div>
+  <div class="lg-item"><span><b>% highlight</b> — win % lights up gold from 30% confidence; place % lights up blue from 50%.</span></div>
+</div>
+</section>
+
+<div class="foot">Lounge C — the meetings-rail layout with full lounge detail. Live data.</div>
+
+<div class="overlay" id="ovl"></div>
+<aside class="drawer" id="drawer" aria-label="Race predictions">
+  <div class="dw-head">
+    <div class="dw-grab"></div>
+    <div class="dw-title" id="dwTitle"></div>
+    <div class="dw-sub" id="dwSub"></div>
+    <div class="dw-chips" id="dwChips"></div>
+    <button class="dw-close" id="dwClose" aria-label="Close">✕</button>
+  </div>
+  <div class="dw-body" id="dwBody"></div>
+</aside>
+
+<script>
+(() => {
+  const API = '';
+  const S = {
+    date: null,
+    meetings: [],
+    details: {},           // venue_code -> races[]
+    runners: {},           // race_id -> runners[]
+    version: 'C',   // this page IS the C-meetings layout — no switcher
+    selVenue: null,        // view C selection
+    feedVenue: 'all',      // view B filter
+    loadSeq: 0,
+  };
+
+
+  /* ── version switcher ── */
+  const verSeg = document.getElementById('verSeg');
+  function applyVersion(v) {
+    S.version = v;
+    /* pinned to C */
+    verSeg.querySelectorAll('button').forEach(b => b.classList.toggle('on', b.dataset.v === v));
+    ['A','B','C'].forEach(x => document.getElementById('view' + x).classList.toggle('on', x === v));
+  }
+  verSeg.querySelectorAll('button').forEach(b => b.onclick = () => applyVersion(b.dataset.v));
+
+  /* ── dates ── */
+  function aestToday(offset = 0) {
+    const d = new Date(Date.now() + offset * 86400000);
+    return d.toLocaleDateString('en-CA', { timeZone: 'Australia/Sydney' });
+  }
+  const dowName = iso => new Date(iso + 'T12:00:00').toLocaleDateString('en-AU', { weekday: 'long' });
+  function buildDateRow() {
+    const row = document.getElementById('dateRow');
+    const pills = [
+      { d: aestToday(-1), label: 'Yesterday' },
+      { d: aestToday(0),  label: 'Today' },
+      { d: aestToday(1),  label: 'Tomorrow' },
+      { d: aestToday(2),  label: dowName(aestToday(2)) },
+    ];
+    const isPill = pills.some(p => p.d === S.date);
+    row.innerHTML = pills.map(p =>
+      `<button class="date-pill ${p.d === S.date ? 'on' : ''}" data-d="${p.d}">${p.label}</button>`
+    ).join('') + `<input type="date" class="date-input ${isPill ? '' : 'on'}" id="dateInput" value="${S.date}" aria-label="Pick a date">`;
+    row.querySelectorAll('.date-pill').forEach(b => b.onclick = () => setDate(b.dataset.d));
+    document.getElementById('dateInput').onchange = e => { if (e.target.value) setDate(e.target.value); };
+  }
+  function setDate(d) {
+    if (d === S.date) return;
+    S.date = d;
+    S.details = {}; S.runners = {}; S.selVenue = null; S.feedVenue = 'all';
+    buildDateRow();
+    loadAll();
+  }
+
+  /* ── helpers ── */
+  const esc = s => (s == null ? '' : String(s)).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  const pc = v => v == null ? null : Math.round(v * 1000) / 10;
+  const vcOf = m => m.venue_code || (m.venue || '').toLowerCase().replace(/\s+/g, '-');
+
+  function wallTime(iso) {            // track-local post time from the ISO string itself
+    const m = /T(\d{2}):(\d{2})/.exec(iso || '');
+    if (!m) return '—';
+    let h = +m[1]; const mi = m[2];
+    const ap = h >= 12 ? 'pm' : 'am';
+    h = h % 12 || 12;
+    return `${h}:${mi}${ap}`;
+  }
+  const epochOf = iso => { const t = iso ? Date.parse(iso) : NaN; return Number.isNaN(t) ? null : t; };
+  // urg drives the countdown colour ladder: far (green) → hour (amber) →
+  // soon ≤15m (pulsing red pill).
+  function countdown(iso) {
+    const t = epochOf(iso);
+    if (t == null) return { label: '', soon: false, past: false, urg: '' };
+    const diff = t - Date.now();
+    if (diff <= 0) return { label: diff > -35 * 60000 ? 'resulting' : '', soon: false, past: true, urg: '' };
+    const m = Math.floor(diff / 60000);
+    if (m < 60) return { label: `in ${m}m`, soon: m <= 15, past: false, urg: m <= 15 ? 'soon' : 'hour' };
+    const h = Math.floor(m / 60);
+    if (h < 24) return { label: `in ${h}h ${m % 60}m`, soon: false, past: false, urg: 'far' };
+    return { label: `in ${Math.floor(h / 24)}d`, soon: false, past: false, urg: 'far' };
+  }
+
+  function goingInfo(tc) {
+    // Category word only — no numeric rating (e.g. "Good 4" → "SURFACE: GOOD").
+    const s = (tc || '').trim();
+    const l = s.toLowerCase();
+    if (!s) return { cls: 'going-unknown', label: 'SURFACE: TBC' };
+    if (l.startsWith('heavy')) return { cls: 'going-heavy', label: 'SURFACE: HEAVY' };
+    if (l.startsWith('soft'))  return { cls: 'going-soft',  label: 'SURFACE: SOFT' };
+    if (l.startsWith('synth')) return { cls: 'going-synth', label: 'SURFACE: SYNTHETIC' };
+    if (l.startsWith('firm'))  return { cls: 'going-good',  label: 'SURFACE: FIRM' };
+    if (l.startsWith('good'))  return { cls: 'going-good',  label: 'SURFACE: GOOD' };
+    return { cls: 'going-unknown', label: `SURFACE: ${s.split(/\s/)[0].toUpperCase()}` };
+  }
+  const isOffGoing = tc => /^(soft|heavy)/i.test((tc || '').trim());
+
+  // Official live-vision deep links by state. Race vision is rights-locked in
+  // AU (no embeddable players), so we link out to the free/official stream
+  // for the meeting's state in a new tab.
+  function streamFor(state) {
+    const s = (state || '').toUpperCase();
+    if (s === 'VIC' || s === 'SA') return { name: 'Racing.com', url: 'https://www.racing.com/watch' };
+    if (s === 'NSW' || s === 'ACT') return { name: 'Racing NSW', url: 'https://www.racingnsw.com.au/watch-live/' };
+    if (s === 'WA') return { name: 'TABtouch', url: 'https://www.tabtouch.com.au/racing' };
+    return { name: 'Sky Racing', url: 'https://www.skyracing.com.au/' };
+  }
+  const watchBtn = (state, small) =>
+    `<a class="watch-btn ${small ? 'sm' : ''}" href="${streamFor(state).url}" target="_blank" rel="noopener"
+        onclick="event.stopPropagation()">📺 Watch <span class="wb-src">· ${streamFor(state).name}</span></a>`;
+
+  function tierOf(winProb, off) {
+    if (winProb == null) return null;
+    const p = winProb * 100;
+    if (p >= 46 && !off) return { cls: 'tier-hot',    dot: 'hot',    heat: 'heat-hot',    label: '🔥 HOT' };
+    if (p >= 36 && !off) return { cls: 'tier-high',   dot: 'high',   heat: 'heat-high',   label: '⚡ HIGH' };
+    if (p >= 30)         return { cls: 'tier-strong', dot: 'strong', heat: 'heat-strong', label: 'STRONG' };
+    return null;
+  }
+  const isSettled = r => r.model_correct !== null && r.model_correct !== undefined;
+  // Outcome class for settled races — drives the green/amber/red borders.
+  const resCls = r => r.model_correct === true ? 'res-win'
+    : (r.model_correct === false && r.model_placed === true) ? 'res-place'
+    : r.model_correct === false ? 'res-miss' : '';
+  function resultMark(r) {
+    if (r.model_correct === true)  return '<span class="res win">✓</span>';
+    if (r.model_correct === false && r.model_placed === true) return '<span class="res place">✓</span>';
+    if (r.model_correct === false) return '<span class="res miss">✗</span>';
+    return '';
+  }
+  // Simple highlight, matching the original Lounge: win % lights up (gold)
+  // from 30% confidence, place % (blue) from 50%; otherwise dimmed.
+  function barsHtml(winP, placeP) {
+    const w = pc(winP), p = pc(placeP);
+    if (w == null) return `<div style="font-size:0.68rem;color:var(--text-3)">No prediction yet</div>`;
+    return `<div class="pbar-pair">
+      <div class="pbar"><span class="lbl">WIN</span><span class="track"><span class="fill win" style="width:${Math.min(100, w)}%"></span></span><span class="val num ${w >= 30 ? 'v-win' : 'v-dim'}">${w}%</span></div>
+      ${p != null ? `<div class="pbar"><span class="lbl">PLC</span><span class="track"><span class="fill place" style="width:${Math.min(100, p)}%"></span></span><span class="val num ${p >= 50 ? 'v-plc' : 'v-dim'}">${p}%</span></div>` : ''}
+    </div>`;
+  }
+
+  /* ── data ── */
+  async function loadAll() {
+    const seq = ++S.loadSeq;
+    document.getElementById('dayStrip').classList.remove('show');
+    ['A','B','C'].forEach(v => document.getElementById('view' + v).innerHTML =
+      '<div class="loading"><div class="spin"></div>Loading meetings…</div>');
+    try {
+      const r = await fetch(`${API}/api/meetings/${S.date}`);
+      const d = await r.json();
+      if (seq !== S.loadSeq) return;
+      S.meetings = (d.meetings || d || []).filter(m => m.venue || m.venue_code);
+      // Legacy display alias: rows stored before the venue rename keep the
+      // RA-era name; show the bookmaker/town name everywhere.
+      const VENUE_DISPLAY = { 'Pioneer Park': 'Alice Springs' };
+      S.meetings.forEach(m => { if (VENUE_DISPLAY[m.venue]) m.venue = VENUE_DISPLAY[m.venue]; });
+      if (!S.meetings.length) { renderEmptyAll(); return; }
+      if (!S.selVenue) S.selVenue = vcOf(S.meetings[0]);
+      renderAll();
+      const queue = [...S.meetings];
+      const workers = Array.from({ length: 4 }, async () => {
+        while (queue.length) {
+          const m = queue.shift();
+          const vc = vcOf(m);
+          try {
+            const res = await fetch(`${API}/api/meetings/${S.date}/${vc}`);
+            S.details[vc] = res.ok ? ((await res.json()).races || []) : [];
+          } catch { S.details[vc] = []; }
+          if (seq === S.loadSeq) renderAll();
+        }
+      });
+      await Promise.all(workers);
+      if (seq === S.loadSeq) prefetchTopPicks(seq);
+    } catch (e) {
+      if (seq !== S.loadSeq) return;
+      ['A','B','C'].forEach(v => document.getElementById('view' + v).innerHTML =
+        `<div class="empty"><div class="big">⚠️</div>Could not load meetings — ${esc(e.message)}</div>`);
+    }
+  }
+
+  async function fetchRunners(raceId) {
+    // Cache only non-empty successes — caching a transient failure as []
+    // made every later click show 'no predictions' for that race.
+    if (S.runners[raceId] && S.runners[raceId].length) return S.runners[raceId];
+    try {
+      const res = await fetch(`${API}/api/races/${raceId}`);
+      const rs = res.ok ? ((await res.json()).runners || []) : [];
+      if (rs.length) S.runners[raceId] = rs;
+      return rs;
+    } catch { return []; }
+  }
+
+  // pick names for the hero + next few feed cards + selected meeting
+  async function prefetchTopPicks(seq) {
+    const upcoming = allRaces()
+      .filter(r => !countdown(r.scheduled_time).past && r.top_win_probability != null)
+      .sort((a, b) => (epochOf(a.scheduled_time) ?? 9e15) - (epochOf(b.scheduled_time) ?? 9e15))
+      .slice(0, 8);
+    const sel = (S.details[S.selVenue] || []).filter(r => r.top_win_probability != null).slice(0, 10);
+    const wanted = [...upcoming, ...sel];
+    for (const r of wanted) {
+      if (S.runners[r.race_id]) continue;
+      await fetchRunners(r.race_id);
+      if (seq !== S.loadSeq) return;
+      renderAll();
+    }
+  }
+
+  function allRaces() {
+    const out = [];
+    for (const m of S.meetings) {
+      const vc = vcOf(m);
+      for (const r of (S.details[vc] || []))
+        out.push({ ...r, _venue: m.venue, _vc: vc, _state: m.state, _wx: m.weather, _mtier: m.tier });
+    }
+    return out;
+  }
+  const topPickOf = rid => {
+    const rs = S.runners[rid];
+    if (!rs || !rs.length) return null;
+    return rs.find(x => x.model_rank === 1) ||
+      rs.slice().sort((a, b) => (b.win_probability || 0) - (a.win_probability || 0))[0];
+  };
+
+  /* ── shared: day strip ── */
+  function renderDayStrip() {
+    const races = allRaces();
+    const settled = races.filter(isSettled);
+    const el = document.getElementById('dayStrip');
+    if (!settled.length) { el.classList.remove('show'); return; }
+    const wins = settled.filter(r => r.model_correct === true).length;
+    const placed = settled.filter(r => r.model_correct === false && r.model_placed === true).length;
+    const pct = Math.round(wins / settled.length * 100);
+    const placePct = Math.round((wins + placed) / settled.length * 100);
+    el.innerHTML = `
+      <div class="ds-stat"><b class="num">${settled.length}</b> settled</div>
+      <div class="ds-divider"></div>
+      <div class="ds-stat"><b class="g num">${wins}</b> picks won <span class="num">(${pct}%)</span></div>
+      <div class="ds-divider"></div>
+      <div class="ds-stat"><b class="a num">${placed}</b> more placed <span class="num">(${placePct}% placed incl. wins)</span></div>`;
+    el.classList.add('show');
+  }
+
+  /* ── render all ── */
+  function renderAll() { renderDayStrip(); renderA(); renderB(); renderC(); }
+  function renderEmptyAll() {
+    ['A','B','C'].forEach(v => document.getElementById('view' + v).innerHTML =
+      `<div class="empty"><div class="big">🐎</div>No meetings loaded for ${esc(S.date)} yet.<br>Try another date — or check back after the morning update.</div>`);
+  }
+
+  /* ── View A: heat grid ── */
+  function renderA() {
+    const el = document.getElementById('viewA');
+    if (!S.meetings.length) return;
+    const prevScroll = el.querySelector('.grid-wrap')?.scrollLeft || 0;
+    const maxR = Math.max(1, ...S.meetings.map(m => (S.details[vcOf(m)] || []).length));
+    const head = Array.from({ length: maxR }, (_, i) => `<th>R${i + 1}</th>`).join('');
+
+    const rows = S.meetings.map(m => {
+      const vc = vcOf(m);
+      const races = S.details[vc];
+      const g = goingInfo(races?.[0]?.track_condition);
+      const cells = Array.from({ length: maxR }, (_, i) => {
+        const r = races?.[i];
+        if (!r) return `<td class="cell blank"></td>`;
+        const done = isSettled(r);
+        const tier = tierOf(r.top_win_probability, isOffGoing(r.track_condition));
+        const cls = [
+          done ? 'done' : '',
+          done ? resCls(r) : '',
+          !done && tier ? tier.heat : '',
+        ].join(' ');
+        // History cells keep their pre-race confidence label beside the result
+        const tierWord = tier ? tier.label.replace(/[^A-Za-z]/g, '') : '';
+        const sub = done
+          ? resultMark(r) + (tierWord ? `<span class="cell-tier ${tier.dot}">${tierWord}</span>` : '')
+          : (r.is_sharp ? '🎯' : '&nbsp;');
+        return `<td class="cell ${cls}" data-open="${esc(r.race_id)}" title="${esc(m.venue)} R${r.race_number}">
+          <div class="in"><div class="t num">${wallTime(r.scheduled_time)}</div><div class="sub">${sub}</div></div></td>`;
+      }).join('');
+      return `<tr>
+        <td class="mcell">
+          <div class="vname">${esc(m.venue)} <span class="st">${esc(m.state || '')}</span></div>
+          <div class="vmeta">
+            <span class="chip ${g.cls}">${esc(g.label)}</span>
+            ${m.weather ? `<span class="wx">${m.weather.icon || ''} ${Math.round(m.weather.temp_max ?? 0)}°</span>` : ''}
+          </div>
+        </td>${cells}</tr>`;
+    }).join('');
+
+    el.innerHTML = `<div class="grid-wrap"><table class="race-grid">
+      <thead><tr><th>Meeting</th>${head}</tr></thead><tbody>${rows}</tbody></table></div>
+      <div class="heat-legend">
+        <span><span class="sw" style="background:var(--hot-dim);box-shadow:inset 0 0 0 1px var(--hot)"></span>Hot pick race</span>
+        <span><span class="sw" style="background:var(--blue-dim);box-shadow:inset 0 0 0 1px var(--blue)"></span>High confidence</span>
+        <span><span class="sw" style="background:var(--strong-dim);box-shadow:inset 0 0 0 1px var(--strong)"></span>Strong pick</span>
+        <span>🎯 Sharp race</span>
+        <span><span class="res win">✓</span>/<span class="res place">✓</span>/<span class="res miss">✗</span> our pick's result (green won · amber placed)</span>
+      </div>
+      <div class="hint">Cell colour = how strongly our model rates its top pick in that race. Tap any race for the win &amp; place predictions.</div>`;
+    const gw = el.querySelector('.grid-wrap');
+    if (gw && prevScroll) gw.scrollLeft = prevScroll;
+    bindOpen(el);
+  }
+
+  /* ── View B: race day feed ── */
+  function renderB() {
+    const el = document.getElementById('viewB');
+    if (!S.meetings.length) return;
+    let races = allRaces().sort((a, b) => (epochOf(a.scheduled_time) ?? 9e15) - (epochOf(b.scheduled_time) ?? 9e15));
+    const chips = `<div class="venue-chips">
+      <button class="vchip ${S.feedVenue === 'all' ? 'on' : ''}" data-fv="all">All meetings</button>
+      ${S.meetings.map(m => `<button class="vchip ${S.feedVenue === vcOf(m) ? 'on' : ''}" data-fv="${esc(vcOf(m))}">${esc(m.venue)}</button>`).join('')}
+    </div>`;
+    if (S.feedVenue !== 'all') races = races.filter(r => r._vc === S.feedVenue);
+
+    const upcoming = races.filter(r => !countdown(r.scheduled_time).past);
+    const settled = races.filter(r => countdown(r.scheduled_time).past).reverse();
+    const hero = upcoming[0];
+
+    const heroHtml = hero ? (() => {
+      const g = goingInfo(hero.track_condition);
+      const off = isOffGoing(hero.track_condition);
+      const tier = tierOf(hero.top_win_probability, off);
+      const cd = countdown(hero.scheduled_time);
+      const rs = (S.runners[hero.race_id] || []).filter(x => !x.cancelled)
+        .sort((a, b) => (a.model_rank || 99) - (b.model_rank || 99) || (b.win_probability || 0) - (a.win_probability || 0))
+        .slice(0, 3);
+      const picksHtml = rs.length ? rs.map((x, i) => `
+        <div class="hrunner ${i === 0 ? 'top1' : ''}">
+          <div class="saddle num">${x.tab_number ?? '–'}</div>
+          <div class="nm"><div class="h">${esc(x.horse_name)}</div><div class="j">${esc(x.jockey || '')}</div></div>
+          ${x.best_available_odds > 1 ? `<div class="hodds num">$${(+x.best_available_odds).toFixed(2)}</div>` : ''}
+          <div class="bars">${barsHtml(x.win_probability, x.place_probability)}</div>
+        </div>`).join('')
+        : `<div style="padding:10px 0;color:var(--text-3);font-size:0.8rem">Loading our top 3…</div>`;
+      return `<div class="hero" data-open="${esc(hero.race_id)}">
+        <div class="hero-top">
+          <span class="tag">NEXT UP</span>
+          <div>
+            <div class="where">${esc(hero._venue)} <small>R${hero.race_number}</small></div>
+            <div class="meta num">${hero.distance ? hero.distance + 'm · ' : ''}${hero.field_size ? hero.field_size + ' runners · ' : ''}<span></span></div>
+          </div>
+          <span class="chip ${g.cls}">${esc(g.label)}</span>
+          ${hero.is_sharp ? `<span class="chip sharp">🎯 SHARP</span>` : ''}
+          ${tier ? `<span class="chip ${tier.cls}">${tier.label}</span>` : ''}
+          ${watchBtn(hero._state)}
+          <div class="clockbox"><div class="clock num">${wallTime(hero.scheduled_time)}</div><div class="cd ${cd.urg || ''}">${cd.label}</div></div>
+        </div>
+        <div class="hero-picks">${picksHtml}</div>
+        <div class="hero-note">Our top ${rs.length || 3} for this race — tap for the full breakdown.</div>
+      </div>`;
+    })() : '';
+
+    const card = (r, settledCard) => {
+      const cd = countdown(r.scheduled_time);
+      const off = isOffGoing(r.track_condition);
+      const g = goingInfo(r.track_condition);
+      const tier = tierOf(r.top_win_probability, off);
+      const tp = topPickOf(r.race_id);
+      const done = isSettled(r);
+      return `<div class="jcard ${settledCard ? 'settled' : ''} ${done ? resCls(r) : ''}" data-open="${esc(r.race_id)}">
+        <div class="when">
+          <div class="clock num">${wallTime(r.scheduled_time)}</div>
+          <div class="cd ${done ? '' : (cd.urg || '')}">${done ? resultMark(r) : (cd.label || (settledCard ? 'done' : ''))}</div>
+        </div>
+        <div class="where">${esc(r._venue)} <span style="color:var(--text-3)">R${r.race_number}</span>
+          <span class="rmeta num">${r.distance ? r.distance + 'm' : ''}${r.field_size ? ' · ' + r.field_size + ' rnrs' : ''}</span></div>
+        <div class="pick">
+          ${(() => {
+            const nm = r.top_pick || (tp && tp.horse_name) || null;
+            const od = (r.top_pick_odds > 1 ? +r.top_pick_odds : null) || (tp && tp.best_available_odds > 1 ? +tp.best_available_odds : null);
+            return `<div class="pname ${nm ? '' : 'ghost'}"><span class="pn-t">${nm ? esc(nm) : (r.top_win_probability != null ? 'Tap for our pick' : 'No prediction yet')}</span>${od ? `<span class="pk-odds num">$${od.toFixed(2)}</span>` : ''}</div>`;
+          })()}
+          ${barsHtml(r.top_win_probability, r.top_place_probability)}
+        </div>
+        <div class="chips">
+          ${r.is_sharp ? `<span class="chip sharp">🎯 SHARP</span>` : ''}
+          ${tier ? `<span class="chip ${tier.cls}">${tier.label}</span>` : ''}
+        </div>
+      </div>`;
+    };
+
+    el.innerHTML = chips + heroHtml +
+      (upcoming.length > 1 ? `<div class="feed-sec-title">Coming up</div>` + upcoming.slice(1).map(r => card(r, false)).join('') : '') +
+      (settled.length ? `<div class="feed-sec-title">Earlier — how our picks went</div>` + settled.map(r => card(r, true)).join('') : '') +
+      (!upcoming.length && !settled.length ? `<div class="empty"><div class="big">🐎</div>No races for this filter.</div>` : '');
+    el.querySelectorAll('[data-fv]').forEach(b => b.onclick = e => { e.stopPropagation(); S.feedVenue = b.dataset.fv; renderB(); });
+    bindOpen(el);
+  }
+
+  /* ── View C: meetings rail ── */
+  function renderC() {
+    const el = document.getElementById('viewC');
+    if (!S.meetings.length) return;
+    if (!S.selVenue || !S.meetings.some(m => vcOf(m) === S.selVenue)) S.selVenue = vcOf(S.meetings[0]);
+
+    const railItems = S.meetings.map(m => {
+      const vc = vcOf(m);
+      const races = S.details[vc] || [];
+      const done = races.filter(isSettled).length;
+      const g = goingInfo(races[0]?.track_condition);
+      const next = races.find(r => !countdown(r.scheduled_time).past);
+      return `<button class="rail-item ${vc === S.selVenue ? 'on' : ''}" data-sel="${esc(vc)}">
+        <div class="rv">${esc(m.venue)} <span class="st">${esc(m.state || '')}</span>
+          ${m.weather ? `<span class="wx">${m.weather.icon || ''} ${Math.round(m.weather.temp_max ?? 0)}°</span>` : ''}</div>
+        <div class="rmeta">
+          <span class="chip ${g.cls}">${esc(g.label)}</span>
+          <span class="prog num">${done}/${races.length || '–'} raced${next ? ` · next ${wallTime(next.scheduled_time)}` : ''}</span>
+        </div>
+        <div class="progbar"><div class="pf" style="width:${races.length ? done / races.length * 100 : 0}%"></div></div>
+      </button>`;
+    }).join('');
+
+    const m = S.meetings.find(x => vcOf(x) === S.selVenue);
+    const races = S.details[S.selVenue] || [];
+    const g = goingInfo(races[0]?.track_condition);
+    const raceRows = races.map(r => {
+      const cd = countdown(r.scheduled_time);
+      const done = isSettled(r);
+      const off = isOffGoing(r.track_condition);
+      const tier = tierOf(r.top_win_probability, off);
+      const tp = topPickOf(r.race_id);
+      // Settled rows: prefer the venue-results payload (one fetch per meeting,
+      // cached) for the pick's NAME and its actual STARTING PRICE — no
+      // per-race runner fetch needed, so names/odds appear immediately.
+      const rr = (_resultsCache[S.selVenue] || {})[r.race_number] || null;
+      const pickName = r.top_pick || (tp && tp.horse_name) || (rr && rr.top_pick) || null;
+      let pickSp = null;
+      if (rr && rr.runners && pickName) {
+        const f = rr.runners.find(x => (x.name || '').toLowerCase() === pickName.toLowerCase());
+        if (f && f.sp) pickSp = +f.sp;
+      }
+      const oddsShow = pickSp
+        || (r.top_pick_odds > 1 ? +r.top_pick_odds : null)
+        || (tp && tp.best_available_odds > 1 ? +tp.best_available_odds : null);
+      return `<div class="brace ${done ? resCls(r) : ''}" data-open="${esc(r.race_id)}">
+        <div class="rn">R${r.race_number}</div>
+        <div class="rt num">${wallTime(r.scheduled_time)}<span class="cd ${done ? '' : (cd.urg || '')}">${done ? '' : cd.label}</span></div>
+        <div class="mid">
+          ${done
+            ? `<div class="pk"><span class="pk-name">${pickName ? esc(pickName) : 'Our pick'}</span>${resultMark(r)}${oddsShow ? `<span class="pk-odds num">$${oddsShow.toFixed(2)}</span>` : ''}</div>`
+            : (() => {
+                const nm = r.top_pick || (tp && tp.horse_name) || null;
+                const od = (r.top_pick_odds > 1 ? +r.top_pick_odds : null) || (tp && tp.best_available_odds > 1 ? +tp.best_available_odds : null);
+                return `<div class="pk ${nm ? '' : 'ghost'}"><span class="pk-name">${nm ? esc(nm) : (r.top_win_probability != null ? 'Tap for our pick' : 'No prediction yet')}</span>${tier ? `<span class="chip ${tier.cls}">${tier.label}</span>` : ''}${od ? `<span class="pk-odds num">$${od.toFixed(2)}</span>` : ''}</div>`;
+              })()}
+          <div class="sub num">${r.distance ? r.distance + 'm' : ''}${r.field_size ? ' · ' + r.field_size + ' runners' : ''}${r.is_sharp ? ` <span class="chip sharp" style="font-size:0.56rem;padding:1px 5px;margin-left:4px">🎯 SHARP</span>` : ''}</div>
+        </div>
+        <div class="right">
+          ${barsHtml(r.top_win_probability, r.top_place_probability)}
+        </div>
+      </div>`;
+    }).join('');
+
+    el.innerHTML = `<div class="rail-layout">
+      <div class="rail">${railItems}</div>
+      <div class="board">
+        <div class="board-head">
+          <div class="t">${esc(m?.venue || '')} <span class="st">${esc(m?.state || '')}${m?.tier ? ' · ' + esc(m.tier) : ''}</span></div>
+          <div class="chips">
+            ${m?.weather?.rain_mm >= 2 ? `<span class="chip wet-note">🌧 RAIN ${m.weather.rain_mm}mm</span>` : ''}
+            ${m?.weather ? `<span class="chip going-unknown">${m.weather.icon || ''} ${Math.round(m.weather.temp_max ?? 0)}°</span>` : ''}
+            ${watchBtn(m?.state)}
+          </div>
+        </div>
+        ${raceRows || '<div style="padding:16px 18px;color:var(--text-3);font-size:0.82rem">Loading races…</div>'}
+      </div>
+    </div>`;
+    el.querySelectorAll('[data-sel]').forEach(b => b.onclick = () => {
+      S.selVenue = b.dataset.sel;
+      renderC();
+      prefetchSelected();
+    });
+    bindOpen(el);
+    // Load the meeting's results once so settled rows show pick names + SPs
+    const _vcNow = S.selVenue;
+    if (!_resultsCache[_vcNow] && (S.details[_vcNow] || []).some(isSettled)) {
+      fetchVenueResults(_vcNow).then(() => {
+        if (S.version === 'C' && S.selVenue === _vcNow) renderC();
+      });
+    }
+  }
+  async function prefetchSelected() {
+    const seq = S.loadSeq;
+    for (const r of (S.details[S.selVenue] || [])) {
+      if (S.runners[r.race_id] || r.top_win_probability == null) continue;
+      await fetchRunners(r.race_id);
+      if (seq !== S.loadSeq) return;
+      if (S.version === 'C') renderC();
+    }
+  }
+
+  /* ── drawer ── */
+  const drawer = document.getElementById('drawer');
+  const ovl = document.getElementById('ovl');
+  function bindOpen(root) {
+    root.querySelectorAll('[data-open]').forEach(n => n.onclick = n.onclick || (() => openRace(n.dataset.open)));
+  }
+  function closeDrawer() { drawer.classList.remove('open'); ovl.classList.remove('open'); }
+  document.getElementById('dwClose').onclick = closeDrawer;
+  ovl.onclick = closeDrawer;
+  document.addEventListener('keydown', e => { if (e.key === 'Escape') closeDrawer(); });
+
+  const _resultsCache = {};   // "vc" -> {race_number: resultRace}
+  async function fetchVenueResults(vc) {
+    if (_resultsCache[vc]) return _resultsCache[vc];
+    try {
+      const res = await fetch(`${API}/api/meetings/${S.date}/${vc}/results`);
+      const d = res.ok ? await res.json() : {};
+      _resultsCache[vc] = {};
+      for (const rr of (d.races || [])) _resultsCache[vc][rr.race_number] = rr;
+    } catch { _resultsCache[vc] = {}; }
+    return _resultsCache[vc];
+  }
+
+  async function openRace(raceId) {
+    const r = allRaces().find(x => x.race_id === raceId);
+    if (!r) return;
+    const g = goingInfo(r.track_condition);
+    const off = isOffGoing(r.track_condition);
+    const tier = tierOf(r.top_win_probability, off);
+    document.getElementById('dwTitle').innerHTML = `${esc(r._venue)} <b class="dw-rnum">R${r.race_number}</b>`;
+    document.getElementById('dwSub').innerHTML =
+      `${esc(r.race_name || '')}${r.race_name ? ' · ' : ''}<span class="num">${r.distance ? r.distance + 'm · ' : ''}${wallTime(r.scheduled_time)}${r.field_size ? ' · ' + r.field_size + ' runners' : ''}</span>`;
+    document.getElementById('dwChips').innerHTML =
+      (r.is_sharp ? `<span class="chip sharp">🎯 SHARP</span>` : '') +
+      (tier ? `<span class="chip ${tier.cls}">${tier.label}</span>` : '') +
+      watchBtn(r._state);
+    const body = document.getElementById('dwBody');
+    body.innerHTML = '<div class="loading"><div class="spin"></div>Loading predictions…</div>';
+    drawer.classList.add('open'); ovl.classList.add('open');
+
+    const rs = (await fetchRunners(raceId)).filter(x => !x.cancelled)
+      .sort((a, b) => (a.model_rank || 99) - (b.model_rank || 99) || (b.win_probability || 0) - (a.win_probability || 0));
+    const top = rs;  // full field — the drawer scrolls; ranked by our model
+
+    const offNote = off ? `<div class="dw-note"><b>${esc(g.label)} track:</b> rain-affected going. Dry-track form is less reliable here, so our confidence tiers are capped for this race — treat these as guides, not locks.</div>` : '';
+    const settledNote = isSettled(r) ? `<div class="dw-note" style="background:var(--surface-2);border-color:var(--line)"><b>Race finished.</b> ${r.model_correct ? 'Our top pick won this race. ✓' : r.model_placed ? 'Our top pick ran a place. ✓' : 'Our top pick missed here. ✗'} Pre-race predictions shown below.</div>` : '';
+    // Finishing order (1st-4th) for settled races — who actually won
+    let resultHtml = '';
+    if (isSettled(r)) {
+      const vres = await fetchVenueResults(r._vc);
+      const rr = vres[r.race_number];
+      const fin = (rr && rr.runners) ? rr.runners.filter(x => x.position >= 1 && x.position <= 4)
+        .sort((a, b) => a.position - b.position) : [];
+      if (fin.length) {
+        const ORD = { 1: '1st', 2: '2nd', 3: '3rd', 4: '4th' };
+        const pickNorm = (r.top_pick || (top[0] && top[0].horse_name) || '').toLowerCase();
+        resultHtml = `<div class="dw-result"><div class="dw-result-t">RESULT</div>` + fin.map(f => {
+          const isPick = (f.name || '').toLowerCase() === pickNorm;
+          return `<div class="dw-res-row ${f.position === 1 ? 'w' : ''} ${isPick ? 'mine' : ''}">
+            <span class="pos num">${ORD[f.position]}</span>
+            <span class="nm">${esc(f.name)}${isPick ? ' <span class="pick-tag">OUR PICK</span>' : ''}</span>
+            ${f.sp ? `<span class="sp num">$${(+f.sp).toFixed(2)}</span>` : ''}
+          </div>`;
+        }).join('') + `</div>`;
+      }
+    }
+
+    if (!top.length) {
+      body.innerHTML = resultHtml +
+        `<div class="empty" style="padding:30px 10px">No runner predictions for this race${resultHtml ? ' — result shown above' : ''}.<br><span style="font-size:0.75rem">Tap the race again to retry.</span></div>`;
+      return;
+    }
+
+    // Outcome chip for our predicted winner once the race is settled
+    const pickOutcome = isSettled(r)
+      ? (r.model_correct ? '<span class="chip outcome-win">✓ WIN</span>'
+         : r.model_placed ? '<span class="chip outcome-place">✓ PLACE</span>'
+         : '<span class="chip outcome-miss">✗ LOST</span>')
+      : '';
+    body.innerHTML = offNote + settledNote + resultHtml + top.map((x, i) => {
+      const isVal = (x.overlay || 0) > 0.05 && (x.best_available_odds || 0) >= 3;
+      return `<div class="runner ${i === 0 ? 'top1' : ''}">
+        <div class="saddle num">${x.tab_number ?? '–'}</div>
+        <div class="info">
+          <div class="hn">${esc(x.horse_name)}
+            <span class="pick-tag">${i === 0 ? 'OUR PICK' : (i + 1) + ['','','ND','RD'][i + 1 <= 3 ? i + 1 : 0] + (i + 1 <= 3 ? ' PICK' : 'TH PICK')}</span>${i === 0 ? pickOutcome : ''}
+            ${isVal ? '<span class="val-chip">VALUE</span>' : ''}</div>
+          <div class="jk">${esc(x.jockey || '')}${x.jockey_overall_rate != null ? ` <b>${(+x.jockey_overall_rate).toFixed(0)}%</b>` : ''}${x.trainer ? ` · T: ${esc(x.trainer)}` : ''}${x.trainer_overall_rate != null ? ` <b>${(+x.trainer_overall_rate).toFixed(0)}%</b>` : ''}</div>
+          <div class="jk">${x.barrier ? `barrier ${x.barrier}` : ''}${x.weight ? ` · ${x.weight}kg` : ''}${x.starts_last_10 != null ? ` · last ${x.starts_last_10 < 10 ? x.starts_last_10 : 10}: ${x.wins_last_10 ?? 0}W / ${x.places_last_10 ?? 0} top-3` : ''}${x.days_since_last_run != null && x.days_since_last_run < 999 ? ` · ${x.days_since_last_run}d off` : ''}</div>
+          ${(x.key_flags || []).length ? `<div class="rflags">${(x.key_flags || []).slice(0, 3).map(f => `<span class="rflag">${esc(f)}</span>`).join('')}</div>` : ''}
+          <div class="rbars">${barsHtml(x.win_probability, x.place_probability)}</div>
+        </div>
+        <div class="odds">
+          ${x.best_available_odds ? `<div class="o num">$${(+x.best_available_odds).toFixed(2)}</div><div class="ol">best odds</div>` : ''}
+        </div>
+      </div>`;
+    }).join('');
+  }
+
+  /* ── countdown ticker (light re-render, drawer untouched) ── */
+  setInterval(() => { if (S.meetings.length) renderAll(); }, 45000);
+
+  /* ── boot ── */
+  S.date = aestToday(0);
+  buildDateRow();
+  applyVersion('C');
+  loadAll();
+})();
+</script>
+</body>
+</html>
