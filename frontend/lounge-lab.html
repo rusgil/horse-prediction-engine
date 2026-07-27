@@ -821,12 +821,13 @@
     const wins = settled.filter(r => r.model_correct === true).length;
     const placed = settled.filter(r => r.model_correct === false && r.model_placed === true).length;
     const pct = Math.round(wins / settled.length * 100);
+    const placePct = Math.round((wins + placed) / settled.length * 100);
     el.innerHTML = `
       <div class="ds-stat"><b class="num">${settled.length}</b> settled</div>
       <div class="ds-divider"></div>
       <div class="ds-stat"><b class="g num">${wins}</b> picks won <span class="num">(${pct}%)</span></div>
       <div class="ds-divider"></div>
-      <div class="ds-stat"><b class="a num">${placed}</b> more placed</div>`;
+      <div class="ds-stat"><b class="a num">${placed}</b> more placed <span class="num">(${placePct}% placed incl. wins)</span></div>`;
     el.classList.add('show');
   }
 
