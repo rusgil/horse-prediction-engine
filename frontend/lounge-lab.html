@@ -195,6 +195,10 @@
   .cell.done.res-win .in   { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--mint)  55%, transparent); }
   .cell.done.res-place .in { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--amber) 55%, transparent); }
   .cell.done.res-miss .in  { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--red)   40%, transparent); }
+  /* settled cards keep their outcome colour on hover (generic hover is mint) */
+  .jcard.res-win:hover   { border-color: var(--mint); }
+  .jcard.res-place:hover { border-color: var(--amber); }
+  .jcard.res-miss:hover  { border-color: var(--red); }
   /* light theme: thicker + stronger — the slim borders wash out on white */
   :root[data-theme="light"] .jcard.res-win   { border: 2px solid color-mix(in srgb, var(--mint)  75%, var(--line)); }
   :root[data-theme="light"] .jcard.res-place { border: 2px solid color-mix(in srgb, var(--amber) 75%, var(--line)); }
