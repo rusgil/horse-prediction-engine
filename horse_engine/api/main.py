@@ -1533,15 +1533,23 @@ async def _seed_results_from_oddspro(
             track_results = op_results.get(track) or op_results.get(track.lower()) or {}
             for race_num, race_data in track_results.items():
                 race_id = f"{race_date}_{vc}_R{race_num}"
-                if race_id in already_seeded:
-                    continue
+                # TOP-UP instead of skip (2026-07-27): the race-level skip made
+                # partial seeds permanent — blind meetings seeded by the
+                # live-tote fallback got only the top 4-5 finishers with no
+                # ran-markers, so picks that finished 5th+ had no row and every
+                # such race showed a neutral dot forever (18 races on
+                # 2026-07-26). The per-horse existing_lower guard below already
+                # makes writes idempotent, so re-walking a seeded race only
+                # inserts the missing runners.
                 # get_results now returns {"finishers": [...], "ran": [...]}.
                 finishers = race_data.get("finishers", []) if isinstance(race_data, dict) else race_data
                 ran = race_data.get("ran", []) if isinstance(race_data, dict) else []
                 pred_by_name = races_by_num.get(int(race_num), {})
                 async with get_session() as session:
+                    # _normalize_horse (not plain .lower()) so apostrophe/country
+                    # variants of an already-stored horse can't double-insert.
                     existing_lower = {
-                        n.lower() for n in (await session.execute(
+                        _normalize_horse(n) for n in (await session.execute(
                             select(HistoricalResultRow.horse_name)
                             .where(HistoricalResultRow.race_id == race_id)
                         )).scalars().all()
@@ -1555,7 +1563,7 @@ async def _seed_results_from_oddspro(
                         placed_norm.add(_normalize_horse(name))
                         matched = pred_by_name.get(_normalize_horse(name))
                         display_name = matched.horse_name if matched else name
-                        if display_name.lower() in existing_lower:
+                        if _normalize_horse(display_name) in existing_lower:
                             continue
                         session.add(HistoricalResultRow(
                             race_id=race_id,
@@ -1568,7 +1576,7 @@ async def _seed_results_from_oddspro(
                             tab_number=f.get("number") or (getattr(matched, "tab_number", None) if matched else None),
                             feature_vector_json=matched.enriched_json if matched else None,
                         ))
-                        existing_lower.add(display_name.lower())
+                        existing_lower.add(_normalize_horse(display_name))
                         wrote += 1
                     # UNPLACED (2026-07-23 fix): OddsPro lists only the top ~4, so a
                     # runner that RAN but finished 5th+ has no finisher row. Without a
@@ -1583,7 +1591,7 @@ async def _seed_results_from_oddspro(
                             continue
                         matched = pred_by_name.get(_normalize_horse(name))
                         display_name = matched.horse_name if matched else name
-                        if display_name.lower() in existing_lower:
+                        if _normalize_horse(display_name) in existing_lower:
                             continue
                         session.add(HistoricalResultRow(
                             race_id=race_id,
@@ -1596,7 +1604,7 @@ async def _seed_results_from_oddspro(
                             tab_number=rr.get("number") or (getattr(matched, "tab_number", None) if matched else None),
                             feature_vector_json=matched.enriched_json if matched else None,
                         ))
-                        existing_lower.add(display_name.lower())
+                        existing_lower.add(_normalize_horse(display_name))
                         wrote += 1
                     if wrote:
                         try:
@@ -1663,8 +1671,10 @@ async def _seed_results_from_sportsbet(race_date: str, pred_rows_for_date: list,
                 if not order:
                     continue
                 async with get_session() as session:
+                    # _normalize_horse (not plain .lower()) so apostrophe/country
+                    # variants of an already-stored horse can't double-insert.
                     existing_lower = {
-                        n.lower() for n in (await session.execute(
+                        _normalize_horse(n) for n in (await session.execute(
                             select(HistoricalResultRow.horse_name)
                             .where(HistoricalResultRow.race_id == race_id)
                         )).scalars().all()
@@ -1688,7 +1698,7 @@ async def _seed_results_from_sportsbet(race_date: str, pred_rows_for_date: list,
                             tab_number=tab,
                             feature_vector_json=matched.enriched_json if matched else None,
                         ))
-                        existing_lower.add(display_name.lower())
+                        existing_lower.add(_normalize_horse(display_name))
                         wrote += 1
                     # Unplaced: our predicted runners that ran (not cancelled) and
                     # finished outside the top-3.
@@ -1709,7 +1719,7 @@ async def _seed_results_from_sportsbet(race_date: str, pred_rows_for_date: list,
                             tab_number=tab,
                             feature_vector_json=prow.enriched_json,
                         ))
-                        existing_lower.add(display_name.lower())
+                        existing_lower.add(_normalize_horse(display_name))
                         wrote += 1
                     if wrote:
                         try:
