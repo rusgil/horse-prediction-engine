@@ -1333,6 +1333,28 @@
     const settled = races.filter(r => countdown(r.scheduled_time).past).reverse();
     const hero = upcoming[0];
 
+    // Hot-seat style inline full field — replaces the drawer popup
+    const fieldHtml = (r) => {
+      if (!fieldOpen.has(r.race_id)) {
+        return `<div class="field-toggle">Full field${r.field_size ? ` (${r.field_size})` : ''} ▾</div>`;
+      }
+      const rs = (S.runners[r.race_id] || [])
+        .sort((a, b) => (a.model_rank || 99) - (b.model_rank || 99) || (b.win_probability || 0) - (a.win_probability || 0));
+      if (!rs.length) return `<div class="field-toggle">Loading full field…</div>`;
+      const rows = rs.map(x => `
+        <tr class="${x.model_rank === 1 ? 'rank1' : ''} ${x.cancelled ? 'scratched' : ''}">
+          <td class="r num">${x.tab_number ?? '—'}</td>
+          <td class="name">${esc(x.horse_name)}${x.jockey ? `<span class="jk"> · ${esc(x.jockey)}</span>` : ''}</td>
+          <td class="r num">${x.win_probability != null ? (x.win_probability * 100).toFixed(1) + '%' : '—'}</td>
+          <td class="r num">${x.place_probability != null ? (x.place_probability * 100).toFixed(0) + '%' : '—'}</td>
+          <td class="r num">${x.best_available_odds > 1 ? '$' + (+x.best_available_odds).toFixed(2) : '—'}</td>
+        </tr>`).join('');
+      return `<div class="field-toggle">Hide full field ▴</div>
+        <table class="field-table">
+          <thead><tr><th class="r">#</th><th class="l">Horse</th><th class="r">Win</th><th class="r">Place</th><th class="r">Odds</th></tr></thead>
+          <tbody>${rows}</tbody>
+        </table>`;
+    };
     const heroHtml = hero ? (() => {
       const g = goingInfo(hero.track_condition);
       const off = isOffGoing(hero.track_condition);
@@ -1368,28 +1390,6 @@
       </div>`;
     })() : '';
 
-    // Hot-seat style inline full field — replaces the drawer popup
-    const fieldHtml = (r) => {
-      if (!fieldOpen.has(r.race_id)) {
-        return `<div class="field-toggle">Full field${r.field_size ? ` (${r.field_size})` : ''} ▾</div>`;
-      }
-      const rs = (S.runners[r.race_id] || [])
-        .sort((a, b) => (a.model_rank || 99) - (b.model_rank || 99) || (b.win_probability || 0) - (a.win_probability || 0));
-      if (!rs.length) return `<div class="field-toggle">Loading full field…</div>`;
-      const rows = rs.map(x => `
-        <tr class="${x.model_rank === 1 ? 'rank1' : ''} ${x.cancelled ? 'scratched' : ''}">
-          <td class="r num">${x.tab_number ?? '—'}</td>
-          <td class="name">${esc(x.horse_name)}${x.jockey ? `<span class="jk"> · ${esc(x.jockey)}</span>` : ''}</td>
-          <td class="r num">${x.win_probability != null ? (x.win_probability * 100).toFixed(1) + '%' : '—'}</td>
-          <td class="r num">${x.place_probability != null ? (x.place_probability * 100).toFixed(0) + '%' : '—'}</td>
-          <td class="r num">${x.best_available_odds > 1 ? '$' + (+x.best_available_odds).toFixed(2) : '—'}</td>
-        </tr>`).join('');
-      return `<div class="field-toggle">Hide full field ▴</div>
-        <table class="field-table">
-          <thead><tr><th class="r">#</th><th class="l">Horse</th><th class="r">Win</th><th class="r">Place</th><th class="r">Odds</th></tr></thead>
-          <tbody>${rows}</tbody>
-        </table>`;
-    };
     const card = (r, settledCard) => {
       const cd = countdown(r.scheduled_time);
       const off = isOffGoing(r.track_condition);
