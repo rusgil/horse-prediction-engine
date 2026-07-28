@@ -181,7 +181,10 @@
   }
   .hs-filters .fl { font-weight: 800; color: var(--text-3); letter-spacing: 0.04em; text-transform: uppercase; font-size: 0.62rem; }
   .hs-filters .fl-gap { margin-left: 10px; }
-  .jcard .when .cd.big { font-family: 'Barlow Condensed'; font-weight: 800; font-size: 1.15rem; line-height: 1.1; }
+  .jcard .when .cd.big {
+    font-family: 'Barlow Condensed', sans-serif; font-weight: 800; font-size: 30px;
+    line-height: 1; letter-spacing: 0.5px; font-variant-numeric: tabular-nums;
+  }
   .jcard .when .wt { font-size: 0.68rem; color: var(--text-3); font-weight: 700; }
   .field-toggle {
     grid-column: 1 / -1; margin-top: 8px; text-align: center; font-size: 0.68rem;
@@ -425,7 +428,7 @@
   .jcard {
     background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius);
     padding: 12px 15px; margin-bottom: 9px;
-    display: grid; grid-template-columns: 64px 1fr auto; gap: 4px 14px; align-items: center;
+    display: grid; grid-template-columns: 88px 1fr auto; gap: 4px 14px; align-items: center;
     cursor: pointer; transition: border-color 0.15s; box-shadow: var(--shadow);
   }
   .jcard:hover { border-color: var(--mint); }
@@ -461,7 +464,7 @@
   .jcard.settled { opacity: 0.75; }
   .jcard.settled:hover { opacity: 1; }
   @media (max-width: 640px) {
-    .jcard { grid-template-columns: 56px 1fr; }
+    .jcard { grid-template-columns: 74px 1fr; }
     .jcard .pick { grid-row: auto; grid-column: 2; text-align: left; margin-top: 4px; }
     .jcard .pick .pname { margin-left: 0; justify-content: flex-start; }
     .jcard .when { grid-row: span 3; }
@@ -1009,10 +1012,10 @@
     const diff = t - Date.now();
     if (diff <= 0) return { label: diff > -35 * 60000 ? 'resulting' : '', soon: false, past: true, urg: '' };
     const m = Math.floor(diff / 60000);
-    if (m < 60) return { label: `in ${m}m`, soon: m <= 15, past: false, urg: m <= 15 ? 'soon' : 'hour' };
+    if (m < 60) return { label: `${m}m`, soon: m <= 15, past: false, urg: m <= 15 ? 'soon' : 'hour' };
     const h = Math.floor(m / 60);
-    if (h < 24) return { label: `in ${h}h ${m % 60}m`, soon: false, past: false, urg: 'far' };
-    return { label: `in ${Math.floor(h / 24)}d`, soon: false, past: false, urg: 'far' };
+    if (h < 24) return { label: `${h}h ${m % 60}m`, soon: false, past: false, urg: 'far' };
+    return { label: `${Math.floor(h / 24)}d`, soon: false, past: false, urg: 'far' };
   }
 
   function goingInfo(tc) {
