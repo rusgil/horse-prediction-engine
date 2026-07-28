@@ -13739,10 +13739,18 @@ async def _run_quality_check(target: str) -> dict:
             # backfill writers can add the full field to history later, which
             # must not hide that the live pre-race snapshot was short.
             .where(RunnerPredictionHistoryRow.source == "live")
+            # cancelled rows are excluded EVERYWHERE runners are displayed and
+            # ranked — a cancelled "prediction" for a horse that then FINISHED
+            # is a false scratching, which is exactly what this canary is for
+            # (Bathurst 2026-07-28: ARGYLE SPRINGS cancelled in the data, ran 3rd).
+            .where(RunnerPredictionHistoryRow.cancelled.is_(False)
+                   | RunnerPredictionHistoryRow.cancelled.is_(None))
         )).fetchall()
         _pn_mut = (await session.execute(
             select(RunnerPredictionRow.race_id, RunnerPredictionRow.horse_name)
             .where(RunnerPredictionRow.race_id.like(f"{target}_%"))
+            .where(RunnerPredictionRow.cancelled.is_(False)
+                   | RunnerPredictionRow.cancelled.is_(None))
         )).fetchall()
     # The prediction of record is the FROZEN pre-race snapshot — a later
     # re-enrich can backfill mutable with the full field (Bathurst 2026-07-28
