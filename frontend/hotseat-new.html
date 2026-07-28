@@ -182,6 +182,8 @@
   .filt-info { font-size: 0.7rem; color: var(--text-3); line-height: 1.45; margin-top: 7px; }
   .filt-info strong { color: var(--text-2); }
   .filt-info em { color: var(--gold); font-style: normal; font-weight: 700; }
+  .filt-clear { margin: 2px 0 14px; display: inline-block; }
+  .filt-clear:disabled { opacity: 0.4; cursor: default; }
   .filt-note { font-size: 0.7rem; color: var(--text-3); margin-top: 4px; }
   .jcard .when .cd.big {
     font-family: 'Barlow Condensed', sans-serif; font-weight: 800; font-size: 30px;
@@ -1589,18 +1591,28 @@
       <div class="opts">${opts.map(([v, l]) =>
         `<button class="vchip ${S[key] === v ? 'on' : ''}" data-fx="${attr}" data-val="${v}">${l}</button>`).join('')}</div>
       ${info ? `<div class="filt-info">${info}</div>` : ''}
-    </div>`).join('') + `<div class="filt-note">Filters apply to upcoming races only — settled results always show in full.</div>`;
+    </div>`).join('')
+      + `<button class="vchip filt-clear" id="hsFiltClear" ${_FILT_GROUPS.some(g => S[g[2]] !== 'all') ? '' : 'disabled'}>✕ Clear all filters</button>`
+      + `<div class="filt-note">Filters apply to upcoming races only — settled results always show in full.</div>`;
   }
   function bindFilterDrawer() {
-    document.querySelectorAll('#dwBody [data-fx]').forEach(b => b.onclick = () => {
-      const g = _FILT_GROUPS.find(x => x[1] === b.dataset.fx);
-      S[g[2]] = b.dataset.val;
-      localStorage.setItem(g[3], b.dataset.val);
+    const refresh = () => {
       renderB();
       renderDayStrip();
       document.getElementById('dwBody').innerHTML = filterDrawerBody();
       bindFilterDrawer();
+    };
+    document.querySelectorAll('#dwBody [data-fx]').forEach(b => b.onclick = () => {
+      const g = _FILT_GROUPS.find(x => x[1] === b.dataset.fx);
+      S[g[2]] = b.dataset.val;
+      localStorage.setItem(g[3], b.dataset.val);
+      refresh();
     });
+    const clr = document.getElementById('hsFiltClear');
+    if (clr) clr.onclick = () => {
+      _FILT_GROUPS.forEach(g => { S[g[2]] = 'all'; localStorage.setItem(g[3], 'all'); });
+      refresh();
+    };
   }
   function openFilters() {
     document.getElementById('dwTitle').textContent = '⚙️ Filters';
