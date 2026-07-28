@@ -1150,8 +1150,9 @@
     const jump = p.scheduled_time ? new Date(p.scheduled_time).getTime() : null;
     const isPast = jump && jump < now;
     const cd = countdown(p.scheduled_time);
-    const displayOdds = (res && res.sp) ? res.sp : p.best_available_odds;
-    const oddsLbl = (res && res.sp) ? 'SP' : 'best odds';
+    const useSp = isPast && res && res.sp;
+    const displayOdds = useSp ? res.sp : (p.best_available_odds || (res && res.sp));
+    const oddsLbl = useSp ? 'SP' : 'best odds';
     const oddsCls = displayOdds >= 3 ? 'great' : displayOdds >= 2.5 ? 'good' : '';
     const hasResult = res && !res.scratched && !res.no_result && (res.winner === true || res.placed === true || res.position != null);
     const outcome = hasResult ? (res.winner ? 'res-win' : res.placed ? 'res-place' : 'res-miss') : '';
@@ -1325,8 +1326,13 @@
           : `<div class="cd big ${cd.urg || ''}">${cd.label || ''}</div><div class="wt num">${wallTime(p.scheduled_time)}</div>`}</div>
         <div class="mid">
           <div class="pk-horse">${esc(p.venue)} R${p.race_number}</div>
-          <div class="pk-sub num">${p.distance ? p.distance + 'm · ' : ''}${p.field_size ? p.field_size + ' runners · ' : ''}${esc(p.state || '')}</div>
-          <div class="pk-chips">${tier}${p.exotic_alignment ? '<span class="chip nosb">' + esc(p.exotic_alignment) + '</span>' : ''}</div>
+          <div class="pk-sub num">${[p.distance ? p.distance + 'm' : '', p.field_size ? p.field_size + ' runners' : '', p.state || ''].filter(Boolean).join(' · ')}</div>
+          <div class="pk-chips">${tier}${(() => {
+            const a = p.exotic_alignment;
+            if (a === 'full' || a === 'aligned') return '<span class="chip nosb" title="The exotic legs agree with our win pick for this race">matches win pick</span>';
+            if (a === 'partial') return '<span class="chip nosb" title="Some exotic legs differ from our win pick">partly matches win pick</span>';
+            return '';
+          })()}</div>
         </div>
         <div class="right">${p.combined_pct != null ? `<div class="odds-pill"><b class="num">~${p.combined_pct}%</b>tri box est.</div>` : ''}${p.first_four_combined_pct != null ? `<div class="odds-pill"><b class="num" style="font-size:1rem">~${p.first_four_combined_pct}%</b>first-4 est.</div>` : ''}</div>
         <div class="exo-legs">${legRows}</div>
