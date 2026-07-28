@@ -175,12 +175,11 @@
   .cell-tally .rs-w, .cell-tally .rs-p { display: block; }
   .cell-tally .rs-p { margin-top: 1px; }
 
-  .hs-filters {
-    display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
-    margin: 0 0 12px; font-size: 0.72rem;
-  }
-  .hs-filters .fl { font-weight: 800; color: var(--text-3); letter-spacing: 0.04em; text-transform: uppercase; font-size: 0.62rem; }
-  .hs-filters .fl-gap { margin-left: 10px; }
+  .hs-filters-bar { display: flex; justify-content: flex-end; margin: 0 0 12px; }
+  .filt-row { margin-bottom: 16px; }
+  .filt-row .fl { font-weight: 800; color: var(--text-3); letter-spacing: 0.05em; text-transform: uppercase; font-size: 0.64rem; margin-bottom: 7px; }
+  .filt-row .opts { display: flex; gap: 6px; flex-wrap: wrap; }
+  .filt-note { font-size: 0.7rem; color: var(--text-3); margin-top: 4px; }
   .jcard .when .cd.big {
     font-family: 'Barlow Condensed', sans-serif; font-weight: 800; font-size: 30px;
     line-height: 1; letter-spacing: 0.5px; font-variant-numeric: tabular-nums; white-space: nowrap;
@@ -1304,15 +1303,9 @@
     if (S.feedVenue !== 'all') races = races.filter(r => r._vc === S.feedVenue);
     if (S.sharpOnly) races = races.filter(r => r.is_sharp === true);
 
-    const filterBar = `<div class="hs-filters num">
-      <span class="fl">Win %</span>
-      ${[['all','All'],['30','≥30%'],['40','≥40%']].map(([v,l]) => `<button class="vchip ${S.winFilter === v ? 'on' : ''}" data-wf="${v}">${l}</button>`).join('')}
-      <span class="fl fl-gap">Place %</span>
-      ${[['all','All'],['40','≥40%'],['55','≥55%'],['70','≥70%']].map(([v,l]) => `<button class="vchip ${S.placeFilter === v ? 'on' : ''}" data-pf="${v}">${l}</button>`).join('')}
-      <span class="fl fl-gap">Top-2 gap</span>
-      ${[['all','All'],['10','≥10pt'],['15','≥15pt'],['20','≥20pt']].map(([v,l]) => `<button class="vchip ${S.gapFilter === v ? 'on' : ''}" data-gf="${v}">${l}</button>`).join('')}
-      <span class="fl fl-gap">💎 Value</span>
-      ${[['all','All'],['5','Edge ≥5pt · $4–10'],['10','Edge ≥10pt · $4–10']].map(([v,l]) => `<button class="vchip ${S.valFilter === v ? 'on' : ''}" data-vf="${v}">${l}</button>`).join('')}
+    const activeFilters = [S.winFilter, S.placeFilter, S.gapFilter, S.valFilter].filter(v => v !== 'all').length;
+    const filterBar = `<div class="hs-filters-bar">
+      <button class="vchip ${activeFilters ? 'on' : ''}" id="hsFiltBtn">⚙️ Filters${activeFilters ? ` · ${activeFilters} active` : ''}</button>
     </div>`;
 
     // Thresholds apply to UPCOMING races only (same as trad hot seat) —
@@ -1426,22 +1419,8 @@
       (settled.length ? `<div class="feed-sec-title">Earlier — how our picks went</div>` + settled.map(r => card(r, true)).join('') : '') +
       (!upcoming.length && !settled.length ? `<div class="empty"><div class="big">🐎</div>No races for this filter.</div>` : '');
     el.querySelectorAll('[data-fv]').forEach(b => b.onclick = e => { e.stopPropagation(); S.feedVenue = b.dataset.fv; renderB(); });
-    el.querySelectorAll('[data-wf]').forEach(b => b.onclick = e => {
-      e.stopPropagation(); S.winFilter = b.dataset.wf;
-      localStorage.setItem('hsWinF', S.winFilter); renderB();
-    });
-    el.querySelectorAll('[data-pf]').forEach(b => b.onclick = e => {
-      e.stopPropagation(); S.placeFilter = b.dataset.pf;
-      localStorage.setItem('hsPlaceF', S.placeFilter); renderB();
-    });
-    el.querySelectorAll('[data-gf]').forEach(b => b.onclick = e => {
-      e.stopPropagation(); S.gapFilter = b.dataset.gf;
-      localStorage.setItem('hsGapF', S.gapFilter); renderB();
-    });
-    el.querySelectorAll('[data-vf]').forEach(b => b.onclick = e => {
-      e.stopPropagation(); S.valFilter = b.dataset.vf;
-      localStorage.setItem('hsValF', S.valFilter); renderB();
-    });
+    const fbtn = el.querySelector('#hsFiltBtn');
+    if (fbtn) fbtn.onclick = e => { e.stopPropagation(); openFilters(); };
     bindOpen(el);
   }
 
@@ -1590,6 +1569,39 @@
       for (const rr of (d.races || [])) _resultsCache[vc][rr.race_number] = rr;
     } catch { _resultsCache[vc] = {}; }
     return _resultsCache[vc];
+  }
+
+  /* ── Filters drawer (right-hand panel, one filter per line) ── */
+  const _FILT_GROUPS = [
+    ['Win %', 'wf', 'winFilter', 'hsWinF', [['all','All'],['30','≥30%'],['40','≥40%']]],
+    ['Place %', 'pf', 'placeFilter', 'hsPlaceF', [['all','All'],['40','≥40%'],['55','≥55%'],['70','≥70%']]],
+    ['Top-2 gap', 'gf', 'gapFilter', 'hsGapF', [['all','All'],['10','≥10pt'],['15','≥15pt'],['20','≥20pt']]],
+    ['💎 Value', 'vf', 'valFilter', 'hsValF', [['all','All'],['5','Edge ≥5pt · $4–10'],['10','Edge ≥10pt · $4–10']]],
+  ];
+  function filterDrawerBody() {
+    return _FILT_GROUPS.map(([label, attr, key]) => `<div class="filt-row">
+      <div class="fl">${label}</div>
+      <div class="opts">${_FILT_GROUPS.find(g => g[1] === attr)[4].map(([v, l]) =>
+        `<button class="vchip ${S[key] === v ? 'on' : ''}" data-fx="${attr}" data-val="${v}">${l}</button>`).join('')}</div>
+    </div>`).join('') + `<div class="filt-note">Filters apply to upcoming races only — settled results always show in full.</div>`;
+  }
+  function bindFilterDrawer() {
+    document.querySelectorAll('#dwBody [data-fx]').forEach(b => b.onclick = () => {
+      const g = _FILT_GROUPS.find(x => x[1] === b.dataset.fx);
+      S[g[2]] = b.dataset.val;
+      localStorage.setItem(g[3], b.dataset.val);
+      renderB();
+      document.getElementById('dwBody').innerHTML = filterDrawerBody();
+      bindFilterDrawer();
+    });
+  }
+  function openFilters() {
+    document.getElementById('dwTitle').textContent = '⚙️ Filters';
+    document.getElementById('dwSub').textContent = 'Narrow the upcoming races';
+    document.getElementById('dwChips').innerHTML = '';
+    document.getElementById('dwBody').innerHTML = filterDrawerBody();
+    bindFilterDrawer();
+    drawer.classList.add('open'); ovl.classList.add('open');
   }
 
   const fieldOpen = new Set();
