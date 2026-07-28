@@ -175,6 +175,15 @@
   .cell-tally .rs-w, .cell-tally .rs-p { display: block; }
   .cell-tally .rs-p { margin-top: 1px; }
 
+  .sharp-note {
+    padding: 9px 18px; font-size: 0.74rem; color: var(--text-2);
+    background: var(--surface-2); border-bottom: 1px solid var(--line);
+  }
+  .sharp-note button {
+    background: none; border: none; color: var(--blue); font-weight: 800;
+    cursor: pointer; font-size: 0.74rem; padding: 0; text-decoration: underline;
+  }
+
   /* ── Legend ─────────────────────────────────────────────── */
   .key { max-width: 1220px; margin: 34px auto 0; padding: 0 16px; }
   .key-title {
@@ -1458,9 +1467,12 @@
             ${watchBtn(m?.state)}
           </div>
         </div>
+        ${S.sharpOnly && races.length && races.length < (S.details[S.selVenue] || []).length
+          ? `<div class="sharp-note">Showing <b>${races.length}</b> of <b>${(S.details[S.selVenue] || []).length}</b> races — 🎯 Sharp filter is on · <button data-clearsharp>Show all races</button></div>` : ''}
         ${raceRows || `<div style="padding:16px 18px;color:var(--text-3);font-size:0.82rem">${S.sharpOnly && (S.details[S.selVenue] || []).length ? 'No 🎯 Sharp races at this meeting — switch to \'All picks\' to see the full card.' : 'Loading races…'}</div>`}
       </div>
     </div>`;
+    el.querySelectorAll('[data-clearsharp]').forEach(b => b.onclick = e => { e.stopPropagation(); applySharp('all'); });
     el.querySelectorAll('[data-sel]').forEach(b => b.onclick = () => {
       S.selVenue = b.dataset.sel;
       renderC();
