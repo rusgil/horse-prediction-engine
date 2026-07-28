@@ -582,6 +582,7 @@
     .brace .right { flex-direction: column; align-items: flex-end; gap: 3px; }
     .date-pill { flex-direction: column; gap: 1px; }
     .prev-pill { flex-direction: row; }
+    .prev-pill .dp-arr { font-size: 1.35rem; padding: 4px 12px; }
     .date-pill .dp-acc { display: block; margin-left: 0; margin-top: 1px; font-size: 0.68rem; }
     .prev-pill .dp-mid .dp-acc { display: block; }
     .dw-title { font-size: 1.55rem; }
@@ -598,6 +599,100 @@
     .runner .rflag { font-size: 0.68rem; }
   }
 
+    /* Cross-page nav strip — same on every page. */
+    .page-nav {
+      display: flex; justify-content: center; align-items: center;
+      gap: 6px; padding: 10px 12px; flex-wrap: wrap;
+      background: rgba(10,10,15,0.85);
+      border-bottom: 1px solid rgba(255,255,255,0.08);
+    }
+    .page-nav-btn {
+      display: inline-flex; align-items: center; gap: 4px;
+      padding: 6px 12px; border-radius: 6px;
+      font-size: 12px; font-weight: 700; letter-spacing: 0.03em;
+      text-decoration: none; color: #9ca3af; white-space: nowrap;
+      background: rgba(255,255,255,0.03);
+      border: 1px solid rgba(255,255,255,0.10);
+      transition: all 0.15s ease;
+    }
+    .page-nav-btn:hover { background: rgba(255,255,255,0.07); color: #fff; }
+    .page-nav-btn.edge.active { background: rgba(34,197,94,0.15);  color: #4ade80; border-color: rgba(34,197,94,0.45); }
+    .page-nav-btn.hot.active  { background: rgba(249,115,22,0.15); color: #fb923c; border-color: rgba(249,115,22,0.45); }
+    .page-nav-btn.funk.active { background: rgba(192,132,252,0.15);color: #c084fc; border-color: rgba(192,132,252,0.45); }
+    .page-nav-btn.labs.active   { background: rgba(16,185,129,0.15); color: #34d399; border-color: rgba(16,185,129,0.45); }
+    .page-nav-btn.lounge.active { background: rgba(245,200,66,0.16); color: #f5c842; border-color: rgba(245,200,66,0.45); }
+    .page-nav-btn.about { font-size: 11px; padding: 6px 9px; color: #6b7280; }
+    .page-nav-btn.about:hover { color: #d1d5db; }
+    .page-nav-btn.admin { font-size: 11px; padding: 6px 9px; color: #6b7280; }
+    .page-nav-btn.admin:hover { color: #d1d5db; }
+    /* Spacer is a no-op now — nav buttons centre as one group on every breakpoint. */
+    .nav-spacer { display: none; }
+
+    /* Unified brand strip — same on every page, sits above the .page-nav button row. */
+    .brand-bar {
+      display: flex; align-items: center; justify-content: center;
+      gap: 14px; padding: 14px 16px 8px; flex-wrap: wrap;
+    }
+    .brand-bar-logo {
+      display: inline-flex; align-items: center; gap: 8px;
+      color: #f5c842; text-decoration: none;
+      font-weight: 800; font-size: 17px; letter-spacing: 0.02em;
+    }
+    .brand-bar-dot {
+      width: 10px; height: 10px; border-radius: 50%;
+      background: #f5c842;
+    }
+    .brand-bar-subtitle {
+      color: #9ca3af; font-size: 12px; font-weight: 600;
+      letter-spacing: 0.08em; text-transform: uppercase;
+    }
+    /* Mobile: bottom-fixed nav, NRL-style */
+    @media (max-width: 760px) {
+      .page-nav {
+        position: fixed;
+        left: 0; right: 0; bottom: 0;
+        top: auto;
+        background: rgba(10,10,15,0.96);
+        -webkit-backdrop-filter: blur(10px);
+        backdrop-filter: blur(10px);
+        border-top: 1px solid rgba(255,255,255,0.12);
+        border-bottom: none;
+        padding: 6px 4px calc(6px + env(safe-area-inset-bottom, 0px));
+        gap: 2px;
+        z-index: 100;
+        box-shadow: 0 -4px 16px rgba(0,0,0,0.5);
+        justify-content: space-around;
+      }
+      .nav-spacer { display: none; }
+      .page-nav-btn {
+        flex: 1; min-width: 0;
+        padding: 8px 3px 6px;
+        flex-direction: column;
+        gap: 3px;
+        letter-spacing: 0.02em;
+        text-align: center;
+        background: transparent;
+        border: none;
+        border-radius: 6px;
+        color: #6b7280;
+        justify-content: center;
+        white-space: nowrap;
+        overflow: hidden;
+      }
+      .page-nav-btn .nav-ico { font-size: 22px; line-height: 1; }
+      .page-nav-btn .nav-lab { font-size: 10px; font-weight: 700; line-height: 1; letter-spacing: 0.04em; }
+      .page-nav-btn.about, .page-nav-btn.admin {
+        padding: 8px 3px 6px;
+        flex: 0 0 auto;
+        min-width: 52px;
+      }
+      .page-nav-btn.about .nav-ico,
+      .page-nav-btn.admin .nav-ico { font-size: 18px; }
+      .page-nav-btn.about .nav-lab,
+      .page-nav-btn.admin .nav-lab { font-size: 9.5px; }
+      body { padding-bottom: 86px; }
+    }
+
   .foot { max-width: 1220px; margin: 30px auto 0; padding: 0 16px; font-size: 0.7rem; color: var(--text-3); text-align: center; }
 
   @media (prefers-reduced-motion: reduce) {
@@ -608,9 +703,32 @@
 </head>
 <body>
 
+<div class="brand-bar">
+  <a href="https://funkyiq.com" class="brand-bar-logo">
+    <span class="brand-bar-dot"></span>
+    FunkyIQ
+  </a>
+  <span class="brand-bar-subtitle">Horse Racing</span>
+</div>
+
+<nav class="page-nav">
+  <a href="/"           class="page-nav-btn lounge active"><span class="nav-ico">🛋️</span><span class="nav-lab">Lounge</span></a>
+  <a href="/edge"       class="page-nav-btn edge"><span class="nav-ico">🎯</span><span class="nav-lab">Edge</span></a>
+  <a href="/hotseat"    class="page-nav-btn hot"><span class="nav-ico">🔥</span><span class="nav-lab">Hot Seat</span></a>
+  <a href="/funk-me-up" class="page-nav-btn funk"><span class="nav-ico">🎺</span><span class="nav-lab">Funk Me Up</span></a>
+  <a href="/lab"        class="page-nav-btn labs"><span class="nav-ico">🧪</span><span class="nav-lab">Labs</span></a>
+  <span class="nav-spacer"></span>
+  <a href="/account"    class="page-nav-btn about"><span class="nav-ico">👤</span><span class="nav-lab">Account</span></a>
+  <a href="/about"      class="page-nav-btn about"><span class="nav-ico">ℹ️</span><span class="nav-lab">About</span></a>
+</nav>
+
 <header>
   <div class="hd-row">
-    <div class="brand">FunkyIQ Lounge <span class="lab-tag">C</span></div>
+    <div class="brand">🛋️ The Lounge</div>
+    <span class="seg" id="loungeVerSeg" role="radiogroup" aria-label="Lounge version">
+      <button data-lv="trad">Trad</button>
+      <button data-lv="new" class="on">New</button>
+    </span>
     <div class="hd-spacer"></div>
     <div class="seg" id="verSeg" role="tablist" aria-label="Layout version" style="display:none">
       <button data-v="A" role="tab">A · Heat Grid</button>
@@ -929,9 +1047,6 @@
     const races = allRaces();
     const settled = races.filter(isSettled);
     const el = document.getElementById('dayStrip');
-    // Best pick of the day — highest claimed win% with a known pick name
-    const cand = races.filter(r => r.top_pick && r.top_win_probability != null);
-    const best = cand.length ? cand.reduce((a, b) => (b.top_win_probability > a.top_win_probability ? b : a)) : null;
     // strip always shows — it hosts the Sharp filter
     const wins = settled.filter(r => r.model_correct === true).length;
     const placed = settled.filter(r => r.model_correct === false && r.model_placed === true).length;
@@ -943,19 +1058,23 @@
       <div class="ds-stat"><b class="g num">${wins}</b> picks won <span class="num">(${pct}%)</span></div>
       <div class="ds-divider"></div>
       <div class="ds-stat"><b class="a num">${placed}</b> more placed <span class="num">(${placePct}% placed incl. wins)</span></div>` : '';
-    const bestHtml = best ? `${settled.length ? '<div class="ds-divider"></div>' : ''}
-      <div class="ds-stat ds-best" data-open="${esc(best.race_id)}">⭐ Best pick:&nbsp;<b>${esc(best.top_pick)}</b>&nbsp;<span class="num">${esc(best._venue)} R${best.race_number} · ${Math.round(best.top_win_probability * 100)}%${best.top_pick_odds > 1 ? ' · $' + (+best.top_pick_odds).toFixed(2) : ''}</span>&nbsp;${isSettled(best) ? resultMark(best) : ''}</div>` : '';
     const sharpHtml = `
       <div class="ds-divider"></div>
       <span class="seg seg-sm" role="radiogroup" aria-label="Sharp filter">
         <button data-s="all" class="${S.sharpOnly ? '' : 'on'}">All picks</button>
         <button data-s="sharp" class="${S.sharpOnly ? 'on' : ''}">🎯 Sharp only</button>
       </span>`;
-    el.innerHTML = statsHtml + bestHtml + sharpHtml;
+    el.innerHTML = statsHtml + sharpHtml;
     el.classList.add('show');
-    el.querySelectorAll('[data-open]').forEach(n => n.onclick = () => openRace(n.dataset.open));
     el.querySelectorAll('[data-s]').forEach(b => b.onclick = () => applySharp(b.dataset.s));
   }
+
+  document.querySelectorAll('#loungeVerSeg button').forEach(b => b.onclick = () => {
+    if (b.dataset.lv === 'trad') {
+      try { localStorage.setItem('fiqLoungeView', 'trad'); } catch (e) {}
+      location.href = '/';
+    }
+  });
 
   /* ── render all ── */
   function renderAll() { renderDayStrip(); renderA(); renderB(); renderC(); }
@@ -1115,13 +1234,11 @@
       const vc = vcOf(m);
       const races = S.details[vc] || [];
       const done = races.filter(isSettled).length;
-      const g = goingInfo(races[0]?.track_condition);
       const next = races.find(r => !countdown(r.scheduled_time).past);
       return `<button class="rail-item ${vc === S.selVenue ? 'on' : ''}" data-sel="${esc(vc)}">
         <div class="rv">${esc(m.venue)} <span class="st">${esc(m.state || '')}</span>
           ${m.weather ? `<span class="wx">${m.weather.icon || ''} ${Math.round(m.weather.temp_max ?? 0)}°</span>` : ''}</div>
         <div class="rmeta">
-          <span class="chip ${g.cls}">${esc(g.label)}</span>
           <span class="prog num">${done}/${races.length || '–'} raced${next ? ` · next ${wallTime(next.scheduled_time)}` : ''}</span>
         </div>
         <div class="progbar"><div class="pf" style="width:${races.length ? done / races.length * 100 : 0}%"></div></div>
@@ -1130,8 +1247,8 @@
 
     const m = S.meetings.find(x => vcOf(x) === S.selVenue);
     let races = S.details[S.selVenue] || [];
-    if (S.sharpOnly) races = races.filter(r => r.is_sharp === true);
     const g = goingInfo(races[0]?.track_condition);
+    if (S.sharpOnly) races = races.filter(r => r.is_sharp === true);
     const raceRows = races.map(r => {
       const cd = countdown(r.scheduled_time);
       const done = isSettled(r);
@@ -1186,6 +1303,7 @@
         <div class="board-head">
           <div class="t">${esc(m?.venue || '')} <span class="st">${esc(m?.state || '')}${m?.tier ? ' · ' + esc(m.tier) : ''}</span></div>
           <div class="chips">
+            <span class="chip ${g.cls}">${esc(g.label)}</span>
             ${m?.weather?.rain_mm >= 2 ? `<span class="chip wet-note">🌧 RAIN ${m.weather.rain_mm}mm</span>` : ''}
             ${m?.weather ? `<span class="chip going-unknown">${m.weather.icon || ''} ${Math.round(m.weather.temp_max ?? 0)}°</span>` : ''}
             ${watchBtn(m?.state)}

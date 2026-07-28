@@ -7,6 +7,15 @@
 <!-- AUTH GATE TEMPORARILY REMOVED 2026-07-23 for Google AdSense review. To re-lock: restore the /api/check gate (redirect to /login) and the noindex meta. Admin + Account stay locked. -->
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <script src="/theme.js"></script>
+  <script>
+    /* Lounge v2 (2026-07-28): the new meetings layout is the default lounge.
+       "Trad" on the toggle stores an opt-out; only then does / render this page. */
+    (function () {
+      try {
+        if (localStorage.getItem('fiqLoungeView') !== 'trad') location.replace('/lounge-c.html');
+      } catch (e) {}
+    })();
+  </script>
   <meta name="google-adsense-account" content="ca-pub-3484503919714282">
   <title>Horse Racing Predictions | AI Tips | FunkyIQ</title>
   <meta name="description" content="AI-powered Australian thoroughbred predictions. Runner rankings, win probabilities, pedigree and market signals — every race, every meeting." />
@@ -1034,6 +1043,13 @@
       animation: spin 0.7s linear infinite;
     }
 
+    .lounge-ver-seg { display: inline-flex; background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.14); border-radius: 999px; padding: 2px; }
+    .lounge-ver-seg button { border: none; background: none; color: #9ca3af; font-weight: 700; font-size: 12px; padding: 4px 14px; border-radius: 999px; cursor: pointer; }
+    .lounge-ver-seg button.on { background: rgba(245,200,66,0.16); color: #f5c842; }
+    :root[data-theme="light"] .lounge-ver-seg { background: rgba(23,33,47,0.05); border-color: rgba(23,33,47,0.15); }
+    :root[data-theme="light"] .lounge-ver-seg button { color: #5d6b80; }
+    :root[data-theme="light"] .lounge-ver-seg button.on { background: rgba(156,117,0,0.14); color: #8a6a00; }
+
     /* Cross-page nav strip — same on every page. */
     .page-nav {
       display: flex; justify-content: center; align-items: center;
@@ -1205,10 +1221,27 @@
   <a href="/about"      class="page-nav-btn about"><span class="nav-ico">ℹ️</span><span class="nav-lab">About</span></a>
 </nav>
 
+<script>
+  document.addEventListener('DOMContentLoaded', function () {
+    document.querySelectorAll('.lounge-ver-seg button').forEach(function (b) {
+      b.onclick = function () {
+        if (b.dataset.lv === 'new') {
+          try { localStorage.setItem('fiqLoungeView', 'new'); } catch (e) {}
+          location.href = '/lounge-c.html';
+        }
+      };
+    });
+  });
+</script>
+
 <div class="page">
   <header class="page-header lounge">
     <h1 class="page-title">🛋️ The Lounge</h1>
     <p class="page-subtitle" id="heroSub">Today's race meetings · model predictions for every horse</p>
+    <div style="margin-top:10px"><span class="lounge-ver-seg" role="radiogroup" aria-label="Lounge version">
+      <button data-lv="trad" class="on">Trad</button>
+      <button data-lv="new">New</button>
+    </span></div>
   </header>
 
   <!-- Date selector -->
