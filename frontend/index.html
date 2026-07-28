@@ -1226,8 +1226,8 @@
   document.addEventListener('DOMContentLoaded', function () {
     document.querySelectorAll('.lounge-ver-seg button').forEach(function (b) {
       b.onclick = function () {
-        if (b.dataset.lv === 'new') {
-          try { localStorage.setItem('fiqLoungeView', 'new'); } catch (e) {}
+        if (b.dataset.lv === 'new' || b.dataset.lv === 'heat') {
+          try { localStorage.setItem('fiqLoungeView', b.dataset.lv); } catch (e) {}
           location.href = '/lounge-c.html';
         }
       };
@@ -1242,6 +1242,7 @@
     <div style="margin-top:10px"><span class="lounge-ver-seg" role="radiogroup" aria-label="Lounge version">
       <button data-lv="trad" class="on">Trad</button>
       <button data-lv="new">New</button>
+      <button data-lv="heat">Heat</button>
     </span></div>
   </header>
 

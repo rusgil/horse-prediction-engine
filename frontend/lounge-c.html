@@ -792,7 +792,8 @@
   <p class="page-subtitle">Today's race meetings · model predictions for every horse</p>
   <div style="margin-top:10px"><span class="lounge-ver-seg" id="loungeVerSeg" role="radiogroup" aria-label="Lounge version">
     <button data-lv="trad">Trad</button>
-    <button data-lv="new" class="on">New</button>
+    <button data-lv="new">New</button>
+    <button data-lv="heat">Heat</button>
   </span></div>
 </header>
 
@@ -1136,12 +1137,25 @@
     el.querySelectorAll('[data-s]').forEach(b => b.onclick = () => applySharp(b.dataset.s));
   }
 
+  function loungeView() {
+    try { return localStorage.getItem('fiqLoungeView') === 'heat' ? 'heat' : 'new'; } catch (e) { return 'new'; }
+  }
+  function markLoungeSeg() {
+    const cur = loungeView();
+    document.querySelectorAll('#loungeVerSeg button').forEach(b => b.classList.toggle('on', b.dataset.lv === cur));
+  }
   document.querySelectorAll('#loungeVerSeg button').forEach(b => b.onclick = () => {
-    if (b.dataset.lv === 'trad') {
+    const lv = b.dataset.lv;
+    if (lv === 'trad') {
       try { localStorage.setItem('fiqLoungeView', 'trad'); } catch (e) {}
       location.href = '/';
+      return;
     }
+    try { localStorage.setItem('fiqLoungeView', lv); } catch (e) {}
+    markLoungeSeg();
+    applyVersion(lv === 'heat' ? 'A' : 'C');
   });
+  markLoungeSeg();
 
   /* ── render all ── */
   function renderAll() { renderDayStrip(); renderA(); renderB(); renderC(); }
@@ -1508,7 +1522,7 @@
   /* ── boot ── */
   S.date = aestToday(0);
   buildDateRow();
-  applyVersion('C');
+  applyVersion(loungeView() === 'heat' ? 'A' : 'C');
   loadAll();
   loadPerf();
 })();
