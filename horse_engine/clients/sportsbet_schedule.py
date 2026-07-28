@@ -188,6 +188,68 @@ async def get_sportsbet_race_times(date: str) -> dict[str, dict[int, str]] | Non
     return out or None
 
 
+_COND_TTL_SECONDS = 1800  # racecard trackStatus re-fetched at most every 30 min
+_cond_cache: dict[str, tuple[datetime, dict]] = {}   # date -> (ts, {norm_track: "Soft 5"})
+
+_RACECARD_URL = "https://www.sportsbet.com.au/apigw/sportsbook-racing/Sportsbook/Racing/Events/{event_id}/Racecard"
+
+
+def _clean_track_status(raw: str) -> str | None:
+    """'Soft (5)' → 'Soft 5', 'Good' → 'Good'. None for junk."""
+    m = re.match(r"\s*(Firm|Good|Soft|Heavy|Synthetic)\s*\(?(\d*)\)?", raw or "", re.I)
+    if not m:
+        return None
+    return f"{m.group(1).title()} {m.group(2)}".strip()
+
+
+async def get_sportsbet_track_conditions(date: str) -> dict[str, str] | None:
+    """Live going per AU meeting from Sportsbet racecards: {norm_track: 'Soft 5'}.
+
+    RA's program pages carry no live going (our parser hardcodes Good 4), so
+    Sportsbet's per-event `trackStatus` is the race-day truth. ONE racecard
+    request per meeting (trackStatus is meeting-level), sequential, results
+    cached 30 min — never a hot loop (see HARD RULE: no API hammering).
+    Fail-open: None on outage; per-meeting failures just skip that meeting.
+    """
+    cached = _cond_cache.get(date)
+    if cached and (datetime.utcnow() - cached[0]).total_seconds() < _COND_TTL_SECONDS:
+        return cached[1]
+    data = await _fetch_allracing(date)
+    if data is None:
+        return None
+    import os
+    _proxy = os.getenv("SPORTSBET_PROXY_URL") or None
+    out: dict[str, str] = {}
+    try:
+        async with httpx.AsyncClient(
+            headers={"User-Agent": _UA, "Accept": "application/json"},
+            timeout=25.0 if _proxy else 15.0,
+            proxy=_proxy,
+        ) as client:
+            for m in _iter_au_horse_meetings(data):
+                events = m.get("events") or []
+                if not events:
+                    continue
+                # prefer a not-yet-resulted race so the status is current
+                ev = next((e for e in events if not e.get("result")), events[-1])
+                try:
+                    resp = await client.get(_RACECARD_URL.format(event_id=ev.get("id")))
+                    resp.raise_for_status()
+                    cond = _clean_track_status((resp.json() or {}).get("trackStatus") or "")
+                except Exception as e:  # one bad card never kills the sweep
+                    log.info("[sportsbet-conditions] %s racecard failed: %s", m.get("name"), e)
+                    continue
+                if cond:
+                    out[_norm(m.get("name") or "")] = cond
+    except Exception as e:
+        log.warning("[sportsbet-conditions] sweep failed for %s: %s", date, e)
+        return None
+    if not out:
+        return None
+    _cond_cache[date] = (datetime.utcnow(), out)
+    return out
+
+
 def venue_on_sportsbet(venue: str, allowlist: frozenset[str] | None) -> bool:
     """Does `venue` (an RA venue name or hyphenated code) appear in the Sportsbet
     allowlist? Fuzzy: exact normalised match, or one is a substring of the other

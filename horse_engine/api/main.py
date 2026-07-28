@@ -3067,6 +3067,22 @@ async def lifespan(app: FastAPI):
             log.warning("[meetings-prewarm] failed: %s", e)
     asyncio.create_task(_prewarm_meetings_strip())
 
+    # Live track-condition sweep — every 30 min during racing hours. The SB
+    # client caches for 30 min and makes ONE racecard request per meeting, so
+    # worst case is ~15 requests/half hour (no-hammer rule respected).
+    async def _track_conditions_loop():
+        await asyncio.sleep(20)
+        while True:
+            try:
+                if 8 <= datetime.now(_AEST).hour <= 20:
+                    changed = await _refresh_track_conditions(_today_aest().isoformat())
+                    if changed:
+                        log.info("[track-conditions] updated: %s", changed)
+            except Exception as e:
+                log.warning("[track-conditions] loop error: %s", e)
+            await asyncio.sleep(1800 + random.uniform(0, 300))
+    asyncio.create_task(_track_conditions_loop())
+
     # Backfill last 3 days — catch up on any missed enrichments/results.
     # Throttled per-date: skip dates whose latest enriched_at is < 12h old.
     # Without this, every Railway redeploy (often several per day during
@@ -26586,6 +26602,73 @@ async def _enrich_date(race_date: str, client, model, force: bool = False, place
             log.warning("Cron failed for %s on %s: %s", venue_code, race_date, e)
             summary.append({"venue": venue_code, "status": "error", "error": str(e)})
     return summary
+
+
+async def _refresh_track_conditions(race_date: str) -> dict[str, str]:
+    """Live going from Sportsbet racecards → today's MUTABLE rows.
+
+    RA's race-program pages carry no live going (the parser defaults every
+    race to "Good 4"), so without this sweep the site can never show a wet
+    track pre-race — while the model's off-going caps silently never fire.
+    Sportsbet's per-event trackStatus is the race-day truth (Swan Hill
+    2026-07-28: site said Good 4 all day, SB said Soft).
+
+    Touches RacePredictionRow + RunnerPredictionRow only — history snapshots
+    stay immutable; results seeding later syncs the official condition.
+    """
+    from sqlalchemy import update as sa_update
+    from horse_engine.clients.sportsbet_schedule import (
+        get_sportsbet_track_conditions,
+        _norm as _sb_norm,
+    )
+    conds = await get_sportsbet_track_conditions(race_date)
+    if not conds:
+        return {}
+    changed: dict[str, str] = {}
+    changed_rids: list[tuple[str, str]] = []
+    async with get_session() as session:
+        rows = (await session.execute(
+            select(RacePredictionRow)
+            .where(RacePredictionRow.race_id.like(f"{_like_safe(race_date)}_%"))
+        )).scalars().all()
+        for r in rows:
+            parts = (r.race_id or "").split("_")
+            slug = parts[1] if len(parts) >= 3 else ""
+            cond = conds.get(_sb_norm(r.venue or "")) or conds.get(_sb_norm(slug))
+            if not cond:
+                continue
+            if (r.track_condition or "").strip().lower() == cond.lower():
+                continue
+            changed[f"{r.venue or slug} R{r.race_number}"] = f"{r.track_condition or '?'} -> {cond}"
+            changed_rids.append((r.race_id, cond))
+            r.track_condition = cond
+        for rid, cond in changed_rids:
+            await session.execute(
+                sa_update(RunnerPredictionRow)
+                .where(RunnerPredictionRow.race_id == rid)
+                .values(track_condition=cond)
+            )
+        if changed_rids:
+            await session.commit()
+    # /api/edge picks up the change within ~90s via its prewarm loop.
+    return changed
+
+
+@app.post("/api/admin/refresh-track-conditions")
+async def admin_refresh_track_conditions(
+    race_date: Optional[str] = None,
+    x_cron_secret: Optional[str] = Header(None),
+):
+    """Manual trigger for the Sportsbet going sweep (also runs on a 30-min
+    background loop during racing hours)."""
+    _check_admin(x_cron_secret)
+    target = race_date or _today_aest().isoformat()
+    changed = await _refresh_track_conditions(target)
+    return {
+        "date": target,
+        "changed": changed,
+        "note": None if changed else "no differences, or Sportsbet feed unavailable",
+    }
 
 
 @app.post("/api/cron/enrich")
