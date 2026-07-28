@@ -8,6 +8,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@400;600;700;800;900&family=Outfit:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+  <script src="/theme.js"></script>
   <style>
     :root {
       --bg: #07090f;
@@ -106,19 +107,57 @@
     }
 
     /* Page title bar (below nav) */
-    .page-title-bar {
-      display: flex; align-items: baseline; gap: 12px;
-      padding-bottom: 20px; border-bottom: 1px solid var(--edge);
-      margin-bottom: 24px;
+    /* Unified page header — same on every page. */
+    /* Explicit resets defeat each page's generic `header { sticky; blur; ... }`
+       rule so the unified header doesn't inherit them. */
+    .page-header {
+      position: static;
+      top: auto;
+      z-index: auto;
+      background: transparent;
+      -webkit-backdrop-filter: none;
+      backdrop-filter: none;
+      text-align: center;
+      padding: 26px 16px 18px;
+      border-bottom: 1px solid rgba(255,255,255,0.06);
+      margin-bottom: 16px;
     }
+    /* Tier-coloured accent line under the title. */
+    .page-header::after {
+      content: '';
+      display: block;
+      width: 80px; height: 3px;
+      background: var(--page-accent, #9ca3af);
+      border-radius: 2px;
+      margin: 14px auto -19px;
+    }
+    .page-header.lounge { --page-accent: #f5c842; }
+    .page-header.edge   { --page-accent: #4ade80; }
+    .page-header.hot    { --page-accent: #fb923c; }
+    .page-header.funk   { --page-accent: #c084fc; }
+    .page-header.labs   { --page-accent: #10b981; }
     .page-title {
       font-family: 'Barlow Condensed', sans-serif;
-      font-size: 1.7rem; font-weight: 800;
-      letter-spacing: 0.04em; text-transform: uppercase;
+      font-size: 36px;
+      font-weight: 800;
       line-height: 1;
+      letter-spacing: 0.5px;
+      margin: 0 0 8px;
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+      justify-content: center;
     }
     .page-subtitle {
-      color: var(--muted); font-size: 0.85rem; margin-left: auto;
+      font-size: 13px;
+      color: #9ca3af;
+      margin: 0 auto;
+      max-width: 600px;
+      line-height: 1.4;
+    }
+    @media (max-width: 600px) {
+      .page-title { font-size: 28px; }
     }
 
     section {
@@ -337,11 +376,12 @@
   <a href="/lounge-lab.html" class="page-nav-btn about"><span class="nav-ico">🧫</span><span class="nav-lab">Lounge Lab</span></a>
   </nav>
 
+  <header class="page-header">
+    <h1 class="page-title">👤 Account</h1>
+    <p class="page-subtitle" id="whoami-mini"></p>
+  </header>
+
   <div class="wrap">
-    <div class="page-title-bar">
-      <h1 class="page-title">👤 Account</h1>
-      <span class="page-subtitle" id="whoami-mini"></span>
-    </div>
 
     <div id="content" style="display:none">
       <section>
