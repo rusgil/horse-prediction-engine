@@ -7,6 +7,15 @@
 <!-- AUTH GATE TEMPORARILY REMOVED 2026-07-23 for Google AdSense review. To re-lock: restore the /api/check gate (redirect to /login) and the noindex meta. Admin + Account stay locked. -->
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
   <script src="/theme.js"></script>
+  <script>
+    /* Hot Seat v2 (2026-07-28): the race-feed layout is the default.
+       "Trad" on the toggle stores an opt-out; only then does /hotseat render this page. */
+    (function () {
+      try {
+        if (localStorage.getItem('fiqHotseatView') !== 'trad') location.replace('/hotseat-new.html');
+      } catch (e) {}
+    })();
+  </script>
   <meta name="theme-color" content="#07090f" />
   <title>🔥 Hot Seat — Live Picks | FunkyIQ</title>
   <meta name="description" content="The Hot Seat is FunkyIQ's live mobile view of today's top Australian horse racing picks — model win probabilities, market odds and the sharpest selections for each meeting, refreshed as races approach." />
@@ -829,6 +838,12 @@
     .page-header.funk   { --page-accent: #c084fc; }
     .page-header.labs   { --page-accent: #10b981; }
     .header-side-link { display: none; }
+    .lounge-ver-seg { display: inline-flex; background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.14); border-radius: 999px; padding: 2px; }
+    .lounge-ver-seg button { border: none; background: none; color: #9ca3af; font-weight: 700; font-size: 12px; padding: 4px 14px; border-radius: 999px; cursor: pointer; }
+    .lounge-ver-seg button.on { background: rgba(249,115,22,0.16); color: #fb923c; }
+    :root[data-theme="light"] .lounge-ver-seg { background: rgba(23,33,47,0.05); border-color: rgba(23,33,47,0.15); }
+    :root[data-theme="light"] .lounge-ver-seg button { color: #5d6b80; }
+    :root[data-theme="light"] .lounge-ver-seg button.on { background: rgba(208,90,12,0.14); color: #b34d0a; }
 
     /* Collapsible filter section — same toggle on every viewport
        (2026-07-21 UX pass). Default state: collapsed on mobile,
@@ -901,7 +916,21 @@
     <h1 class="page-title">🔥 Hot Seat <span class="tier-badge tier-pro">Pro</span></h1>
     <p class="page-subtitle">Next races · sorted by jump time</p>
     <a href="/lab" class="header-side-link">🧪 Funky IQ Labs →</a>
+    <div style="margin-top:10px"><span class="lounge-ver-seg" role="radiogroup" aria-label="Hot Seat version">
+      <button data-lv="trad" class="on">Trad</button>
+      <button data-lv="new">New</button>
+    </span></div>
   </header>
+  <script>
+    document.querySelectorAll('.lounge-ver-seg button').forEach(function (b) {
+      b.onclick = function () {
+        if (b.dataset.lv === 'new') {
+          try { localStorage.setItem('fiqHotseatView', 'new'); } catch (e) {}
+          location.href = '/hotseat-new.html';
+        }
+      };
+    });
+  </script>
   <header>
     <div class="refresh-status" style="text-align:center;margin-bottom:8px"><span class="dot"></span><span id="refreshLabel">Loading…</span></div>
     <!-- Mode filter lives OUTSIDE the collapsible body so it's always
