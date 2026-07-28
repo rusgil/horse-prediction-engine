@@ -400,9 +400,14 @@
   .hero-top .where { font-family: 'Barlow Condensed'; font-weight: 800; font-size: 1.5rem; }
   .hero-top .where small { color: var(--text-3); font-size: 1.05rem; }
   .hero-top .meta { font-size: 0.74rem; color: var(--text-3); }
-  .hero-top .clockbox { margin-left: auto; text-align: right; }
+  .hero-top .clockbox { margin-left: auto; text-align: right; flex-shrink: 0; }
   .hero-top .clock { font-family: 'Barlow Condensed'; font-weight: 800; font-size: 1.7rem; line-height: 1; }
   .hero-top .cd { font-size: 0.7rem; font-weight: 800; color: var(--mint); }
+  .hero-top .cd.big {
+    font-family: 'Barlow Condensed', sans-serif; font-weight: 800; font-size: 30px;
+    line-height: 1; letter-spacing: 0.5px; font-variant-numeric: tabular-nums; white-space: nowrap;
+  }
+  .hero-top .wt { font-size: 0.68rem; color: var(--text-3); font-weight: 700; }
   .hero-picks { padding: 6px 18px 12px; }
   .hero-note { padding: 0 18px 14px; font-size: 0.72rem; color: var(--text-3); }
   .hrunner { display: flex; align-items: center; gap: 12px; padding: 9px 0; border-bottom: 1px solid var(--line); }
@@ -1353,7 +1358,7 @@
           ${hero.is_sharp ? `<span class="chip sharp">🎯 SHARP</span>` : ''}
           ${tier ? `<span class="chip ${tier.cls}">${tier.label}</span>` : ''}
           ${watchBtn(hero._state)}
-          <div class="clockbox"><div class="clock num">${wallTime(hero.scheduled_time)}</div><div class="cd ${cd.urg || ''}">${cd.label}</div></div>
+          <div class="clockbox"><div class="cd big ${cd.urg || ''}">${cd.label}</div><div class="wt num">${wallTime(hero.scheduled_time)}</div></div>
         </div>
         <div class="hero-picks">${picksHtml}</div>
         <div class="hero-note">Our top ${rs.length || 3} for this race — tap for the full field.</div>
