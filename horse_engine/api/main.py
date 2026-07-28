@@ -4570,9 +4570,26 @@ async def get_edge_picks():
                     .where(RunnerPredictionHistoryRow.model_rank == 1)
                     .where(RunnerPredictionHistoryRow.win_probability >= threshold)
                     .where(RunnerPredictionHistoryRow.cancelled.is_(False) | RunnerPredictionHistoryRow.cancelled.is_(None))
+                    # FIX-S: live snapshots only — validation/backfill writers add
+                    # POST-RACE rank-1 rows; without this filter the edge page
+                    # showed the actual WINNER as "our pick" after the race
+                    # (Bathurst R2 2026-07-28: MR CACCIATORE replaced the real
+                    # pre-race pick RED ROCQUETTE, and R1's confidence jumped
+                    # 33.7 -> 47.1 post-race).
+                    .where((RunnerPredictionHistoryRow.source == "live")
+                           | RunnerPredictionHistoryRow.source.is_(None))
                     .order_by(RunnerPredictionHistoryRow.win_probability.desc())
                 )
                 hist_rows = hr_q.scalars().all()
+                # FIX-S dedup: one row per race — latest live snapshot wins.
+                _seen_hr: set[str] = set()
+                _dedup_hr = []
+                for _r in sorted(hist_rows, key=lambda x: x.enriched_at or datetime.min, reverse=True):
+                    if _r.race_id in _seen_hr:
+                        continue
+                    _seen_hr.add(_r.race_id)
+                    _dedup_hr.append(_r)
+                hist_rows = sorted(_dedup_hr, key=lambda x: x.win_probability or 0, reverse=True)
 
             # For upcoming races, query mutable as before
             mut_q = (
@@ -4700,6 +4717,8 @@ async def get_edge_picks():
                     .where(RunnerPredictionHistoryRow.race_id.in_(hist_race_ids))
                     .where(RunnerPredictionHistoryRow.model_rank.in_([2, 3, 4, 5]))
                     .where(RunnerPredictionHistoryRow.cancelled.is_(False) | RunnerPredictionHistoryRow.cancelled.is_(None))
+                    .where((RunnerPredictionHistoryRow.source == "live")
+                           | RunnerPredictionHistoryRow.source.is_(None))
                 )).scalars().all())
             if mut_race_ids_list:
                 hedge_rank_rows.extend((await session.execute(
