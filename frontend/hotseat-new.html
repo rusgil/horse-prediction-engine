@@ -1188,15 +1188,19 @@
       <div class="ds-divider"></div>
       <div class="ds-stat"><b class="a num">${placed}</b> more placed <span class="num">(${placePct}% placed incl. wins)</span></div>
     </div>` : '';
+    const activeFilters = [S.winFilter, S.placeFilter, S.gapFilter, S.valFilter].filter(v => v !== 'all').length;
     const sharpHtml = `<div class="ds-row">
       <span class="seg seg-sm" role="radiogroup" aria-label="Sharp filter">
         <button data-s="all" class="${S.sharpOnly ? '' : 'on'}">All picks</button>
         <button data-s="sharp" class="${S.sharpOnly ? 'on' : ''}">🎯 Sharp only</button>
       </span>
+      <button class="vchip ${activeFilters ? 'on' : ''}" id="hsFiltBtn">⚙️ Filters${activeFilters ? ` · ${activeFilters} active` : ''}</button>
     </div>`;
     el.innerHTML = sharpHtml + statsHtml;
     el.classList.add('show');
     el.querySelectorAll('[data-s]').forEach(b => b.onclick = () => applySharp(b.dataset.s));
+    const fbtn = el.querySelector('#hsFiltBtn');
+    if (fbtn) fbtn.onclick = () => openFilters();
   }
 
   document.querySelectorAll('#loungeVerSeg button').forEach(b => b.onclick = () => {
@@ -1306,10 +1310,6 @@
     if (S.feedVenue !== 'all') races = races.filter(r => r._vc === S.feedVenue);
     if (S.sharpOnly) races = races.filter(r => r.is_sharp === true);
 
-    const activeFilters = [S.winFilter, S.placeFilter, S.gapFilter, S.valFilter].filter(v => v !== 'all').length;
-    const filterBar = `<div class="hs-filters-bar">
-      <button class="vchip ${activeFilters ? 'on' : ''}" id="hsFiltBtn">⚙️ Filters${activeFilters ? ` · ${activeFilters} active` : ''}</button>
-    </div>`;
 
     // Thresholds apply to UPCOMING races only (same as trad hot seat) —
     // the settled section stays honest, wins and losses alike.
@@ -1417,13 +1417,11 @@
       </div>`;
     };
 
-    el.innerHTML = chips + filterBar + heroHtml +
+    el.innerHTML = chips + heroHtml +
       (upcoming.length > 1 ? `<div class="feed-sec-title">Coming up</div>` + upcoming.slice(1).map(r => card(r, false)).join('') : '') +
       (settled.length ? `<div class="feed-sec-title">Earlier — how our picks went</div>` + settled.map(r => card(r, true)).join('') : '') +
       (!upcoming.length && !settled.length ? `<div class="empty"><div class="big">🐎</div>No races for this filter.</div>` : '');
     el.querySelectorAll('[data-fv]').forEach(b => b.onclick = e => { e.stopPropagation(); S.feedVenue = b.dataset.fv; renderB(); });
-    const fbtn = el.querySelector('#hsFiltBtn');
-    if (fbtn) fbtn.onclick = e => { e.stopPropagation(); openFilters(); };
     bindOpen(el);
   }
 
@@ -1599,6 +1597,7 @@
       S[g[2]] = b.dataset.val;
       localStorage.setItem(g[3], b.dataset.val);
       renderB();
+      renderDayStrip();
       document.getElementById('dwBody').innerHTML = filterDrawerBody();
       bindFilterDrawer();
     });
