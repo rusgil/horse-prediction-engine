@@ -654,7 +654,7 @@
       </div>
       <ul class="perf-log-metrics">
         <li><span class="perf-log-lbl">Win Rate:</span> <span class="perf-log-num" data-slot="pl-win">30%</span> <span class="perf-log-tag">📈 (Professional Tier Baseline)</span></li>
-        <li><span class="perf-log-lbl">Place Rate:</span> <span class="perf-log-num" data-slot="pl-place">65%</span> <span class="perf-log-tag">🏆 (Elite Tier Consistency)</span></li>
+        <li><span class="perf-log-lbl">Place Rate:</span> <span class="perf-log-num" data-slot="pl-place">65%</span> <span class="perf-log-tag" data-slot="pl-place-tag">🏆 (Elite Tier Consistency)</span></li>
         <li><span class="perf-log-lbl">Average Winning SP:</span> <span class="perf-log-num" data-slot="pl-sp">$2.87</span></li>
       </ul>
       <!-- STATS-BLOCK-END -->
@@ -930,6 +930,15 @@
       const q = (slot) => document.querySelector(`[data-slot="${slot}"]`);
       const qwin = q('pl-win');   if (qwin)   qwin.textContent   = winRounded + '%';
       const qpla = q('pl-place'); if (qpla)   qpla.textContent   = placeRounded + '%';
+      // Tier word follows the place-scale bands [35/45/55/65/80] so the tag
+      // can never contradict the number (TAB paid-place figure, unchanged).
+      const qtag = q('pl-place-tag');
+      if (qtag) {
+        qtag.textContent = placeRounded >= 65 ? '🏆 (Elite Tier Consistency)'
+          : placeRounded >= 55 ? '🥇 (Great Tier Consistency)'
+          : placeRounded >= 45 ? '📈 (Good Tier Consistency)'
+          : '(Developing)';
+      }
       const qsp  = q('pl-sp');    if (qsp && p.mean_winning_sp != null) qsp.textContent = '$' + p.mean_winning_sp.toFixed(2);
       const qra  = q('pl-races'); if (qra)   qra.textContent    = p.races.toLocaleString();
 
