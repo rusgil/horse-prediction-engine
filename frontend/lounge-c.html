@@ -1114,7 +1114,8 @@
 
   /* ── shared: day strip ── */
   function renderDayStrip() {
-    const races = allRaces();
+    let races = allRaces();
+    if (S.sharpOnly) races = races.filter(r => r.is_sharp === true);
     const settled = races.filter(isSettled);
     const el = document.getElementById('dayStrip');
     // strip always shows — it hosts the Sharp filter
