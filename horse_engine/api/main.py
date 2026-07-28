@@ -23725,6 +23725,9 @@ async def performance_summary(
             .where(RunnerPredictionHistoryRow.race_id.in_(race_ids))
             .where(RunnerPredictionHistoryRow.model_rank == 1)
             .where(RunnerPredictionHistoryRow.cancelled.is_(False) | RunnerPredictionHistoryRow.cancelled.is_(None))
+            # FIX-S source leg — quarantined/validation rows must not grade
+            .where((RunnerPredictionHistoryRow.source == "live")
+                   | RunnerPredictionHistoryRow.source.is_(None))
             .order_by(RunnerPredictionHistoryRow.enriched_at.desc())
         )
         top_picks: dict[str, RunnerPredictionHistoryRow] = {}
