@@ -13735,6 +13735,10 @@ async def _run_quality_check(target: str) -> dict:
         _pn_hist = (await session.execute(
             select(RunnerPredictionHistoryRow.race_id, RunnerPredictionHistoryRow.horse_name)
             .where(RunnerPredictionHistoryRow.race_id.like(f"{target}_%"))
+            # Prediction of record = LIVE snapshots only (FIX-S) — validation/
+            # backfill writers can add the full field to history later, which
+            # must not hide that the live pre-race snapshot was short.
+            .where(RunnerPredictionHistoryRow.source == "live")
         )).fetchall()
         _pn_mut = (await session.execute(
             select(RunnerPredictionRow.race_id, RunnerPredictionRow.horse_name)
