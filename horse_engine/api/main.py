@@ -17948,6 +17948,10 @@ async def get_meeting(race_date: str, venue_code: str):
                 .where(RunnerPredictionHistoryRow.race_id.in_(completed_ids))
                 .where(RunnerPredictionHistoryRow.model_rank.in_([1, 2]))
                 .where(RunnerPredictionHistoryRow.cancelled.is_(False) | RunnerPredictionHistoryRow.cancelled.is_(None))
+                # FIX-S source leg — without it, quarantined/validation rows
+                # still drove top_pick + model_correct (MR CACCIATORE incident)
+                .where((RunnerPredictionHistoryRow.source == "live")
+                       | RunnerPredictionHistoryRow.source.is_(None))
                 .order_by(RunnerPredictionHistoryRow.enriched_at.desc())
             )
             seen_rank: dict[tuple[str, int], bool] = {}
