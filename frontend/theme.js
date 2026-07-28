@@ -95,6 +95,8 @@
     ':root[data-theme="light"] .pick { border-width: 1.5px; border-color: #b7c2cf; }',
     ':root[data-theme="light"] .play:not(.hero) { border-width: 1.5px; border-color: #b7c2cf; }',
     ':root[data-theme="light"] .race, :root[data-theme="light"] .summary-card, :root[data-theme="light"] .strategy-block-box { border-width: 1.5px; border-color: #b7c2cf; }',
+    /* brand strip left-justified so the fixed top-right toggle never overlaps it */
+    '.brand-bar { justify-content: flex-start; }',
     /* toggle control — works on both themes */
     '.fiq-theme-toggle {',
     '  position: fixed; top: 10px; right: 12px; z-index: 220;',
