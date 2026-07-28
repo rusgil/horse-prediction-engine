@@ -467,11 +467,11 @@
   .rail-item .rv .st { font-size: 0.6rem; color: var(--text-3); font-family: 'Barlow'; font-weight: 800; }
   .rail-item .rmeta { display: flex; gap: 5px; margin-top: 5px; align-items: center; flex-wrap: wrap; }
   .rail-item .prog { font-size: 0.66rem; color: var(--text-3); font-weight: 700; }
-  .rail-item .rstat { display: flex; gap: 4px; flex-wrap: wrap; margin-top: 5px; font-size: 0.7rem; font-weight: 700; }
-  .rail-item .rs-w { color: #10b981; }
-  .rail-item .rs-p { color: #60a5fa; }
-  .rail-item .rs-c { color: var(--gold); }
-  .rail-item .rs-c.hi { color: #10b981; }
+  .rstat { display: flex; gap: 4px; flex-wrap: wrap; margin-top: 5px; font-size: 0.7rem; font-weight: 700; }
+  .rs-w { color: #10b981; }
+  .rs-p { color: #60a5fa; }
+  .rs-c { color: var(--gold); }
+  .rs-c.hi { color: #10b981; }
   .rail-item .progbar { height: 3px; border-radius: 2px; background: var(--surface-2); margin-top: 7px; overflow: hidden; }
   .rail-item .progbar .pf { height: 100%; background: var(--mint); border-radius: 2px; }
 
@@ -1196,6 +1196,15 @@
       const g = goingInfo(races?.[0]?.track_condition);
       if (S.sharpOnly && races && !races.some(r => r.is_sharp === true)) return '';
       let mW = 0, mP = 0;
+      const settledRaces = (races || []).filter(isSettled);
+      const aWins = settledRaces.filter(r => r.model_correct === true).length;
+      const aPlaced = settledRaces.filter(r => r.model_placed === true).length;
+      const aConf = Math.round(Math.max(0, ...(races || []).map(r => r.top_win_probability || 0)) * 100);
+      const statLine = settledRaces.length ? `<div class="rstat num">
+          <span class="rs-w">${aWins}/${settledRaces.length} wins</span>
+          ${aPlaced > aWins ? `<span class="rs-p">· ${aPlaced} placed</span>` : ''}
+          ${aConf >= 25 ? `<span class="rs-c ${aConf >= 40 ? 'hi' : ''}">· ${aConf}% best pick</span>` : ''}
+        </div>` : '';
       const cells = Array.from({ length: maxR }, (_, i) => {
         const r = races?.[i];
         if (!r) return `<td class="cell blank"></td>`;
@@ -1221,11 +1230,12 @@
       }).join('');
       return `<tr>
         <td class="mcell">
-          <div class="vname">${esc(m.venue)} <span class="st">${esc(m.state || '')}</span>${mW + mP ? `<span class="mtally num">${mW ? `<b class="tw">${mW}W</b>` : ''}${mP ? `<b class="tp">${mP}P</b>` : ''}</span>` : ''}</div>
+          <div class="vname">${esc(m.venue)} <span class="st">${esc(m.state || '')}</span></div>
           <div class="vmeta">
             <span class="chip ${g.cls}">${esc(g.label)}</span>
             ${m.weather ? `<span class="wx">${m.weather.icon || ''} ${Math.round(m.weather.temp_max ?? 0)}°</span>` : ''}
           </div>
+          ${statLine}
         </td>${cells}</tr>`;
     }).join('');
 
