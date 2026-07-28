@@ -97,7 +97,8 @@
     ':root[data-theme="light"] .race, :root[data-theme="light"] .summary-card, :root[data-theme="light"] .strategy-block-box { border-width: 1.5px; border-color: #b7c2cf; }',
     /* toggle control — works on both themes */
     '.fiq-theme-toggle {',
-    '  display: inline-flex; align-items: center; gap: 2px; margin-left: 10px;',
+    '  position: fixed; top: 10px; right: 12px; z-index: 220;',
+    '  display: inline-flex; align-items: center; gap: 2px;',
     '  background: var(--bg-elevated, var(--surface-2, #1a2130));',
     '  border: 1px solid var(--border, var(--line, #232c3d));',
     '  border-radius: 999px; padding: 2px; vertical-align: middle; flex-shrink: 0;',
@@ -135,8 +136,7 @@
 
   function mount() {
     if (document.querySelector('.fiq-theme-toggle')) return;
-    var host = document.querySelector('.page-nav') || document.querySelector('.hd-row')
-            || document.querySelector('header') || document.body;
+    var host = document.body;
     if (!host) return;
     var wrap = document.createElement('span');
     wrap.className = 'fiq-theme-toggle';
