@@ -169,6 +169,14 @@
   .ds-stat b.a { color: var(--amber); }
   .ds-divider { width: 1px; height: 18px; background: var(--line); }
 
+  .mtally { margin-left: 6px; display: inline-flex; gap: 5px; font-size: 0.68rem; }
+  .tw { color: var(--mint); font-weight: 800; }
+  .tp { color: var(--amber); font-weight: 800; }
+  .tn { color: var(--text-3); }
+  .tally-lab { font-size: 0.64rem; font-weight: 800; letter-spacing: 0.05em; text-transform: uppercase; color: var(--text-3); }
+  .cell-tally { text-align: center; font-size: 0.72rem; padding: 7px 4px; border-top: 1px solid var(--line); }
+  .cell-tally b { display: inline-block; padding: 0 2px; }
+
   /* ── Legend ─────────────────────────────────────────────── */
   .key { max-width: 1220px; margin: 34px auto 0; padding: 0 16px; }
   .key-title {
@@ -794,7 +802,7 @@
   <div style="margin-top:10px"><span class="lounge-ver-seg" id="loungeVerSeg" role="radiogroup" aria-label="Lounge version">
     <button data-lv="trad">Trad</button>
     <button data-lv="new">New</button>
-    <button data-lv="heat">Heat</button>
+    <button data-lv="heat">Heat Map</button>
   </span></div>
 </header>
 
@@ -1176,15 +1184,21 @@
     const maxR = Math.max(1, ...S.meetings.map(m => (S.details[vcOf(m)] || []).length));
     const head = Array.from({ length: maxR }, (_, i) => `<th>R${i + 1}</th>`).join('');
 
+    const colW = Array(maxR).fill(0), colP = Array(maxR).fill(0);
     const rows = S.meetings.map(m => {
       const vc = vcOf(m);
       const races = S.details[vc];
       const g = goingInfo(races?.[0]?.track_condition);
       if (S.sharpOnly && races && !races.some(r => r.is_sharp === true)) return '';
+      let mW = 0, mP = 0;
       const cells = Array.from({ length: maxR }, (_, i) => {
         const r = races?.[i];
         if (!r) return `<td class="cell blank"></td>`;
         if (S.sharpOnly && r.is_sharp !== true) return `<td class="cell blank"></td>`;
+        if (isSettled(r)) {
+          if (r.model_correct === true) { mW++; colW[i]++; }
+          else if (r.model_placed === true) { mP++; colP[i]++; }
+        }
         const done = isSettled(r);
         const tier = tierOf(r.top_win_probability, isOffGoing(r.track_condition));
         const cls = [
@@ -1202,7 +1216,7 @@
       }).join('');
       return `<tr>
         <td class="mcell">
-          <div class="vname">${esc(m.venue)} <span class="st">${esc(m.state || '')}</span></div>
+          <div class="vname">${esc(m.venue)} <span class="st">${esc(m.state || '')}</span>${mW + mP ? `<span class="mtally num">${mW ? `<b class="tw">${mW}W</b>` : ''}${mP ? `<b class="tp">${mP}P</b>` : ''}</span>` : ''}</div>
           <div class="vmeta">
             <span class="chip ${g.cls}">${esc(g.label)}</span>
             ${m.weather ? `<span class="wx">${m.weather.icon || ''} ${Math.round(m.weather.temp_max ?? 0)}°</span>` : ''}
@@ -1215,7 +1229,11 @@
       return;
     }
     el.innerHTML = `<div class="grid-wrap"><table class="race-grid">
-      <thead><tr><th>Meeting</th>${head}</tr></thead><tbody>${rows}</tbody></table></div>
+      <thead><tr><th>Meeting</th>${head}</tr></thead><tbody>${rows}</tbody>
+      ${colW.some(Boolean) || colP.some(Boolean) ? `<tfoot><tr>
+        <td class="mcell tally-lab">Wins / places</td>
+        ${Array.from({ length: maxR }, (_, i) => `<td class="cell-tally num">${colW[i] ? `<b class="tw">${colW[i]}W</b>` : ''}${colP[i] ? `<b class="tp">${colP[i]}P</b>` : ''}${!colW[i] && !colP[i] ? '<span class="tn">–</span>' : ''}</td>`).join('')}
+      </tr></tfoot>` : ''}</table></div>
       <div class="heat-legend">
         <span><span class="sw" style="background:var(--hot-dim);box-shadow:inset 0 0 0 1px var(--hot)"></span>Hot pick race</span>
         <span><span class="sw" style="background:var(--blue-dim);box-shadow:inset 0 0 0 1px var(--blue)"></span>High confidence</span>
