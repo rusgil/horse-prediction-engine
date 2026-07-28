@@ -14719,6 +14719,63 @@ async def audit_post_race_snapshots(
     }
 
 
+@app.post("/api/admin/repair/restore-quarantined-pick")
+async def admin_restore_quarantined_pick(
+    race_id: str = Query(...),
+    horse_name: str = Query(...),
+    win_probability: Optional[float] = Query(None, ge=0.0, le=1.0),
+    x_cron_secret: Optional[str] = Header(None),
+):
+    """Restore ONE horse of a quarantined race as the live rank-1 pick.
+
+    Used when the true pre-race pick is KNOWN from external evidence (e.g.
+    Bathurst R2 2026-07-28: morning /api/edge payload showed RED ROCQUETTE
+    29.0% before the in-place rewrite). Only that horse returns to
+    source='live'; the rest of the race stays quarantined. Temporarily
+    disables the write-once trigger — this endpoint IS the sanctioned
+    repair path the trigger otherwise blocks.
+    """
+    _check_admin(x_cron_secret)
+    from sqlalchemy import text as sa_text, update as sa_update
+    async with get_session() as session:
+        rows = (await session.execute(
+            select(RunnerPredictionHistoryRow)
+            .where(RunnerPredictionHistoryRow.race_id == race_id)
+        )).scalars().all()
+        if not rows:
+            raise HTTPException(status_code=404, detail="no history rows for race")
+        if not any(r.source == "quarantined" for r in rows):
+            raise HTTPException(status_code=409, detail="race is not quarantined — refusing")
+        target = [r for r in rows if _normalize_horse(r.horse_name) == _normalize_horse(horse_name)]
+        if not target:
+            raise HTTPException(status_code=404, detail="horse not found in race history")
+        try:
+            await session.execute(sa_text(
+                "ALTER TABLE runner_prediction_history DISABLE TRIGGER trg_fiq_history_write_guard"))
+            vals = {"source": "live", "contaminated": False, "cancelled": False, "model_rank": 1}
+            if win_probability is not None:
+                vals["win_probability"] = win_probability
+            await session.execute(
+                sa_update(RunnerPredictionHistoryRow)
+                .where(RunnerPredictionHistoryRow.id.in_([r.id for r in target]))
+                .values(**vals)
+            )
+        finally:
+            await session.execute(sa_text(
+                "ALTER TABLE runner_prediction_history ENABLE TRIGGER trg_fiq_history_write_guard"))
+        await session.execute(sa_text(
+            "INSERT INTO history_guard_incidents(race_id, horse_name, kind, detail) "
+            "VALUES (:r, :h, 'manual_restore', :d)"),
+            {"r": race_id, "h": horse_name,
+             "d": f"admin restore as rank-1 win_prob={win_probability}"})
+        await session.commit()
+    global _edge_response_cache
+    _edge_response_cache = None
+    _get_meeting_cache.clear()
+    return {"restored": horse_name, "race_id": race_id, "rows": len(target),
+            "win_probability": win_probability}
+
+
 @app.get("/api/admin/morning-report")
 async def admin_morning_report(x_cron_secret: Optional[str] = Header(None)):
     """
