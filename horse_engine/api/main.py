@@ -247,19 +247,40 @@ async def _scheduled_odds_snapshot():
                             mins_to_jump = round((jump - snapped_at).total_seconds() / 60) if jump else None
                         except Exception:
                             pass
-                    # Snapshot history — only for rank-1 to keep the table's
-                    # steam-computation cost bounded (same as before this fix).
-                    if row.model_rank == 1:
+                    # Place odds (2026-07-28): OddsPro is fixed-win only, so
+                    # place_odds was permanently NULL. Inside the last ~35 min
+                    # before the jump, pull Sportsbet's fixed placePrice once
+                    # per race (10-min client cache) — the final pre-jump
+                    # capture doubles as the post-race "place bet at the jump
+                    # paid $X" record. Recorded for the TOP-3 model ranks.
+                    place_price = None
+                    if (mins_to_jump is not None and -5 <= mins_to_jump <= 35
+                            and row.model_rank in (1, 2, 3)):
+                        try:
+                            from horse_engine.clients.sportsbet_schedule import (
+                                get_sportsbet_place_prices, _norm as _sbn)
+                            _, _vc, _rn = _parse_race_id(row.race_id)
+                            _pmap = await get_sportsbet_place_prices(
+                                target_date, _vc, int(str(_rn).replace("R", "")))
+                            if _pmap:
+                                place_price = _pmap.get(_sbn(row.horse_name or ""))
+                        except Exception:
+                            place_price = None
+                    # Snapshot history — rank-1 always (steam cost bounded);
+                    # ranks 2-3 only when a place price landed (a few rows per
+                    # race in the pre-jump window).
+                    if row.model_rank == 1 or place_price:
                         session.add(OddsSnapshotRow(
                             race_id=row.race_id,
                             horse_name=row.horse_name,
                             snapshotted_at=snapped_at,
                             minutes_to_jump=mins_to_jump,
                             win_odds=float(price),
-                            place_odds=None,  # OddsPro exposes fixed-win only
-                            source="oddspro-fixed",
+                            place_odds=place_price,
+                            source="oddspro-fixed" if row.model_rank == 1 else "sb-place",
                         ))
-                        snapped_race_ids.add(row.race_id)
+                        if row.model_rank == 1:
+                            snapped_race_ids.add(row.race_id)
                     # Piggyback the displayed odds — re-fetch inside THIS
                     # session so the mutation actually persists. The prior
                     # implementation set the attribute on a detached instance

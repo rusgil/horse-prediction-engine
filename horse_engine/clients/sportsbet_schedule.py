@@ -251,6 +251,69 @@ async def get_sportsbet_track_conditions(date: str) -> dict[str, str] | None:
     return out
 
 
+_PLACE_TTL_SECONDS = 600  # racecard place prices re-fetched at most every 10 min per race
+_place_cache: dict[tuple, tuple[datetime, dict]] = {}   # (date, norm_track, race_no) -> (ts, {norm_horse: place_price})
+
+
+async def get_sportsbet_place_prices(date: str, track: str, race_number: int) -> dict[str, float] | None:
+    """Fixed PLACE prices per runner from the Sportsbet racecard.
+
+    {norm_horse: place_price}. Pre-race place odds are recorded into
+    OddsSnapshotRow (OddsPro is fixed-win only, so place_odds was always
+    NULL). One racecard request per race, 10-min cache, fail-open — callers
+    are throttled to the pre-jump window so this stays within the no-hammer
+    rule.
+    """
+    key = (date, _norm(track), int(race_number))
+    cached = _place_cache.get(key)
+    if cached and (datetime.utcnow() - cached[0]).total_seconds() < _PLACE_TTL_SECONDS:
+        return cached[1]
+    data = await _fetch_allracing(date)
+    if data is None:
+        return None
+    ev_id = None
+    for m in _iter_au_horse_meetings(data):
+        if _norm(m.get("name") or "") != _norm(track):
+            continue
+        for e in m.get("events") or []:
+            if e.get("raceNumber") == int(race_number):
+                ev_id = e.get("id")
+                break
+    if not ev_id:
+        return None
+    import os
+    _proxy = os.getenv("SPORTSBET_PROXY_URL") or None
+    try:
+        async with httpx.AsyncClient(
+            headers={"User-Agent": _UA, "Accept": "application/json"},
+            timeout=25.0 if _proxy else 15.0,
+            proxy=_proxy,
+        ) as client:
+            resp = await client.get(_RACECARD_URL.format(event_id=ev_id))
+            resp.raise_for_status()
+            card = resp.json() or {}
+    except Exception as e:
+        log.info("[sportsbet-place] racecard %s R%s failed: %s", track, race_number, e)
+        return None
+    out: dict[str, float] = {}
+    for mk in card.get("markets") or []:
+        if "win or place" not in (mk.get("name") or "").lower():
+            continue
+        for sel in mk.get("selections") or []:
+            best = None
+            for p in sel.get("prices") or []:
+                pp = p.get("placePrice")
+                if pp and pp > 1.0:
+                    best = float(pp)   # last entry wins ('L' = current fixed)
+            if best and sel.get("name"):
+                out[_norm(sel["name"])] = best
+        break
+    if not out:
+        return None
+    _place_cache[key] = (datetime.utcnow(), out)
+    return out
+
+
 def venue_on_sportsbet(venue: str, allowlist: frozenset[str] | None) -> bool:
     """Does `venue` (an RA venue name or hyphenated code) appear in the Sportsbet
     allowlist? Fuzzy: exact normalised match, or one is a substring of the other
