@@ -13740,8 +13740,18 @@ async def _run_quality_check(target: str) -> dict:
             select(RunnerPredictionRow.race_id, RunnerPredictionRow.horse_name)
             .where(RunnerPredictionRow.race_id.like(f"{target}_%"))
         )).fetchall()
+    # The prediction of record is the FROZEN pre-race snapshot — a later
+    # re-enrich can backfill mutable with the full field (Bathurst 2026-07-28
+    # did exactly that by mid-afternoon), which must not hide that the model
+    # actually rated a short field. History wins; mutable only fills races
+    # never snapshotted.
     _pred_by_race: dict[str, set] = {}
-    for _rid, _hn in list(_pn_hist) + list(_pn_mut):
+    _hist_races = {_rid for _rid, _ in _pn_hist}
+    for _rid, _hn in _pn_hist:
+        _pred_by_race.setdefault(_rid, set()).add(_normalize_horse(_hn))
+    for _rid, _hn in _pn_mut:
+        if _rid in _hist_races:
+            continue
         _pred_by_race.setdefault(_rid, set()).add(_normalize_horse(_hn))
     _unrated: dict[str, list[str]] = {}
     for _r in hr_result_rows:
