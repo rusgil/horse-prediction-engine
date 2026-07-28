@@ -13840,10 +13840,22 @@ async def _run_quality_check(target: str) -> dict:
         if _rid in _hist_races:
             continue
         _pred_by_race.setdefault(_rid, set()).add(_normalize_horse(_hn))
+    # Races with quarantined rows are known-handled incidents — reporting
+    # their finishers as "unrated" would nag daily until they age out.
+    _quarantined_races: set[str] = set()
+    async with get_session() as session:
+        _qr = (await session.execute(
+            select(RunnerPredictionHistoryRow.race_id).distinct()
+            .where(RunnerPredictionHistoryRow.race_id.like(f"{target}_%"))
+            .where(RunnerPredictionHistoryRow.source == "quarantined")
+        )).scalars().all()
+        _quarantined_races = set(_qr)
     _unrated: dict[str, list[str]] = {}
     for _r in hr_result_rows:
         if not (_r.position and 1 <= _r.position < 90):
             continue  # actual finishers only (90+ = unplaced sentinel)
+        if _r.race_id in _quarantined_races:
+            continue
         _preds = _pred_by_race.get(_r.race_id)
         if _preds is None:
             continue  # whole race unpredicted — the coverage check owns that
@@ -13872,6 +13884,7 @@ async def _run_quality_check(target: str) -> dict:
                 "SELECT race_id, horse_name, kind, detail, created_at "
                 "FROM history_guard_incidents "
                 "WHERE created_at > now() - interval '36 hours' "
+                "AND kind != 'manual_restore' "
                 "ORDER BY created_at DESC LIMIT 20"
             ))).fetchall()
         if _gi:
