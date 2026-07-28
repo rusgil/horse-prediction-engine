@@ -244,6 +244,7 @@ async def get_sportsbet_track_conditions(date: str) -> dict[str, str] | None:
     except Exception as e:
         log.warning("[sportsbet-conditions] sweep failed for %s: %s", date, e)
         return None
+    log.info("[sportsbet-conditions] %s: %d meetings -> %s", date, len(out), out)
     if not out:
         return None
     _cond_cache[date] = (datetime.utcnow(), out)

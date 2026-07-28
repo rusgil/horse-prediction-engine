@@ -26663,9 +26663,18 @@ async def admin_refresh_track_conditions(
     background loop during racing hours)."""
     _check_admin(x_cron_secret)
     target = race_date or _today_aest().isoformat()
+    from horse_engine.clients.sportsbet_schedule import get_sportsbet_track_conditions
+    conds = await get_sportsbet_track_conditions(target)
     changed = await _refresh_track_conditions(target)
+    async with get_session() as session:
+        n_rows = (await session.execute(
+            select(func.count()).select_from(RacePredictionRow)
+            .where(RacePredictionRow.race_id.like(f"{_like_safe(target)}_%"))
+        )).scalar()
     return {
         "date": target,
+        "sportsbet_conditions": conds,
+        "race_rows_matched": n_rows,
         "changed": changed,
         "note": None if changed else "no differences, or Sportsbet feed unavailable",
     }
