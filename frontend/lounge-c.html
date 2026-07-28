@@ -439,11 +439,15 @@
     .hero-top .clock { font-size: 1.3rem; }
     /* heat grid: slim the meeting column — smaller surface chip, weather
        icon wraps to its own line under the chip */
-    .mcell { min-width: 116px; max-width: 132px; padding: 8px 8px 8px 10px !important; }
+    .mcell { min-width: 102px; max-width: 116px; padding: 8px 8px 8px 10px !important; }
     .mcell .vname { font-size: 0.88rem; }
     .mcell .vmeta { flex-direction: column; align-items: flex-start; gap: 3px; }
     .mcell .vmeta .chip { font-size: 0.54rem; padding: 1px 5px; letter-spacing: 0.02em; }
     .mcell .wx { font-size: 0.66rem; }
+    /* best-pick %% made today's column much wider than the historical view —
+       hide it in the heat-map meeting column on mobile (drill-in still has it) */
+    .mcell .rs-c { display: none; }
+    .mcell .rstat { font-size: 0.62rem; gap: 3px; }
   }
 
   /* ── View C: Meetings rail ──────────────────────────────── */
