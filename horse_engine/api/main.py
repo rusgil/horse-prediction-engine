@@ -751,6 +751,22 @@ async def _rerank_race_after_scratch(session, race_id: str) -> bool:
 
     # Mirror into history's latest snapshot so settled-race code sees the
     # corrected ranking too. Only touches uncancelled history rows.
+    #
+    # POST-JUMP GUARD (2026-07-28, MR CACCIATORE incident): once the race has
+    # started, the frozen snapshot is the prediction of record — a scratch
+    # processed late (or falsely detected) must NEVER re-rank history, because
+    # the survivor probabilities come from MUTABLE, which post-race may hold
+    # re-enriched (hindsight) values. The in-place UPDATE kept the original
+    # timestamps, so it was invisible to batch-level audits.
+    _sched_row = (await session.execute(
+        select(RunnerPredictionHistoryRow.scheduled_time)
+        .where(RunnerPredictionHistoryRow.race_id == race_id)
+        .limit(1)
+    )).scalar()
+    _jump = sched_to_utc_naive(_sched_row) if _sched_row else None
+    if _jump is not None and datetime.utcnow() > _jump:
+        log.info("[rerank] %s already jumped — history snapshot left untouched", race_id)
+        return True
     latest_at = (await session.execute(
         select(func.max(RunnerPredictionHistoryRow.enriched_at))
         .where(RunnerPredictionHistoryRow.race_id == race_id)
@@ -13808,6 +13824,31 @@ async def _run_quality_check(target: str) -> dict:
                       "cache, or late ballot-ins). Probabilities for these races were "
                       "computed over a short field.",
         })
+
+    # ── History write-guard incidents (DB trigger catches, last 36h) ────────
+    try:
+        async with get_session() as session:
+            _gi = (await session.execute(sa_text(
+                "SELECT race_id, horse_name, kind, detail, created_at "
+                "FROM history_guard_incidents "
+                "WHERE created_at > now() - interval '36 hours' "
+                "ORDER BY created_at DESC LIMIT 20"
+            ))).fetchall()
+        if _gi:
+            warning.append({
+                "check": "history_write_guard_incidents",
+                "n": len(_gi),
+                "examples": [
+                    {"race_id": g[0], "horse": g[1], "kind": g[2], "detail": (g[3] or "")[:120]}
+                    for g in _gi[:8]
+                ],
+                "reason": "The DB write-once trigger caught attempts to modify frozen "
+                          "pre-race snapshots after the jump. The writes were neutralised "
+                          "(insert→contaminated / update→old values kept) — find and fix "
+                          "the caller.",
+            })
+    except Exception:
+        pass  # table absent on SQLite dev DBs
 
     # ── Track conditions vs Sportsbet (ops check — evaluates TODAY) ─────────
     # RA program pages carry no live going (parser defaults Good 4); the

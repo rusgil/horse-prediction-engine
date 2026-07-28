@@ -776,6 +776,80 @@ async def init_db() -> None:
     # Run each DDL statement in its own transaction so one failure never
     # blocks the rest. All statements are idempotent (IF NOT EXISTS / IF EXISTS).
     migrations = [
+        # ── History write-once guard (2026-07-28, MR CACCIATORE incident) ──
+        # DB-level backstop independent of app guards: after a race jumps,
+        # (a) new "live" snapshot batches are contaminated AT BIRTH (readers
+        #     already filter contaminated), and
+        # (b) UPDATEs may not change horse/rank/probabilities — the trigger
+        #     silently keeps the OLD values (cancelled/track_condition/is_sharp
+        #     syncs still pass). Every catch is logged to
+        #     history_guard_incidents, surfaced by the nightly quality check.
+        """
+        CREATE TABLE IF NOT EXISTS history_guard_incidents (
+            id SERIAL PRIMARY KEY,
+            race_id TEXT,
+            horse_name TEXT,
+            kind TEXT,
+            detail TEXT,
+            created_at TIMESTAMPTZ DEFAULT now()
+        )
+        """,
+        """
+        CREATE OR REPLACE FUNCTION fiq_history_write_guard() RETURNS trigger AS $fn$
+        DECLARE jumped boolean := false;
+        BEGIN
+          BEGIN
+            jumped := NEW.scheduled_time IS NOT NULL
+                      AND (NEW.scheduled_time)::timestamptz < (now() - interval '5 minutes');
+          EXCEPTION WHEN others THEN
+            jumped := false;
+          END;
+          IF TG_OP = 'INSERT' THEN
+            IF jumped AND COALESCE(NEW.source, 'live') = 'live'
+               AND EXISTS (
+                 SELECT 1 FROM runner_prediction_history h
+                 WHERE h.race_id = NEW.race_id
+                   AND COALESCE(h.source, 'live') = 'live'
+                   AND h.batch_id IS DISTINCT FROM NEW.batch_id
+               ) THEN
+              NEW.contaminated := true;
+              INSERT INTO history_guard_incidents(race_id, horse_name, kind, detail)
+              VALUES (NEW.race_id, NEW.horse_name, 'post_race_insert',
+                      'live snapshot after jump — auto-contaminated at birth');
+            END IF;
+            RETURN NEW;
+          ELSE
+            IF jumped AND (
+                 NEW.horse_name IS DISTINCT FROM OLD.horse_name
+              OR NEW.model_rank IS DISTINCT FROM OLD.model_rank
+              OR NEW.win_probability IS DISTINCT FROM OLD.win_probability
+              OR NEW.place_probability IS DISTINCT FROM OLD.place_probability
+            ) THEN
+              INSERT INTO history_guard_incidents(race_id, horse_name, kind, detail)
+              VALUES (OLD.race_id, OLD.horse_name, 'post_race_update_blocked',
+                      'kept pre-race values; attempted rank='
+                      || COALESCE(NEW.model_rank::text, '?')
+                      || ' win_prob=' || COALESCE(NEW.win_probability::text, '?'));
+              NEW.horse_name := OLD.horse_name;
+              NEW.model_rank := OLD.model_rank;
+              NEW.win_probability := OLD.win_probability;
+              NEW.place_probability := OLD.place_probability;
+              NEW.place_model_rank := OLD.place_model_rank;
+              NEW.exotic_model_rank := OLD.exotic_model_rank;
+            END IF;
+            RETURN NEW;
+          END IF;
+        END
+        $fn$ LANGUAGE plpgsql
+        """,
+        """
+        DROP TRIGGER IF EXISTS trg_fiq_history_write_guard ON runner_prediction_history
+        """,
+        """
+        CREATE TRIGGER trg_fiq_history_write_guard
+        BEFORE INSERT OR UPDATE ON runner_prediction_history
+        FOR EACH ROW EXECUTE FUNCTION fiq_history_write_guard()
+        """,
         "ALTER TABLE runner_predictions ADD COLUMN IF NOT EXISTS cancelled BOOLEAN DEFAULT FALSE",
         "ALTER TABLE runner_predictions ADD COLUMN IF NOT EXISTS place_model_rank INTEGER",
         "ALTER TABLE runner_predictions ADD COLUMN IF NOT EXISTS exotic_model_rank INTEGER",
