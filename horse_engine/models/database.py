@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import json
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 
 from sqlalchemy import Column, Float, Integer, String, Text, Boolean, DateTime, Index, UniqueConstraint, select, text
@@ -32,6 +32,26 @@ SessionLocal = async_sessionmaker(engine, expire_on_commit=False)
 
 class Base(DeclarativeBase):
     pass
+
+
+def sched_to_utc_naive(value) -> "datetime | None":
+    """Parse a scheduled_time string to NAIVE UTC for guard comparisons.
+
+    THE bug this kills (2026-07-28): race times arrive as "…T13:40:00+10:00";
+    `fromisoformat(...).replace(tzinfo=None)` kept the LOCAL clock face, so
+    `utcnow() > sched` believed every race was ~10h in the future — letting
+    post-race re-enrichments rewrite mutable AND history snapshots ("MR
+    CACCIATORE became our pick after winning"). Z-format strings were fine,
+    which is why the corruption was intermittent (depends on which feed
+    stamped the times that day). ALWAYS convert via the offset.
+    """
+    try:
+        dt = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    except (ValueError, TypeError):
+        return None
+    if dt.tzinfo is not None:
+        dt = dt.astimezone(timezone.utc).replace(tzinfo=None)
+    return dt
 
 
 class RacePredictionRow(Base):
@@ -1042,8 +1062,8 @@ async def backfill_prediction_history(session: AsyncSession) -> int:
     race_rows: dict[str, list] = {}
     for row in rows:
         try:
-            sched = datetime.fromisoformat(row.scheduled_time.replace("Z", "+00:00")).replace(tzinfo=None)
-            if row.enriched_at < sched and row.race_id not in already_set:
+            sched = sched_to_utc_naive(row.scheduled_time)
+            if sched and row.enriched_at < sched and row.race_id not in already_set:
                 race_rows.setdefault(row.race_id, []).append(row)
         except (ValueError, TypeError):
             continue
@@ -1112,8 +1132,8 @@ async def save_race_predictions(session: AsyncSession, race_id: str, predictions
         scheduled_time = predictions[0].get("scheduled_time")
         if scheduled_time:
             try:
-                sched = datetime.fromisoformat(str(scheduled_time).replace("Z", "+00:00")).replace(tzinfo=None)
-                if datetime.utcnow() > sched:
+                sched = sched_to_utc_naive(scheduled_time)
+                if sched is not None and datetime.utcnow() > sched:
                     return  # Pre-race snapshot exists and race has started — don't overwrite
             except (ValueError, TypeError):
                 pass
@@ -1293,8 +1313,8 @@ async def save_race_predictions(session: AsyncSession, race_id: str, predictions
         is_pre_race = False
         if scheduled_time:
             try:
-                sched = datetime.fromisoformat(str(scheduled_time).replace("Z", "+00:00")).replace(tzinfo=None)
-                is_pre_race = enriched_at < sched
+                sched = sched_to_utc_naive(scheduled_time)
+                is_pre_race = sched is not None and enriched_at < sched
             except (ValueError, TypeError):
                 pass
         if is_pre_race:

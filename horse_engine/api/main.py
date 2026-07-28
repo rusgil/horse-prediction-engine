@@ -77,6 +77,7 @@ from horse_engine.models.database import (
     load_exotic_model_weights,
     save_exotic_model_weights,
     save_race_predictions,
+    sched_to_utc_naive,
     UserRow,
     MagicLinkRow,
     SessionRow,
@@ -242,8 +243,8 @@ async def _scheduled_odds_snapshot():
                     mins_to_jump = None
                     if row.scheduled_time:
                         try:
-                            jump = datetime.fromisoformat(row.scheduled_time.replace("Z", "+00:00")).replace(tzinfo=None)
-                            mins_to_jump = round((jump - snapped_at).total_seconds() / 60)
+                            jump = sched_to_utc_naive(row.scheduled_time)
+                            mins_to_jump = round((jump - snapped_at).total_seconds() / 60) if jump else None
                         except Exception:
                             pass
                     # Snapshot history — only for rank-1 to keep the table's
@@ -996,8 +997,8 @@ async def _scheduled_live_odds_refresh():
         upcoming = []
         for row in all_rows:
             try:
-                sched = datetime.fromisoformat(row.scheduled_time.replace("Z", "+00:00")).replace(tzinfo=None)
-                if now_utc <= sched <= window_end:
+                sched = sched_to_utc_naive(row.scheduled_time)
+                if sched and now_utc <= sched <= window_end:
                     upcoming.append(row)
             except Exception:
                 continue
@@ -2400,7 +2401,7 @@ async def _snapshot_prerace_predictions() -> int:
                 sched = sched_map.get(r.race_id)
                 if sched is None and r.scheduled_time:
                     try:
-                        sched = datetime.fromisoformat(str(r.scheduled_time).replace("Z", "+00:00")).replace(tzinfo=None)
+                        sched = sched_to_utc_naive(r.scheduled_time)
                     except (ValueError, TypeError):
                         sched = None
                 if sched:
@@ -2448,7 +2449,7 @@ async def _snapshot_prerace_predictions() -> int:
         sched = sched_map.get(r.race_id)
         if sched is None and r.scheduled_time:
             try:
-                sched = datetime.fromisoformat(str(r.scheduled_time).replace("Z", "+00:00")).replace(tzinfo=None)
+                sched = sched_to_utc_naive(r.scheduled_time)
             except (ValueError, TypeError):
                 pass
         if sched and sched <= now_utc:
@@ -14478,6 +14479,118 @@ async def _scheduled_quality_check():
     else:
         log.info("[quality-check %s] clean after heals (%d applied)",
                  target, combined["summary"]["heals_applied"])
+
+
+@app.get("/api/admin/audit/post-race-snapshots")
+async def audit_post_race_snapshots(
+    since: str = "2026-07-22",
+    apply: bool = False,
+    x_cron_secret: Optional[str] = Header(None),
+):
+    """Audit (and optionally quarantine) POST-RACE history snapshots.
+
+    The tz-naive jump guards let re-enrichments rewrite history after races
+    ran (MR CACCIATORE incident, 2026-07-28). This scans live snapshots since
+    `since`, groups them into batches per race, and finds races where a batch
+    was RECORDED after the jump. apply=true marks post-race batches
+    contaminated=True — but ONLY for races that also have a pre-race batch,
+    so late-listed races whose only snapshot is the pre-seed fallback keep
+    their grading row (counted separately as post_race_only).
+    """
+    _check_admin(x_cron_secret)
+    GRACE = timedelta(minutes=5)
+    async with get_session() as session:
+        rows = (await session.execute(
+            select(RunnerPredictionHistoryRow)
+            .where(RunnerPredictionHistoryRow.race_id >= since)
+            .where((RunnerPredictionHistoryRow.source == "live")
+                   | RunnerPredictionHistoryRow.source.is_(None))
+            .where(RunnerPredictionHistoryRow.contaminated.is_(False)
+                   | RunnerPredictionHistoryRow.contaminated.is_(None))
+        )).scalars().all()
+        winners_q = (await session.execute(
+            select(HistoricalResultRow.race_id, HistoricalResultRow.horse_name)
+            .where(HistoricalResultRow.race_id >= since)
+            .where(HistoricalResultRow.position == 1)
+        )).fetchall()
+    winners = {rid: _normalize_horse(hn) for rid, hn in winners_q}
+
+    by_race: dict[str, list] = {}
+    for r in rows:
+        by_race.setdefault(r.race_id, []).append(r)
+
+    affected = []
+    post_race_only = []
+    flips = 0
+    quarantine_ids: list[int] = []
+    for rid, rws in by_race.items():
+        jump = sched_to_utc_naive(next((r.scheduled_time for r in rws if r.scheduled_time), None))
+        if jump is None:
+            continue
+        batches: dict[str, list] = {}
+        for r in rws:
+            key = r.batch_id or (r.enriched_at.isoformat() if r.enriched_at else "?")
+            batches.setdefault(key, []).append(r)
+        pre, post = [], []
+        for key, brows in batches.items():
+            rec = max((r.recorded_at or r.enriched_at or datetime.min) for r in brows)
+            (post if rec > jump + GRACE else pre).append((rec, brows))
+        if not post:
+            continue
+        def _rank1(batch_rows):
+            r1 = [r for r in batch_rows if r.model_rank == 1 and not r.cancelled]
+            return r1[0] if r1 else None
+        if not pre:
+            post_race_only.append(rid)
+            continue
+        pre_pick = _rank1(max(pre)[1])
+        cur_pick = _rank1(max(post)[1])
+        pick_changed = bool(pre_pick and cur_pick
+                            and _normalize_horse(pre_pick.horse_name) != _normalize_horse(cur_pick.horse_name))
+        win = winners.get(rid)
+        flipped = bool(pick_changed and win and cur_pick
+                       and _normalize_horse(cur_pick.horse_name) == win
+                       and pre_pick and _normalize_horse(pre_pick.horse_name) != win)
+        if flipped:
+            flips += 1
+        affected.append({
+            "race_id": rid,
+            "post_batches": len(post),
+            "pre_pick": pre_pick.horse_name if pre_pick else None,
+            "served_pick": cur_pick.horse_name if cur_pick else None,
+            "pick_changed": pick_changed,
+            "grading_flipped_to_win": flipped,
+        })
+        for _, brows in post:
+            quarantine_ids.extend(r.id for r in brows)
+
+    if apply and quarantine_ids:
+        async with get_session() as session:
+            from sqlalchemy import update as sa_update
+            await session.execute(
+                sa_update(RunnerPredictionHistoryRow)
+                .where(RunnerPredictionHistoryRow.id.in_(quarantine_ids))
+                .values(contaminated=True)
+            )
+            await session.commit()
+        global _edge_response_cache
+        _edge_response_cache = None
+        _get_meeting_cache.clear()
+
+    by_date: dict[str, int] = {}
+    for a in affected:
+        by_date[a["race_id"][:10]] = by_date.get(a["race_id"][:10], 0) + 1
+    return {
+        "since": since,
+        "races_with_post_race_batches": len(affected),
+        "by_date": dict(sorted(by_date.items())),
+        "picks_changed": sum(1 for a in affected if a["pick_changed"]),
+        "grading_flipped_loss_to_win": flips,
+        "post_race_only_races": len(post_race_only),
+        "rows_quarantined": len(quarantine_ids) if apply else 0,
+        "apply": apply,
+        "examples": [a for a in affected if a["pick_changed"]][:12],
+    }
 
 
 @app.get("/api/admin/morning-report")
