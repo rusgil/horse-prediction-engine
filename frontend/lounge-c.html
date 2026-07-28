@@ -169,9 +169,6 @@
   .ds-stat b.a { color: var(--amber); }
   .ds-divider { width: 1px; height: 18px; background: var(--line); }
 
-  .mtally { margin-left: 6px; display: inline-flex; gap: 5px; font-size: 0.68rem; }
-  .tw { color: var(--mint); font-weight: 800; }
-  .tp { color: var(--amber); font-weight: 800; }
   .tn { color: var(--text-3); }
   .tally-lab { font-size: 0.64rem; font-weight: 800; letter-spacing: 0.05em; text-transform: uppercase; color: var(--text-3); }
   .cell-tally { text-align: center; font-size: 0.72rem; padding: 7px 4px; border-top: 1px solid var(--line); }
@@ -1189,13 +1186,12 @@
     const maxR = Math.max(1, ...S.meetings.map(m => (S.details[vcOf(m)] || []).length));
     const head = Array.from({ length: maxR }, (_, i) => `<th>R${i + 1}</th>`).join('');
 
-    const colW = Array(maxR).fill(0), colP = Array(maxR).fill(0);
+    const colW = Array(maxR).fill(0), colP = Array(maxR).fill(0), colS = Array(maxR).fill(0);
     const rows = S.meetings.map(m => {
       const vc = vcOf(m);
       const races = S.details[vc];
       const g = goingInfo(races?.[0]?.track_condition);
       if (S.sharpOnly && races && !races.some(r => r.is_sharp === true)) return '';
-      let mW = 0, mP = 0;
       const settledRaces = (races || []).filter(isSettled);
       const aWins = settledRaces.filter(r => r.model_correct === true).length;
       const aPlaced = settledRaces.filter(r => r.model_placed === true).length;
@@ -1210,8 +1206,9 @@
         if (!r) return `<td class="cell blank"></td>`;
         if (S.sharpOnly && r.is_sharp !== true) return `<td class="cell blank"></td>`;
         if (isSettled(r)) {
-          if (r.model_correct === true) { mW++; colW[i]++; }
-          else if (r.model_placed === true) { mP++; colP[i]++; }
+          colS[i]++;
+          if (r.model_correct === true) colW[i]++;
+          if (r.model_placed === true) colP[i]++;
         }
         const done = isSettled(r);
         const tier = tierOf(r.top_win_probability, isOffGoing(r.track_condition));
@@ -1245,9 +1242,9 @@
     }
     el.innerHTML = `<div class="grid-wrap"><table class="race-grid">
       <thead><tr><th>Meeting</th>${head}</tr></thead><tbody>${rows}</tbody>
-      ${colW.some(Boolean) || colP.some(Boolean) ? `<tfoot><tr>
+      ${colS.some(Boolean) ? `<tfoot><tr>
         <td class="mcell tally-lab">Wins / places</td>
-        ${Array.from({ length: maxR }, (_, i) => `<td class="cell-tally num">${colW[i] ? `<b class="tw">${colW[i]}W</b>` : ''}${colP[i] ? `<b class="tp">${colP[i]}P</b>` : ''}${!colW[i] && !colP[i] ? '<span class="tn">–</span>' : ''}</td>`).join('')}
+        ${Array.from({ length: maxR }, (_, i) => `<td class="cell-tally num">${colS[i] ? `<span class="rs-w">${colW[i]}/${colS[i]} wins</span>${colP[i] > colW[i] ? `<span class="rs-p"> · ${colP[i]} placed</span>` : ''}` : '<span class="tn">–</span>'}</td>`).join('')}
       </tr></tfoot>` : ''}</table></div>
       <div class="heat-legend">
         <span><span class="sw" style="background:var(--hot-dim);box-shadow:inset 0 0 0 1px var(--hot)"></span>Hot pick race</span>
