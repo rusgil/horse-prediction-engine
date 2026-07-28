@@ -14585,8 +14585,8 @@ async def audit_post_race_snapshots(
         if not pre:
             post_race_only.append(rid)
             continue
-        pre_pick = _rank1(max(pre)[1])
-        cur_pick = _rank1(max(post)[1])
+        pre_pick = _rank1(max(pre, key=lambda t: t[0])[1])
+        cur_pick = _rank1(max(post, key=lambda t: t[0])[1])
         pick_changed = bool(pre_pick and cur_pick
                             and _normalize_horse(pre_pick.horse_name) != _normalize_horse(cur_pick.horse_name))
         win = winners.get(rid)
@@ -14661,7 +14661,7 @@ async def audit_post_race_snapshots(
         r1 = next((r for r in active if r.model_rank == 1), None)
         raws = [(r.win_prob_raw or 0, r) for r in active if r.win_prob_raw]
         if r1 is not None and raws:
-            raw_max = max(raws)[1]
+            raw_max = max(raws, key=lambda t: t[0])[1]
             if _normalize_horse(raw_max.horse_name) != _normalize_horse(r1.horse_name):
                 win = winners.get(rid)
                 rank_inversions.append({
