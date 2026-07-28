@@ -5652,7 +5652,7 @@ async def refresh_edge_results(request: Request):
 _yesterday_response_cache: dict[str, tuple[datetime, dict]] = {}
 _YESTERDAY_CACHE_TTL = 1800  # 30 min — past dates are stable
 _YESTERDAY_CACHE_TTL_TODAY = 60  # 1 min — today's results land throughout the day
-_YESTERDAY_CACHE_VERSION = 3  # bumped to invalidate stale "all no_result" payloads from the 2026-07-10/11 RA outage
+_YESTERDAY_CACHE_VERSION = 4  # v4: recompute post-quarantine (MR CACCIATORE incident 2026-07-28) so results views drop the 11 rewritten races
 
 
 def _yesterday_cache_ttl(target_date: str) -> int:
@@ -25065,8 +25065,15 @@ async def performance_by_venue(days: int = Query(30, ge=1, le=90)):
             select(RunnerPredictionHistoryRow)
             .where(RunnerPredictionHistoryRow.race_id.in_(race_ids))
             .where(RunnerPredictionHistoryRow.model_rank == 1)
+            .where(RunnerPredictionHistoryRow.cancelled.is_(False) | RunnerPredictionHistoryRow.cancelled.is_(None))
+            .where((RunnerPredictionHistoryRow.source == "live")
+                   | RunnerPredictionHistoryRow.source.is_(None))
+            .order_by(RunnerPredictionHistoryRow.enriched_at.desc())
         )
-        top_picks = {p.race_id: p for p in pred_result.scalars().all()}
+        top_picks: dict = {}
+        for p in pred_result.scalars().all():
+            if p.race_id not in top_picks:
+                top_picks[p.race_id] = p
 
     result_by_key = {(r.race_id, _normalize_horse(r.horse_name)): r for r in hr_rows}
     from collections import Counter as _Counter
