@@ -172,7 +172,8 @@
   .tn { color: var(--text-3); }
   .tally-lab { font-size: 0.64rem; font-weight: 800; letter-spacing: 0.05em; text-transform: uppercase; color: var(--text-3); }
   .cell-tally { text-align: center; font-size: 0.72rem; padding: 7px 4px; border-top: 1px solid var(--line); }
-  .cell-tally b { display: inline-block; padding: 0 2px; }
+  .cell-tally .rs-w, .cell-tally .rs-p { display: block; }
+  .cell-tally .rs-p { margin-top: 1px; }
 
   /* ── Legend ─────────────────────────────────────────────── */
   .key { max-width: 1220px; margin: 34px auto 0; padding: 0 16px; }
@@ -1244,7 +1245,7 @@
       <thead><tr><th>Meeting</th>${head}</tr></thead><tbody>${rows}</tbody>
       ${colS.some(Boolean) ? `<tfoot><tr>
         <td class="mcell tally-lab">Wins / places</td>
-        ${Array.from({ length: maxR }, (_, i) => `<td class="cell-tally num">${colS[i] ? `<span class="rs-w">${colW[i]}/${colS[i]} wins</span>${colP[i] > colW[i] ? `<span class="rs-p"> · ${colP[i]} placed</span>` : ''}` : '<span class="tn">–</span>'}</td>`).join('')}
+        ${Array.from({ length: maxR }, (_, i) => `<td class="cell-tally num">${colS[i] ? `<span class="rs-w">${colW[i]}/${colS[i]} wins</span>${colP[i] > colW[i] ? `<span class="rs-p">${colP[i]} placed</span>` : ''}` : '<span class="tn">–</span>'}</td>`).join('')}
       </tr></tfoot>` : ''}</table></div>
       <div class="heat-legend">
         <span><span class="sw" style="background:var(--hot-dim);box-shadow:inset 0 0 0 1px var(--hot)"></span>Hot pick race</span>
