@@ -7,6 +7,25 @@
 <!-- AUTH GATE TEMPORARILY REMOVED 2026-07-23 for Google AdSense review. To re-lock: restore the /api/check gate (redirect to /login) and the noindex meta. Admin + Account stay locked. -->
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <script src="/theme.js"></script>
+  <script>
+    /* Edge v2 (2026-07-28): the new layout is the default.
+       "Trad" on the toggle stores an opt-out; only then does /edge render this page. */
+    (function () {
+      try {
+        if (localStorage.getItem('fiqEdgeView') !== 'trad') location.replace('/edge-new.html');
+      } catch (e) {}
+    })();
+    document.addEventListener('DOMContentLoaded', function () {
+      document.querySelectorAll('.lounge-ver-seg button').forEach(function (b) {
+        b.onclick = function () {
+          if (b.dataset.lv === 'new') {
+            try { localStorage.setItem('fiqEdgeView', 'new'); } catch (e) {}
+            location.href = '/edge-new.html';
+          }
+        };
+      });
+    });
+  </script>
   <title>The Edge — High Confidence Picks | FunkyIQ</title>
   <meta name="description" content="The Edge shows FunkyIQ's highest-confidence Australian horse racing picks — model win probability versus market odds, with value overlays highlighted, updated live throughout the race day." />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -872,6 +891,12 @@
       border-radius: 2px;
       margin: 14px auto -19px;
     }
+    .lounge-ver-seg { display: inline-flex; background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.14); border-radius: 999px; padding: 2px; }
+    .lounge-ver-seg button { border: none; background: none; color: #9ca3af; font-weight: 700; font-size: 12px; padding: 4px 14px; border-radius: 999px; cursor: pointer; }
+    .lounge-ver-seg button.on { background: rgba(34,197,94,0.14); color: #4ade80; }
+    :root[data-theme="light"] .lounge-ver-seg { background: rgba(23,33,47,0.05); border-color: rgba(23,33,47,0.15); }
+    :root[data-theme="light"] .lounge-ver-seg button { color: #5d6b80; }
+    :root[data-theme="light"] .lounge-ver-seg button.on { background: rgba(13,148,80,0.12); color: #0a7a41; }
     .page-header.lounge { --page-accent: #f5c842; }
     .page-header.edge   { --page-accent: #4ade80; }
     .page-header.hot    { --page-accent: #fb923c; }
@@ -1780,6 +1805,10 @@
   <header class="page-header edge">
     <h1 class="page-title">🎯 The Edge <span class="tier-badge tier-edge">Edge</span></h1>
     <p class="page-subtitle">High-confidence picks compared against market odds — where the value sits</p>
+    <div style="margin-top:10px"><span class="lounge-ver-seg" role="radiogroup" aria-label="Edge version">
+      <button data-lv="trad" class="on">Trad</button>
+      <button data-lv="new">New</button>
+    </span></div>
   </header>
   <div class="hero" style="text-align:center;padding-top:0">
     <div class="hero-sub" style="display:none">spacer</div>
