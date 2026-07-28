@@ -13964,9 +13964,16 @@ async def _run_quality_check(target: str) -> dict:
                     "error": f"{type(e).__name__}: {str(e)[:100]}"}
 
     try:
-        async with _httpx_probe.AsyncClient() as client:
+        # The RA proxy serves Caddy's INTERNAL self-signed CA (Let's Encrypt
+        # dropped 2026-07-23 — its rate limits broke IP rotation), and the RA
+        # client itself skips verification for that hop. Verifying here made
+        # every probe fail TLS → status 0 → a false ra_proxy_droplet_down
+        # CRITICAL in each morning report since the cert change.
+        async with _httpx_probe.AsyncClient() as client, \
+                _httpx_probe.AsyncClient(verify=False) as ext_client:
             probes = await asyncio.gather(
-                *[_probe(client, u) for u in internal_urls + external_urls]
+                *([_probe(client, u) for u in internal_urls]
+                  + [_probe(ext_client, u) for u in external_urls])
             )
         broken_internal = [p for p in probes[:len(internal_urls)] if not p["ok"]]
         broken_external = [p for p in probes[len(internal_urls):] if not p["ok"]]
@@ -13986,7 +13993,7 @@ async def _run_quality_check(target: str) -> dict:
             critical.append({
                 "check": "ra_proxy_droplet_down",
                 "urls": broken_external,
-                "reason": "The DigitalOcean RA proxy is unreachable. Self-heal (ra-proxy-healthcheck.timer) should have restarted it within 2 minutes. If you see this in the morning report, the droplet is powered off, OOM globally, or the self-heal timer failed to install.",
+                "reason": "The RA proxy box is unreachable. Self-heal (ra-proxy-healthcheck.timer) should have restarted it within 2 minutes. If you see this in the morning report, the droplet is powered off, OOM globally, or the self-heal timer failed to install.",
                 "remediation": f"SSH to {_ra_proxy_url or 'the droplet'}, run: systemctl status ra-proxy-healthcheck.timer; tail -50 /var/log/ra-proxy-healthcheck.log — see scripts/migrate-ra-proxy.sh to rotate to a new droplet",
             })
         info.append({
@@ -24046,6 +24053,98 @@ async def admin_refresh_about_stats_now(
         )).scalar_one_or_none()
     published = json.loads(row.payload_json) if row and row.payload_json else None
     return {"ok": True, "forced": force, "published": published}
+
+
+@app.get("/api/admin/backtest/layoff-bands")
+async def backtest_layoff_bands(
+    days: int = 180,
+    x_cron_secret: Optional[str] = Header(None),
+):
+    """Rank-1 pick performance grouped by the pick's days-since-last-run.
+
+    Asks: does the layoff taper (discount_form_for_layoff — 120d→365d linear,
+    365d→730d harder) discount long-spelled horses ENOUGH? Compares claimed
+    win % vs actual win rate per band (COMIC CULTURE 304d question,
+    2026-07-28). days_since_last_run comes from the snapshot's enriched_json.
+    """
+    _check_admin(x_cron_secret)
+    cutoff = (_today_aest() - timedelta(days=days)).isoformat()
+    async with get_session() as session:
+        hist = (await session.execute(
+            select(RunnerPredictionHistoryRow)
+            .where(RunnerPredictionHistoryRow.race_id >= cutoff)
+            .where(RunnerPredictionHistoryRow.source == "live")
+            .where(RunnerPredictionHistoryRow.model_rank == 1)
+            .where(RunnerPredictionHistoryRow.cancelled.is_(False) | RunnerPredictionHistoryRow.cancelled.is_(None))
+            .where(RunnerPredictionHistoryRow.win_probability.isnot(None))
+            .order_by(RunnerPredictionHistoryRow.enriched_at.desc())
+        )).scalars().all()
+        hr_rows = (await session.execute(
+            select(HistoricalResultRow.race_id, HistoricalResultRow.horse_name,
+                   HistoricalResultRow.position)
+            .where(HistoricalResultRow.race_id >= cutoff)
+        )).fetchall()
+    winners = {r.race_id: _normalize_horse(r.horse_name) for r in hr_rows if r.position == 1}
+    placed_by_race: dict[str, set] = {}
+    for r in hr_rows:
+        if r.position and 1 <= r.position <= 3:
+            placed_by_race.setdefault(r.race_id, set()).add(_normalize_horse(r.horse_name))
+
+    # Latest rank-1 snapshot per race (FIX-S dedup).
+    seen: set[str] = set()
+    picks = []
+    for row in hist:
+        if row.race_id in seen:
+            continue
+        seen.add(row.race_id)
+        picks.append(row)
+
+    bands = [
+        ("0-60d", 0, 60), ("61-120d", 61, 120), ("121-249d", 121, 249),
+        ("250-365d", 250, 365), ("366d+", 366, 10**6),
+    ]
+    out = {name: {"n": 0, "wins": 0, "placed": 0, "claimed_sum": 0.0, "sp_sum": 0.0, "sp_n": 0}
+           for name, _, _ in bands}
+    skipped_no_days = 0
+    for row in picks:
+        if row.race_id not in winners:
+            continue
+        d = None
+        try:
+            e = json.loads(row.enriched_json) if isinstance(row.enriched_json, str) else (row.enriched_json or {})
+            d = e.get("days_since_last_run")
+        except Exception:
+            pass
+        if d is None:
+            skipped_no_days += 1
+            continue
+        for name, lo, hi in bands:
+            if lo <= d <= hi:
+                b = out[name]
+                b["n"] += 1
+                b["claimed_sum"] += row.win_probability or 0
+                nh = _normalize_horse(row.horse_name)
+                if nh == winners[row.race_id]:
+                    b["wins"] += 1
+                if nh in placed_by_race.get(row.race_id, set()):
+                    b["placed"] += 1
+                if row.best_available_odds and row.best_available_odds > 1:
+                    b["sp_sum"] += row.best_available_odds
+                    b["sp_n"] += 1
+                break
+    result = {}
+    for name, _, _ in bands:
+        b = out[name]
+        result[name] = {
+            "races": b["n"],
+            "wins": b["wins"],
+            "win_rate_pct": round(b["wins"] / b["n"] * 100, 1) if b["n"] else None,
+            "top3_rate_pct": round(b["placed"] / b["n"] * 100, 1) if b["n"] else None,
+            "avg_claimed_win_pct": round(b["claimed_sum"] / b["n"] * 100, 1) if b["n"] else None,
+            "avg_odds": round(b["sp_sum"] / b["sp_n"], 2) if b["sp_n"] else None,
+        }
+    return {"window_days": days, "picks_scored": sum(v["races"] for v in result.values()),
+            "skipped_no_days_field": skipped_no_days, "bands": result}
 
 
 @app.get("/api/admin/backtest/blind-shrinkage")
