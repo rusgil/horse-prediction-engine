@@ -13774,11 +13774,8 @@ async def _run_quality_check(target: str) -> dict:
             continue  # whole race unpredicted — the coverage check owns that
         if _normalize_horse(_r.horse_name) not in _preds:
             _unrated.setdefault(_r.race_id, []).append(_r.horse_name)
-    log.info("[qc-unrated] target=%s pred_races=%d finishers_checked=%d unrated=%s sample_preds=%s",
-             target, len(_pred_by_race),
-             sum(1 for _r in hr_result_rows if _r.position and 1 <= _r.position < 90),
-             {k: v for k, v in list(_unrated.items())[:3]},
-             {k: sorted(v)[:12] for k, v in list(_pred_by_race.items())[:2]})
+    if _unrated:
+        log.info("[qc-unrated] target=%s flagged=%s", target, dict(list(_unrated.items())[:5]))
     if _unrated:
         _bucket = critical if len(_unrated) >= 3 else warning
         _bucket.append({
