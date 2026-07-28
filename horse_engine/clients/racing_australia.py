@@ -545,9 +545,17 @@ def _parse_acceptances_page(html: str, ra_key: str, race_date: str, state: str) 
             values = [c.get_text(strip=True) for c in cells]
             tab_num_raw, form_str, horse, trainer, jockey_raw, barrier_raw, weight_raw = values[:7]
 
-            # Validate tab number is numeric
-            if not re.match(r"^\d+$", tab_num_raw):
+            # Tab number: plain numeric OR an EMERGENCY like "13e"/"14E".
+            # Emergencies were silently rejected here, so when one gained a
+            # start (routine in country racing after scratchings) it raced
+            # UNRATED and every field it was in was priced one horse short
+            # (GEM TYCOON, Bathurst R6 2026-07-28, finished while never in
+            # our field). Emergencies that ballot OUT are scratched/absent on
+            # the day-of page, so including them self-corrects by jump time.
+            m_tab = re.match(r"^(\d+)[eE]?$", tab_num_raw)
+            if not m_tab:
                 continue
+            tab_num_raw = m_tab.group(1)
 
             jockey_name, jockey_claim = _parse_jockey(jockey_raw)
             weight = _parse_weight(weight_raw)

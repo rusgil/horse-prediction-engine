@@ -13620,6 +13620,50 @@ async def _auto_heal_findings(target: str, findings: list[dict]) -> list[dict]:
             actions.append({"check": check, "action": "recompute_is_sharp",
                             "affected": updated, "outcome": "healed" if updated else "skipped"})
 
+        elif check == "unrated_finishers":
+            # Results are ground truth: a CANCELLED prediction row for a horse
+            # that finished is a false scratching — un-cancel it (mutable +
+            # history; the write-guard trigger allows cancelled-flag changes).
+            # Truly absent horses (never parsed) can't be healed here — the
+            # emergency-tab parser fix prevents that class going forward.
+            from sqlalchemy import text as _sa_text
+            healed_n = 0
+            skipped_n = 0
+            async with get_session() as session:
+                for ex in f.get("examples") or []:
+                    rid = ex.get("race_id")
+                    for horse in ex.get("horses") or []:
+                        res_m = await session.execute(
+                            sa_update(RunnerPredictionRow)
+                            .where(RunnerPredictionRow.race_id == rid)
+                            .where(_func.lower(RunnerPredictionRow.horse_name) == (horse or "").lower())
+                            .where(RunnerPredictionRow.cancelled.is_(True))
+                            .values(cancelled=False)
+                        )
+                        res_h = await session.execute(
+                            sa_update(RunnerPredictionHistoryRow)
+                            .where(RunnerPredictionHistoryRow.race_id == rid)
+                            .where(_func.lower(RunnerPredictionHistoryRow.horse_name) == (horse or "").lower())
+                            .where(RunnerPredictionHistoryRow.cancelled.is_(True))
+                            .values(cancelled=False)
+                        )
+                        n = (res_m.rowcount or 0) + (res_h.rowcount or 0)
+                        if n:
+                            healed_n += 1
+                            try:
+                                await session.execute(_sa_text(
+                                    "INSERT INTO history_guard_incidents(race_id, horse_name, kind, detail) "
+                                    "VALUES (:r, :h, 'result_reconciled_uncancel', 'finished with a real position while flagged scratched')"),
+                                    {"r": rid, "h": horse})
+                            except Exception:
+                                pass
+                        else:
+                            skipped_n += 1
+                await session.commit()
+            actions.append({"check": check, "action": "uncancel_finishers",
+                            "affected": healed_n, "unhealable_absent": skipped_n,
+                            "outcome": "healed" if healed_n else "skipped"})
+
         elif check == "duplicate_positions_in_result":
             # Delete duplicate HistoricalResultRow rows for the same race+position,
             # keeping the one with tab_number populated (or earliest id if tied).
