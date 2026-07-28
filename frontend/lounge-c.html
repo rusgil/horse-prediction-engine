@@ -697,6 +697,66 @@
       body { padding-bottom: 86px; }
     }
 
+    /* Unified page header — same on every page. */
+    /* Explicit resets defeat each page's generic `header { sticky; blur; ... }`
+       rule so the unified header doesn't inherit them. */
+    .page-header {
+      position: static;
+      top: auto;
+      z-index: auto;
+      background: transparent;
+      -webkit-backdrop-filter: none;
+      backdrop-filter: none;
+      text-align: center;
+      padding: 26px 16px 18px;
+      border-bottom: 1px solid rgba(255,255,255,0.06);
+      margin-bottom: 16px;
+    }
+    /* Tier-coloured accent line under the title. */
+    .page-header::after {
+      content: '';
+      display: block;
+      width: 80px; height: 3px;
+      background: var(--page-accent, #9ca3af);
+      border-radius: 2px;
+      margin: 14px auto -19px;
+    }
+    .page-header.lounge { --page-accent: #f5c842; }
+    .page-header.edge   { --page-accent: #4ade80; }
+    .page-header.hot    { --page-accent: #fb923c; }
+    .page-header.funk   { --page-accent: #c084fc; }
+    .page-header.labs   { --page-accent: #10b981; }
+    .page-title {
+      font-family: 'Barlow Condensed', sans-serif;
+      font-size: 36px;
+      font-weight: 800;
+      line-height: 1;
+      letter-spacing: 0.5px;
+      margin: 0 0 8px;
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+      justify-content: center;
+    }
+    .page-subtitle {
+      font-size: 13px;
+      color: #9ca3af;
+      margin: 0 auto;
+      max-width: 600px;
+      line-height: 1.4;
+    }
+    @media (max-width: 600px) {
+      .page-title { font-size: 28px; }
+    }
+
+    .lounge-ver-seg { display: inline-flex; background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.14); border-radius: 999px; padding: 2px; }
+    .lounge-ver-seg button { border: none; background: none; color: #9ca3af; font-weight: 700; font-size: 12px; padding: 4px 14px; border-radius: 999px; cursor: pointer; }
+    .lounge-ver-seg button.on { background: rgba(245,200,66,0.16); color: #f5c842; }
+    :root[data-theme="light"] .lounge-ver-seg { background: rgba(23,33,47,0.05); border-color: rgba(23,33,47,0.15); }
+    :root[data-theme="light"] .lounge-ver-seg button { color: #5d6b80; }
+    :root[data-theme="light"] .lounge-ver-seg button.on { background: rgba(156,117,0,0.14); color: #8a6a00; }
+
   .foot { max-width: 1220px; margin: 30px auto 0; padding: 0 16px; font-size: 0.7rem; color: var(--text-3); text-align: center; }
 
   @media (prefers-reduced-motion: reduce) {
@@ -727,20 +787,22 @@
   <a href="/lounge-lab.html" class="page-nav-btn about"><span class="nav-ico">🧫</span><span class="nav-lab">Lounge Lab</span></a>
 </nav>
 
+<header class="page-header lounge">
+  <h1 class="page-title">🛋️ The Lounge</h1>
+  <p class="page-subtitle">Today's race meetings · model predictions for every horse</p>
+  <div style="margin-top:10px"><span class="lounge-ver-seg" id="loungeVerSeg" role="radiogroup" aria-label="Lounge version">
+    <button data-lv="trad">Trad</button>
+    <button data-lv="new" class="on">New</button>
+  </span></div>
+</header>
+
 <header>
-  <div class="hd-row">
-    <div class="brand">🛋️ The Lounge</div>
-    <span class="seg" id="loungeVerSeg" role="radiogroup" aria-label="Lounge version">
-      <button data-lv="trad">Trad</button>
-      <button data-lv="new" class="on">New</button>
-    </span>
-    <div class="hd-spacer"></div>
+  <div class="hd-row" style="display:none">
     <div class="seg" id="verSeg" role="tablist" aria-label="Layout version" style="display:none">
       <button data-v="A" role="tab">A · Heat Grid</button>
       <button data-v="B" role="tab">B · Race Feed</button>
       <button data-v="C" role="tab">C · Meetings</button>
     </div>
-
   </div>
   <div class="date-row" id="dateRow"></div>
 </header>
