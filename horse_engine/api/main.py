@@ -14527,6 +14527,7 @@ async def _scheduled_quality_check():
 async def audit_post_race_snapshots(
     since: str = "2026-07-22",
     apply: bool = False,
+    quarantine_false_scratch: bool = False,
     x_cron_secret: Optional[str] = Header(None),
 ):
     """Audit (and optionally quarantine) POST-RACE history snapshots.
@@ -14670,6 +14671,29 @@ async def audit_post_race_snapshots(
                     "raw_max": raw_max.horse_name,
                     "served_rank1_is_winner": bool(win and _normalize_horse(r1.horse_name) == win),
                 })
+    # Quarantine: flip the affected races' rows off source='live' — every
+    # FIX-S reader (grading, track-record, meetings, edge) filters on it, so
+    # the races drop from the record as ungraded rather than mis-graded.
+    quarantined_races = 0
+    if quarantine_false_scratch and false_scratch:
+        _q_rids = [a["race_id"] for a in false_scratch]
+        async with get_session() as session:
+            from sqlalchemy import update as sa_update
+            res = await session.execute(
+                sa_update(RunnerPredictionHistoryRow)
+                .where(RunnerPredictionHistoryRow.race_id.in_(_q_rids))
+                .where((RunnerPredictionHistoryRow.source == "live")
+                       | RunnerPredictionHistoryRow.source.is_(None))
+                .values(source="quarantined", contaminated=True)
+            )
+            await session.commit()
+        quarantined_races = len(_q_rids)
+        global _edge_response_cache
+        _edge_response_cache = None
+        _get_meeting_cache.clear()
+        log.warning("[audit] QUARANTINED %d false-scratch races (%d rows): %s",
+                    quarantined_races, res.rowcount, _q_rids)
+
     by_date: dict[str, int] = {}
     for a in affected:
         by_date[a["race_id"][:10]] = by_date.get(a["race_id"][:10], 0) + 1
@@ -14690,6 +14714,7 @@ async def audit_post_race_snapshots(
         "grading_flipped_loss_to_win": flips,
         "post_race_only_races": len(post_race_only),
         "rows_quarantined": len(quarantine_ids) if apply else 0,
+        "false_scratch_races_quarantined": quarantined_races,
         "apply": apply,
         "examples": [a for a in affected if a["pick_changed"]][:12],
     }
