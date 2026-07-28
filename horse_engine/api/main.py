@@ -13726,6 +13726,85 @@ async def _run_quality_check(target: str) -> dict:
                       "coverage for these races (no_market_odds=true = model ran blind).",
         })
 
+    # ── Unrated finishers (canary for incomplete fields, 2026-07-28) ────────
+    # Horses that FINISHED a race but were never in our predicted field.
+    # Bathurst 2026-07-28: ARGYLE SPRINGS ran 3rd having never been rated —
+    # fields held 6-9 of 10-12 acceptances and NO existing check noticed.
+    # Compares result rows against the union of history+mutable predictions.
+    async with get_session() as session:
+        _pn_hist = (await session.execute(
+            select(RunnerPredictionHistoryRow.race_id, RunnerPredictionHistoryRow.horse_name)
+            .where(RunnerPredictionHistoryRow.race_id.like(f"{target}_%"))
+        )).fetchall()
+        _pn_mut = (await session.execute(
+            select(RunnerPredictionRow.race_id, RunnerPredictionRow.horse_name)
+            .where(RunnerPredictionRow.race_id.like(f"{target}_%"))
+        )).fetchall()
+    _pred_by_race: dict[str, set] = {}
+    for _rid, _hn in list(_pn_hist) + list(_pn_mut):
+        _pred_by_race.setdefault(_rid, set()).add(_normalize_horse(_hn))
+    _unrated: dict[str, list[str]] = {}
+    for _r in hr_result_rows:
+        if not (_r.position and 1 <= _r.position < 90):
+            continue  # actual finishers only (90+ = unplaced sentinel)
+        _preds = _pred_by_race.get(_r.race_id)
+        if _preds is None:
+            continue  # whole race unpredicted — the coverage check owns that
+        if _normalize_horse(_r.horse_name) not in _preds:
+            _unrated.setdefault(_r.race_id, []).append(_r.horse_name)
+    if _unrated:
+        _bucket = critical if len(_unrated) >= 3 else warning
+        _bucket.append({
+            "check": "unrated_finishers",
+            "n_races": len(_unrated),
+            "n_horses": sum(len(v) for v in _unrated.values()),
+            "examples": [{"race_id": k, "horses": v} for k, v in list(_unrated.items())[:6]],
+            "reason": "Horses crossed the line that were NEVER in our predicted field — "
+                      "enrichment saw an incomplete acceptance list (RA page variant, stale "
+                      "cache, or late ballot-ins). Probabilities for these races were "
+                      "computed over a short field.",
+        })
+
+    # ── Track conditions vs Sportsbet (ops check — evaluates TODAY) ─────────
+    # RA program pages carry no live going (parser defaults Good 4); the
+    # 30-min sweep corrects from SB racecards. This check catches the sweep
+    # failing silently (Swan Hill showed Good 4 all day on a Soft 5 track,
+    # 2026-07-28, with no alarm).
+    try:
+        from horse_engine.clients.sportsbet_schedule import (
+            get_sportsbet_track_conditions as _sb_tc, _norm as _sbn,
+        )
+        _tc_today = _today_aest().isoformat()
+        _sb_conds = await _sb_tc(_tc_today)
+        if _sb_conds:
+            async with get_session() as session:
+                _tc_rows = (await session.execute(
+                    select(RunnerPredictionRow.race_id, RunnerPredictionRow.track_condition)
+                    .where(RunnerPredictionRow.race_id.like(f"{_like_safe(_tc_today)}_%"))
+                    .distinct()
+                )).fetchall()
+            _tc_mismatch: dict[str, str] = {}
+            for _rid, _tc in _tc_rows:
+                _parts = _rid.split("_")
+                _slug = _parts[1] if len(_parts) >= 3 else ""
+                _want = _sb_conds.get(_sbn(_slug))
+                if _want and (_tc or "").strip().lower() != _want.lower():
+                    _tc_mismatch[_slug] = f"ours '{_tc or '?'}' vs Sportsbet '{_want}'"
+            if _tc_mismatch:
+                warning.append({
+                    "check": "track_conditions_stale",
+                    "venues": _tc_mismatch,
+                    "reason": "Today's stored going disagrees with Sportsbet's live trackStatus. "
+                              "The 30-min sweep should have corrected this — if it persists, "
+                              "POST /api/admin/refresh-track-conditions and check "
+                              "[track-conditions] / [sportsbet-conditions] logs.",
+                })
+            else:
+                info.append({"check": "track_conditions", "status": "in_sync",
+                             "venues_checked": len(_sb_conds)})
+    except Exception as _tce:
+        info.append({"check": "track_conditions", "status": f"probe_failed: {str(_tce)[:80]}"})
+
     # ── Coverage vs "races that actually ran" (best proxy: results seeded) ──
     # Break down by venue and filter out blocklisted venues (they're
     # intentionally not enriched — flagging them as "missed" is a false
