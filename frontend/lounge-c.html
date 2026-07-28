@@ -159,9 +159,10 @@
   /* ── Day summary strip ──────────────────────────────────── */
   .day-strip {
     max-width: 1220px; margin: 12px auto 0; padding: 0 16px;
-    display: none; align-items: center; gap: 14px; flex-wrap: wrap;
+    display: none; flex-direction: column; align-items: flex-start; gap: 10px;
   }
   .day-strip.show { display: flex; }
+  .ds-row { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
   .ds-stat { display: flex; align-items: baseline; gap: 6px; font-size: 0.78rem; color: var(--text-3); }
   .ds-stat b { font-family: 'Barlow Condensed'; font-size: 1.25rem; color: var(--text); font-weight: 800; }
   .ds-stat b.g { color: var(--mint); }
@@ -1121,19 +1122,20 @@
     const placed = settled.filter(r => r.model_correct === false && r.model_placed === true).length;
     const pct = settled.length ? Math.round(wins / settled.length * 100) : 0;
     const placePct = settled.length ? Math.round((wins + placed) / settled.length * 100) : 0;
-    const statsHtml = settled.length ? `
+    const statsHtml = settled.length ? `<div class="ds-row">
       <div class="ds-stat"><b class="num">${settled.length}</b> settled</div>
       <div class="ds-divider"></div>
       <div class="ds-stat"><b class="g num">${wins}</b> picks won <span class="num">(${pct}%)</span></div>
       <div class="ds-divider"></div>
-      <div class="ds-stat"><b class="a num">${placed}</b> more placed <span class="num">(${placePct}% placed incl. wins)</span></div>` : '';
-    const sharpHtml = `
-      <div class="ds-divider"></div>
+      <div class="ds-stat"><b class="a num">${placed}</b> more placed <span class="num">(${placePct}% placed incl. wins)</span></div>
+    </div>` : '';
+    const sharpHtml = `<div class="ds-row">
       <span class="seg seg-sm" role="radiogroup" aria-label="Sharp filter">
         <button data-s="all" class="${S.sharpOnly ? '' : 'on'}">All picks</button>
         <button data-s="sharp" class="${S.sharpOnly ? 'on' : ''}">🎯 Sharp only</button>
-      </span>`;
-    el.innerHTML = statsHtml + sharpHtml;
+      </span>
+    </div>`;
+    el.innerHTML = sharpHtml + statsHtml;
     el.classList.add('show');
     el.querySelectorAll('[data-s]').forEach(b => b.onclick = () => applySharp(b.dataset.s));
   }
