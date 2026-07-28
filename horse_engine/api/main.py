@@ -26648,6 +26648,33 @@ async def _refresh_track_conditions(race_date: str) -> dict[str, str]:
                 .where(RunnerPredictionRow.race_id == rid)
                 .values(track_condition=cond)
             )
+        # RacePredictionRow is often EMPTY for a date (get_meeting then serves
+        # race meta from the RunnerPredictionRow fallback) — sweep the runner
+        # rows independently or the sweep silently no-ops (2026-07-28).
+        rr = await session.execute(
+            select(RunnerPredictionRow.race_id, RunnerPredictionRow.track_condition)
+            .where(RunnerPredictionRow.race_id.like(f"{_like_safe(race_date)}_%"))
+            .distinct()
+        )
+        per_race: dict[str, str] = {}
+        for rid, tc in rr:
+            per_race.setdefault(rid, tc or "")
+        already = {rid for rid, _ in changed_rids}
+        for rid, tc in per_race.items():
+            if rid in already:
+                continue
+            parts = rid.split("_")
+            slug = parts[1] if len(parts) >= 3 else ""
+            cond = conds.get(_sb_norm(slug))
+            if not cond or (tc or "").strip().lower() == cond.lower():
+                continue
+            changed[f"{slug} {parts[-1]}"] = f"{tc or '?'} -> {cond}"
+            changed_rids.append((rid, cond))
+            await session.execute(
+                sa_update(RunnerPredictionRow)
+                .where(RunnerPredictionRow.race_id == rid)
+                .values(track_condition=cond)
+            )
         if changed_rids:
             await session.commit()
     # /api/edge picks up the change within ~90s via its prewarm loop.
