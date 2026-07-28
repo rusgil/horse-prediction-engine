@@ -200,7 +200,15 @@
       color: var(--text-dim); margin-bottom: 6px;
       display: flex; justify-content: space-between; align-items: baseline;
     }
-    .tier-scale-value { color: var(--text); font-size: 1rem; letter-spacing: 0.02em; }
+    .tier-scale-value { color: var(--gold, #f5c842); font-size: 0.82rem; letter-spacing: 0.02em; margin-left: 4px; }
+    /* light mode: band labels + FunkyIQ marker were washed out */
+    :root[data-theme="light"] .tier-band { color: rgba(23,33,47,0.82); font-weight: 900; }
+    :root[data-theme="light"] .tier-marker { border-bottom-color: #17212f; }
+    :root[data-theme="light"] .tier-marker-you {
+      color: #17212f; background: #ffffff; border-color: #8792a3;
+      box-shadow: 0 1px 4px rgba(23,33,47,0.18);
+    }
+    :root[data-theme="light"] .tier-scale-value { color: #8a6a00; }
     .tier-scale-bar {
       position: relative;
       display: flex;
@@ -568,7 +576,7 @@
     <h1 class="hero-title">About <span>FunkyIQ</span></h1>
     <p class="hero-desc">
       FunkyIQ™ is a progressive AI engine that scans every Australian thoroughbred race,
-      processing numerous data points to surface the races where the model has a
+      processing millions of data points to surface the races where the model has a
       genuine edge over the market. Five surfaces, one engine — predictions, exotic
       hunting, live betting tools, and paper-trading sandbox all powered by the same
       win, place, and exotic models trained on historical Australian racing data.
@@ -586,10 +594,9 @@
     <div class="tier-scale">
       <div class="tier-scale-label">
         <span>Win Rate</span>
-        <!-- SHARP-WIN-VALUE-START --><span class="tier-scale-value" id="sharp-win-value">30%</span><!-- SHARP-WIN-VALUE-END -->
       </div>
       <!-- SHARP-WIN-MARKER-START -->
-      <div class="tier-marker-you" id="sharp-win-marker-label" style="left:61.1%">👑 FunkyIQ</div>
+      <div class="tier-marker-you" id="sharp-win-marker-label" style="left:61.1%">👑 FunkyIQ <!-- SHARP-WIN-VALUE-START --><span class="tier-scale-value" id="sharp-win-value">30%</span><!-- SHARP-WIN-VALUE-END --></div>
       <div class="tier-marker" id="sharp-win-marker" style="left:61.1%"></div>
       <!-- SHARP-WIN-MARKER-END -->
       <div class="tier-scale-bar" id="sharp-win-bar">
@@ -615,10 +622,9 @@
     <div class="tier-scale">
       <div class="tier-scale-label">
         <span>Place Rate</span>
-        <!-- SHARP-PLACE-VALUE-START --><span class="tier-scale-value" id="sharp-place-value">65%</span><!-- SHARP-PLACE-VALUE-END -->
       </div>
       <!-- SHARP-PLACE-MARKER-START -->
-      <div class="tier-marker-you" id="sharp-place-marker-label" style="left:79.1%">👑 FunkyIQ</div>
+      <div class="tier-marker-you" id="sharp-place-marker-label" style="left:79.1%">👑 FunkyIQ <!-- SHARP-PLACE-VALUE-START --><span class="tier-scale-value" id="sharp-place-value">65%</span><!-- SHARP-PLACE-VALUE-END --></div>
       <div class="tier-marker" id="sharp-place-marker" style="left:79.1%"></div>
       <!-- SHARP-PLACE-MARKER-END -->
       <div class="tier-scale-bar" id="sharp-place-bar">

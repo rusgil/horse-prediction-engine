@@ -63,7 +63,7 @@ window.FIQConditions = (function() {
   // on every card clashed with the green result markers and was noise on
   // all-Good days. No chip = track is Good/Firm.
   var COLORS = { soft: '#e8a020', heavy: '#ef4444' };
-  var LABELS = { soft: 'Soft track', heavy: 'Heavy track' };
+  var LABELS = { soft: 'SURFACE: SOFT', heavy: 'SURFACE: HEAVY' };
   return {
     ready: ready,
     // meeting record for a venue name (fuzzy: case/punctuation-insensitive)
@@ -73,8 +73,8 @@ window.FIQConditions = (function() {
       var m = map && map[norm(venue)];
       if (!m || !COLORS[m.category]) return '';
       var col = COLORS[m.category];
-      return '<span class="fiq-going-chip" style="display:inline-flex;align-items:center;gap:4px;padding:1px 7px;border-radius:999px;border:1px solid ' + col + '55;background:' + col + '18;color:' + col + ';font-size:0.68rem;font-weight:600;white-space:nowrap;vertical-align:middle;margin-left:6px">' +
-        '<span style="width:6px;height:6px;border-radius:50%;background:' + col + ';display:inline-block"></span>' +
+      // Lounge/Hot Seat chip format: uppercase SURFACE word, no dot.
+      return '<span class="fiq-going-chip" style="display:inline-flex;align-items:center;padding:1px 8px;border-radius:999px;border:1px solid ' + col + '55;background:' + col + '18;color:' + col + ';font-size:0.6rem;font-weight:800;letter-spacing:0.06em;white-space:nowrap;vertical-align:middle;margin-left:6px">' +
         LABELS[m.category] + '</span>';
     }
   };
