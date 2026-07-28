@@ -95,11 +95,14 @@
     ':root[data-theme="light"] .pick { border-width: 1.5px; border-color: #b7c2cf; }',
     ':root[data-theme="light"] .play:not(.hero) { border-width: 1.5px; border-color: #b7c2cf; }',
     ':root[data-theme="light"] .race, :root[data-theme="light"] .summary-card, :root[data-theme="light"] .strategy-block-box { border-width: 1.5px; border-color: #b7c2cf; }',
-    /* brand strip left-justified so the fixed top-right toggle never overlaps it */
-    '.brand-bar { justify-content: flex-start; }',
+    /* brand strip: left-justified (body-prefixed to outrank each page's own
+       centre rule) and one typeface everywhere — pages' body fonts differ
+       (Outfit vs Barlow), which made the FunkyIQ title shift between pages */
+    'body .brand-bar { justify-content: flex-start; }',
+    'body .brand-bar-logo, body .brand-bar-subtitle { font-family: \'Outfit\', \'Barlow\', system-ui, sans-serif; }',
     /* toggle control — works on both themes */
     '.fiq-theme-toggle {',
-    '  position: fixed; top: 10px; right: 12px; z-index: 220;',
+    '  position: absolute; top: 10px; right: 12px; z-index: 220;',
     '  display: inline-flex; align-items: center; gap: 2px;',
     '  background: var(--bg-elevated, var(--surface-2, #1a2130));',
     '  border: 1px solid var(--border, var(--line, #232c3d));',
