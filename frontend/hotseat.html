@@ -828,43 +828,7 @@
     .page-header.hot    { --page-accent: #fb923c; }
     .page-header.funk   { --page-accent: #c084fc; }
     .page-header.labs   { --page-accent: #10b981; }
-    /* Mobile-only: compact Hot Seat header. Saves vertical real estate
-       by hiding the brand strip + subtitle + accent, then laying the
-       title left-justified with a Funky IQ Labs shortcut on the right. */
     .header-side-link { display: none; }
-    @media (max-width: 760px) {
-      .brand-bar { display: none; }
-      .page-header.hot {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
-        text-align: left;
-        padding: 12px 14px 10px;
-        margin-bottom: 8px;
-        gap: 8px;
-      }
-      .page-header.hot .page-title {
-        font-size: 24px;
-        margin: 0;
-        gap: 6px;
-      }
-      .page-header.hot .page-subtitle { display: none; }
-      .page-header.hot::after { display: none; }
-      .header-side-link {
-        display: inline-flex; align-items: center; gap: 4px;
-        font-size: 11px; font-weight: 700;
-        letter-spacing: 0.04em;
-        color: #34d399;
-        text-decoration: none;
-        padding: 5px 8px;
-        border: 1px solid rgba(16,185,129,0.40);
-        background: rgba(16,185,129,0.10);
-        border-radius: 6px;
-        white-space: nowrap;
-        flex-shrink: 0;
-      }
-      .header-side-link:hover { background: rgba(16,185,129,0.18); color: #4ade80; }
-    }
 
     /* Collapsible filter section — same toggle on every viewport
        (2026-07-21 UX pass). Default state: collapsed on mobile,
