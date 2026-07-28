@@ -1024,6 +1024,14 @@
     : (r.model_correct === false && r.model_placed === true) ? 'res-place'
     : r.model_correct === false ? 'res-miss' : '';
   const posOrd = p => p === 1 ? '1st' : p === 2 ? '2nd' : p === 3 ? '3rd' : p ? p + 'th' : '';
+  // Bare tick — heat-map cells are too small for the position label; the
+  // amber outline + tick carry the outcome there.
+  function resultMarkBare(r) {
+    if (r.model_correct === true)  return '<span class="res win">✓</span>';
+    if (r.model_correct === false && r.model_placed === true) return '<span class="res place">✓</span>';
+    if (r.model_correct === false) return '<span class="res miss">✗</span>';
+    return '';
+  }
   function resultMark(r) {
     if (r.model_correct === true)  return '<span class="res win">✓</span>';
     if (r.model_correct === false && r.model_placed === true) {
@@ -1225,7 +1233,7 @@
         // History cells keep their pre-race confidence label beside the result
         const tierWord = tier ? tier.label.replace(/[^A-Za-z]/g, '') : '';
         const sub = done
-          ? resultMark(r) + (tierWord ? `<span class="cell-tier ${tier.dot}">${tierWord}</span>` : '')
+          ? resultMarkBare(r) + (tierWord ? `<span class="cell-tier ${tier.dot}">${tierWord}</span>` : '')
           : (r.is_sharp ? '🎯' : '&nbsp;');
         return `<td class="cell ${cls}" data-open="${esc(r.race_id)}" title="${esc(m.venue)} R${r.race_number}">
           <div class="in"><div class="t num">${wallTime(r.scheduled_time)}</div><div class="sub">${sub}</div></div></td>`;
