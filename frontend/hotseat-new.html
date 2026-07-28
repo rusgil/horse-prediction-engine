@@ -175,6 +175,12 @@
   .cell-tally .rs-w, .cell-tally .rs-p { display: block; }
   .cell-tally .rs-p { margin-top: 1px; }
 
+  .hs-filters {
+    display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+    margin: 0 0 12px; font-size: 0.72rem;
+  }
+  .hs-filters .fl { font-weight: 800; color: var(--text-3); letter-spacing: 0.04em; text-transform: uppercase; font-size: 0.62rem; }
+  .hs-filters .fl-gap { margin-left: 10px; }
   .jcard .when .cd.big { font-family: 'Barlow Condensed'; font-weight: 800; font-size: 1.15rem; line-height: 1.1; }
   .jcard .when .wt { font-size: 0.68rem; color: var(--text-3); font-weight: 700; }
   .field-toggle {
@@ -892,6 +898,8 @@
     runners: {},           // race_id -> runners[]
     version: 'C',   // this page IS the C-meetings layout — no switcher
     sharpOnly: localStorage.getItem('loungeCSharp') === 'sharp',
+    winFilter: localStorage.getItem('hsWinF') || 'all',
+    placeFilter: localStorage.getItem('hsPlaceF') || 'all',
     selVenue: null,        // view C selection
     feedVenue: 'all',      // view B filter
     loadSeq: 0,
@@ -1284,7 +1292,18 @@
     if (S.feedVenue !== 'all') races = races.filter(r => r._vc === S.feedVenue);
     if (S.sharpOnly) races = races.filter(r => r.is_sharp === true);
 
-    const upcoming = races.filter(r => !countdown(r.scheduled_time).past);
+    const filterBar = `<div class="hs-filters num">
+      <span class="fl">Win %</span>
+      ${[['all','All'],['30','≥30%'],['40','≥40%']].map(([v,l]) => `<button class="vchip ${S.winFilter === v ? 'on' : ''}" data-wf="${v}">${l}</button>`).join('')}
+      <span class="fl fl-gap">Place %</span>
+      ${[['all','All'],['40','≥40%'],['55','≥55%'],['70','≥70%']].map(([v,l]) => `<button class="vchip ${S.placeFilter === v ? 'on' : ''}" data-pf="${v}">${l}</button>`).join('')}
+    </div>`;
+
+    // Thresholds apply to UPCOMING races only (same as trad hot seat) —
+    // the settled section stays honest, wins and losses alike.
+    let upcoming = races.filter(r => !countdown(r.scheduled_time).past);
+    if (S.winFilter !== 'all') upcoming = upcoming.filter(r => (r.top_win_probability || 0) * 100 >= +S.winFilter);
+    if (S.placeFilter !== 'all') upcoming = upcoming.filter(r => (r.top_place_probability || 0) * 100 >= +S.placeFilter);
     const settled = races.filter(r => countdown(r.scheduled_time).past).reverse();
     const hero = upcoming[0];
 
@@ -1375,11 +1394,19 @@
       </div>`;
     };
 
-    el.innerHTML = chips + heroHtml +
+    el.innerHTML = chips + filterBar + heroHtml +
       (upcoming.length > 1 ? `<div class="feed-sec-title">Coming up</div>` + upcoming.slice(1).map(r => card(r, false)).join('') : '') +
       (settled.length ? `<div class="feed-sec-title">Earlier — how our picks went</div>` + settled.map(r => card(r, true)).join('') : '') +
       (!upcoming.length && !settled.length ? `<div class="empty"><div class="big">🐎</div>No races for this filter.</div>` : '');
     el.querySelectorAll('[data-fv]').forEach(b => b.onclick = e => { e.stopPropagation(); S.feedVenue = b.dataset.fv; renderB(); });
+    el.querySelectorAll('[data-wf]').forEach(b => b.onclick = e => {
+      e.stopPropagation(); S.winFilter = b.dataset.wf;
+      localStorage.setItem('hsWinF', S.winFilter); renderB();
+    });
+    el.querySelectorAll('[data-pf]').forEach(b => b.onclick = e => {
+      e.stopPropagation(); S.placeFilter = b.dataset.pf;
+      localStorage.setItem('hsPlaceF', S.placeFilter); renderB();
+    });
     bindOpen(el);
   }
 
