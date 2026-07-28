@@ -832,15 +832,19 @@
   .legend-row .lg-tier b { font-weight: 800; color: var(--text); }
   .ctl-rows { display: flex; flex-direction: column; gap: 9px; margin-bottom: 16px; }
   .ctl-rows .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
-  .pcard.prem { border-color: color-mix(in srgb, var(--prem) 45%, var(--line)); }
-  .pcard.hot { border-color: color-mix(in srgb, var(--hot) 50%, var(--line)); }
+  .pcard.prem:not(.res-win):not(.res-place):not(.res-miss) { border-color: color-mix(in srgb, var(--prem) 65%, var(--line)); box-shadow: 0 0 0 1px rgba(192,132,252,0.18), var(--shadow); }
+  .pcard.prem .pk-horse { color: var(--prem); }
+  .pcard.hot:not(.res-win):not(.res-place):not(.res-miss) { border-color: color-mix(in srgb, var(--hot) 50%, var(--line)); }
+  .pk-venue { font-family: 'Barlow Condensed'; font-weight: 700; font-size: 0.94rem; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-2); }
+  .pk-venue b { font-weight: 800; color: var(--text); }
   .pk-horse { font-family: 'Barlow Condensed'; font-weight: 800; font-size: 1.28rem; line-height: 1.1; }
   .pk-sub { font-size: 0.72rem; color: var(--text-3); margin-top: 2px; }
   .pk-chips { display: flex; gap: 5px; flex-wrap: wrap; margin-top: 6px; }
   .chip.tier-hot2 { background: var(--hot-dim); color: var(--hot); }
   .chip.tier-high2 { background: var(--blue-dim); color: var(--blue); }
   .chip.tier-strong2 { background: var(--strong-dim); color: var(--strong); }
-  .chip.prem { background: var(--prem-dim); color: var(--prem); }
+  .chip.prem { background: rgba(168,85,247,0.2); color: #d8b4fe; border: 1px solid rgba(192,132,252,0.55); font-weight: 800; }
+  :root[data-theme="light"] .chip.prem { background: rgba(109,63,212,0.12); color: #5b2fc0; border-color: rgba(109,63,212,0.45); }
   .chip.offg { background: var(--amber-dim); color: var(--amber); }
   .chip.nosb { background: var(--surface-2); color: var(--text-3); }
   .streak { margin-left: 8px; font-size: 0.62rem; font-weight: 800; padding: 2px 8px; border-radius: 999px; vertical-align: 3px; white-space: nowrap; }
@@ -1172,8 +1176,7 @@
     else if (isPast && hasResult) {
       const winner = (!res.winner && res.winner_name) ? `<span class="winner">Winner: <b>${esc(res.winner_name)}</b></span>` : '';
       if (res.winner) {
-        const profit = res.sp ? ' <span class="num">+$' + ((res.sp - 1) * 10).toFixed(2) + ' at $10</span>' : '';
-        verdict = `<div class="verdict-line"><span class="vw">✓ Won${res.sp ? ' at $' + res.sp.toFixed(2) : ''}${profit}</span></div>`;
+        verdict = `<div class="verdict-line"><span class="vw">✓ Won${res.sp ? ' at $' + res.sp.toFixed(2) : ''}</span></div>`;
       } else if (res.placed) verdict = `<div class="verdict-line"><span class="vp">~ Placed${posLbl ? ' ' + posLbl : ''}</span>${winner}</div>`;
       else verdict = `<div class="verdict-line"><span class="vl">✗ Did not place${posLbl ? ' (' + posLbl + ')' : ''}</span>${winner}</div>`;
     } else if (isPast) verdict = '<div class="verdict-line"><span class="vn">Result pending…</span></div>';
@@ -1182,17 +1185,18 @@
       : '';
     const l10 = (p.wins_last_10 != null && p.places_last_10 != null)
       ? ` · last ${p.starts_last_10 && p.starts_last_10 < 10 ? p.starts_last_10 : 10}: ${p.wins_last_10}W/${p.places_last_10} top-3` : '';
-    return `<div class="jcard pcard ${outcome} ${!isPast && (p.confidence_tier === 'hot' || p.hot_pick) ? 'hot' : ''} ${!isPast && isPremium(p) ? 'prem' : ''}" style="${dim}" data-open="${esc(p.race_id)}" data-horse="${esc(p.horse_name)}">
+    return `<div class="jcard pcard ${outcome} ${!isPast && (p.confidence_tier === 'hot' || p.hot_pick) ? 'hot' : ''} ${isPremium(p) ? 'prem' : ''}" style="${dim}" data-open="${esc(p.race_id)}" data-horse="${esc(p.horse_name)}">
       <div class="when">
         ${isPast
           ? `<div class="clock num">${wallTime(p.scheduled_time)}</div><div class="cd">${hasResult ? (res.winner ? '<span class="res win">✓</span>' : res.placed ? '<span class="res place">✓' + (posLbl ? ' ' + posLbl : '') + '</span>' : '<span class="res miss">✗</span>') : ''}</div>`
           : `<div class="cd big ${cd.urg || ''}">${cd.label || ''}</div><div class="wt num">${wallTime(p.scheduled_time)}</div>`}
       </div>
       <div class="mid">
+        <div class="pk-venue">${esc(p.venue)} <b>R${p.race_number}</b></div>
         <div class="pk-horse">${esc(p.horse_name)}${streak}</div>
-        <div class="pk-sub num">${esc(p.venue)} R${p.race_number}${p.distance ? ' · ' + p.distance + 'm' : ''}${p.barrier ? ' · B' + p.barrier : ''}${p.weight ? ' · ' + p.weight + 'kg' : ''}${l10}</div>
+        <div class="pk-sub num">${[p.distance ? p.distance + 'm' : '', p.barrier ? 'B' + p.barrier : '', p.weight ? p.weight + 'kg' : ''].filter(Boolean).join(' · ')}${l10}</div>
         <div class="pk-sub">${p.jockey ? 'J: ' + esc(p.jockey) : ''}${p.trainer ? (p.jockey ? ' · ' : '') + 'T: ' + esc(p.trainer) : ''}</div>
-        <div class="pk-chips">${tierChip(p)}${!isPast && isPremium(p) ? '<span class="chip prem">💎 PREMIUM</span>' : ''}${sharpOf(p) ? '<span class="chip sharp">🎯 SHARP</span>' : ''}${p.sportsbet_available === false ? '<span class="chip nosb">🚫 Not on Sportsbet</span>' : ''}</div>
+        <div class="pk-chips">${tierChip(p)}${isPremium(p) ? '<span class="chip prem">💎 PREMIUM</span>' : ''}${sharpOf(p) ? '<span class="chip sharp">🎯 SHARP</span>' : ''}${p.sportsbet_available === false ? '<span class="chip nosb">🚫 Not on Sportsbet</span>' : ''}</div>
       </div>
       <div class="right">
         ${barsHtml((p.model_pct || 0) / 100, p.place_probability != null ? p.place_probability / 100 : null)}
