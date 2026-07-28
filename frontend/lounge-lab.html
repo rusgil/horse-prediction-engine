@@ -920,9 +920,13 @@
   const resCls = r => r.model_correct === true ? 'res-win'
     : (r.model_correct === false && r.model_placed === true) ? 'res-place'
     : r.model_correct === false ? 'res-miss' : '';
+  const posOrd = p => p === 1 ? '1st' : p === 2 ? '2nd' : p === 3 ? '3rd' : p ? p + 'th' : '';
   function resultMark(r) {
     if (r.model_correct === true)  return '<span class="res win">✓</span>';
-    if (r.model_correct === false && r.model_placed === true) return '<span class="res place">✓</span>';
+    if (r.model_correct === false && r.model_placed === true) {
+      const o = posOrd(r.top_pick_position);
+      return '<span class="res place">✓' + (o ? ' ' + o : '') + '</span>';
+    }
     if (r.model_correct === false) return '<span class="res miss">✗</span>';
     return '';
   }

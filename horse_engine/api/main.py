@@ -17506,9 +17506,15 @@ async def get_meeting(race_date: str, venue_code: str):
         def _eff_starters(rid: str):
             n = max(_gm_starters.get(rid) or 0, _pred_counts.get(rid) or 0)
             return n or None
+        # Pick's actual finishing position (for "✓ 2nd" place labels).
+        _positions_by_race: dict[str, dict[str, int]] = {}
         for r in _all_hr:
             if r.position == 1:
                 winners[r.race_id] = r.horse_name
+            if r.position and 1 <= r.position < 100:
+                _positions_by_race.setdefault(r.race_id, {})[
+                    _normalize_horse(r.horse_name)
+                ] = r.position
             if _is_paid_place(r.position, _eff_starters(r.race_id)):
                 placers.setdefault(r.race_id, set()).add(r.horse_name)
             if r.position and r.position > 0:
@@ -17671,6 +17677,12 @@ async def get_meeting(race_date: str, venue_code: str):
             return None
         return _normalize_horse(pick) in {_normalize_horse(h) for h in race_placers}
 
+    def _pick_position(race_id: str):
+        pick = top_picks.get(race_id)
+        if not pick:
+            return None
+        return _positions_by_race.get(race_id, {}).get(_normalize_horse(pick))
+
     races_out = []
     for r in race_list:
         rid = r["race_id"]
@@ -17679,6 +17691,7 @@ async def get_meeting(race_date: str, venue_code: str):
             "enriched_at": enriched_rows.get(rid).isoformat() if enriched_rows.get(rid) else None,
             "model_correct": _model_correct(rid),
             "model_placed": _model_placed(rid),
+            "top_pick_position": _pick_position(rid),
             "top_win_probability": top_win_probs.get(rid),
             "top_place_probability": top_place_probs.get(rid),
             "rank2_win_probability": rank2_win_probs.get(rid),

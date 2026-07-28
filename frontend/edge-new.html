@@ -1185,7 +1185,7 @@
     return `<div class="jcard pcard ${outcome} ${!isPast && (p.confidence_tier === 'hot' || p.hot_pick) ? 'hot' : ''} ${!isPast && isPremium(p) ? 'prem' : ''}" style="${dim}" data-open="${esc(p.race_id)}" data-horse="${esc(p.horse_name)}">
       <div class="when">
         ${isPast
-          ? `<div class="clock num">${wallTime(p.scheduled_time)}</div><div class="cd">${hasResult ? (res.winner ? '<span class="res win">✓</span>' : res.placed ? '<span class="res place">✓</span>' : '<span class="res miss">✗</span>') : ''}</div>`
+          ? `<div class="clock num">${wallTime(p.scheduled_time)}</div><div class="cd">${hasResult ? (res.winner ? '<span class="res win">✓</span>' : res.placed ? '<span class="res place">✓' + (posLbl ? ' ' + posLbl : '') + '</span>' : '<span class="res miss">✗</span>') : ''}</div>`
           : `<div class="cd big ${cd.urg || ''}">${cd.label || ''}</div><div class="wt num">${wallTime(p.scheduled_time)}</div>`}
       </div>
       <div class="mid">
