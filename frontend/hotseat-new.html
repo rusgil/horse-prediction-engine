@@ -439,7 +439,7 @@
   .jcard {
     background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius);
     padding: 12px 15px; margin-bottom: 9px;
-    display: grid; grid-template-columns: minmax(88px, max-content) 1fr auto; gap: 4px 14px; align-items: center;
+    display: grid; grid-template-columns: 104px 1fr auto; gap: 4px 14px; align-items: center;
     cursor: pointer; transition: border-color 0.15s; box-shadow: var(--shadow);
   }
   .jcard:hover { border-color: var(--mint); }
@@ -475,7 +475,8 @@
   .jcard.settled { opacity: 0.75; }
   .jcard.settled:hover { opacity: 1; }
   @media (max-width: 640px) {
-    .jcard { grid-template-columns: minmax(64px, max-content) 1fr; }
+    .jcard { grid-template-columns: 78px 1fr; }
+    .jcard .when .cd.big { font-size: 21px; }
     .jcard .pick { grid-row: auto; grid-column: 2; text-align: left; margin-top: 4px; }
     .jcard .pick .pname { margin-left: 0; justify-content: flex-start; }
     .jcard .when { grid-row: span 3; }
