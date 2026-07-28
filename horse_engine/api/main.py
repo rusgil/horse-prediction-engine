@@ -14541,6 +14541,7 @@ async def audit_post_race_snapshots(
     their grading row (counted separately as post_race_only).
     """
     _check_admin(x_cron_secret)
+    global _edge_response_cache
     GRACE = timedelta(minutes=5)
     async with get_session() as session:
         rows = (await session.execute(
@@ -14616,7 +14617,6 @@ async def audit_post_race_snapshots(
                 .values(contaminated=True)
             )
             await session.commit()
-        global _edge_response_cache
         _edge_response_cache = None
         _get_meeting_cache.clear()
 
@@ -14688,7 +14688,6 @@ async def audit_post_race_snapshots(
             )
             await session.commit()
         quarantined_races = len(_q_rids)
-        global _edge_response_cache
         _edge_response_cache = None
         _get_meeting_cache.clear()
         log.warning("[audit] QUARANTINED %d false-scratch races (%d rows): %s",
