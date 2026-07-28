@@ -13827,6 +13827,7 @@ async def _run_quality_check(target: str) -> dict:
 
     # ── History write-guard incidents (DB trigger catches, last 36h) ────────
     try:
+        from sqlalchemy import text as sa_text
         async with get_session() as session:
             _gi = (await session.execute(sa_text(
                 "SELECT race_id, horse_name, kind, detail, created_at "
