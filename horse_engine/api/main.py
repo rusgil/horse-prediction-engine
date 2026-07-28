@@ -14619,11 +14619,71 @@ async def audit_post_race_snapshots(
         _edge_response_cache = None
         _get_meeting_cache.clear()
 
+    # ── In-place rewrite detection (batch audit is blind to UPDATEs) ────────
+    # Signature A — false scratch: a cancelled live history row for a horse
+    # that actually FINISHED. Every such race had the scratch-rerank fire.
+    # Signature B — rank inversion: the served rank-1's win_prob_raw (which
+    # the rerank does NOT touch) isn't the race's max raw — i.e. the ranking
+    # no longer matches the frozen inference ordering.
+    async with get_session() as session:
+        _cx_rows = (await session.execute(
+            select(RunnerPredictionHistoryRow)
+            .where(RunnerPredictionHistoryRow.race_id >= since)
+            .where((RunnerPredictionHistoryRow.source == "live")
+                   | RunnerPredictionHistoryRow.source.is_(None))
+        )).scalars().all()
+        _fin_rows = (await session.execute(
+            select(HistoricalResultRow.race_id, HistoricalResultRow.horse_name,
+                   HistoricalResultRow.position)
+            .where(HistoricalResultRow.race_id >= since)
+        )).fetchall()
+    _finished: dict[str, dict[str, int]] = {}
+    for rid, hn, pos in _fin_rows:
+        if pos and 1 <= pos < 90:
+            _finished.setdefault(rid, {})[_normalize_horse(hn)] = pos
+    _by_race2: dict[str, list] = {}
+    for r in _cx_rows:
+        _by_race2.setdefault(r.race_id, []).append(r)
+    false_scratch = []
+    rank_inversions = []
+    for rid, rws in _by_race2.items():
+        fins = _finished.get(rid) or {}
+        # latest row per horse (FIX-S dedup)
+        latest: dict[str, object] = {}
+        for r in sorted(rws, key=lambda x: x.enriched_at or datetime.min):
+            latest[_normalize_horse(r.horse_name)] = r
+        fs = [r.horse_name for n, r in latest.items()
+              if r.cancelled and n in fins]
+        if fs:
+            false_scratch.append({"race_id": rid, "horses": fs,
+                                  "positions": {r: fins.get(_normalize_horse(r)) for r in fs}})
+        active = [r for r in latest.values() if not r.cancelled]
+        r1 = next((r for r in active if r.model_rank == 1), None)
+        raws = [(r.win_prob_raw or 0, r) for r in active if r.win_prob_raw]
+        if r1 is not None and raws:
+            raw_max = max(raws)[1]
+            if _normalize_horse(raw_max.horse_name) != _normalize_horse(r1.horse_name):
+                win = winners.get(rid)
+                rank_inversions.append({
+                    "race_id": rid,
+                    "served_rank1": r1.horse_name,
+                    "raw_max": raw_max.horse_name,
+                    "served_rank1_is_winner": bool(win and _normalize_horse(r1.horse_name) == win),
+                })
     by_date: dict[str, int] = {}
     for a in affected:
         by_date[a["race_id"][:10]] = by_date.get(a["race_id"][:10], 0) + 1
+    _fs_by_date: dict[str, int] = {}
+    for a in false_scratch:
+        _fs_by_date[a["race_id"][:10]] = _fs_by_date.get(a["race_id"][:10], 0) + 1
     return {
         "since": since,
+        "false_scratch_races": len(false_scratch),
+        "false_scratch_by_date": dict(sorted(_fs_by_date.items())),
+        "false_scratch_examples": false_scratch[:10],
+        "rank_inversions": len(rank_inversions),
+        "rank_inversions_where_served_pick_won": sum(1 for x in rank_inversions if x["served_rank1_is_winner"]),
+        "rank_inversion_examples": rank_inversions[:10],
         "races_with_post_race_batches": len(affected),
         "by_date": dict(sorted(by_date.items())),
         "picks_changed": sum(1 for a in affected if a["pick_changed"]),
