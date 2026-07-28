@@ -903,6 +903,8 @@
     sharpOnly: localStorage.getItem('loungeCSharp') === 'sharp',
     winFilter: localStorage.getItem('hsWinF') || 'all',
     placeFilter: localStorage.getItem('hsPlaceF') || 'all',
+    gapFilter: localStorage.getItem('hsGapF') || 'all',
+    valFilter: localStorage.getItem('hsValF') || 'all',
     selVenue: null,        // view C selection
     feedVenue: 'all',      // view B filter
     loadSeq: 0,
@@ -1300,6 +1302,10 @@
       ${[['all','All'],['30','≥30%'],['40','≥40%']].map(([v,l]) => `<button class="vchip ${S.winFilter === v ? 'on' : ''}" data-wf="${v}">${l}</button>`).join('')}
       <span class="fl fl-gap">Place %</span>
       ${[['all','All'],['40','≥40%'],['55','≥55%'],['70','≥70%']].map(([v,l]) => `<button class="vchip ${S.placeFilter === v ? 'on' : ''}" data-pf="${v}">${l}</button>`).join('')}
+      <span class="fl fl-gap">Top-2 gap</span>
+      ${[['all','All'],['10','≥10pt'],['15','≥15pt'],['20','≥20pt']].map(([v,l]) => `<button class="vchip ${S.gapFilter === v ? 'on' : ''}" data-gf="${v}">${l}</button>`).join('')}
+      <span class="fl fl-gap">💎 Value</span>
+      ${[['all','All'],['5','Edge ≥5pt · $4–10'],['10','Edge ≥10pt · $4–10']].map(([v,l]) => `<button class="vchip ${S.valFilter === v ? 'on' : ''}" data-vf="${v}">${l}</button>`).join('')}
     </div>`;
 
     // Thresholds apply to UPCOMING races only (same as trad hot seat) —
@@ -1307,6 +1313,16 @@
     let upcoming = races.filter(r => !countdown(r.scheduled_time).past);
     if (S.winFilter !== 'all') upcoming = upcoming.filter(r => (r.top_win_probability || 0) * 100 >= +S.winFilter);
     if (S.placeFilter !== 'all') upcoming = upcoming.filter(r => (r.top_place_probability || 0) * 100 >= +S.placeFilter);
+    if (S.gapFilter !== 'all') upcoming = upcoming.filter(r =>
+      r.top_win_probability != null && r.rank2_win_probability != null
+      && (r.top_win_probability - r.rank2_win_probability) * 100 >= +S.gapFilter);
+    if (S.valFilter !== 'all') upcoming = upcoming.filter(r => {
+      const tp = topPickOf(r.race_id);
+      const od = (r.top_pick_odds > 1 ? +r.top_pick_odds : null) || (tp && tp.best_available_odds > 1 ? +tp.best_available_odds : null);
+      if (!od || od < 4 || od > 10) return false;
+      const edge = (r.top_win_probability || 0) * 100 - 100 / od;
+      return edge >= +S.valFilter;
+    });
     const settled = races.filter(r => countdown(r.scheduled_time).past).reverse();
     const hero = upcoming[0];
 
@@ -1409,6 +1425,14 @@
     el.querySelectorAll('[data-pf]').forEach(b => b.onclick = e => {
       e.stopPropagation(); S.placeFilter = b.dataset.pf;
       localStorage.setItem('hsPlaceF', S.placeFilter); renderB();
+    });
+    el.querySelectorAll('[data-gf]').forEach(b => b.onclick = e => {
+      e.stopPropagation(); S.gapFilter = b.dataset.gf;
+      localStorage.setItem('hsGapF', S.gapFilter); renderB();
+    });
+    el.querySelectorAll('[data-vf]').forEach(b => b.onclick = e => {
+      e.stopPropagation(); S.valFilter = b.dataset.vf;
+      localStorage.setItem('hsValF', S.valFilter); renderB();
     });
     bindOpen(el);
   }
