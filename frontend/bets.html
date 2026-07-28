@@ -492,6 +492,43 @@
     }
 
     /* Bet detail expansion */
+    /* Filters drawer — same right-hand popup pattern as the Hot Seat */
+    .foverlay {
+      position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: 140;
+      opacity: 0; pointer-events: none; transition: opacity 0.2s;
+    }
+    .foverlay.open { opacity: 1; pointer-events: auto; }
+    .fdrawer {
+      position: fixed; top: 0; right: 0; bottom: 0; width: min(420px, 92vw);
+      background: var(--bg-card); border-left: 1px solid var(--border);
+      z-index: 150; transform: translateX(105%); transition: transform 0.22s ease;
+      display: flex; flex-direction: column;
+    }
+    .fdrawer.open { transform: translateX(0); }
+    .fdrawer-head {
+      padding: 16px 18px 12px; border-bottom: 1px solid var(--border);
+      display: flex; align-items: center; gap: 12px;
+    }
+    .fdrawer-title { font-family: 'Barlow Condensed', sans-serif; font-weight: 800; font-size: 1.2rem; }
+    .fdrawer-clear {
+      background: var(--bg-elevated); border: 1px solid var(--border); color: var(--text-dim);
+      border-radius: 999px; padding: 4px 12px; font-size: 0.72rem; font-weight: 700; cursor: pointer;
+    }
+    .fdrawer-close {
+      margin-left: auto; background: var(--bg-elevated); border: 1px solid var(--border);
+      color: var(--text); width: 30px; height: 30px; border-radius: 8px; cursor: pointer;
+    }
+    .fdrawer-body { padding: 16px 18px; overflow-y: auto; }
+    .fdrawer .filt-row { margin-bottom: 18px; }
+    .fdrawer .fl {
+      font-weight: 800; color: var(--text-dim); letter-spacing: 0.05em;
+      text-transform: uppercase; font-size: 0.64rem; margin-bottom: 7px;
+    }
+    .fdrawer .opts { display: flex; gap: 6px; flex-wrap: wrap; }
+    .fdrawer .filt-info { font-size: 0.72rem; color: var(--text-dim); line-height: 1.5; margin-top: 7px; }
+    .fdrawer .filt-info strong { color: var(--teal-bright); }
+    .fdrawer .filt-note { font-size: 0.7rem; color: var(--text-muted); }
+
     .bet-toggle {
       margin-top: 10px;
       text-align: center;
@@ -906,6 +943,7 @@
       <span class="filter-info" data-tip="mode-tip" tabindex="0">i</span>
       <button class="sort-pill mode-pill active" data-mode="sharp">🧪 Lab Sharp</button>
       <button class="sort-pill mode-pill" data-mode="all">All races</button>
+      <button class="sort-pill" id="fdrawerBtn" style="margin-left:auto">⚙️ Filters</button>
     </div>
     <div id="mode-tip" class="filter-tip">
       <strong>Lab Sharp</strong> = trifecta-specific niche where the model has
@@ -921,36 +959,54 @@
       <button class="sort-pill" data-sort="recent">Just ran</button>
       <button class="sort-pill" data-sort="pnl">Best P/L</button>
     </div>
-    <div class="sort-row sub-filter">
-      <span class="sort-label">Race spread</span>
-      <span class="filter-info" data-tip="conf-tip" tabindex="0">i</span>
-      <button class="sort-pill conf-pill" data-conf="all">All</button>
-      <button class="sort-pill conf-pill" data-conf="65">≤65% open</button>
-      <button class="sort-pill conf-pill active" data-conf="55">≤55% open</button>
-      <button class="sort-pill conf-pill" data-conf="45">≤45% open</button>
-    </div>
-    <div id="conf-tip" class="filter-tip">
-      <strong>Top-3 model probability sum</strong> (lower = more open race).
-      Add the model's win % for the rank-1, 2, and 3 horses. Open races
-      (e.g. ≤45%) historically catch the trifecta more often than
-      favourite-dominated ones — your 3-4 horse box covers more of the
-      plausible placings.
-    </div>
-    <div class="sort-row sub-filter">
-      <span class="sort-label">Field size</span>
-      <span class="filter-info" data-tip="field-tip" tabindex="0">i</span>
-      <button class="sort-pill field-pill" data-field="all">All</button>
-      <button class="sort-pill field-pill active" data-field="11">≤11</button>
-      <button class="sort-pill field-pill" data-field="10">≤10</button>
-      <button class="sort-pill field-pill" data-field="9">≤9</button>
-    </div>
-    <div id="field-tip" class="filter-tip">
-      <strong>Active runners in the race</strong> (cancelled excluded).
-      Today's 17-race sample: field ≤11 hit 60% vs 14% for 12+ runners.
-      Smaller fields mean fewer ways the box can be bowled.
-    </div>
   </header>
-  <div style="text-align:center;font-size:11px;color:var(--text-dim);margin-bottom:8px"><span style="color:#e8a020">●</span> Soft / <span style="color:#ef4444">●</span> Heavy track = rain-affected meeting — model confidence reduced (no chip = Good/Firm)</div>
+  <div style="display:flex;justify-content:center;align-items:center;gap:7px;flex-wrap:wrap;font-size:11px;color:var(--text-dim);margin-bottom:8px">
+    <span style="padding:2px 9px;border-radius:999px;font-weight:800;letter-spacing:0.06em;font-size:0.62rem;background:rgba(232,160,32,0.14);color:#e8a020;border:1px solid rgba(232,160,32,0.4)">SURFACE: SOFT</span>
+    <span style="padding:2px 9px;border-radius:999px;font-weight:800;letter-spacing:0.06em;font-size:0.62rem;background:rgba(239,68,68,0.13);color:#ef4444;border:1px solid rgba(239,68,68,0.4)">SURFACE: HEAVY</span>
+    <span>= rain-affected meeting — model confidence reduced (no chip = Good/Firm)</span>
+  </div>
+  <aside class="fdrawer" id="fdrawer" aria-label="Filters">
+    <div class="fdrawer-head">
+      <div class="fdrawer-title">⚙️ Filters</div>
+      <button class="fdrawer-clear" id="fdrawerClear">✕ Clear all filters</button>
+      <button class="fdrawer-close" id="fdrawerClose" aria-label="Close">✕</button>
+    </div>
+    <div class="fdrawer-body">
+      <div class="filt-row">
+        <div class="fl">Race spread</div>
+        <div class="opts">
+          <button class="sort-pill conf-pill" data-conf="all">All</button>
+          <button class="sort-pill conf-pill" data-conf="65">≤65% open</button>
+          <button class="sort-pill conf-pill active" data-conf="55">≤55% open</button>
+          <button class="sort-pill conf-pill" data-conf="45">≤45% open</button>
+        </div>
+        <div class="filt-info">
+          <strong>Top-3 model probability sum</strong> (lower = more open race).
+          Add the model's win % for the rank-1, 2, and 3 horses. Open races
+          (e.g. ≤45%) historically catch the trifecta more often than
+          favourite-dominated ones — your 3-4 horse box covers more of the
+          plausible placings.
+        </div>
+      </div>
+      <div class="filt-row">
+        <div class="fl">Field size</div>
+        <div class="opts">
+          <button class="sort-pill field-pill" data-field="all">All</button>
+          <button class="sort-pill field-pill active" data-field="11">≤11</button>
+          <button class="sort-pill field-pill" data-field="10">≤10</button>
+          <button class="sort-pill field-pill" data-field="9">≤9</button>
+        </div>
+        <div class="filt-info">
+          <strong>Active runners in the race</strong> (cancelled excluded).
+          Field ≤11 hit 60% vs 14% for 12+ runners on the first tracked
+          sample. Smaller fields mean fewer ways the box can be bowled.
+        </div>
+      </div>
+      <div class="filt-note">Filters combine with the Mode toggle — changing them away from ≤55% / ≤11 flips Mode to “All races” so the labels stay honest.</div>
+    </div>
+  </aside>
+  <div class="foverlay" id="foverlay"></div>
+
   <main id="races">
     <div class="loading">Loading ledger…</div>
   </main>
@@ -1693,6 +1749,23 @@
       target.innerHTML = '';
     }
   }
+
+  // Filters drawer (right-hand popup, Hot Seat pattern)
+  const _fd = document.getElementById('fdrawer');
+  const _fov = document.getElementById('foverlay');
+  const _fdClose = () => { _fd.classList.remove('open'); _fov.classList.remove('open'); };
+  document.getElementById('fdrawerBtn').addEventListener('click', () => {
+    _fd.classList.add('open'); _fov.classList.add('open');
+  });
+  document.getElementById('fdrawerClose').addEventListener('click', _fdClose);
+  _fov.addEventListener('click', _fdClose);
+  document.addEventListener('keydown', e => { if (e.key === 'Escape') _fdClose(); });
+  document.getElementById('fdrawerClear').addEventListener('click', () => {
+    const c = document.querySelector('.conf-pill[data-conf="all"]');
+    const f = document.querySelector('.field-pill[data-field="all"]');
+    if (c) c.click();
+    if (f) f.click();
+  });
 
   // Mode pills — Lab Sharp / All races. Sub-filter rows hide when Sharp
   // is on so the page reads as a single toggle.
