@@ -54,6 +54,10 @@
       padding: 14px 16px 12px;
       padding-top: calc(14px + env(safe-area-inset-top));
     }
+    /* light mode: the sticky header's gradient is hardcoded dark — swap it */
+    :root[data-theme="light"] header {
+      background: linear-gradient(180deg, #eef1f5 0%, rgba(238,241,245,0.92) 100%);
+    }
     .title-row {
       display: flex;
       align-items: baseline;
