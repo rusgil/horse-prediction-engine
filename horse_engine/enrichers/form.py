@@ -49,7 +49,11 @@ def weighted_form_score(starts: list[FormStart]) -> float:
 # horse hasn't shown the public anything in a long time and we treat
 # the form record as effectively unknown.
 LAYOFF_DISCOUNT_START_DAYS = 120
-LAYOFF_DISCOUNT_FULL_DAYS = 365
+# 365 → 250 (2026-07-28): 180-day backtest of 2,426 rank-1 picks showed
+# 250-365d picks winning 19.2% vs 23.2% claimed (-4pt) while 121-249d was
+# calibrated (-0.8pt) — the old taper still credited too much stale form in
+# its back half. Full discount to baseline now lands at 250 days.
+LAYOFF_DISCOUNT_FULL_DAYS = 250
 LAYOFF_BASELINE_SCORE = 0.3  # matches weighted_form_score's no-data fallback
 
 
@@ -99,7 +103,10 @@ def discount_form_for_thin_record(form_score: float, starts_last_10: int) -> flo
 # years it's actively misleading. Drop the score below the no-form
 # baseline so the model can tell the difference between 'never raced
 # recently' and 'so far in the past that we shouldn't trust it'.
-LAYOFF_EXTREME_DAYS = 730  # 2 years
+# 730 → 550 (2026-07-28, same backtest): 366d+ picks won 14.6% vs 20.9%
+# claimed (-6.3pt) — the crawl from baseline to the extreme floor was too
+# slow. The floor now lands at ~18 months instead of 2 years.
+LAYOFF_EXTREME_DAYS = 550  # ~18 months
 LAYOFF_EXTREME_SCORE = 0.15
 
 
@@ -111,15 +118,16 @@ def discount_form_for_layoff(form_score: float, days_since_last_run: int) -> flo
     the track, model rank 1 (31%, +23pt edge), market rank 6 (the market
     knew better), finished 12th of 12.
 
-    Curve:
+    Curve (tightened 2026-07-28 — 180d backtest, 2,426 rank-1 picks:
+    250-365d actual 19.2% vs 23.2% claimed, 366d+ 14.6% vs 20.9%;
+    COMIC CULTURE/Bathurst R4 at 304d was the trigger case):
         ≤ 120 days     → form_score unchanged (normal racing spell)
-        120-365 days   → linear taper toward the no-form baseline (0.3)
-        365-730 days   → linear taper from 0.3 down to 0.15 (NEW —
-                         OFFENBACH/Northam R7 2026-06-25 at 426 days was
-                         still rank-1 with form 0.71 → 12th of 13; the
-                         old curve floored at 0.3 from 365d onwards so
-                         these extreme cases were under-penalised).
-        ≥ 730 days     → 0.15 (treat as actively misleading)
+        120-250 days   → linear taper toward the no-form baseline (0.3)
+                         (was 120-365; the back half under-discounted)
+        250-550 days   → linear taper from 0.3 down to 0.15
+                         (was 365-730 — OFFENBACH/Northam R7 2026-06-25
+                         at 426 days, rank-1 form 0.71 → 12th of 13)
+        ≥ 550 days     → 0.15 (treat as actively misleading)
 
     A horse whose form is already at/below the floor is left alone — a
     layoff shouldn't make a poor performer look worse.
