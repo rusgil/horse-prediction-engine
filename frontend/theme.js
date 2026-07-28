@@ -102,7 +102,7 @@
     'body .brand-bar-logo, body .brand-bar-subtitle { font-family: \'Outfit\', \'Barlow\', system-ui, sans-serif; }',
     /* toggle control — works on both themes */
     '.fiq-theme-toggle {',
-    '  position: absolute; top: 10px; right: 12px; z-index: 220;',
+    '  position: absolute; top: 10px; right: 12px; z-index: 120;',
     '  display: inline-flex; align-items: center; gap: 2px;',
     '  background: var(--bg-elevated, var(--surface-2, #1a2130));',
     '  border: 1px solid var(--border, var(--line, #232c3d));',
