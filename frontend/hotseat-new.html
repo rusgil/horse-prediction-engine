@@ -1412,13 +1412,15 @@
             const nm = r.top_pick || (tp && tp.horse_name) || null;
             let od = (r.top_pick_odds > 1 ? +r.top_pick_odds : null) || (tp && tp.best_available_odds > 1 ? +tp.best_available_odds : null);
             let odTag = '';
+            let winnerPlace = null;
             if (done) {
-              // SB-style: winner keeps win odds, placed shows place odds, missed none
-              if (r.model_correct === true) { odTag = ''; }
+              // SB-style: winner keeps win odds (+ its place odds), placed
+              // shows place odds, missed none
+              if (r.model_correct === true) { odTag = ''; winnerPlace = r.top_pick_place_odds || null; }
               else if (r.model_placed === true) { od = r.top_pick_place_odds || null; odTag = ' place'; }
               else { od = null; }
             }
-            return `<div class="pname ${nm ? '' : 'ghost'}"><span class="pn-t">${nm ? esc(nm) : (r.top_win_probability != null ? 'Tap for our pick' : 'No prediction yet')}</span>${od ? `<span class="pk-odds num"${odTag ? ' style="color:var(--blue)"' : ''}>$${od.toFixed(2)}${odTag}</span>` : ''}</div>`;
+            return `<div class="pname ${nm ? '' : 'ghost'}"><span class="pn-t">${nm ? esc(nm) : (r.top_win_probability != null ? 'Tap for our pick' : 'No prediction yet')}</span>${od ? `<span class="pk-odds num"${odTag ? ' style="color:var(--blue)"' : ''}>$${od.toFixed(2)}${odTag}</span>` : ''}${winnerPlace ? `<span class="pk-odds num" style="color:var(--blue)">$${winnerPlace.toFixed(2)} place</span>` : ''}</div>`;
           })()}
           ${barsHtml(r.top_win_probability, r.top_place_probability)}
         </div>

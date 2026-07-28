@@ -1429,8 +1429,8 @@
       // SB-style results odds: winner shows WIN odds, 2nd-4th show PLACE
       // odds, out-of-the-money shows none. Upcoming rows keep win odds.
       const rowOdds = done ? (r.model_correct === true ? oddsShow : null) : oddsShow;
-      const placeOdds = (done && r.model_correct === false && r.model_placed === true)
-        ? (r.top_pick_place_odds || null) : null;
+      const placeOdds = (done && r.model_placed === true)
+        ? (r.top_pick_place_odds || null) : null;   // winners show BOTH
       return `<div class="brace ${done ? resCls(r) : ''}" data-open="${esc(r.race_id)}">
         <div class="rn">R${r.race_number}</div>
         <div class="rt num">${wallTime(r.scheduled_time)}<span class="cd ${done ? '' : (cd.urg || '')}">${done ? '' : cd.label}</span></div>
@@ -1563,7 +1563,7 @@
             <span class="pos num">${ORD[f.position]}</span>
             <span class="nm">${esc(f.name)}${isPick ? ' <span class="pick-tag">OUR PICK</span>' : ''}</span>
             ${f.position === 1
-              ? (f.sp ? `<span class="sp num">$${(+f.sp).toFixed(2)}</span>` : '')
+              ? `${f.sp ? `<span class="sp num">$${(+f.sp).toFixed(2)}</span>` : ''}${f.place_odds ? `<span class="sp num" style="color:var(--blue)">$${(+f.place_odds).toFixed(2)}</span>` : ''}`
               : (f.place_odds ? `<span class="sp num" style="color:var(--blue)">$${(+f.place_odds).toFixed(2)}</span>` : '')}
           </div>`;
         }).join('') + `</div>`;

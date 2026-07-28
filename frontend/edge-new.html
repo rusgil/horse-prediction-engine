@@ -1204,6 +1204,7 @@
       <div class="right">
         ${barsHtml((p.model_pct || 0) / 100, p.place_probability != null ? p.place_probability / 100 : null)}
         ${displayOdds ? `<div class="odds-pill ${oddsCls}"><b class="num">$${(+displayOdds).toFixed(2)}</b>${oddsLbl}</div>` : '<div class="odds-pill">TBA</div>'}
+        ${settledRes && res.winner && res.place_odds ? `<div class="odds-pill"><b class="num" style="font-size:1rem;color:var(--blue)">$${(+res.place_odds).toFixed(2)}</b>place</div>` : ''}
       </div>
       ${edgeLine}${verdict}
     </div>`;
