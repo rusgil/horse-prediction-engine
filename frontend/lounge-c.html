@@ -467,6 +467,11 @@
   .rail-item .rv .st { font-size: 0.6rem; color: var(--text-3); font-family: 'Barlow'; font-weight: 800; }
   .rail-item .rmeta { display: flex; gap: 5px; margin-top: 5px; align-items: center; flex-wrap: wrap; }
   .rail-item .prog { font-size: 0.66rem; color: var(--text-3); font-weight: 700; }
+  .rail-item .rstat { display: flex; gap: 4px; flex-wrap: wrap; margin-top: 5px; font-size: 0.7rem; font-weight: 700; }
+  .rail-item .rs-w { color: #10b981; }
+  .rail-item .rs-p { color: #60a5fa; }
+  .rail-item .rs-c { color: var(--gold); }
+  .rail-item .rs-c.hi { color: #10b981; }
   .rail-item .progbar { height: 3px; border-radius: 2px; background: var(--surface-2); margin-top: 7px; overflow: hidden; }
   .rail-item .progbar .pf { height: 100%; background: var(--mint); border-radius: 2px; }
 
@@ -1342,14 +1347,26 @@
     const railItems = S.meetings.map(m => {
       const vc = vcOf(m);
       const races = S.details[vc] || [];
-      const done = races.filter(isSettled).length;
+      const settledRaces = races.filter(isSettled);
+      const done = settledRaces.length;
       const next = races.find(r => !countdown(r.scheduled_time).past);
+      // Same meeting stats the trad lounge pills carry: x/y wins · z placed
+      // (placed counts top-3 incl. wins, shown when it exceeds wins) + best pick %
+      const mWins = settledRaces.filter(r => r.model_correct === true).length;
+      const mPlaced = settledRaces.filter(r => r.model_placed === true).length;
+      const maxConf = Math.round(Math.max(0, ...races.map(r => r.top_win_probability || 0)) * 100);
+      const statLine = done ? `<div class="rstat num">
+          <span class="rs-w">${mWins}/${done} wins</span>
+          ${mPlaced > mWins ? `<span class="rs-p">· ${mPlaced} placed</span>` : ''}
+          ${maxConf >= 25 ? `<span class="rs-c ${maxConf >= 40 ? 'hi' : ''}">· ${maxConf}% best pick</span>` : ''}
+        </div>` : '';
       return `<button class="rail-item ${vc === S.selVenue ? 'on' : ''}" data-sel="${esc(vc)}">
         <div class="rv">${esc(m.venue)} <span class="st">${esc(m.state || '')}</span>
           ${m.weather ? `<span class="wx">${m.weather.icon || ''} ${Math.round(m.weather.temp_max ?? 0)}°</span>` : ''}</div>
         <div class="rmeta">
           <span class="prog num">${done}/${races.length || '–'} raced${next ? ` · next ${wallTime(next.scheduled_time)}` : ''}</span>
         </div>
+        ${statLine}
         <div class="progbar"><div class="pf" style="width:${races.length ? done / races.length * 100 : 0}%"></div></div>
       </button>`;
     }).join('');
