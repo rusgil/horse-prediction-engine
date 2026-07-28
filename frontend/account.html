@@ -21,6 +21,13 @@
       --red: #ef4444;
       --blue: #60a5fa;
     }
+    /* light-mode values for this page's own tokens (theme.js covers the
+       shared ones; --card/--edge/--muted are account-local) */
+    :root[data-theme="light"] {
+      --bg: #eef1f5; --card: #ffffff; --edge: #c6cfda;
+      --text: #17212f; --muted: #5d6b80;
+      --gold: #9c7500; --green: #0d9450; --red: #cc4444; --blue: #245fc4;
+    }
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
     body {
       font-family: 'Outfit', sans-serif;
