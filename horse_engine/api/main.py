@@ -17507,11 +17507,13 @@ async def get_meeting(race_date: str, venue_code: str):
             n = max(_gm_starters.get(rid) or 0, _pred_counts.get(rid) or 0)
             return n or None
         # Pick's actual finishing position (for "✓ 2nd" place labels).
+        # < 90 excludes the "unplaced" sentinel (90-99) — those races surface
+        # as a plain miss, not a fake 99th.
         _positions_by_race: dict[str, dict[str, int]] = {}
         for r in _all_hr:
             if r.position == 1:
                 winners[r.race_id] = r.horse_name
-            if r.position and 1 <= r.position < 100:
+            if r.position and 1 <= r.position < 90:
                 _positions_by_race.setdefault(r.race_id, {})[
                     _normalize_horse(r.horse_name)
                 ] = r.position
