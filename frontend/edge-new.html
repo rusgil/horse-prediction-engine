@@ -1247,7 +1247,7 @@
       const pnl = settled.reduce((s, p) => { const r = E.resultsMap[p.race_id]; return s + (r.winner && r.sp ? r.sp * 10 - 10 : -10); }, 0);
       const label = d === today ? 'Today' : d === tomorrow ? 'Tomorrow' : fmtDate(d);
       html += `<div class="day-head"><span class="t">${label}</span><span class="c num">${ps.length} pick${ps.length === 1 ? '' : 's'}</span>
-        ${settled.length ? `<span class="pnl num" style="color:${pnl >= 0 ? 'var(--mint)' : 'var(--red)'}">${w}W · ${pl}P settled · ${pnl >= 0 ? '+' : ''}$${pnl.toFixed(0)} at $10 flat</span>` : ''}</div>`;
+        ${settled.length ? `<span class="pnl num" style="color:${pnl >= 0 ? 'var(--mint)' : 'var(--red)'}">${w}W · ${pl}P settled · ${pnl >= 0 ? '+' : ''}$${pnl.toFixed(0)}</span>` : ''}</div>`;
       html += ps.map(p => card(p, E.resultsMap[p.race_id])).join('');
     });
     el.innerHTML = html;
@@ -1280,9 +1280,9 @@
         <div class="ds-divider"></div>
         <div class="ds-stat"><b class="num" style="color:var(--mint)">${w}</b> won <span class="num">(${Math.round(w / settled.length * 100)}%)</span></div>
         <div class="ds-divider"></div>
-        <div class="ds-stat"><b class="num" style="color:var(--amber)">${pl}</b> more placed</div>
+        <div class="ds-stat"><b class="num" style="color:var(--amber)">${pl}</b> more placed <span class="num">(${Math.round((w + pl) / settled.length * 100)}% placed incl. wins)</span></div>
         <div class="ds-divider"></div>
-        <div class="ds-stat"><b class="num" style="color:${pnl >= 0 ? 'var(--mint)' : 'var(--red)'}">${pnl >= 0 ? '+' : ''}$${pnl.toFixed(0)}</b> at $10 flat</div>
+        <div class="ds-stat"><b class="num" style="color:${pnl >= 0 ? 'var(--mint)' : 'var(--red)'}">${pnl >= 0 ? '+' : ''}$${pnl.toFixed(0)}</b></div>
       </div>` : '';
     const cards = picks.map(p => card(p, p)).join('')
       || `<div class="empty"><div class="big">🐎</div>No ${E.mode === 'sharp' ? 'Sharp ' : ''}picks recorded for this date.</div>`;
