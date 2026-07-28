@@ -410,6 +410,8 @@
   .hero-top .wt { font-size: 0.68rem; color: var(--text-3); font-weight: 700; }
   .hero-picks { padding: 6px 18px 12px; }
   .hero-note { padding: 0 18px 14px; font-size: 0.72rem; color: var(--text-3); }
+  .hero-field { padding: 0 18px 12px; }
+  .hero-field .field-toggle { border-top: 1px dashed var(--line); }
   .hrunner { display: flex; align-items: center; gap: 12px; padding: 9px 0; border-bottom: 1px solid var(--line); }
   .hrunner:last-child { border-bottom: none; }
   .hrunner .saddle {
@@ -1361,7 +1363,8 @@
           <div class="clockbox"><div class="cd big ${cd.urg || ''}">${cd.label}</div><div class="wt num">${wallTime(hero.scheduled_time)}</div></div>
         </div>
         <div class="hero-picks">${picksHtml}</div>
-        <div class="hero-note">Our top ${rs.length || 3} for this race — tap for the full field.</div>
+        ${fieldOpen.has(hero.race_id) ? '' : `<div class="hero-note">Our top ${rs.length || 3} for this race — tap for the full field.</div>`}
+        <div class="hero-field">${fieldHtml(hero)}</div>
       </div>`;
     })() : '';
 
