@@ -866,6 +866,7 @@
   function applySharp(mode) {
     S.sharpOnly = mode === 'sharp';
     localStorage.setItem('loungeCSharp', mode);
+    renderA();
     renderC();
     renderDayStrip();
     loadPerf();
@@ -1176,9 +1177,11 @@
       const vc = vcOf(m);
       const races = S.details[vc];
       const g = goingInfo(races?.[0]?.track_condition);
+      if (S.sharpOnly && races && !races.some(r => r.is_sharp === true)) return '';
       const cells = Array.from({ length: maxR }, (_, i) => {
         const r = races?.[i];
         if (!r) return `<td class="cell blank"></td>`;
+        if (S.sharpOnly && r.is_sharp !== true) return `<td class="cell blank"></td>`;
         const done = isSettled(r);
         const tier = tierOf(r.top_win_probability, isOffGoing(r.track_condition));
         const cls = [
@@ -1204,6 +1207,10 @@
         </td>${cells}</tr>`;
     }).join('');
 
+    if (S.sharpOnly && !rows) {
+      el.innerHTML = `<div class="empty"><div class="big">🎯</div>No Sharp races today — switch to 'All picks' to see the full grid.</div>`;
+      return;
+    }
     el.innerHTML = `<div class="grid-wrap"><table class="race-grid">
       <thead><tr><th>Meeting</th>${head}</tr></thead><tbody>${rows}</tbody></table></div>
       <div class="heat-legend">
