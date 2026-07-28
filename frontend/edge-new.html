@@ -1377,7 +1377,7 @@
         ${(x.key_flags || []).length ? `<div class="rflags">${(x.key_flags || []).slice(0, 3).map(f => `<span class="rflag">${esc(f)}</span>`).join('')}</div>` : ''}
         <div class="rbars">${barsHtml(x.win_probability, x.place_probability)}</div>
       </div>
-      <div class="odds">${x.best_available_odds ? `<div class="o num">$${(+x.best_available_odds).toFixed(2)}</div><div class="ol">best odds</div>` : ''}</div>
+      <div class="odds">${x.best_available_odds ? `<div class="o num">$${(+x.best_available_odds).toFixed(2)}</div><div class="ol">best odds</div>` : ''}${x.place_odds_at_jump ? `<div class="o num" style="font-size:0.95rem;color:var(--blue)">$${(+x.place_odds_at_jump).toFixed(2)}</div><div class="ol">place @ jump</div>` : ''}</div>
     </div>`).join('');
   }
 

@@ -1591,6 +1591,7 @@
         </div>
         <div class="odds">
           ${x.best_available_odds ? `<div class="o num">$${(+x.best_available_odds).toFixed(2)}</div><div class="ol">best odds</div>` : ''}
+          ${x.place_odds_at_jump ? `<div class="o num" style="font-size:0.95rem;color:var(--blue)">$${(+x.place_odds_at_jump).toFixed(2)}</div><div class="ol">place @ jump</div>` : ''}
         </div>
       </div>`;
     }).join('');

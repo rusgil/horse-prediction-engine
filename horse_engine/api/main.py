@@ -18282,9 +18282,34 @@ async def get_race(race_id: str):
         if name not in last10:
             last10[name] = {"days_since_last_run_hist": days}
 
+    # Fixed place odds at the jump (recorded from Sportsbet racecards for the
+    # top-3 ranks in the pre-jump window). Last capture per horse wins.
+    place_at_jump: dict[str, float] = {}
+    try:
+        async with get_session() as session:
+            _ps = (await session.execute(
+                select(OddsSnapshotRow.horse_name, OddsSnapshotRow.place_odds,
+                       OddsSnapshotRow.minutes_to_jump)
+                .where(OddsSnapshotRow.race_id == race_id)
+                .where(OddsSnapshotRow.place_odds.isnot(None))
+                .order_by(OddsSnapshotRow.snapshotted_at.asc())
+            )).fetchall()
+        for hn, po, mtj in _ps:
+            if mtj is None or mtj >= -5:
+                place_at_jump[_normalize_horse(hn)] = float(po)
+    except Exception:
+        pass
+
+    out_runners = []
+    for r in runners:
+        d = _runner_response(r, last10.get(r.horse_name))
+        po = place_at_jump.get(_normalize_horse(r.horse_name))
+        if po:
+            d["place_odds_at_jump"] = po
+        out_runners.append(d)
     return {
         "race_id": race_id,
-        "runners": [_runner_response(r, last10.get(r.horse_name)) for r in runners],
+        "runners": out_runners,
     }
 
 
