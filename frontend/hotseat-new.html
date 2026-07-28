@@ -179,6 +179,9 @@
   .filt-row { margin-bottom: 16px; }
   .filt-row .fl { font-weight: 800; color: var(--text-3); letter-spacing: 0.05em; text-transform: uppercase; font-size: 0.64rem; margin-bottom: 7px; }
   .filt-row .opts { display: flex; gap: 6px; flex-wrap: wrap; }
+  .filt-info { font-size: 0.7rem; color: var(--text-3); line-height: 1.45; margin-top: 7px; }
+  .filt-info strong { color: var(--text-2); }
+  .filt-info em { color: var(--gold); font-style: normal; font-weight: 700; }
   .filt-note { font-size: 0.7rem; color: var(--text-3); margin-top: 4px; }
   .jcard .when .cd.big {
     font-family: 'Barlow Condensed', sans-serif; font-weight: 800; font-size: 30px;
@@ -1573,16 +1576,21 @@
 
   /* ── Filters drawer (right-hand panel, one filter per line) ── */
   const _FILT_GROUPS = [
-    ['Win confidence', 'wf', 'winFilter', 'hsWinF', [['all','All'],['30','≥30%'],['40','≥40%']]],
-    ['Place confidence', 'pf', 'placeFilter', 'hsPlaceF', [['all','All'],['40','≥40%'],['55','≥55%'],['70','≥70%']]],
-    ['Top-2 gap', 'gf', 'gapFilter', 'hsGapF', [['all','All'],['10','≥10pt'],['15','≥15pt'],['20','≥20pt']]],
-    ['💎 Value', 'vf', 'valFilter', 'hsValF', [['all','All'],['5','Edge ≥5pt · $4–10'],['10','Edge ≥10pt · $4–10']]],
+    ['Win confidence', 'wf', 'winFilter', 'hsWinF', [['all','All'],['30','≥30%'],['40','≥40%']],
+      `The model's chance our top pick wins the race.`],
+    ['Place confidence', 'pf', 'placeFilter', 'hsPlaceF', [['all','All'],['40','≥40%'],['55','≥55%'],['70','≥70%']],
+      `The model's chance our top pick finishes top 3.`],
+    ['Top-2 gap', 'gf', 'gapFilter', 'hsGapF', [['all','All'],['10','≥10pt'],['15','≥15pt'],['20','≥20pt']],
+      `<strong>Win % gap between the model's rank-1 and rank-2 horse.</strong> Bigger gap = clearer favourite. 60-day backtest: only <em>≥20pt</em> was historically +EV at flat stake (33.7% win, +2% ROI).`],
+    ['💎 Value', 'vf', 'valFilter', 'hsValF', [['all','All'],['5','Edge ≥5pt · $4–10'],['10','Edge ≥10pt · $4–10']],
+      `<strong>Model edge over market on mid-priced overlays.</strong> Picks where the model gives the rank-1 horse at least 5pt more win chance than the market implies, AND the bookmaker is offering <em>$4–$10</em>. 180-day backtest: 220 races, 19.1% win rate, $5.48 avg winner SP, +32.7% ROI at flat $10 stake.`],
   ];
   function filterDrawerBody() {
-    return _FILT_GROUPS.map(([label, attr, key]) => `<div class="filt-row">
+    return _FILT_GROUPS.map(([label, attr, key, , opts, info]) => `<div class="filt-row">
       <div class="fl">${label}</div>
-      <div class="opts">${_FILT_GROUPS.find(g => g[1] === attr)[4].map(([v, l]) =>
+      <div class="opts">${opts.map(([v, l]) =>
         `<button class="vchip ${S[key] === v ? 'on' : ''}" data-fx="${attr}" data-val="${v}">${l}</button>`).join('')}</div>
+      ${info ? `<div class="filt-info">${info}</div>` : ''}
     </div>`).join('') + `<div class="filt-note">Filters apply to upcoming races only — settled results always show in full.</div>`;
   }
   function bindFilterDrawer() {
