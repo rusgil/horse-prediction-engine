@@ -18151,6 +18151,26 @@ async def get_meeting(race_date: str, venue_code: str):
             return None
         return _positions_by_race.get(race_id, {}).get(_normalize_horse(pick))
 
+    # Pick's fixed place odds at the jump (recorded from SB racecards) —
+    # settled lounge rows show the place price, not the win price.
+    pick_place_odds: dict[str, float] = {}
+    if completed_ids:
+        try:
+            async with get_session() as session:
+                _po_rows = (await session.execute(
+                    select(OddsSnapshotRow.race_id, OddsSnapshotRow.horse_name,
+                           OddsSnapshotRow.place_odds)
+                    .where(OddsSnapshotRow.race_id.in_(completed_ids))
+                    .where(OddsSnapshotRow.place_odds.isnot(None))
+                    .order_by(OddsSnapshotRow.snapshotted_at.asc())
+                )).fetchall()
+            for _rid, _hn, _po in _po_rows:
+                _pick = top_picks.get(_rid)
+                if _pick and _normalize_horse(_hn) == _normalize_horse(_pick):
+                    pick_place_odds[_rid] = float(_po)   # last capture wins
+        except Exception:
+            pass
+
     races_out = []
     for r in race_list:
         rid = r["race_id"]
@@ -18165,6 +18185,7 @@ async def get_meeting(race_date: str, venue_code: str):
             "rank2_win_probability": rank2_win_probs.get(rid),
             "top_pick": top_picks.get(rid),
             "top_pick_odds": top_pick_odds.get(rid),
+            "top_pick_place_odds": pick_place_odds.get(rid),
             "is_sharp": is_sharp_map.get(rid),
         })
 

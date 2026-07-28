@@ -1426,7 +1426,10 @@
       const oddsShow = pickSp
         || (r.top_pick_odds > 1 ? +r.top_pick_odds : null)
         || (tp && tp.best_available_odds > 1 ? +tp.best_available_odds : null);
-      const rowOdds = oddsShow;   // shown under the win/place bars
+      // Settled rows show the pick's PLACE odds (Sportsbet-style results
+      // view) — win odds only while the race is still upcoming.
+      const rowOdds = done ? null : oddsShow;
+      const placeOdds = done ? (r.top_pick_place_odds || null) : null;
       return `<div class="brace ${done ? resCls(r) : ''}" data-open="${esc(r.race_id)}">
         <div class="rn">R${r.race_number}</div>
         <div class="rt num">${wallTime(r.scheduled_time)}<span class="cd ${done ? '' : (cd.urg || '')}">${done ? '' : cd.label}</span></div>
@@ -1450,7 +1453,7 @@
         </div>
         <div class="right">
           ${barsHtml(r.top_win_probability, r.top_place_probability)}
-          ${rowOdds ? `<div class="pk-odds num">$${rowOdds.toFixed(2)}</div>` : ''}
+          ${rowOdds ? `<div class="pk-odds num">$${rowOdds.toFixed(2)}</div>` : ''}${placeOdds ? `<div class="pk-odds num" style="color:var(--blue)">$${placeOdds.toFixed(2)} <span style="font-size:0.6rem;font-weight:700">place</span></div>` : ''}
         </div>
       </div>`;
     }).join('');
