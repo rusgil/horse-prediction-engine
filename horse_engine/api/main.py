@@ -254,8 +254,7 @@ async def _scheduled_odds_snapshot():
                     # capture doubles as the post-race "place bet at the jump
                     # paid $X" record. Recorded for the TOP-3 model ranks.
                     place_price = None
-                    if (mins_to_jump is not None and -5 <= mins_to_jump <= 35
-                            and row.model_rank in (1, 2, 3)):
+                    if mins_to_jump is not None and -5 <= mins_to_jump <= 35:
                         try:
                             from horse_engine.clients.sportsbet_schedule import (
                                 get_sportsbet_place_prices, _norm as _sbn)
@@ -267,8 +266,9 @@ async def _scheduled_odds_snapshot():
                         except Exception:
                             place_price = None
                     # Snapshot history — rank-1 always (steam cost bounded);
-                    # ranks 2-3 only when a place price landed (a few rows per
-                    # race in the pre-jump window).
+                    # other ranks only when a place price landed in the
+                    # pre-jump window (the results view needs place odds for
+                    # the ACTUAL placegetters, who can be any horse).
                     if row.model_rank == 1 or place_price:
                         session.add(OddsSnapshotRow(
                             race_id=row.race_id,
@@ -5715,6 +5715,23 @@ async def get_edge_yesterday(for_date: Optional[str] = Query(None, alias="date")
     prefix = f"{target_date}_"
     stake = 10
 
+    # Pick's fixed place odds at the jump (SB racecard capture) — results
+    # views show WIN odds for winners, PLACE odds for 2nd/3rd/4th.
+    _yst_place_odds: dict[tuple, float] = {}
+    try:
+        async with get_session() as session:
+            _po = (await session.execute(
+                select(OddsSnapshotRow.race_id, OddsSnapshotRow.horse_name,
+                       OddsSnapshotRow.place_odds)
+                .where(OddsSnapshotRow.race_id.like(f"{prefix}%"))
+                .where(OddsSnapshotRow.place_odds.isnot(None))
+                .order_by(OddsSnapshotRow.snapshotted_at.asc())
+            )).fetchall()
+        for _rid, _hn, _p in _po:
+            _yst_place_odds[(_rid, _normalize_horse(_hn or ""))] = float(_p)
+    except Exception:
+        pass
+
     async with get_session() as session:
         # cancelled filter (BUG-25) + source="live" filter (BUG-26) — exclude
         # scratched horses (whose result lookup would silently drop the race)
@@ -5901,6 +5918,7 @@ async def get_edge_yesterday(for_date: Optional[str] = Query(None, alias="date")
             "place_probability": place_pct,
             "calibrated_win_rate": next((r2 for t, r2 in _CALIBRATED_WIN_RATES if model_pct >= t), 66),
             "sp": sp,
+            "place_odds": _yst_place_odds.get((p.race_id, _normalize_horse(p.horse_name or ""))),
             "winner": winner,
             "placed": placed,
             "position": position,
@@ -21297,6 +21315,21 @@ async def get_meeting_results(race_date: str, venue_code: str):
             .where(RunnerPredictionRow.cancelled.is_(False) | RunnerPredictionRow.cancelled.is_(None))
             .group_by(RunnerPredictionRow.race_id)
         )).fetchall()}
+        # Fixed place odds at the jump (SB racecard capture) — SB-style
+        # results show WIN odds for the winner, PLACE odds for 2nd/3rd/4th.
+        _res_place_odds: dict[tuple, float] = {}
+        try:
+            _po = (await session.execute(
+                select(OddsSnapshotRow.race_id, OddsSnapshotRow.horse_name,
+                       OddsSnapshotRow.place_odds)
+                .where(OddsSnapshotRow.race_id.like(prefix + "%"))
+                .where(OddsSnapshotRow.place_odds.isnot(None))
+                .order_by(OddsSnapshotRow.snapshotted_at.asc())
+            )).fetchall()
+            for _rid, _hn, _p in _po:
+                _res_place_odds[(_rid, _normalize_horse(_hn or ""))] = float(_p)
+        except Exception:
+            pass
 
     top_picks: dict[str, str] = {}
     for rid, name in hist_rows:          # dedup-in-Python, latest enriched_at first
@@ -21340,7 +21373,8 @@ async def get_meeting_results(race_date: str, venue_code: str):
             "top_pick": top_pick or None,
             "runners": [
                 {"position": r.position, "name": (r.horse_name or "").upper(),
-                 "margin": r.beaten_margin or 0, "sp": r.starting_price}
+                 "margin": r.beaten_margin or 0, "sp": r.starting_price,
+                 "place_odds": _res_place_odds.get((r.race_id, _normalize_horse(r.horse_name or "")))}
                 for r in positioned[:8]
             ],
         })

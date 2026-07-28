@@ -1154,9 +1154,13 @@
     const jump = p.scheduled_time ? new Date(p.scheduled_time).getTime() : null;
     const isPast = jump && jump < now;
     const cd = countdown(p.scheduled_time);
-    const useSp = isPast && res && res.sp;
-    const displayOdds = useSp ? res.sp : (p.best_available_odds || (res && res.sp));
-    const oddsLbl = useSp ? 'SP' : 'best odds';
+    // SB-style results odds: winner -> win SP, placed -> place odds, missed -> none.
+    const settledRes = isPast && res && !res.scratched && !res.no_result;
+    let displayOdds, oddsLbl;
+    if (settledRes && res.winner) { displayOdds = res.sp; oddsLbl = 'SP'; }
+    else if (settledRes && res.placed) { displayOdds = res.place_odds || null; oddsLbl = 'place'; }
+    else if (settledRes) { displayOdds = null; oddsLbl = ''; }
+    else { displayOdds = p.best_available_odds || (res && res.sp); oddsLbl = 'best odds'; }
     const oddsCls = displayOdds >= 3 ? 'great' : displayOdds >= 2.5 ? 'good' : '';
     const hasResult = res && !res.scratched && !res.no_result && (res.winner === true || res.placed === true || res.position != null);
     const outcome = hasResult ? (res.winner ? 'res-win' : res.placed ? 'res-place' : 'res-miss') : '';
