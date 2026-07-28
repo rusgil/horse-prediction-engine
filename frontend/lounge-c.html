@@ -596,7 +596,6 @@
   /* Mobile: drill-in text a touch bigger for readability */
   @media (max-width: 640px) {
     .brace .right { flex-direction: column; align-items: flex-end; gap: 3px; }
-    .rs-c { display: none; }
     .date-pill { flex-direction: column; gap: 1px; }
     .prev-pill { flex-direction: row; }
     .prev-pill .dp-arr { font-size: 1.35rem; padding: 4px 12px; }
@@ -1201,7 +1200,7 @@
       const statLine = settledRaces.length ? `<div class="rstat num">
           <span class="rs-w">${aWins}/${settledRaces.length} wins</span>
           ${aPlaced > aWins ? `<span class="rs-p">· ${aPlaced} placed</span>` : ''}
-          ${aConf >= 25 ? `<span class="rs-c ${aConf >= 40 ? 'hi' : ''}">· ${aConf}% best pick</span>` : ''}
+          ${aConf >= 25 && S.date >= aestToday(0) ? `<span class="rs-c ${aConf >= 40 ? 'hi' : ''}">· ${aConf}% best pick</span>` : ''}
         </div>` : '';
       const cells = Array.from({ length: maxR }, (_, i) => {
         const r = races?.[i];
@@ -1367,7 +1366,7 @@
       const statLine = done ? `<div class="rstat num">
           <span class="rs-w">${mWins}/${done} wins</span>
           ${mPlaced > mWins ? `<span class="rs-p">· ${mPlaced} placed</span>` : ''}
-          ${maxConf >= 25 ? `<span class="rs-c ${maxConf >= 40 ? 'hi' : ''}">· ${maxConf}% best pick</span>` : ''}
+          ${maxConf >= 25 && S.date >= aestToday(0) ? `<span class="rs-c ${maxConf >= 40 ? 'hi' : ''}">· ${maxConf}% best pick</span>` : ''}
         </div>` : '';
       return `<button class="rail-item ${vc === S.selVenue ? 'on' : ''}" data-sel="${esc(vc)}">
         <div class="rv">${esc(m.venue)} <span class="st">${esc(m.state || '')}</span>
