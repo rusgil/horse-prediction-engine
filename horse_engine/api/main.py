@@ -26800,6 +26800,15 @@ async def _compute_output_calibration_curve(days: int = 45) -> dict:
     # can eyeball it in the follow-up UI.
     backtest = await _backtest_calibration_candidate(curve, days=7)
 
+    # ── 10k sample gate (2026-07-29) ────────────────────────────────────
+    # Isotonic fits below ~10k win_prob_raw samples produce noise-step
+    # curves with 20pp+ displayed-confidence swings (the 2026-07-15
+    # plateau incident + candidates #2/#4/#5, all human-rejected on the
+    # same grounds). Sub-gate candidates are archived immediately with the
+    # reason recorded — they never reach the human review queue.
+    ISOTONIC_SAMPLE_GATE = 10_000
+    below_gate = len(samples) < ISOTONIC_SAMPLE_GATE
+
     async with get_session() as session:
         # Always INSERT a new candidate row — NEVER overwrite the active
         # curve. Human promotion via /api/admin/isotonic-candidate/{id}/promote
@@ -26809,13 +26818,25 @@ async def _compute_output_calibration_curve(days: int = 45) -> dict:
             curve_json=payload,
             sample_days=days,
             sample_size=len(samples),
-            status="candidate",
+            status="archived" if below_gate else "candidate",
             backtest_json=json.dumps(backtest),
         )
         session.add(candidate_row)
         await session.commit()
         await session.refresh(candidate_row)
         candidate_id = candidate_row.id
+
+    if below_gate:
+        log.info("[output_calibration] candidate #%d AUTO-ARCHIVED: %d samples < %d gate",
+                 candidate_id, len(samples), ISOTONIC_SAMPLE_GATE)
+        return {
+            "ok": True,
+            "candidate_id": candidate_id,
+            "sample_size": len(samples),
+            "auto_archived": True,
+            "reason": f"below the {ISOTONIC_SAMPLE_GATE:,}-sample gate "
+                      f"({len(samples):,} samples) — not queued for review",
+        }
 
     # Surface a follow-up row for human review. Reviewer promotes or
     # rejects via the dashboard buttons (POST endpoints below).
