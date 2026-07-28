@@ -5673,7 +5673,7 @@ async def refresh_edge_results(request: Request):
 _yesterday_response_cache: dict[str, tuple[datetime, dict]] = {}
 _YESTERDAY_CACHE_TTL = 1800  # 30 min — past dates are stable
 _YESTERDAY_CACHE_TTL_TODAY = 60  # 1 min — today's results land throughout the day
-_YESTERDAY_CACHE_VERSION = 4  # v4: recompute post-quarantine (MR CACCIATORE incident 2026-07-28) so results views drop the 11 rewritten races
+_YESTERDAY_CACHE_VERSION = 5  # v5: picks carry place_odds (SB-style results odds)
 
 
 def _yesterday_cache_ttl(target_date: str) -> int:
