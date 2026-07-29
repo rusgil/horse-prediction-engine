@@ -217,6 +217,13 @@
   .chip.tier-strong { background: var(--strong-dim); color: var(--strong); }
   .chip.wet-note { background: var(--amber-dim); color: var(--amber); }
   .mcell .wx { font-size: 0.72rem; color: var(--text-3); }
+  .metro-badge {
+    font-size: 0.54rem; font-weight: 800; letter-spacing: 0.1em;
+    color: var(--gold); border: 1px solid color-mix(in srgb, var(--gold) 55%, transparent);
+    background: color-mix(in srgb, var(--gold) 12%, transparent);
+    border-radius: 4px; padding: 1px 6px; margin-left: 7px; vertical-align: 2px;
+    font-family: 'Barlow', sans-serif;
+  }
   .rail-item .rv .wx { margin-left: auto; font-size: 0.72rem; color: var(--text-3); font-family: 'Barlow'; font-weight: 500; }
 
   .watch-btn {
@@ -1393,7 +1400,7 @@
           ${maxConf >= 25 && S.date >= aestToday(0) ? `<span class="rs-c ${maxConf >= 40 ? 'hi' : ''}">· ${maxConf}% best pick</span>` : ''}
         </div>` : '';
       return `<button class="rail-item ${vc === S.selVenue ? 'on' : ''}" data-sel="${esc(vc)}">
-        <div class="rv">${esc(m.venue)} <span class="st">${esc(m.state || '')}</span>
+        <div class="rv">${esc(m.venue)} <span class="st">${esc(m.state || '')}</span>${m.is_metro ? '<span class="metro-badge">METRO</span>' : ''}
           ${m.weather ? `<span class="wx">${m.weather.icon || ''} ${Math.round(m.weather.temp_max ?? 0)}°</span>` : ''}</div>
         <div class="rmeta">
           <span class="prog num">${done}/${races.length || '–'} raced${next ? ` · next ${wallTime(next.scheduled_time)}` : ''}</span>
@@ -1463,7 +1470,7 @@
       <div class="rail">${railItems}</div>
       <div class="board">
         <div class="board-head">
-          <div class="t">${esc(m?.venue || '')} <span class="st">${esc(m?.state || '')}${m?.tier ? ' · ' + esc(m.tier) : ''}</span></div>
+          <div class="t">${esc(m?.venue || '')} <span class="st">${esc(m?.state || '')}${m?.tier ? ' · ' + esc(m.tier) : ''}</span>${m?.is_metro ? '<span class="metro-badge">METRO</span>' : ''}</div>
           <div class="chips">
             <span class="chip ${g.cls}">${esc(g.label)}</span>
             ${m?.weather?.rain_mm >= 2 ? `<span class="chip wet-note">🌧 RAIN ${m.weather.rain_mm}mm</span>` : ''}

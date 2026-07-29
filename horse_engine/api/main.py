@@ -17650,6 +17650,14 @@ async def list_meetings(race_date: str = _today()):
                 it["tier"] = "metro" if is_metro_venue(vc) else "country"
             it["max_prize_money"] = mx or None
 
+    # Metro flag — union of the curated METRO_VENUES set and the tier
+    # classifier (covers e.g. Kensington, which is tier=metro but not in
+    # the slug list).
+    for it in items:
+        it["is_metro"] = bool(
+            _is_metro_venue(it.get("venue_code") or "") or it.get("tier") == "metro"
+        )
+
     result = {"date": race_date, "meetings": items}
     _list_meetings_cache[race_date] = (datetime.utcnow(), result)
     # Persist to Postgres so the next container redeploy hydrates this
