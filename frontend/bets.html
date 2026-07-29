@@ -933,7 +933,7 @@
   </nav>
   <header class="page-header labs">
     <h1 class="page-title">🧪 Funky IQ Labs <span class="tier-badge tier-labs">Labs</span></h1>
-    <p class="page-subtitle">Paper-trading · $2 flexi-box trifectas · metro meetings only</p>
+    <p class="page-subtitle">Paper-trading · trifecta boxes at $1 a combination · P/L straight from the dividends · metro meetings only</p>
   </header>
   <header>
     <div id="heroPick"></div>
@@ -1074,6 +1074,21 @@
     return flipped ? !defaultCollapsed : defaultCollapsed;
   }
 
+  // Odds-based accounting (2026-07-29): the $2-flexi framing is gone.
+  // Every box is costed at $1 a combination — cost = permutations,
+  // return = the listed dividend itself. P/L and ROI derive purely from
+  // the odds, so numbers read like a form guide, not a bankroll.
+  function unitStake(b) { return b.num_permutations || 0; }
+  function unitPayout(b) {
+    if (!b.settled || !b.is_hit) return 0;
+    return b.trifecta_dividend != null ? b.trifecta_dividend : null;  // null = hit, div pending
+  }
+  // Harville-estimated payout arrives scaled to the legacy flexi stake —
+  // rescale to the $1-a-combination dividend it implies.
+  function estUnitPayout(b) {
+    if (!b.estimated_payout || !b.stake_dollars || !b.num_permutations) return 0;
+    return b.estimated_payout * b.num_permutations / b.stake_dollars;
+  }
   function fmtPnl(v) {
     if (v == null) return null;
     const s = v >= 0 ? '+' : '−';
@@ -1150,12 +1165,12 @@
     if (!bets || !bets.length) return '';
     const meta = STRATEGY_DISPLAY.find(s => s.key === group);
     if (!meta) return '';
-    const totalStake = bets.reduce((a, b) => a + (b.stake_dollars || 0), 0);
+    const totalStake = bets.reduce((a, b) => a + unitStake(b), 0);
     const hits = bets.filter(b => b.is_hit).length;
-    // Sum estimated payouts across hit boxes — uses Harville on actual
-    // top-3's market odds, before any real TAB dividend is entered.
+    // Sum estimated dividends across hit boxes — Harville on the actual
+    // top-3's market odds, rescaled to $1-a-combination units.
     const estTotal = bets.reduce(
-      (a, b) => a + ((b.is_hit && b.estimated_payout) ? b.estimated_payout : 0),
+      (a, b) => a + ((b.is_hit) ? estUnitPayout(b) : 0),
       0
     );
     const estPnl = estTotal > 0 ? (estTotal - totalStake) : null;
@@ -1220,8 +1235,8 @@
         ? ` <span class="strategy-block-fin-summary">${finTop4}/${(b.box_horses || []).length} in top-4</span>`
         : '';
       const hitMark = isHit ? ' ✓' : '';
-      const payoutTag = (isHit && b.estimated_payout)
-        ? ` <span class="strategy-block-payout">+$${b.estimated_payout.toFixed(2)}</span>`
+      const payoutTag = (isHit && estUnitPayout(b))
+        ? ` <span class="strategy-block-payout">div ~$${estUnitPayout(b).toFixed(2)}</span>`
         : '';
       return `
         <div class="strategy-block-box${isHit ? ' hit' : ''}">
@@ -1239,7 +1254,7 @@
             <span style="color:var(--text-muted);font-weight:700;margin-right:6px">${chevron}</span>
             <span class="strategy-block-name">${escHtml(meta.label)}</span>
             ${meta.isDefault ? '<span class="strategy-block-badge">★ DEFAULT</span>' : ''}
-            <span class="strategy-block-meta">· $${totalStake.toFixed(0)} · ${meta.tagline} · ${bets.length} box${bets.length === 1 ? '' : 'es'}</span>
+            <span class="strategy-block-meta">· ${totalStake} combs · ${meta.tagline} · ${bets.length} box${bets.length === 1 ? '' : 'es'}</span>
           </div>
           <span class="strategy-block-result ${resultCls}">${resultText}</span>
         </div>
@@ -1261,8 +1276,8 @@
       if (b.settled) {
         if (b.is_hit) {
           cls = 'hit';
-          const payoutTxt = (b.payout_dollars != null)
-            ? `+$${b.payout_dollars.toFixed(2)}`
+          const payoutTxt = (b.trifecta_dividend != null)
+            ? `div $${b.trifecta_dividend.toFixed(2)}`
             : `(dividend pending)`;
           resultEl = `<span class="bet-result hit">HIT · ${payoutTxt}</span>`;
         } else {
@@ -1274,13 +1289,15 @@
       let meta;
       if (b.settled) {
         if (b.is_hit) {
-          const divTxt = (b.trifecta_dividend != null) ? `div $${b.trifecta_dividend.toFixed(2)}` : `dividend not yet available`;
-          meta = `${b.num_permutations} perms · stake $${(b.stake_dollars||0).toFixed(2)} · ${divTxt}`;
+          const netTxt = (b.trifecta_dividend != null)
+            ? ` · net ${fmtPnl(b.trifecta_dividend - unitStake(b))} @ $1/comb`
+            : '';
+          meta = `${b.num_permutations} combinations${netTxt}`;
         } else {
-          meta = `${b.num_permutations} perms · stake $${(b.stake_dollars||0).toFixed(2)} · top-3 outside box`;
+          meta = `${b.num_permutations} combinations · top-3 outside box`;
         }
       } else {
-        meta = `${b.num_permutations} perms · stake $${(b.stake_dollars||0).toFixed(2)}`;
+        meta = `${b.num_permutations} combinations`;
       }
       return `
         <div class="bet-row ${cls}">
@@ -1409,11 +1426,11 @@
     }
     if (state.sort === 'pnl') {
       return [...races].sort((a, b) => {
-        // pending races last, then by pnl desc
-        const ap = a.pnl == null ? 1 : 0;
-        const bp = b.pnl == null ? 1 : 0;
+        // pending races last, then by unit pnl desc
+        const ap = a._upnl == null ? 1 : 0;
+        const bp = b._upnl == null ? 1 : 0;
         if (ap !== bp) return ap - bp;
-        return (b.pnl || 0) - (a.pnl || 0);
+        return (a._upnl || 0) < (b._upnl || 0) ? 1 : -1;
       });
     }
     return races;
@@ -1421,12 +1438,25 @@
 
   function render(data) {
     state.lastData = data;
+    // Odds-based conversion pass: every race re-costed at $1 a combination
+    // (stake = combinations, payout = real or Harville-estimated dividend).
+    for (const r of (data.races || [])) {
+      const bs = Object.values(r.bets_by_strategy || {}).flat().filter(b => !b.voided);
+      r._ustake = bs.reduce((a, b) => a + unitStake(b), 0);
+      let pay = 0;
+      for (const b of bs) {
+        if (!b.settled || !b.is_hit) continue;
+        const p = unitPayout(b);
+        pay += (p != null) ? p : estUnitPayout(b);
+      }
+      r._upayout = pay;
+      r._upnl = (r.status === 'settled') ? pay - r._ustake : null;
+    }
     const races = applySort(data.races || []);
     const summary = document.getElementById('summary');
     const settled = races.filter(r => r.status === 'settled');
     const resulted = races.filter(r => r.status === 'settled' || r.status === 'settled_no_dividend');
-    const totalStakeAll = races.reduce((a, r) => a + (r.total_stake || 0), 0);
-    const totalPnl = settled.reduce((a, r) => a + (r.pnl || 0), 0);
+    const totalPnl = settled.reduce((a, r) => a + (r._upnl || 0), 0);
     const racesWithHit = resulted.filter(r => (r.hits || 0) > 0).length;
     const hitPct = resulted.length ? Math.round(racesWithHit / resulted.length * 100) : 0;
     const pendingCount = races.length - resulted.length;
@@ -1455,8 +1485,8 @@
       for (const r of racesWithGroup) {
         for (const b of r.bets_by_strategy[s.key]) {
           if (b.voided) continue;
-          stake += b.stake_dollars || 0;
-          payout += b.payout_dollars || 0;
+          stake += unitStake(b);
+          payout += unitPayout(b) || 0;
         }
       }
       const pnl = payout - stake;
@@ -1532,7 +1562,7 @@
       }
       const pending = r.status === 'pending';
       const noDiv = r.status === 'settled_no_dividend';
-      const pnl = r.pnl;
+      const pnl = r._upnl;
       const hits = r.hits || 0;
       // Card class drives the outline colour: green border if any bet hit
       // (whether or not we have a dividend), red/dimmed if all missed.
@@ -1588,7 +1618,7 @@
           <div class="race-top">
             <div>
               <div class="race-id">${escHtml(venue)}${dateKey >= _todayAestKey() && window.FIQConditions ? FIQConditions.chip(r.venue) : ''} R${r.race_number}</div>
-              <div class="race-meta">${escHtml(r.date || '')} · ${r.num_bets} bets · stake $${r.total_stake.toFixed(2)}${r.top3_sum_pct != null ? ` · <strong style="color:var(--green-bright)" title="Top-3 model probability — lower = more open race = higher hit rate">top-3 ${r.top3_sum_pct.toFixed(0)}%</strong>` : ''}${r.field_size != null ? ` · <strong style="color:var(--blue)" title="Runners in the race — smaller fields hit more often">${r.field_size}-horse</strong>` : ''}</div>
+              <div class="race-meta">${escHtml(r.date || '')} · ${r.num_bets} bets · ${r._ustake} combinations${r.top3_sum_pct != null ? ` · <strong style="color:var(--green-bright)" title="Top-3 model probability — lower = more open race = higher hit rate">top-3 ${r.top3_sum_pct.toFixed(0)}%</strong>` : ''}${r.field_size != null ? ` · <strong style="color:var(--blue)" title="Runners in the race — smaller fields hit more often">${r.field_size}-horse</strong>` : ''}</div>
               ${timeRow}
             </div>
             ${pnlEl}
@@ -1603,12 +1633,12 @@
               <span class="race-stat-label">Hits</span>
             </div>
             <div class="race-stat">
-              <span class="race-stat-num">$${r.total_stake.toFixed(2)}</span>
-              <span class="race-stat-label">Stake</span>
+              <span class="race-stat-num">${r._ustake}</span>
+              <span class="race-stat-label">Combinations</span>
             </div>
             <div class="race-stat">
-              <span class="race-stat-num">${r.total_payout != null ? '$' + r.total_payout.toFixed(2) : '—'}</span>
-              <span class="race-stat-label">Payout</span>
+              <span class="race-stat-num">${r.status !== 'pending' ? '$' + (r._upayout || 0).toFixed(2) : '—'}</span>
+              <span class="race-stat-label">Dividends</span>
             </div>
           </div>
           ${winningStrip}
