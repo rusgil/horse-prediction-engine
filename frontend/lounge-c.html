@@ -463,6 +463,7 @@
     /* best-pick %% made today's column much wider than the historical view —
        hide it in the heat-map meeting column on mobile (drill-in still has it) */
     .mcell .rs-c { display: none; }
+    .mcell .metro-badge { font-size: 0.48rem; padding: 0 4px; margin-left: 4px; }
     .mcell .rstat { font-size: 0.62rem; gap: 3px; }
   }
 
@@ -1259,7 +1260,7 @@
       }).join('');
       return `<tr>
         <td class="mcell">
-          <div class="vname">${esc(m.venue)} <span class="st">${esc(m.state || '')}</span></div>
+          <div class="vname">${esc(m.venue)} <span class="st">${esc(m.state || '')}</span>${m.is_metro ? '<span class="metro-badge">METRO</span>' : ''}</div>
           <div class="vmeta">
             <span class="chip ${g.cls}">${esc(g.label)}</span>
             ${m.weather ? `<span class="wx">${m.weather.icon || ''} ${Math.round(m.weather.temp_max ?? 0)}°</span>` : ''}
