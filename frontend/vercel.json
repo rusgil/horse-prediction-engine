@@ -1,20 +1,72 @@
 {
   "rewrites": [
-    { "source": "/edge",       "destination": "/edge.html" },
-    { "source": "/hotseat",    "destination": "/hotseat.html" },
-    { "source": "/bets",       "destination": "/bets.html" },
-    { "source": "/lab",        "destination": "/bets.html" },
-    { "source": "/funk-me-up", "destination": "/funkmeup.html" },
-    { "source": "/funkmeup",   "destination": "/funkmeup.html" },
-    { "source": "/about",      "destination": "/about.html" },
-    { "source": "/privacy",    "destination": "/privacy.html" },
-    { "source": "/login",      "destination": "/login.html" },
-    { "source": "/verify",     "destination": "/verify.html" },
-    { "source": "/dashboard",  "destination": "/dashboard.html" },
-    { "source": "/invite",     "destination": "/invite.html" },
-    { "source": "/waitlist",   "destination": "/waitlist.html" },
-    { "source": "/members",    "destination": "/members.html" },
-    { "source": "/account",    "destination": "/account.html" },
-    { "source": "/api/:path*", "destination": "https://api.funkyiq.com/api/:path*" }
+    {
+      "source": "/edge",
+      "destination": "/edge.html"
+    },
+    {
+      "source": "/hotseat",
+      "destination": "/hotseat.html"
+    },
+    {
+      "source": "/bets",
+      "destination": "/bets.html"
+    },
+    {
+      "source": "/lab",
+      "destination": "/bets.html"
+    },
+    {
+      "source": "/playbook",
+      "destination": "/funkmeup.html"
+    },
+    {
+      "source": "/funk-me-up",
+      "destination": "/funkmeup.html"
+    },
+    {
+      "source": "/funkmeup",
+      "destination": "/funkmeup.html"
+    },
+    {
+      "source": "/about",
+      "destination": "/about.html"
+    },
+    {
+      "source": "/privacy",
+      "destination": "/privacy.html"
+    },
+    {
+      "source": "/login",
+      "destination": "/login.html"
+    },
+    {
+      "source": "/verify",
+      "destination": "/verify.html"
+    },
+    {
+      "source": "/dashboard",
+      "destination": "/dashboard.html"
+    },
+    {
+      "source": "/invite",
+      "destination": "/invite.html"
+    },
+    {
+      "source": "/waitlist",
+      "destination": "/waitlist.html"
+    },
+    {
+      "source": "/members",
+      "destination": "/members.html"
+    },
+    {
+      "source": "/account",
+      "destination": "/account.html"
+    },
+    {
+      "source": "/api/:path*",
+      "destination": "https://api.funkyiq.com/api/:path*"
+    }
   ]
 }
