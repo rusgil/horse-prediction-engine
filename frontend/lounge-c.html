@@ -503,10 +503,16 @@
   .board-head .t .st { font-size: 0.72rem; color: var(--text-3); font-family: 'Barlow'; font-weight: 800; }
   .board-head .chips { display: flex; gap: 5px; margin-top: 8px; flex-wrap: wrap; }
   .brace {
-    display: grid; grid-template-columns: 30px 60px 1fr auto; gap: 12px; align-items: center;
+    display: grid; grid-template-columns: 30px 60px 1fr auto; gap: 4px 12px; align-items: center;
+    grid-template-areas: "rn rt pk right" "rn rt sub right";
     padding: 11px 18px; border-bottom: 1px solid var(--line); cursor: pointer;
     transition: background 0.12s;
   }
+  .brace .rn { grid-area: rn; }
+  .brace .rt { grid-area: rt; }
+  .brace .pkrow { grid-area: pk; min-width: 0; align-self: end; }
+  .brace .mid { grid-area: sub; align-self: start; }
+  .brace .right { grid-area: right; }
   .brace:last-child { border-bottom: none; }
   .brace:hover { background: var(--surface-2); }
   .brace .rn { font-family: 'Barlow Condensed'; font-weight: 800; font-size: 1rem; color: var(--text-3); }
@@ -514,15 +520,15 @@
   .brace .rt .cd { display: block; font-size: 0.62rem; color: var(--text-3); font-weight: 700; }
   .brace .rt .cd.soon { margin-top: 2px; }
   .brace .mid { min-width: 0; }
-  .brace .mid .pk { font-weight: 700; font-size: 0.86rem; display: flex; align-items: center; gap: 6px; min-width: 0; }
-  .brace .mid .pk .pk-name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .brace .mid .pk .chip { flex-shrink: 0; }
-  .brace .mid .pk .pk-odds { flex-shrink: 0; font-size: 0.78rem; font-weight: 800; color: var(--text-2); }
+  .brace .pkrow .pk { font-weight: 700; font-size: 0.86rem; display: flex; align-items: center; gap: 6px; min-width: 0; }
+  .brace .pkrow .pk .pk-name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .brace .pkrow .pk .chip { flex-shrink: 0; }
+  .brace .pkrow .pk .pk-odds { flex-shrink: 0; font-size: 0.78rem; font-weight: 800; color: var(--text-2); }
   .chip.cf { background: var(--gold-dim, rgba(245,200,66,0.14)); color: var(--gold, #f5c842); flex-shrink: 0; }
   .chip.tu { background: var(--surface-2); color: var(--text-2); flex-shrink: 0; }
   .brace .mid .sub .wp { font-weight: 800; color: var(--gold, #f5c842); }
   .brace .mid .sub .pp { font-weight: 800; color: var(--blue); }
-  .brace .mid .pk.ghost { color: var(--text-3); font-weight: 500; font-size: 0.76rem; }
+  .brace .pkrow .pk.ghost { color: var(--text-3); font-weight: 500; font-size: 0.76rem; }
   .brace .mid .sub { font-size: 0.68rem; color: var(--text-3); margin-top: 1px; }
   .brace .right { display: flex; align-items: center; gap: 10px; }  /* desktop: odds beside bars */
   @media (max-width: 860px) {
@@ -530,7 +536,10 @@
     .rail { position: static; max-height: none; display: flex; overflow-x: auto; border-radius: 12px; }
     .rail-item { min-width: 180px; border-bottom: none; border-right: 1px solid var(--line); border-left: none; border-top: 3px solid transparent; }
     .rail-item.on { border-top-color: var(--mint); border-left: none; }
-    .brace { grid-template-columns: 26px 56px 1fr auto; padding: 11px 13px; gap: 8px; }
+    .brace {
+      grid-template-columns: 26px 56px 1fr auto; padding: 11px 13px; gap: 3px 8px;
+      grid-template-areas: "pk pk pk pk" "rn rt sub right";
+    }
   }
 
   /* ── Race drawer ────────────────────────────────────────── */
@@ -1450,14 +1459,15 @@
       return `<div class="brace ${done ? resCls(r) : ''}" data-open="${esc(r.race_id)}">
         <div class="rn">R${r.race_number}</div>
         <div class="rt num">${wallTime(r.scheduled_time)}<span class="cd ${done ? '' : (cd.urg || '')}">${done ? '' : cd.label}</span></div>
-        <div class="mid">
+        <div class="pkrow">
           ${done
             ? `<div class="pk"><span class="pk-name">${pickName ? esc(pickName) : 'Our pick'}</span>${resultMark(r)}</div>`
             : (() => {
                 const nm = r.top_pick || (tp && tp.horse_name) || null;
-                const od = (r.top_pick_odds > 1 ? +r.top_pick_odds : null) || (tp && tp.best_available_odds > 1 ? +tp.best_available_odds : null);
                 return `<div class="pk ${nm ? '' : 'ghost'}"><span class="pk-name">${nm ? esc(nm) : (r.top_win_probability != null ? 'Tap for our pick' : 'No prediction yet')}</span></div>`;
               })()}
+        </div>
+        <div class="mid">
           <div class="sub num">${r.distance ? r.distance + 'm' : ''}${r.field_size ? ' · ' + r.field_size + ' runners' : ''}${!done && tier ? ` <span class="chip ${tier.cls}" style="font-size:0.56rem;padding:1px 5px;margin-left:4px">${tier.label}</span>` : ''}${(() => {
             // Decisiveness (lounge rule): rank1−rank2 gap ≥5pts = clear fav;
             // <2pts with a 25%+ pick = toss-up.
