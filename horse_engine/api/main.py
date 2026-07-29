@@ -18988,7 +18988,8 @@ async def _seed_weight_candidate_review_followup(
                 f"Trained on {meta.get('sample_size', 0)} race groups · "
                 f"window={meta.get('training_window_start') or 'all'} → {meta.get('training_window_end') or 'today'}. "
                 f"7-day held-out backtest ({races} races): active hits {active_pct}% · candidate hits {candidate_pct}% "
-                f"(delta {delta:+}pp). Recommendation: **{rec.upper()}**."
+                f"(delta {delta:+}pp)."
+                f"\n\n{_plain_recommendation(rec)}"
             )
             action = (
                 f"Inspect full weights: GET /api/admin/weight-candidate/{batch_id}. "
@@ -26997,6 +26998,18 @@ async def _backtest_calibration_candidate(
     }
 
 
+def _plain_recommendation(rec: str) -> str:
+    """Human-readable verdict for the review card — 'FLAG' meant nothing to
+    the reviewer. Maps the internal verdict to what to actually DO."""
+    return {
+        "promote": "✅ SAFE TO PROMOTE — better than the live model, no large confidence swing.",
+        "reject":  "❌ REJECT — worse than the live model.",
+        "flag":    "⚠️ HOLD / default REJECT — no clear improvement over the live model; "
+                   "promote only if you have a specific reason.",
+    }.get((rec or "flag").lower(),
+          "⚠️ HOLD / default REJECT — review the numbers below.")
+
+
 async def _seed_candidate_review_followup(
     artefact: str,
     candidate_id: int,
@@ -27031,7 +27044,7 @@ async def _seed_candidate_review_followup(
                 f"(delta={backtest.get('mse_delta_candidate_vs_active')}, "
                 f"lower = better calibrated). "
                 f"Max displayed-confidence shift vs active: {max_shift}pp. "
-                f"Automated recommendation: **{rec.upper()}**."
+                f"\n\n{_plain_recommendation(rec)}"
             )
             action = (
                 f"Inspect curve: GET /api/admin/{artefact}-candidate/{candidate_id}. "

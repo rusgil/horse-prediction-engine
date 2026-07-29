@@ -689,7 +689,7 @@
               <div style="display:flex;gap:8px;flex-wrap:wrap">
                 <button class="btn" style="background:#22c55e20;border-color:#22c55e;color:#22c55e" onclick="reviewCandidate('${artefact}', '${candidateId}', 'promote')">✓ Promote</button>
                 <button class="btn" style="background:#ef444420;border-color:#ef4444;color:#ef4444" onclick="reviewCandidate('${artefact}', '${candidateId}', 'reject')">✗ Reject</button>
-                <a class="btn" style="text-decoration:none" href="${inspectUrl}" target="_blank">🔍 Inspect</a>
+                <button class="btn" onclick="inspectCandidate('${artefact}', '${candidateId}')">🔍 Inspect</button>
               </div>
             </div>`;
         }
@@ -706,6 +706,40 @@
           ${outcomeBlock}
         </div>`;
     }).join('');
+  }
+
+  async function inspectCandidate(artefact, candidateId) {
+    // The Inspect endpoint is x-cron-secret gated, so a plain link 403s in
+    // the browser. Fetch it with the dashboard's admin secret and render
+    // the payload inline in a modal (no navigation).
+    const isWeights = artefact.endsWith('_weights');
+    const url = isWeights
+      ? `${API}/api/admin/weight-candidate/${candidateId}`
+      : `${API}/api/admin/${artefact}-candidate/${candidateId}`;
+    let ov = document.getElementById('inspectModal');
+    if (!ov) {
+      ov = document.createElement('div');
+      ov.id = 'inspectModal';
+      ov.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.6);z-index:9999;display:flex;align-items:center;justify-content:center;padding:20px';
+      ov.onclick = (e) => { if (e.target === ov) ov.remove(); };
+      document.body.appendChild(ov);
+    }
+    ov.innerHTML = `<div style="background:var(--bg-card);border:1px solid var(--border);border-radius:10px;max-width:760px;width:100%;max-height:82vh;display:flex;flex-direction:column;overflow:hidden">
+        <div style="display:flex;justify-content:space-between;align-items:center;padding:14px 16px;border-bottom:1px solid var(--border)">
+          <strong style="font-size:0.95rem">🔍 ${escHtml(artefact)} candidate <span style="color:var(--text-dim);font-family:'JetBrains Mono',monospace">#${escHtml(String(candidateId))}</span></strong>
+          <button class="btn" onclick="document.getElementById('inspectModal').remove()">✕ Close</button>
+        </div>
+        <pre id="inspectBody" style="margin:0;padding:16px;overflow:auto;font-size:0.72rem;line-height:1.5;color:var(--text-secondary);white-space:pre-wrap;word-break:break-word">Loading…</pre>
+      </div>`;
+    try {
+      const res = await fetch(url, { headers: { 'x-cron-secret': adminSecret } });
+      const body = await res.json();
+      const el = document.getElementById('inspectBody');
+      if (el) el.textContent = res.ok ? JSON.stringify(body, null, 2) : `Error ${res.status}: ${body.detail || 'request failed'}`;
+    } catch (e) {
+      const el = document.getElementById('inspectBody');
+      if (el) el.textContent = `Request failed: ${e}`;
+    }
   }
 
   async function reviewCandidate(artefact, candidateId, action) {
