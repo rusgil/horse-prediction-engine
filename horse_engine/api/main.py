@@ -24662,6 +24662,94 @@ async def admin_refresh_about_stats_now(
     return {"ok": True, "forced": force, "published": published}
 
 
+@app.get("/api/admin/backtest/rank-gap")
+async def backtest_rank_gap(
+    days: int = 120,
+    x_cron_secret: Optional[str] = Header(None),
+):
+    """Tests: does a bigger win%% gap between our rank-1 and rank-2 pick mean
+    a higher chance the rank-1 actually wins? Buckets settled rank-1 picks by
+    (p1 - p2) in points and reports actual win/place rate + avg claimed win%%
+    + avg SP per bucket. FIX-S reads (live snapshots, latest per race).
+    """
+    _check_admin(x_cron_secret)
+    cutoff = (_today_aest() - timedelta(days=days)).isoformat()
+    async with get_session() as session:
+        hist = (await session.execute(
+            select(RunnerPredictionHistoryRow)
+            .where(RunnerPredictionHistoryRow.race_id >= cutoff)
+            .where(RunnerPredictionHistoryRow.source == "live")
+            .where(RunnerPredictionHistoryRow.model_rank.in_([1, 2]))
+            .where(RunnerPredictionHistoryRow.cancelled.is_(False) | RunnerPredictionHistoryRow.cancelled.is_(None))
+            .where(RunnerPredictionHistoryRow.win_probability.isnot(None))
+            .order_by(RunnerPredictionHistoryRow.enriched_at.desc())
+        )).scalars().all()
+        hr_rows = (await session.execute(
+            select(HistoricalResultRow.race_id, HistoricalResultRow.horse_name,
+                   HistoricalResultRow.position, HistoricalResultRow.starting_price)
+            .where(HistoricalResultRow.race_id >= cutoff)
+        )).fetchall()
+    winners = {r.race_id: _normalize_horse(r.horse_name) for r in hr_rows if r.position == 1}
+    placed_by_race: dict[str, set] = {}
+    sp_by_horse: dict[tuple, float] = {}
+    for r in hr_rows:
+        if r.position and 1 <= r.position <= 3:
+            placed_by_race.setdefault(r.race_id, set()).add(_normalize_horse(r.horse_name))
+        if r.starting_price:
+            sp_by_horse[(r.race_id, _normalize_horse(r.horse_name))] = float(r.starting_price)
+
+    # Latest snapshot per (race, rank) — FIX-S dedup.
+    seen: set[tuple] = set()
+    r1: dict[str, object] = {}
+    r2: dict[str, object] = {}
+    for row in hist:
+        k = (row.race_id, row.model_rank)
+        if k in seen:
+            continue
+        seen.add(k)
+        (r1 if row.model_rank == 1 else r2)[row.race_id] = row
+
+    buckets = [
+        ("0-2pt", 0.0, 2.0), ("2-5pt", 2.0, 5.0), ("5-10pt", 5.0, 10.0),
+        ("10-15pt", 10.0, 15.0), ("15-20pt", 15.0, 20.0), ("20pt+", 20.0, 1e9),
+    ]
+    agg = {name: {"n": 0, "wins": 0, "placed": 0, "claimed": 0.0, "sp_sum": 0.0, "sp_n": 0}
+           for name, _, _ in buckets}
+    for rid, p1 in r1.items():
+        if rid not in winners:
+            continue
+        p2row = r2.get(rid)
+        gap = ((p1.win_probability or 0) - (p2row.win_probability or 0)) * 100 if p2row else (p1.win_probability or 0) * 100
+        nh = _normalize_horse(p1.horse_name)
+        for name, lo, hi in buckets:
+            if lo <= gap < hi:
+                b = agg[name]
+                b["n"] += 1
+                b["claimed"] += p1.win_probability or 0
+                if nh == winners[rid]:
+                    b["wins"] += 1
+                if nh in placed_by_race.get(rid, set()):
+                    b["placed"] += 1
+                sp = sp_by_horse.get((rid, nh))
+                if sp and sp > 1:
+                    b["sp_sum"] += sp
+                    b["sp_n"] += 1
+                break
+    out = {}
+    for name, _, _ in buckets:
+        b = agg[name]
+        n = b["n"]
+        out[name] = {
+            "races": n,
+            "win_rate_pct": round(b["wins"] / n * 100, 1) if n else None,
+            "place_rate_pct": round(b["placed"] / n * 100, 1) if n else None,
+            "avg_claimed_win_pct": round(b["claimed"] / n * 100, 1) if n else None,
+            "avg_winning_sp": None,
+        }
+    return {"window_days": days, "note": "gap = rank1 win%% minus rank2 win%%, at snapshot time",
+            "picks_scored": sum(v["races"] for v in out.values()), "buckets": out}
+
+
 @app.get("/api/admin/backtest/layoff-bands")
 async def backtest_layoff_bands(
     days: int = 180,
