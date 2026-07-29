@@ -18983,6 +18983,21 @@ async def _seed_weight_candidate_review_followup(
             active_pct = backtest.get("active_hit_rate_pct", 0)
             candidate_pct = backtest.get("candidate_hit_rate_pct", 0)
             delta = backtest.get("delta_pp", 0)
+            # No-improvement gate (2026-07-30): a candidate that doesn't BEAT
+            # the live model on the held-out backtest (delta ≤ 0) is churn
+            # risk with no upside — auto-reject it and never queue a review.
+            # Mirrors the isotonic 10k gate: the human queue only sees
+            # candidates worth a decision. (#29/#31 were both +0.0pp.)
+            if (delta or 0) <= 0:
+                try:
+                    await reject_weight_candidate(
+                        session, batch_id,
+                        f"auto-rejected: no holdout improvement (delta {delta:+}pp)")
+                    log.info("[followup-seed] AUTO-REJECTED %s weights #%s — delta %+.2fpp (no improvement)",
+                             model_type, batch_id[:8], delta or 0)
+                except Exception as _e:
+                    log.warning("[followup-seed] auto-reject failed for #%s: %s", batch_id[:8], _e)
+                return
             context = (
                 f"Candidate {model_type} weights #{batch_id[:8]}. "
                 f"Trained on {meta.get('sample_size', 0)} race groups · "
