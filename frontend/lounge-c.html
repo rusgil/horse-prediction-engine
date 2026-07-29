@@ -612,6 +612,11 @@
 
   @media (min-width: 641px) {
     .brace .right .pk-odds { font-family: 'Barlow Condensed', sans-serif; font-size: 0.72rem; font-weight: 700; letter-spacing: 0.03em; }
+    /* fixed-width odds slot — rows without odds keep the bars aligned */
+    .brace .right .odds-slot {
+      min-width: 64px; display: flex; flex-direction: column;
+      align-items: flex-end; gap: 2px; flex-shrink: 0;
+    }
   }
 
   /* Mobile: drill-in text a touch bigger for readability */
@@ -1462,7 +1467,7 @@
         </div>
         <div class="right">
           ${barsHtml(r.top_win_probability, r.top_place_probability)}
-          ${rowOdds ? `<div class="pk-odds num">$${rowOdds.toFixed(2)}</div>` : ''}${placeOdds ? `<div class="pk-odds num" style="color:var(--blue)">$${placeOdds.toFixed(2)} <span style="font-size:0.6rem;font-weight:700">place</span></div>` : ''}
+          <div class="odds-slot">${rowOdds ? `<div class="pk-odds num">$${rowOdds.toFixed(2)}</div>` : ''}${placeOdds ? `<div class="pk-odds num" style="color:var(--blue)">$${placeOdds.toFixed(2)} <span style="font-size:0.6rem;font-weight:700">place</span></div>` : ''}</div>
         </div>
       </div>`;
     }).join('');
