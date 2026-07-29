@@ -20,7 +20,9 @@
       if (saved) localStorage.setItem(KEY, saved);
     } catch (e) {}
   }
-  var theme = saved === 'light' ? 'light' : 'dark';
+  // Default flipped to LIGHT (2026-07-29): fresh visitors get light; an
+  // explicit Dark/Light choice (stored key) always wins.
+  var theme = saved === 'dark' ? 'dark' : 'light';
   document.documentElement.setAttribute('data-theme', theme);
 
   var css = [
