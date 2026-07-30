@@ -962,9 +962,9 @@
     <label for="bank">Bankroll $</label>
     <input id="bank" type="number" min="0" step="50" value="1000">
     <span class="frac" id="fracSeg" role="radiogroup" aria-label="Kelly fraction">
-      <button data-f="0.125">Conservative</button>
-      <button data-f="0.25" class="on">Sensible</button>
-      <button data-f="0.5">Aggressive</button>
+      <button data-f="0.125">Gentle</button>
+      <button data-f="0.25" class="on">Calmer</button>
+      <button data-f="0.5">Wild</button>
     </span>
     <div class="total"><b id="totalStake">—</b><span>total recommended today</span></div>
   </div>
@@ -1082,7 +1082,7 @@
       yHtml = `<div class="sec-t">Yesterday’s Hot Book <span class="day-pnl" style="color:${flatPnl>=0?'var(--mint)':'var(--red)'}">${wins}W · ${plc}P of ${settled.length} · flat ${flatPnl>=0?'+':''}${flatPnl.toFixed(1)}u (${roi>=0?'+':''}${roi}% ROI)</span></div>${rows}`;
     }
 
-    const methodLbl = `${HB.frac===0.125?'conservative':HB.frac===0.5?'aggressive':'sensible'} (${HB.frac===0.125?'⅛':HB.frac===0.5?'½':'¼'} Kelly)`;
+    const methodLbl = `${HB.frac===0.125?'gentle':HB.frac===0.5?'wild':'calmer'} (${HB.frac===0.125?'⅛':HB.frac===0.5?'½':'¼'} Kelly)`;
     el.innerHTML = (up.length
       ? `<div class="sec-t">Today’s Hot picks <span class="day-pnl" style="color:var(--text-3)">${up.length} · stake at ${methodLbl}</span></div>${cards}`
       : `<div class="empty"><div class="big">🔥</div>No Hot picks up next right now.<br><span style="font-size:0.8rem">The book only shows 46%+ confidence picks — come back closer to race time.</span></div>`)
