@@ -2851,8 +2851,10 @@ async def lifespan(app: FastAPI):
     # BUG-43: hourly (was 9am once) — each race snapshots inside its T-2h
     # window so the frozen market features reflect a live market.
     scheduler.add_job(_scheduled_prerace_snapshot, CronTrigger(hour="9-19", minute=0, timezone="Australia/Sydney"))
-    # Daily exotic-dividend capture — 22:45 AEST, after the last (incl. night) races settle.
-    scheduler.add_job(_scheduled_capture_exotic_dividends, CronTrigger(hour=22, minute=45, jitter=600, timezone="Australia/Sydney"))
+    # Daily exotic-dividend capture — base 23:15 AEST with a LARGE ±1h jitter
+    # so the SB fetch lands anywhere ~22:15-00:15 (never a predictable
+    # fixed-second daily hit; idempotent, so drift across midnight is fine).
+    scheduler.add_job(_scheduled_capture_exotic_dividends, CronTrigger(hour=23, minute=15, jitter=3600, timezone="Australia/Sydney"))
     # Defense #3 — auto-repair contaminated snapshots once upstream is
     # stable again. Every 5 min: checks health, requires 5+ min of
     # continuous healthy state, then walks contaminated=True rows from
