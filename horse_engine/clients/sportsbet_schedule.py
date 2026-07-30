@@ -314,6 +314,56 @@ async def get_sportsbet_place_prices(date: str, track: str, race_number: int) ->
     return out
 
 
+async def get_sportsbet_exotic_dividends(date: str, track: str, race_number: int) -> dict | None:
+    """Settled exotic tote dividends from the Sportsbet racecard:
+    {quinella, exacta, trifecta, first_four} (floats, only keys present).
+
+    SB's post-race racecard carries `exoticResults` — the one AU source we
+    already have that publishes quinella dividends for country/provincial/NT
+    meetings (RA free results and TAB do not). One racecard request per race.
+    None if the race isn't found or no exotics resulted yet.
+    """
+    data = await _fetch_allracing(date)
+    if data is None:
+        return None
+    ev_id = None
+    for m in _iter_au_horse_meetings(data):
+        if _norm(m.get("name") or "") != _norm(track):
+            continue
+        for e in m.get("events") or []:
+            if e.get("raceNumber") == int(race_number):
+                ev_id = e.get("id")
+                break
+    if not ev_id:
+        return None
+    import os
+    _proxy = os.getenv("SPORTSBET_PROXY_URL") or None
+    try:
+        async with httpx.AsyncClient(
+            headers={"User-Agent": _UA, "Accept": "application/json"},
+            timeout=25.0 if _proxy else 15.0,
+            proxy=_proxy,
+        ) as client:
+            resp = await client.get(_RACECARD_URL.format(event_id=ev_id))
+            resp.raise_for_status()
+            card = resp.json() or {}
+    except Exception as e:
+        log.info("[sportsbet-exotics] %s R%s failed: %s", track, race_number, e)
+        return None
+    _map = {"quinella": "quinella", "exacta": "exacta", "trifecta": "trifecta",
+            "first 4": "first_four", "first four": "first_four"}
+    out: dict[str, float] = {}
+    for r in card.get("exoticResults") or []:
+        key = _map.get((r.get("name") or "").strip().lower())
+        div = r.get("dividend")
+        if key and div is not None:
+            try:
+                out[key] = float(str(div).replace("$", "").replace(",", ""))
+            except ValueError:
+                pass
+    return out or None
+
+
 def venue_on_sportsbet(venue: str, allowlist: frozenset[str] | None) -> bool:
     """Does `venue` (an RA venue name or hyphenated code) appear in the Sportsbet
     allowlist? Fuzzy: exact normalised match, or one is a substring of the other

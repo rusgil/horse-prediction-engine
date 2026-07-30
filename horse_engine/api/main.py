@@ -6238,14 +6238,40 @@ async def _capture_exotic_dividends(race_id: str, force: bool = False) -> Option
     if existing is not None and existing.quinella is not None and not force:
         return {"quinella": existing.quinella, "cached": True}
     vals = {"quinella": None, "exacta": None, "trifecta": None, "first_four": None}
-    raw = await _fetch_race_raw_from_tab(race_id)
-    if raw is not None:
-        vals = {
-            "quinella":   _extract_pool_dividend(raw, "QUINELLA"),
-            "exacta":     _extract_pool_dividend(raw, "EXACTA"),
-            "trifecta":   _extract_pool_dividend(raw, "TRIFECTA", exclude=("FIRST",)),
-            "first_four": _extract_pool_dividend(raw, "FIRST FOUR") or _extract_pool_dividend(raw, "FIRST 4"),
-        }
+    src = None
+    # PRIMARY: Sportsbet racecard exoticResults — the one source that
+    # publishes quinella dividends for the country/provincial/NT meetings we
+    # cover (RA free results carry none; TAB none for these venues).
+    try:
+        from horse_engine.clients.sportsbet_schedule import get_sportsbet_exotic_dividends
+        date_str, vc, race_num = _parse_race_id(race_id)
+        async with get_session() as _s:
+            _v = (await _s.execute(
+                select(RunnerPredictionRow.venue).where(RunnerPredictionRow.race_id == race_id).limit(1)
+            )).scalar()
+            if not _v:
+                _v = (await _s.execute(
+                    select(RunnerPredictionHistoryRow.venue).where(RunnerPredictionHistoryRow.race_id == race_id).limit(1)
+                )).scalar()
+        if _v:
+            sb = await get_sportsbet_exotic_dividends(date_str, _v, int(race_num))
+            if sb:
+                vals.update({k: v for k, v in sb.items() if v is not None})
+                src = "sportsbet"
+    except Exception as _e:
+        log.debug("[exotic-div] SB source failed for %s: %s", race_id, _e)
+    # FALLBACK 1: TAB pools (metro meetings TAB does cover).
+    raw = None
+    if vals.get("quinella") is None:
+        raw = await _fetch_race_raw_from_tab(race_id)
+        if raw is not None:
+            for k, kw, exc in (("quinella","QUINELLA",()), ("exacta","EXACTA",()),
+                               ("trifecta","TRIFECTA",("FIRST",)),
+                               ("first_four","FIRST FOUR",())):
+                if vals.get(k) is None:
+                    vals[k] = _extract_pool_dividend(raw, kw, exclude=exc)
+            if vals.get("quinella") is not None and src is None:
+                src = "tab" 
     # RA fallback — TAB doesn't carry quinella for many country/NT/synthetic
     # meetings (Darwin 2026-07-29). RA's Results.aspx DOES parse the exotic
     # dividends; resolve the meeting key from stored venue+state. get_results
@@ -6272,6 +6298,8 @@ async def _capture_exotic_dividends(race_id: str, force: bool = False) -> Option
                 for k in ("quinella", "exacta", "trifecta", "first_four"):
                     if vals.get(k) is None and divs.get(k):
                         vals[k] = float(divs[k])
+                        if k == "quinella":
+                            src = "ra" 
         except Exception as _e:
             log.debug("[exotic-div] RA fallback failed for %s: %s", race_id, _e)
     if not any(v is not None for v in vals.values()):
@@ -6286,7 +6314,7 @@ async def _capture_exotic_dividends(race_id: str, force: bool = False) -> Option
         for k, v in vals.items():
             if v is not None:
                 setattr(row, k, v)
-        row.source = "tab" if (raw is not None and _extract_pool_dividend(raw, "QUINELLA")) else "ra"
+        row.source = src or "ra"
         row.captured_at = datetime.utcnow()
         await session.commit()
     log.info("[exotic-div] captured %s: %s", race_id, {k: v for k, v in vals.items() if v})
