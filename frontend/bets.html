@@ -1135,12 +1135,6 @@
     if (!b.settled || !b.is_hit) return 0;
     return b.trifecta_dividend != null ? b.trifecta_dividend : null;  // null = hit, div pending
   }
-  // Harville-estimated payout arrives scaled to the legacy flexi stake —
-  // rescale to the $1-a-combination dividend it implies.
-  function estUnitPayout(b) {
-    if (!b.estimated_payout || !b.stake_dollars || !b.num_permutations) return 0;
-    return b.estimated_payout * b.num_permutations / b.stake_dollars;
-  }
   function fmtPnl(v) {
     if (v == null) return null;
     const s = v >= 0 ? '+' : '−';
@@ -1219,19 +1213,22 @@
     if (!meta) return '';
     const totalStake = bets.reduce((a, b) => a + unitStake(b), 0);
     const hits = bets.filter(b => b.is_hit).length;
-    // Sum estimated dividends across hit boxes — Harville on the actual
-    // top-3's market odds, rescaled to $1-a-combination units.
-    const estTotal = bets.reduce(
-      (a, b) => a + ((b.is_hit) ? estUnitPayout(b) : 0),
-      0
-    );
-    const estPnl = estTotal > 0 ? (estTotal - totalStake) : null;
+    // Sum the REAL declared trifecta dividends across hit boxes. P/L only
+    // shows once the dividend has landed (payTotal > 0); a hit whose
+    // dividend is still pending shows the hit count without a $ figure.
+    let payTotal = 0;
+    for (const b of bets) {
+      if (!b.is_hit) continue;
+      const rp = unitPayout(b);
+      if (rp != null) payTotal += rp;
+    }
+    const boxPnl = (hits > 0 && payTotal > 0) ? (payTotal - totalStake) : null;
     let resultText, resultCls;
     if (raceStatus === 'pending') {
       resultText = 'Pending'; resultCls = 'pending';
     } else if (hits > 0) {
-      const pnlTag = estPnl != null
-        ? ` · est ${estPnl >= 0 ? '+' : '-'}$${Math.abs(estPnl).toFixed(2)}`
+      const pnlTag = boxPnl != null
+        ? ` · ${boxPnl >= 0 ? '+' : '-'}$${Math.abs(boxPnl).toFixed(2)}`
         : '';
       resultText = '✓ ' + hits + (hits === 1 ? ' hit' : ' hits') + pnlTag;
       resultCls = 'hit';
@@ -1287,8 +1284,10 @@
         ? ` <span class="strategy-block-fin-summary">${finTop4}/${(b.box_horses || []).length} in top-4</span>`
         : '';
       const hitMark = isHit ? ' ✓' : '';
-      const payoutTag = (isHit && estUnitPayout(b))
-        ? ` <span class="strategy-block-payout">div ~$${estUnitPayout(b).toFixed(2)}</span>`
+      // Real declared dividend only (shown once it lands).
+      const realDiv = unitPayout(b);
+      const payoutTag = (isHit && realDiv != null)
+        ? ` <span class="strategy-block-payout">div $${realDiv.toFixed(2)}</span>`
         : '';
       return `
         <div class="strategy-block-box${isHit ? ' hit' : ''}">
@@ -1490,7 +1489,7 @@
   function render(data) {
     state.lastData = data;
     // Odds-based conversion pass: every race re-costed at $1 a combination
-    // (stake = combinations, payout = real or Harville-estimated dividend).
+    // (stake = combinations, payout = real declared dividend).
     for (const r of (data.races || [])) {
       // Cost the race on the SELECTED strategy only — these are alternative
       // ways to play one race, not a portfolio you'd bet together.
@@ -1503,7 +1502,7 @@
         if (b.is_hit) uhits++;
         if (!b.settled || !b.is_hit) continue;
         const p = unitPayout(b);
-        pay += (p != null) ? p : estUnitPayout(b);
+        if (p != null) pay += p;
       }
       r._upayout = pay;
       r._uhits = uhits;
@@ -1519,7 +1518,6 @@
     const racesWithHit = resulted.filter(r => (r._uhits || 0) > 0).length;
     const hitPct = resulted.length ? Math.round(racesWithHit / resulted.length * 100) : 0;
     const pendingCount = races.length - resulted.length;
-    const anyEstimated = settled.some(r => r.dividend_estimated);
 
     // The strip shows EVERY strategy's window stats (it's the selector), so
     // it spans all resulted races, not just the selected strategy's subset.
@@ -1558,7 +1556,7 @@
       </div>
       <div class="summary-card">
         <div class="summary-num ${totalPnl >= 0 ? 'pos' : 'neg'}">${fmtPnl(totalPnl) || '—'}</div>
-        <div class="summary-label">${anyEstimated ? 'P/L (est.)' : 'Settled P/L'}</div>
+        <div class="summary-label">Settled P/L</div>
       </div>
       <div class="summary-card">
         <div class="summary-num">${racesWithHit}/${resulted.length}</div>
