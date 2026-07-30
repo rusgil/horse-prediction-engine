@@ -15109,6 +15109,60 @@ async def admin_restore_quarantined_pick(
             "win_probability": win_probability}
 
 
+@app.post("/api/admin/resettle-real-dividends")
+async def admin_resettle_real_dividends(
+    days: int = 3,
+    x_cron_secret: Optional[str] = Header(None),
+):
+    """Upgrade already-settled Lab trifecta bets from the Harville ESTIMATE to
+    the real Sportsbet tote dividend, for races settled in the last `days`.
+    Captures any missing exotic dividends first, then for each race that now
+    has a real trifecta dividend, rewrites its settled bets' trifecta_dividend
+    (+ dividend_estimated=False) and recomputes payout/pnl. Idempotent."""
+    _check_admin(x_cron_secret)
+    from sqlalchemy import update as sa_update
+    dates = [(_today_aest() - timedelta(days=i)).isoformat() for i in range(days)]
+    # 1) make sure the real dividends are captured (SB primary, throttled)
+    await _capture_exotic_dividends_for_dates(dates)
+    # 2) real trifecta dividends now on hand
+    async with get_session() as session:
+        rows = (await session.execute(
+            select(RaceExoticDividendRow.race_id, RaceExoticDividendRow.trifecta)
+            .where(RaceExoticDividendRow.trifecta.isnot(None))
+        )).fetchall()
+    real_div = {rid: float(t) for rid, t in rows
+                if any(rid.startswith(d + "_") for d in dates)}
+    upgraded_races = 0
+    upgraded_bets = 0
+    async with get_session() as session:
+        for rid, div in real_div.items():
+            bets = (await session.execute(
+                select(BetRecommendationRow)
+                .where(BetRecommendationRow.race_id == rid)
+                .where(BetRecommendationRow.settled.is_(True))
+                .where(BetRecommendationRow.voided.is_(False) | BetRecommendationRow.voided.is_(None))
+            )).scalars().all()
+            touched = False
+            for b in bets:
+                # Only rewrite rows still carrying an estimate (or a stale value).
+                if b.dividend_estimated is False and b.trifecta_dividend == div:
+                    continue
+                b.trifecta_dividend = div
+                b.dividend_estimated = False
+                perms = b.num_permutations or 0
+                if perms >= 3 and b.is_hit is not None:
+                    payout, pnl = _bet_compute_payout(b.stake_dollars, perms, div, bool(b.is_hit))
+                    b.payout_dollars = payout
+                    b.pnl_dollars = pnl
+                upgraded_bets += 1
+                touched = True
+            if touched:
+                upgraded_races += 1
+        await session.commit()
+    return {"dates": dates, "races_with_real_dividend": len(real_div),
+            "races_upgraded": upgraded_races, "bets_upgraded": upgraded_bets}
+
+
 @app.get("/api/admin/morning-report")
 async def admin_morning_report(x_cron_secret: Optional[str] = Header(None)):
     """
