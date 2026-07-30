@@ -2111,7 +2111,7 @@
     if (typeof t === 'string' && /T00:00:00/.test(t)) return '';
     try {
       const d = new Date(t);
-      if (!isNaN(d)) return d.toLocaleTimeString('en-AU', { hour:'2-digit', minute:'2-digit', hour12: true, timeZone: 'Australia/Sydney' });
+      if (!isNaN(d)) return d.toLocaleTimeString('en-AU', { hour:'2-digit', minute:'2-digit', hour12: true }); // viewer-local
     } catch(e) {}
     return t;
   }
@@ -2913,14 +2913,16 @@
   }
   // Format a tz-aware ISO race time to the TRACK-local post time (e.g. 12:10pm),
   // using the wall-clock part of the string (not the viewer's timezone).
-  function _fmtRaceTime(iso) {
+  function _fmtRaceTime(iso) {  // viewer-local (was track-local from raw digits)
     if (!iso) return '';
+    if (/T00:00(:00)?/.test(iso)) return '';
+    const fmt = (h, mi) => `${h % 12 || 12}:${mi}${h >= 12 ? 'pm' : 'am'}`;
+    if (/[Tt]\d{2}:\d{2}(:\d{2})?(\.\d+)?([Zz]|[+-]\d{2}:?\d{2})/.test(iso)) {
+      const d = new Date(iso);
+      if (!isNaN(d.getTime())) return fmt(d.getHours(), String(d.getMinutes()).padStart(2, '0'));
+    }
     const m = /T(\d{2}):(\d{2})/.exec(iso);
-    if (!m) return '';
-    let h = +m[1]; const min = m[2];
-    const ap = h >= 12 ? 'pm' : 'am';
-    h = h % 12; if (h === 0) h = 12;
-    return `${h}:${min}${ap}`;
+    return m ? fmt(+m[1], m[2]) : '';
   }
   let weatherByCode = {};
 

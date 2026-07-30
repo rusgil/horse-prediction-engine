@@ -1113,7 +1113,7 @@
     if (typeof scheduledIso === 'string' && /T00:00:00/.test(scheduledIso)) return '';
     try {
       return new Date(scheduledIso).toLocaleTimeString('en-AU', {
-        hour: '2-digit', minute: '2-digit', hour12: true, timeZone: 'Australia/Sydney'
+        hour: '2-digit', minute: '2-digit', hour12: true  // viewer-local
       });
     } catch (e) {
       return '';
