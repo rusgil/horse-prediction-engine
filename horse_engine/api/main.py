@@ -574,30 +574,14 @@ async def _scheduled_enrich():
             n = await _seed_results_for_date(seed_date)
             if n:
                 log.info("[scheduler] Seeded %d results for %s", n, seed_date)
-        # Capture real tote exotic dividends (quinella EV data) for the freshly
-        # seeded races — TAB source, throttled inside the helper.
+        # Capture real tote exotic dividends (quinella EV data). Idempotent;
+        # the dedicated evening cron is the primary same-day pass, this just
+        # catches yesterday early.
         try:
-            for offset in (-1, 0):
-                cap_date = (_today_aest() + timedelta(days=offset)).isoformat()
-                async with get_session() as _s:
-                    _settled = (await _s.execute(
-                        select(HistoricalResultRow.race_id).distinct()
-                        .where(HistoricalResultRow.race_id.like(f"{_like_safe(cap_date)}_%"))
-                        .where(HistoricalResultRow.position == 1)
-                    )).scalars().all()
-                    _have = set((await _s.execute(
-                        select(RaceExoticDividendRow.race_id)
-                        .where(RaceExoticDividendRow.race_id.like(f"{_like_safe(cap_date)}_%"))
-                        .where(RaceExoticDividendRow.quinella.isnot(None))
-                    )).scalars().all())
-                for _rid in _settled:
-                    if _rid in _have:
-                        continue
-                    try:
-                        await _capture_exotic_dividends(_rid)
-                    except Exception:
-                        pass
-                    await asyncio.sleep(1.5)
+            n_div = await _capture_exotic_dividends_for_dates(
+                [(_today_aest() + timedelta(days=o)).isoformat() for o in (-1, 0)])
+            if n_div:
+                log.info("[scheduler] Exotic-dividend capture (enrich): %d new", n_div)
         except Exception as e:
             log.warning("[scheduler] exotic-dividend capture failed: %s", e)
         log.info("[scheduler] Enrichment complete")
@@ -2867,6 +2851,8 @@ async def lifespan(app: FastAPI):
     # BUG-43: hourly (was 9am once) — each race snapshots inside its T-2h
     # window so the frozen market features reflect a live market.
     scheduler.add_job(_scheduled_prerace_snapshot, CronTrigger(hour="9-19", minute=0, timezone="Australia/Sydney"))
+    # Daily exotic-dividend capture — 22:45 AEST, after the last (incl. night) races settle.
+    scheduler.add_job(_scheduled_capture_exotic_dividends, CronTrigger(hour=22, minute=45, jitter=600, timezone="Australia/Sydney"))
     # Defense #3 — auto-repair contaminated snapshots once upstream is
     # stable again. Every 5 min: checks health, requires 5+ min of
     # continuous healthy state, then walks contaminated=True rows from
@@ -6224,6 +6210,49 @@ async def _fetch_trifecta_dividend(race_id: str) -> Optional[float]:
     if raw is None:
         return None
     return _extract_trifecta_from_tab_response(raw)
+
+
+async def _capture_exotic_dividends_for_dates(dates: list[str]) -> int:
+    """Sweep settled races for each date and capture tote exotic dividends
+    (SB primary). Idempotent — skips races already holding a quinella.
+    Throttled inside _capture_exotic_dividends' callers; here 1.5s/race.
+    Returns count newly captured."""
+    captured = 0
+    for d in dates:
+        async with get_session() as session:
+            settled = (await session.execute(
+                select(HistoricalResultRow.race_id).distinct()
+                .where(HistoricalResultRow.race_id.like(f"{_like_safe(d)}_%"))
+                .where(HistoricalResultRow.position == 1)
+            )).scalars().all()
+            have = set((await session.execute(
+                select(RaceExoticDividendRow.race_id)
+                .where(RaceExoticDividendRow.race_id.like(f"{_like_safe(d)}_%"))
+                .where(RaceExoticDividendRow.quinella.isnot(None))
+            )).scalars().all())
+        for rid in settled:
+            if rid in have:
+                continue
+            try:
+                r = await _capture_exotic_dividends(rid)
+                if r and not r.get("cached"):
+                    captured += 1
+            except Exception as e:
+                log.debug("[exotic-div] %s failed: %s", rid, e)
+            await asyncio.sleep(1.5)  # gentle on SB (no-hammer rule)
+    return captured
+
+
+async def _scheduled_capture_exotic_dividends():
+    """Daily evening cron — capture today + yesterday's exotic dividends once
+    every meeting (incl. late night races) has settled. Same-day quinella EV
+    data. Idempotent, so re-runs and the morning-enrich piggyback are free."""
+    try:
+        dates = [(_today_aest() - timedelta(days=1)).isoformat(), _today_aest().isoformat()]
+        n = await _capture_exotic_dividends_for_dates(dates)
+        log.info("[scheduler] Exotic-dividend capture: %d new across %s", n, dates)
+    except Exception as e:
+        log.exception("[scheduler] Exotic-dividend capture failed: %s", e)
 
 
 async def _capture_exotic_dividends(race_id: str, force: bool = False) -> Optional[dict]:
