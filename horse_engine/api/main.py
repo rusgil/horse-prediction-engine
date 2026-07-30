@@ -25034,8 +25034,8 @@ async def backtest_quinella(
             "exacta_hit_pct": round(d["exacta"] / n * 100, 1) if n else None,
             "one_of_two_won_pct": round(d["one_won"] / n * 100, 1) if n else None,
             "avg_combined_sp_on_hit": round(d["csp_sum"] / d["csp_n"], 2) if d["csp_n"] else None,
-            "real_quinella_dividends": d["div_n"],
-            "avg_real_quinella_div": round(d["div_sum"] / d["div_n"], 2) if d["div_n"] else None,
+            "quinella_hits_paid": d["quin"],
+            "avg_quinella_div_on_hit": round(d["div_sum"] / d["quin"], 2) if d["quin"] else None,
             # $1 flat-stake ROI using REAL dividends: (sum of dividends on hits
             # − races with a dividend known) / races. Only meaningful once
             # real_quinella_dividends is a decent sample.
