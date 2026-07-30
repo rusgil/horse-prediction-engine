@@ -1060,6 +1060,26 @@ async def init_db() -> None:
         # Sharp eligibility snapshot — see RunnerPredictionHistoryRow.is_sharp.
         "ALTER TABLE runner_prediction_history ADD COLUMN IF NOT EXISTS is_sharp BOOLEAN",
         "CREATE INDEX IF NOT EXISTS ix_hist_is_sharp ON runner_prediction_history (is_sharp)",
+        # prediction_integrity — the table was created (6acb488) before
+        # baseline_field was added to the model (0eefb46), and there was no
+        # ALTER migration, so the column was missing in production and EVERY
+        # read of the integrity audit 500'd ("column ... does not exist";
+        # the /admin/prediction-integrity endpoint SELECTs all columns).
+        # Ship IF NOT EXISTS ALTERs for the whole nullable column set so the
+        # DB matches the model regardless of which deploy created the table.
+        "ALTER TABLE prediction_integrity ADD COLUMN IF NOT EXISTS scheduled_time TEXT",
+        "ALTER TABLE prediction_integrity ADD COLUMN IF NOT EXISTS jump_top1 TEXT",
+        "ALTER TABLE prediction_integrity ADD COLUMN IF NOT EXISTS jump_top2 TEXT",
+        "ALTER TABLE prediction_integrity ADD COLUMN IF NOT EXISTS jump_top3 TEXT",
+        "ALTER TABLE prediction_integrity ADD COLUMN IF NOT EXISTS jump_captured_at TIMESTAMP",
+        "ALTER TABLE prediction_integrity ADD COLUMN IF NOT EXISTS baseline_field TEXT",
+        "ALTER TABLE prediction_integrity ADD COLUMN IF NOT EXISTS eod_top1 TEXT",
+        "ALTER TABLE prediction_integrity ADD COLUMN IF NOT EXISTS eod_top2 TEXT",
+        "ALTER TABLE prediction_integrity ADD COLUMN IF NOT EXISTS eod_top3 TEXT",
+        "ALTER TABLE prediction_integrity ADD COLUMN IF NOT EXISTS eod_captured_at TIMESTAMP",
+        "ALTER TABLE prediction_integrity ADD COLUMN IF NOT EXISTS mismatch BOOLEAN DEFAULT FALSE",
+        "ALTER TABLE prediction_integrity ADD COLUMN IF NOT EXISTS detail TEXT",
+        "CREATE INDEX IF NOT EXISTS ix_prediction_integrity_mismatch ON prediction_integrity (mismatch)",
     ]
     for stmt in migrations:
         try:
