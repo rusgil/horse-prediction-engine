@@ -15332,6 +15332,42 @@ async def admin_resettle_real_dividends(
             "races_upgraded": upgraded_races, "bets_upgraded": upgraded_bets}
 
 
+@app.get("/api/admin/prediction-integrity")
+async def admin_prediction_integrity(
+    date: Optional[str] = None,
+    only_mismatch: bool = False,
+    x_cron_secret: Optional[str] = Header(None),
+):
+    """Per-race prediction-integrity audit records with snapshot timestamps.
+    Each race carries its own baseline_at (captured just before it jumped) and
+    rechecked_at (23:15 frozen-history re-read), the 1st/2nd/3rd at each point,
+    and whether they diverged (mismatch)."""
+    _check_admin(x_cron_secret)
+    target = date or _today_aest().isoformat()
+    async with get_session() as session:
+        q = (select(PredictionIntegrityRow)
+             .where(PredictionIntegrityRow.race_date == target)
+             .order_by(PredictionIntegrityRow.scheduled_time))
+        if only_mismatch:
+            q = q.where(PredictionIntegrityRow.mismatch.is_(True))
+        rows = (await session.execute(q)).scalars().all()
+    return {
+        "date": target,
+        "races": len(rows),
+        "mismatches": sum(1 for r in rows if r.mismatch),
+        "records": [{
+            "race_id": r.race_id,
+            "scheduled_time": r.scheduled_time,
+            "baseline": [r.jump_top1, r.jump_top2, r.jump_top3],
+            "baseline_at": r.jump_captured_at.isoformat() if r.jump_captured_at else None,
+            "rechecked": [r.eod_top1, r.eod_top2, r.eod_top3],
+            "rechecked_at": r.eod_captured_at.isoformat() if r.eod_captured_at else None,
+            "mismatch": bool(r.mismatch),
+            "detail": r.detail,
+        } for r in rows],
+    }
+
+
 @app.get("/api/admin/morning-report")
 async def admin_morning_report(x_cron_secret: Optional[str] = Header(None)):
     """
