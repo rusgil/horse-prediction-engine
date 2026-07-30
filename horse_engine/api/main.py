@@ -14305,13 +14305,24 @@ async def _run_quality_check(target: str) -> dict:
                     "check": "prediction_integrity_mismatch",
                     "races_checked": len(_ir),
                     "mismatches": len(_bad),
-                    "examples": [{"race_id": r.race_id, "detail": (r.detail or "")[:160]} for r in _bad[:6]],
+                    "examples": [{
+                        "race_id": r.race_id,
+                        "baseline_at": r.jump_captured_at.isoformat() if r.jump_captured_at else None,
+                        "rechecked_at": r.eod_captured_at.isoformat() if r.eod_captured_at else None,
+                        "detail": (r.detail or "")[:160],
+                    } for r in _bad[:6]],
                     "reason": "A race's model 1st/2nd/3rd CHANGED after it jumped with no scratching "
                               "to explain it — the write-once guarantee was violated. Investigate the caller.",
                 })
             else:
-                info.append({"check": "prediction_integrity",
-                             "status": f"clean — {len(_ir)} races, 1st/2nd/3rd unchanged post-jump"})
+                _ts = [r.jump_captured_at for r in _ir if r.jump_captured_at]
+                _re = [r.eod_captured_at for r in _ir if r.eod_captured_at]
+                info.append({
+                    "check": "prediction_integrity",
+                    "status": f"clean — {len(_ir)} races, 1st/2nd/3rd unchanged post-jump",
+                    "baseline_window": (f"{min(_ts).isoformat()} … {max(_ts).isoformat()}" if _ts else None),
+                    "rechecked_at": (max(_re).isoformat() if _re else None),
+                })
     except Exception:
         pass
 
