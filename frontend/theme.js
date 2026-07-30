@@ -162,10 +162,26 @@
     host.appendChild(wrap);
   }
 
+  /* Admin-only nav: Labs lives under the admin section (2026-07-30). Its
+   * nav link is hidden for everyone and only revealed once an admin secret
+   * is present in this session (set by the /dashboard or Labs login gate,
+   * shared via sessionStorage key "fiq_admin_secret"). Any element tagged
+   * [data-admin-only] follows the same rule. */
+  function gateAdminNav() {
+    var isAdmin = false;
+    try { isAdmin = !!sessionStorage.getItem('fiq_admin_secret'); } catch (e) {}
+    if (isAdmin) return;
+    var sel = '.page-nav-btn.labs, [data-admin-only]';
+    var nodes = document.querySelectorAll(sel);
+    for (var i = 0; i < nodes.length; i++) nodes[i].style.display = 'none';
+  }
+
+  function init() { mount(); gateAdminNav(); }
+
   if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', mount);
+    document.addEventListener('DOMContentLoaded', init);
   } else {
-    mount();
+    init();
   }
 
   /* follow changes made in another tab */
