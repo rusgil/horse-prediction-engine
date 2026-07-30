@@ -28494,6 +28494,59 @@ async def restore_cancelled(
     return {"status": "done", "date": target}
 
 
+@app.post("/api/admin/uncancel-runner")
+async def uncancel_runner(
+    race_id: str = Query(...),
+    horse_name: str = Query(...),
+    x_cron_secret: Optional[str] = Header(None),
+):
+    """Un-cancel ONE specific runner (targeted inverse of cancel-runner).
+
+    For surgically reversing a false scratching without the blanket
+    force-restore (which would also revive genuine scratchings). Matches the
+    name case-insensitively, mirrors into history, and re-ranks the field so
+    the restored horse re-enters the ranking. Pre-jump only in practice —
+    post-jump the nightly result-reconciliation heal owns this.
+    """
+    _check_admin(x_cron_secret)
+    from sqlalchemy import update as sa_update
+    reranked = False
+    async with get_session() as session:
+        result = await session.execute(
+            sa_update(RunnerPredictionRow)
+            .where(RunnerPredictionRow.race_id == race_id)
+            .where(func.lower(RunnerPredictionRow.horse_name) == horse_name.lower())
+            .where(RunnerPredictionRow.cancelled.is_(True))
+            .values(cancelled=False)
+        )
+        hist_result = await session.execute(
+            sa_update(RunnerPredictionHistoryRow)
+            .where(RunnerPredictionHistoryRow.race_id == race_id)
+            .where(func.lower(RunnerPredictionHistoryRow.horse_name) == horse_name.lower())
+            .where(RunnerPredictionHistoryRow.cancelled.is_(True))
+            .values(cancelled=False)
+        )
+        await session.commit()
+    try:
+        async with get_session() as rsession:
+            if await _rerank_race_after_scratch(rsession, race_id):
+                await rsession.commit()
+                reranked = True
+    except Exception as re:
+        log.warning("[uncancel-runner] %s rerank failed: %s", race_id, re)
+    date_part, venue_part, _ = _parse_race_id(race_id)
+    _invalidate_meeting_caches(date_part, venue_part)
+    global _edge_response_cache
+    _edge_response_cache = None
+    return {
+        "updated": result.rowcount,
+        "history_updated": hist_result.rowcount,
+        "reranked": reranked,
+        "race_id": race_id,
+        "horse_name": horse_name,
+    }
+
+
 @app.post("/api/admin/force-restore")
 async def force_restore(
     date: Optional[str] = None,
