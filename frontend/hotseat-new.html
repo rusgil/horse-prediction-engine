@@ -1008,13 +1008,20 @@
   const pc = v => v == null ? null : Math.round(v * 1000) / 10;
   const vcOf = m => m.venue_code || (m.venue || '').toLowerCase().replace(/\s+/g, '-');
 
-  function wallTime(iso) {            // track-local post time from the ISO string itself
-    const m = /T(\d{2}):(\d{2})/.exec(iso || '');
-    if (!m) return '—';
-    let h = +m[1]; const mi = m[2];
-    const ap = h >= 12 ? 'pm' : 'am';
-    h = h % 12 || 12;
-    return `${h}:${mi}${ap}`;
+  function wallTime(iso) {            // VIEWER-LOCAL post time (2026-07-30)
+    // The ISO carries the track's UTC offset (WA +08:00, AEST +10:00), so
+    // parse the real instant and render in the BROWSER's timezone — a WA race
+    // at 12:27+08:00 shows 2:27pm to an AEST viewer, matching their clock and
+    // the countdown. Falls back to raw digits only if there's no offset.
+    if (!iso) return '—';
+    if (/T00:00(:00)?/.test(iso)) return 'TBA';
+    const fmt = (h, mi) => { const ap = h >= 12 ? 'pm' : 'am'; return `${h % 12 || 12}:${mi}${ap}`; };
+    if (/[Tt]\d{2}:\d{2}(:\d{2})?(\.\d+)?([Zz]|[+-]\d{2}:?\d{2})/.test(iso)) {
+      const d = new Date(iso);
+      if (!isNaN(d.getTime())) return fmt(d.getHours(), String(d.getMinutes()).padStart(2, '0'));
+    }
+    const m = /T(\d{2}):(\d{2})/.exec(iso);   // naive fallback — source zone unknown
+    return m ? fmt(+m[1], m[2]) : '—';
   }
   const epochOf = iso => { const t = iso ? Date.parse(iso) : NaN; return Number.isNaN(t) ? null : t; };
   // urg drives the countdown colour ladder: far (green) → hour (amber) →
