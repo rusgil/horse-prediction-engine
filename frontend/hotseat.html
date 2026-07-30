@@ -62,6 +62,11 @@
       padding: 14px 16px 12px;
       padding-top: calc(14px + env(safe-area-inset-top));
     }
+    /* Light mode: the sticky header (which holds the filter rows) had a
+       hardcoded dark gradient, leaving the filter area black on light. */
+    :root[data-theme="light"] header {
+      background: linear-gradient(180deg, #ffffff 0%, rgba(238,241,245,0.92) 100%);
+    }
     .title-row {
       display: flex;
       align-items: baseline;
