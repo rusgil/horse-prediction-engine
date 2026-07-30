@@ -6547,9 +6547,27 @@ async def _settle_bets_for_race(race_id: str) -> int:
     # doesn't carry exotic dividends. Settle anyway with hit/miss + winning
     # trifecta so the ledger shows actionable info; payout / P&L populate
     # later if/when a dividend source comes online.
-    dividend = await _fetch_trifecta_dividend(race_id)
+    # PRIORITY 1: the real captured tote trifecta dividend (Sportsbet primary,
+    # via RaceExoticDividendRow). Capture on demand if not stored yet — SB is
+    # 5-min-cached, so this is at most one racecard fetch. This makes Lab
+    # trifecta P&L use REAL dividends, not the Harville estimate.
+    dividend = None
     dividend_estimated = False
-    # Fallback: when TAB doesn't return a dividend, derive a Harville
+    try:
+        cap = await _capture_exotic_dividends(race_id)  # idempotent; returns cached if present
+        async with get_session() as session:
+            exo_tri = (await session.execute(
+                select(RaceExoticDividendRow.trifecta)
+                .where(RaceExoticDividendRow.race_id == race_id)
+            )).scalar()
+        if exo_tri:
+            dividend = float(exo_tri)
+    except Exception as _e:
+        log.debug("[settle] SB trifecta dividend lookup failed for %s: %s", race_id, _e)
+    # PRIORITY 2: TAB pool (metro meetings).
+    if dividend is None:
+        dividend = await _fetch_trifecta_dividend(race_id)
+    # PRIORITY 3 (fallback): when no real dividend, derive a Harville
     # estimate from the actual finishers' model win-probabilities. Same
     # math the Lab UI uses for the on-card 'estimated payout' badge —
     # accurate within ~10-20% of the printed TAB number on average.
