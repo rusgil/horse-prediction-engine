@@ -202,6 +202,43 @@ def _clean_track_status(raw: str) -> str | None:
     return f"{m.group(1).title()} {m.group(2)}".strip()
 
 
+_RACECARD_TTL = 300  # 5 min — a settled racecard doesn't change; live ones re-read every 5 min
+_racecard_cache: dict[int, tuple[datetime, dict]] = {}   # event_id -> (ts, card json)
+
+
+async def _fetch_racecard(event_id) -> dict | None:
+    """Fetch (and 5-min cache) ONE Sportsbet racecard. Shared by the track-
+    condition, place-price and exotic-dividend readers so a race is pulled
+    from SB at most once per TTL no matter how many features consume it —
+    the primary guard against flooding Sportsbet."""
+    if event_id is None:
+        return None
+    key = int(event_id)
+    cached = _racecard_cache.get(key)
+    if cached and (datetime.utcnow() - cached[0]).total_seconds() < _RACECARD_TTL:
+        return cached[1]
+    import os
+    _proxy = os.getenv("SPORTSBET_PROXY_URL") or None
+    try:
+        async with httpx.AsyncClient(
+            headers={"User-Agent": _UA, "Accept": "application/json"},
+            timeout=25.0 if _proxy else 15.0,
+            proxy=_proxy,
+        ) as client:
+            resp = await client.get(_RACECARD_URL.format(event_id=key))
+            resp.raise_for_status()
+            card = resp.json() or {}
+    except Exception as e:
+        log.info("[sportsbet-racecard] %s failed: %s", key, e)
+        return None
+    _racecard_cache[key] = (datetime.utcnow(), card)
+    # bound the cache — settled racecards accumulate over a day
+    if len(_racecard_cache) > 600:
+        for k in sorted(_racecard_cache, key=lambda x: _racecard_cache[x][0])[:200]:
+            _racecard_cache.pop(k, None)
+    return card
+
+
 async def get_sportsbet_track_conditions(date: str) -> dict[str, str] | None:
     """Live going per AU meeting from Sportsbet racecards: {norm_track: 'Soft 5'}.
 
@@ -217,30 +254,18 @@ async def get_sportsbet_track_conditions(date: str) -> dict[str, str] | None:
     data = await _fetch_allracing(date)
     if data is None:
         return None
-    import os
-    _proxy = os.getenv("SPORTSBET_PROXY_URL") or None
     out: dict[str, str] = {}
     try:
-        async with httpx.AsyncClient(
-            headers={"User-Agent": _UA, "Accept": "application/json"},
-            timeout=25.0 if _proxy else 15.0,
-            proxy=_proxy,
-        ) as client:
-            for m in _iter_au_horse_meetings(data):
-                events = m.get("events") or []
-                if not events:
-                    continue
-                # prefer a not-yet-resulted race so the status is current
-                ev = next((e for e in events if not e.get("result")), events[-1])
-                try:
-                    resp = await client.get(_RACECARD_URL.format(event_id=ev.get("id")))
-                    resp.raise_for_status()
-                    cond = _clean_track_status((resp.json() or {}).get("trackStatus") or "")
-                except Exception as e:  # one bad card never kills the sweep
-                    log.info("[sportsbet-conditions] %s racecard failed: %s", m.get("name"), e)
-                    continue
-                if cond:
-                    out[_norm(m.get("name") or "")] = cond
+        for m in _iter_au_horse_meetings(data):
+            events = m.get("events") or []
+            if not events:
+                continue
+            # prefer a not-yet-resulted race so the status is current
+            ev = next((e for e in events if not e.get("result")), events[-1])
+            card = await _fetch_racecard(ev.get("id"))
+            cond = _clean_track_status((card or {}).get("trackStatus") or "") if card else None
+            if cond:
+                out[_norm(m.get("name") or "")] = cond
     except Exception as e:
         log.warning("[sportsbet-conditions] sweep failed for %s: %s", date, e)
         return None
@@ -281,19 +306,8 @@ async def get_sportsbet_place_prices(date: str, track: str, race_number: int) ->
                 break
     if not ev_id:
         return None
-    import os
-    _proxy = os.getenv("SPORTSBET_PROXY_URL") or None
-    try:
-        async with httpx.AsyncClient(
-            headers={"User-Agent": _UA, "Accept": "application/json"},
-            timeout=25.0 if _proxy else 15.0,
-            proxy=_proxy,
-        ) as client:
-            resp = await client.get(_RACECARD_URL.format(event_id=ev_id))
-            resp.raise_for_status()
-            card = resp.json() or {}
-    except Exception as e:
-        log.info("[sportsbet-place] racecard %s R%s failed: %s", track, race_number, e)
+    card = await _fetch_racecard(ev_id)
+    if card is None:
         return None
     out: dict[str, float] = {}
     for mk in card.get("markets") or []:
@@ -336,19 +350,8 @@ async def get_sportsbet_exotic_dividends(date: str, track: str, race_number: int
                 break
     if not ev_id:
         return None
-    import os
-    _proxy = os.getenv("SPORTSBET_PROXY_URL") or None
-    try:
-        async with httpx.AsyncClient(
-            headers={"User-Agent": _UA, "Accept": "application/json"},
-            timeout=25.0 if _proxy else 15.0,
-            proxy=_proxy,
-        ) as client:
-            resp = await client.get(_RACECARD_URL.format(event_id=ev_id))
-            resp.raise_for_status()
-            card = resp.json() or {}
-    except Exception as e:
-        log.info("[sportsbet-exotics] %s R%s failed: %s", track, race_number, e)
+    card = await _fetch_racecard(ev_id)
+    if card is None:
         return None
     _map = {"quinella": "quinella", "exacta": "exacta", "trifecta": "trifecta",
             "first 4": "first_four", "first four": "first_four"}

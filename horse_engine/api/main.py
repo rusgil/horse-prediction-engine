@@ -597,7 +597,7 @@ async def _scheduled_enrich():
                         await _capture_exotic_dividends(_rid)
                     except Exception:
                         pass
-                    await asyncio.sleep(0.8)
+                    await asyncio.sleep(1.5)
         except Exception as e:
             log.warning("[scheduler] exotic-dividend capture failed: %s", e)
         log.info("[scheduler] Enrichment complete")
@@ -6355,7 +6355,7 @@ async def admin_capture_exotic_dividends(
                     captured += 1
             except Exception as e:
                 log.debug("[exotic-div] %s failed: %s", rid, e)
-            await asyncio.sleep(0.8)  # throttle — no-hammer rule
+            await asyncio.sleep(1.5)  # throttle — no-hammer rule (be gentle on SB)
     return {"dates": dates, "newly_captured": captured, "already_had": skipped}
 
 
@@ -25009,14 +25009,17 @@ async def backtest_quinella(
             sa, sb = sp.get((rid, na)), sp.get((rid, nb))
             if sa and sb:
                 csp = sa + sb
-        rdiv = quin_div.get(rid) if quin else None
+        rdiv_known = rid in quin_div          # we have the real dividend for this race
+        rdiv_hit = quin_div.get(rid) if quin else 0.0   # payout only when our top-2 boxed it
         def _add(d):
             d["n"] += 1
             if quin: d["quin"] += 1
             if exacta: d["exacta"] += 1
             if one_won: d["one_won"] += 1
             if csp: d["csp_sum"] += csp; d["csp_n"] += 1
-            if rdiv: d["div_n"] += 1; d["div_sum"] += rdiv
+            if rdiv_known:
+                d["div_n"] += 1                 # a $1 quinella we could bet AND measure
+                d["div_sum"] += (rdiv_hit or 0.0)
         _add(overall)
         for n, lo, hi in gap_buckets:
             if lo <= gap < hi: _add(by_gap[n]); break
@@ -25036,7 +25039,11 @@ async def backtest_quinella(
             # $1 flat-stake ROI using REAL dividends: (sum of dividends on hits
             # − races with a dividend known) / races. Only meaningful once
             # real_quinella_dividends is a decent sample.
-            "flat_roi_pct_real": round((d["div_sum"] - d["n"]) / d["n"] * 100, 1) if (d["n"] and d["div_n"]) else None,
+            # ROI = (returns on hits − $1 per bettable race) / bettable races,
+            # over ONLY races where we have the real dividend. Meaningful once
+            # bettable_races is a decent sample (builds nightly).
+            "bettable_races_with_div": d["div_n"],
+            "flat_roi_pct_real": round((d["div_sum"] - d["div_n"]) / d["div_n"] * 100, 1) if d["div_n"] else None,
         }
     return {
         "window_days": days,
