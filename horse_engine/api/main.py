@@ -24662,6 +24662,109 @@ async def admin_refresh_about_stats_now(
     return {"ok": True, "forced": force, "published": published}
 
 
+@app.get("/api/admin/backtest/quinella")
+async def backtest_quinella(
+    days: int = 120,
+    x_cron_secret: Optional[str] = Header(None),
+):
+    """Quinella opportunity: how often do OUR rank-1 + rank-2 picks fill the
+    first two placings (either order)? Reports overall hit rate, plus splits
+    by rank1-rank2 gap and by combined top-2 win%% sum. avg_combined_sp on
+    hits is a dividend-size proxy (RA free results carry no tote dividend).
+    Also: exacta (exact order) and 'one of our two won'. FIX-S reads.
+    """
+    _check_admin(x_cron_secret)
+    cutoff = (_today_aest() - timedelta(days=days)).isoformat()
+    async with get_session() as session:
+        hist = (await session.execute(
+            select(RunnerPredictionHistoryRow)
+            .where(RunnerPredictionHistoryRow.race_id >= cutoff)
+            .where(RunnerPredictionHistoryRow.source == "live")
+            .where(RunnerPredictionHistoryRow.model_rank.in_([1, 2]))
+            .where(RunnerPredictionHistoryRow.cancelled.is_(False) | RunnerPredictionHistoryRow.cancelled.is_(None))
+            .where(RunnerPredictionHistoryRow.win_probability.isnot(None))
+            .order_by(RunnerPredictionHistoryRow.enriched_at.desc())
+        )).scalars().all()
+        hr_rows = (await session.execute(
+            select(HistoricalResultRow.race_id, HistoricalResultRow.horse_name,
+                   HistoricalResultRow.position, HistoricalResultRow.starting_price)
+            .where(HistoricalResultRow.race_id >= cutoff)
+        )).fetchall()
+    pos = {}  # race_id -> {norm_horse: position}
+    sp = {}   # (race_id, norm) -> sp
+    for r in hr_rows:
+        if r.position and 1 <= r.position < 90:
+            pos.setdefault(r.race_id, {})[_normalize_horse(r.horse_name)] = r.position
+        if r.starting_price:
+            sp[(r.race_id, _normalize_horse(r.horse_name))] = float(r.starting_price)
+
+    seen: set = set()
+    r1, r2 = {}, {}
+    for row in hist:
+        k = (row.race_id, row.model_rank)
+        if k in seen:
+            continue
+        seen.add(k)
+        (r1 if row.model_rank == 1 else r2)[row.race_id] = row
+
+    def _blank():
+        return {"n": 0, "quin": 0, "exacta": 0, "one_won": 0, "csp_sum": 0.0, "csp_n": 0}
+    overall = _blank()
+    gap_buckets = [("0-5pt", 0, 5), ("5-10pt", 5, 10), ("10-20pt", 10, 20), ("20pt+", 20, 1e9)]
+    sum_buckets = [("<35%", 0, 35), ("35-45%", 35, 45), ("45-55%", 45, 55), ("55%+", 55, 1e9)]
+    by_gap = {n: _blank() for n, _, _ in gap_buckets}
+    by_sum = {n: _blank() for n, _, _ in sum_buckets}
+
+    for rid, a in r1.items():
+        b = r2.get(rid)
+        race_pos = pos.get(rid)
+        if not b or not race_pos:
+            continue
+        na, nb = _normalize_horse(a.horse_name), _normalize_horse(b.horse_name)
+        pa, pb = race_pos.get(na), race_pos.get(nb)
+        if pa is None or pb is None:
+            continue  # a pick did not finish — no quinella possible
+        top2 = {pa, pb}
+        quin = (top2 == {1, 2})
+        exacta = (pa == 1 and pb == 2)
+        one_won = (pa == 1 or pb == 1)
+        gap = ((a.win_probability or 0) - (b.win_probability or 0)) * 100
+        csum = ((a.win_probability or 0) + (b.win_probability or 0)) * 100
+        csp = None
+        if quin:
+            sa, sb = sp.get((rid, na)), sp.get((rid, nb))
+            if sa and sb:
+                csp = sa + sb
+        def _add(d):
+            d["n"] += 1
+            if quin: d["quin"] += 1
+            if exacta: d["exacta"] += 1
+            if one_won: d["one_won"] += 1
+            if csp: d["csp_sum"] += csp; d["csp_n"] += 1
+        _add(overall)
+        for n, lo, hi in gap_buckets:
+            if lo <= gap < hi: _add(by_gap[n]); break
+        for n, lo, hi in sum_buckets:
+            if lo <= csum < hi: _add(by_sum[n]); break
+
+    def _fmt(d):
+        n = d["n"]
+        return {
+            "races": n,
+            "quinella_hit_pct": round(d["quin"] / n * 100, 1) if n else None,
+            "exacta_hit_pct": round(d["exacta"] / n * 100, 1) if n else None,
+            "one_of_two_won_pct": round(d["one_won"] / n * 100, 1) if n else None,
+            "avg_combined_sp_on_hit": round(d["csp_sum"] / d["csp_n"], 2) if d["csp_n"] else None,
+        }
+    return {
+        "window_days": days,
+        "note": "quinella = our rank1 & rank2 fill 1st+2nd (any order). avg_combined_sp_on_hit ~ dividend proxy (no tote dividend in feed).",
+        "overall": _fmt(overall),
+        "by_rank_gap": {n: _fmt(by_gap[n]) for n, _, _ in gap_buckets},
+        "by_top2_winpct_sum": {n: _fmt(by_sum[n]) for n, _, _ in sum_buckets},
+    }
+
+
 @app.get("/api/admin/backtest/rank-gap")
 async def backtest_rank_gap(
     days: int = 120,
