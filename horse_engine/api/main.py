@@ -840,6 +840,15 @@ async def _rerank_race_after_scratch(session, race_id: str) -> bool:
     return True
 
 
+# Scratch confirmation memory (2026-07-30, false-scratch root fix): a runner
+# must be flagged SCRATCHED on TWO consecutive sweeps before we cancel it.
+# OddsPro occasionally returns a transient status=SCRATCHED for runners that
+# actually start (Illawarra Grange R1 30/7: LEGO MASTER + 2 others cancelled,
+# LEGO MASTER then WON). A single-sweep blip clears within one ~165s cycle and
+# now never corrupts a prediction; genuine scratches (stable) confirm next tick.
+_oddspro_scratch_prev: dict[str, set] = {}   # race_id -> {norm_horse} seen scratched last sweep
+
+
 async def _apply_oddspro_scratches(client, today: str) -> int:
     """Mark runners scratched using OddsPro's live `status` flag — no RA.
 
@@ -884,10 +893,20 @@ async def _apply_oddspro_scratches(client, today: str) -> int:
             if not scratched_lower:
                 continue
             scratched_norm = {_normalize_horse(s) for s in scratched_lower}
-            to_cancel = [horse for norm, horse in active.items() if norm in scratched_norm]
+            race_id = f"{today}_{vc}_R{rn}"
+            # CONFIRMATION GATE: only cancel a runner flagged scratched on this
+            # sweep AND the previous one. Transient OddsPro blips (a runner
+            # briefly showing SCRATCHED mid data-update) never reach cancel.
+            prev = _oddspro_scratch_prev.get(race_id, set())
+            confirmed = scratched_norm & prev
+            _oddspro_scratch_prev[race_id] = scratched_norm  # remember for next sweep
+            pending = scratched_norm - confirmed
+            if pending:
+                log.info("[scratch-check] %s: %d scratch(es) pending 2nd-sweep confirmation: %s",
+                         race_id, len(pending), sorted(pending))
+            to_cancel = [horse for norm, horse in active.items() if norm in confirmed]
             if not to_cancel:
                 continue
-            race_id = f"{today}_{vc}_R{rn}"
             async with get_session() as session:
                 res = await session.execute(
                     sa_update(RunnerPredictionRow)
