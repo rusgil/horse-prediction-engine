@@ -6336,10 +6336,15 @@ async def _integrity_eod_check(target_date: Optional[str] = None):
     try:
         today = target_date or _today_aest().isoformat()
         # frozen history top-3 per race (FIX-S: live, latest snapshot, uncancelled)
+        # ALSO read recorded_at + contaminated: a top-3 pick whose frozen row
+        # was WRITTEN AFTER THE JUMP (or was flagged contaminated by the DB
+        # write-guard) is a post-race change — the exact tamper we're after.
         async with get_session() as session:
             hrows = (await session.execute(
                 select(RunnerPredictionHistoryRow.race_id, RunnerPredictionHistoryRow.horse_name,
-                       RunnerPredictionHistoryRow.model_rank, RunnerPredictionHistoryRow.enriched_at)
+                       RunnerPredictionHistoryRow.model_rank, RunnerPredictionHistoryRow.enriched_at,
+                       RunnerPredictionHistoryRow.recorded_at, RunnerPredictionHistoryRow.contaminated,
+                       RunnerPredictionHistoryRow.scheduled_time)
                 .where(RunnerPredictionHistoryRow.race_id.like(f"{_like_safe(today)}_%"))
                 .where(RunnerPredictionHistoryRow.model_rank.in_([1, 2, 3]))
                 .where((RunnerPredictionHistoryRow.source == "live") | RunnerPredictionHistoryRow.source.is_(None))
@@ -6352,13 +6357,15 @@ async def _integrity_eod_check(target_date: Optional[str] = None):
                 .where(RunnerPredictionRow.cancelled.is_(True))
             )).all()
         seen: set = set()
-        hist_top: dict[str, dict] = {}
-        for rid, hn, rank, _en in hrows:
+        hist_top: dict[str, dict] = {}      # race_id -> {rank: horse}
+        hist_meta: dict[str, dict] = {}     # race_id -> {rank: (recorded_at, contaminated, sched)}
+        for rid, hn, rank, _en, rec, contam, sched in hrows:
             k = (rid, rank)
             if k in seen:
                 continue
             seen.add(k)
             hist_top.setdefault(rid, {})[rank] = hn
+            hist_meta.setdefault(rid, {})[rank] = (rec, bool(contam), sched)
         scratched: dict[str, set] = {}
         for rid, hn in scr:
             scratched.setdefault(rid, set()).add(_normalize_horse(hn))
@@ -6377,27 +6384,29 @@ async def _integrity_eod_check(target_date: Optional[str] = None):
                 row.eod_captured_at = datetime.utcnow()
                 base = [row.jump_top1, row.jump_top2, row.jump_top3]
                 now3 = [row.eod_top1, row.eod_top2, row.eod_top3]
-                changed = [ (_normalize_horse(a or "") != _normalize_horse(b or "")) for a, b in zip(base, now3) ]
-                base_scratched = any(_normalize_horse(x or "") in scratched.get(row.race_id, set()) for x in base)
-                # Late addition: a horse now in the top-3 that wasn't in the
-                # field when we baselined = a legitimate late ballot-in/emergency
-                # gaining a start pre-jump, NOT a post-jump tamper.
-                try:
-                    base_field = set(json.loads(row.baseline_field or "[]"))
-                except Exception:
-                    base_field = set()
-                new_top = [_normalize_horse(x or "") for x in now3 if x]
-                late_added = [x for x in new_top if base_field and x not in base_field]
-                explained = base_scratched or bool(late_added)
-                row.mismatch = any(changed) and not explained
-                if not any(changed):
-                    row.detail = "unchanged"
-                elif base_scratched:
-                    row.detail = f"baseline {base} -> history {now3} (explained: baseline pick scratched)"
-                elif late_added:
-                    row.detail = f"baseline {base} -> history {now3} (explained: LATE ADDITION {late_added})"
+                changed = any(_normalize_horse(a or "") != _normalize_horse(b or "") for a, b in zip(base, now3))
+                # BREACH = any top-3 pick whose frozen row was written AFTER the
+                # jump, or was flagged contaminated by the write-guard. That is
+                # a POST-RACE change to a predicted 1st/2nd/3rd — the exact thing
+                # we guard. Pre-jump re-ranks (scratchings, legit late ballot-ins)
+                # have recorded_at BEFORE the jump and are NOT breaches.
+                jump = sched_to_utc_naive(row.scheduled_time)
+                meta = hist_meta.get(row.race_id, {})
+                post_race = []
+                for rk in (1, 2, 3):
+                    m = meta.get(rk)
+                    if not m:
+                        continue
+                    rec, contam, _s = m
+                    if contam or (jump is not None and rec is not None and rec > jump + timedelta(minutes=3)):
+                        post_race.append(f"rank{rk}={now3[rk-1]}")
+                row.mismatch = bool(post_race)
+                if post_race:
+                    row.detail = f"POST-RACE change: {post_race} written/contaminated after jump. baseline {base} -> history {now3}"
+                elif changed:
+                    row.detail = f"pre-jump re-rank (legitimate): baseline {base} -> history {now3}"
                 else:
-                    row.detail = f"baseline {base} -> history {now3} (UNEXPLAINED)"
+                    row.detail = "unchanged"
                 checked += 1
                 if row.mismatch:
                     mismatches += 1
@@ -14316,15 +14325,6 @@ async def _run_quality_check(target: str) -> dict:
             )).scalars().all()
         if _ir:
             _bad = [r for r in _ir if r.mismatch]
-            _late = [r for r in _ir if not r.mismatch and r.detail and 'LATE ADDITION' in r.detail]
-            if _late:
-                info.append({
-                    "check": "prediction_late_additions",
-                    "races": len(_late),
-                    "examples": [{"race_id": r.race_id, "detail": (r.detail or "")[:160]} for r in _late[:6]],
-                    "note": "A horse entered the field after our pre-jump baseline and ranked top-3 "
-                            "(legitimate late ballot-in/emergency) — recorded, not a breach.",
-                })
             if _bad:
                 critical.append({
                     "check": "prediction_integrity_mismatch",
@@ -14336,8 +14336,10 @@ async def _run_quality_check(target: str) -> dict:
                         "rechecked_at": r.eod_captured_at.isoformat() if r.eod_captured_at else None,
                         "detail": (r.detail or "")[:160],
                     } for r in _bad[:6]],
-                    "reason": "A race's model 1st/2nd/3rd CHANGED after it jumped with no scratching "
-                              "to explain it — the write-once guarantee was violated. Investigate the caller.",
+                    "reason": "A predicted 1st/2nd/3rd was written or altered AFTER the race jumped "
+                              "(post-race change to a place/win pick) — the write-once guarantee was "
+                              "violated. Each example names the offending rank + when its frozen row was "
+                              "written. Investigate the caller.",
                 })
             else:
                 _ts = [r.jump_captured_at for r in _ir if r.jump_captured_at]
