@@ -24662,6 +24662,104 @@ async def admin_refresh_about_stats_now(
     return {"ok": True, "forced": force, "published": published}
 
 
+@app.get("/api/admin/backtest/quinella-shape")
+async def backtest_quinella_shape(
+    days: int = 150,
+    top2_gap: float = 3.0,
+    rank3_gap: float = 10.0,
+    x_cron_secret: Optional[str] = Header(None),
+):
+    """The 'two clear standouts' quinella shape: rank1 & rank2 within
+    `top2_gap` points of EACH OTHER, and rank2 at least `rank3_gap` points
+    clear of rank3. Reports quinella hit rate for that shape vs everything
+    else, plus a small sweep grid so the thresholds can be tuned. FIX-S.
+    """
+    _check_admin(x_cron_secret)
+    cutoff = (_today_aest() - timedelta(days=days)).isoformat()
+    async with get_session() as session:
+        hist = (await session.execute(
+            select(RunnerPredictionHistoryRow)
+            .where(RunnerPredictionHistoryRow.race_id >= cutoff)
+            .where(RunnerPredictionHistoryRow.source == "live")
+            .where(RunnerPredictionHistoryRow.model_rank.in_([1, 2, 3]))
+            .where(RunnerPredictionHistoryRow.cancelled.is_(False) | RunnerPredictionHistoryRow.cancelled.is_(None))
+            .where(RunnerPredictionHistoryRow.win_probability.isnot(None))
+            .order_by(RunnerPredictionHistoryRow.enriched_at.desc())
+        )).scalars().all()
+        hr_rows = (await session.execute(
+            select(HistoricalResultRow.race_id, HistoricalResultRow.horse_name,
+                   HistoricalResultRow.position, HistoricalResultRow.starting_price)
+            .where(HistoricalResultRow.race_id >= cutoff)
+        )).fetchall()
+    pos, sp = {}, {}
+    for r in hr_rows:
+        if r.position and 1 <= r.position < 90:
+            pos.setdefault(r.race_id, {})[_normalize_horse(r.horse_name)] = r.position
+        if r.starting_price:
+            sp[(r.race_id, _normalize_horse(r.horse_name))] = float(r.starting_price)
+
+    seen: set = set()
+    ranks: dict = {}   # race_id -> {rank: row}
+    for row in hist:
+        k = (row.race_id, row.model_rank)
+        if k in seen:
+            continue
+        seen.add(k)
+        ranks.setdefault(row.race_id, {})[row.model_rank] = row
+
+    def _eval(g2, g3):
+        shape = {"n": 0, "quin": 0, "exacta": 0, "csp": 0.0, "csp_n": 0}
+        other = {"n": 0, "quin": 0}
+        for rid, rr in ranks.items():
+            a, b, c = rr.get(1), rr.get(2), rr.get(3)
+            race_pos = pos.get(rid)
+            if not a or not b or not c or not race_pos:
+                continue
+            p1 = (a.win_probability or 0) * 100
+            p2 = (b.win_probability or 0) * 100
+            p3 = (c.win_probability or 0) * 100
+            na, nb = _normalize_horse(a.horse_name), _normalize_horse(b.horse_name)
+            pa, pb = race_pos.get(na), race_pos.get(nb)
+            if pa is None or pb is None:
+                continue
+            quin = ({pa, pb} == {1, 2})
+            is_shape = (p1 - p2) <= g2 and (p2 - p3) >= g3
+            tgt = shape if is_shape else other
+            tgt["n"] += 1
+            if quin:
+                tgt["quin"] += 1
+                if is_shape:
+                    if pa == 1 and pb == 2: shape["exacta"] += 1
+                    sa, sb = sp.get((rid, na)), sp.get((rid, nb))
+                    if sa and sb: shape["csp"] += sa + sb; shape["csp_n"] += 1
+        return shape, other
+
+    shape, other = _eval(top2_gap, rank3_gap)
+    grid = []
+    for g2 in (2.0, 3.0, 5.0):
+        for g3 in (8.0, 10.0, 15.0):
+            s, _o = _eval(g2, g3)
+            grid.append({
+                "top2_within": g2, "rank3_clear_by": g3, "races": s["n"],
+                "quinella_hit_pct": round(s["quin"] / s["n"] * 100, 1) if s["n"] else None,
+            })
+    return {
+        "window_days": days,
+        "shape_def": f"rank1-rank2 <= {top2_gap}pt AND rank2-rank3 >= {rank3_gap}pt",
+        "matching_shape": {
+            "races": shape["n"],
+            "quinella_hit_pct": round(shape["quin"] / shape["n"] * 100, 1) if shape["n"] else None,
+            "exacta_hit_pct": round(shape["exacta"] / shape["n"] * 100, 1) if shape["n"] else None,
+            "avg_combined_sp_on_hit": round(shape["csp"] / shape["csp_n"], 2) if shape["csp_n"] else None,
+        },
+        "all_other_races": {
+            "races": other["n"],
+            "quinella_hit_pct": round(other["quin"] / other["n"] * 100, 1) if other["n"] else None,
+        },
+        "threshold_sweep": grid,
+    }
+
+
 @app.get("/api/admin/backtest/quinella")
 async def backtest_quinella(
     days: int = 120,
