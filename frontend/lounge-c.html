@@ -171,7 +171,9 @@
 
   .tn { color: var(--text-3); }
   .tally-lab { font-size: 0.64rem; font-weight: 800; letter-spacing: 0.05em; text-transform: uppercase; color: var(--text-3); }
-  .cell-tally { text-align: center; font-size: 0.72rem; padding: 7px 4px; border-top: 1px solid var(--line); }
+  .cell-tally { text-align: center; font-size: 0.72rem; padding: 6px 4px; }
+  .race-grid thead .totals-row td { border-bottom: 2px solid var(--line); background: var(--surface-2); }
+  .race-grid thead .totals-row .tally-lab { position: sticky; left: 0; background: var(--surface-2); z-index: 2; }
   .cell-tally .rs-w, .cell-tally .rs-p { display: block; }
   .cell-tally .rs-p { margin-top: 1px; }
 
@@ -1297,12 +1299,12 @@
       el.innerHTML = `<div class="empty"><div class="big">🎯</div>No Sharp races today — switch to 'All picks' to see the full grid.</div>`;
       return;
     }
+    const totalsRow = colS.some(Boolean) ? `<tr class="totals-row">
+        <td class="mcell tally-lab">Win / Plc %</td>
+        ${Array.from({ length: maxR }, (_, i) => `<td class="cell-tally num">${colS[i] ? `<span class="rs-w">${Math.round(colW[i] / colS[i] * 100)}%</span><span class="rs-p">${Math.round(colP[i] / colS[i] * 100)}%</span>` : '<span class="tn">–</span>'}</td>`).join('')}
+      </tr>` : '';
     el.innerHTML = `<div class="grid-wrap"><table class="race-grid">
-      <thead><tr><th>Meeting</th>${head}</tr></thead><tbody>${rows}</tbody>
-      ${colS.some(Boolean) ? `<tfoot><tr>
-        <td class="mcell tally-lab">Wins / places</td>
-        ${Array.from({ length: maxR }, (_, i) => `<td class="cell-tally num">${colS[i] ? `<span class="rs-w">${colW[i]}/${colS[i]} wins</span>${colP[i] > colW[i] ? `<span class="rs-p">${colP[i]} placed</span>` : ''}` : '<span class="tn">–</span>'}</td>`).join('')}
-      </tr></tfoot>` : ''}</table></div>
+      <thead><tr><th>Meeting</th>${head}</tr>${totalsRow}</thead><tbody>${rows}</tbody></table></div>
       <div class="heat-legend">
         <span><span class="sw" style="background:var(--hot-dim);box-shadow:inset 0 0 0 1px var(--hot)"></span>Hot pick race</span>
         <span><span class="sw" style="background:var(--blue-dim);box-shadow:inset 0 0 0 1px var(--blue)"></span>High confidence</span>
