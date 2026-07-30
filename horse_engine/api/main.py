@@ -14057,8 +14057,10 @@ async def _auto_heal_findings(target: str, findings: list[dict]) -> list[dict]:
                             "outcome": "healed" if healed_n else "skipped"})
 
         elif check == "duplicate_positions_in_result":
-            # Delete duplicate HistoricalResultRow rows for the same race+position,
-            # keeping the one with tab_number populated (or earliest id if tied).
+            # Delete ONLY exact duplicates: same race + same normalized horse +
+            # same REAL finishing position (1-89), keeping the lowest id (prefer
+            # the one with a tab_number). NEVER touches the unplaced sentinel
+            # (pos >= 90) or different-horse rows (dead-heats). Covers all races.
             race_ids = f.get("example_race_ids") or []
             deleted = 0
             async with get_session() as session:
@@ -14068,29 +14070,21 @@ async def _auto_heal_findings(target: str, findings: list[dict]) -> list[dict]:
                         .where(HistoricalResultRow.race_id == rid)
                         .order_by(HistoricalResultRow.position, HistoricalResultRow.id)
                     )).scalars().all()
-                    seen_pos: dict[int, int] = {}  # position -> kept row id
+                    # group exact (position, normalized-horse) rows
+                    groups: dict[tuple, list] = {}
                     for r in rows:
-                        if r.position is None or r.position <= 0:
-                            continue
-                        if r.position in seen_pos:
-                            # Duplicate — prefer the one with tab_number
-                            kept_id = seen_pos[r.position]
-                            kept = next((x for x in rows if x.id == kept_id), None)
-                            if kept and kept.tab_number is None and r.tab_number is not None:
-                                # Swap: delete kept, keep this one
-                                await session.execute(
-                                    sa_delete(HistoricalResultRow)
-                                    .where(HistoricalResultRow.id == kept_id)
-                                )
-                                seen_pos[r.position] = r.id
-                            else:
-                                await session.execute(
-                                    sa_delete(HistoricalResultRow)
-                                    .where(HistoricalResultRow.id == r.id)
-                                )
+                        if r.position is None or not (1 <= r.position < 90):
+                            continue  # sentinel / unplaced left untouched
+                        groups.setdefault((r.position, _normalize_horse(r.horse_name or "")), []).append(r)
+                    for _k, grp in groups.items():
+                        if len(grp) < 2:
+                            continue  # dead-heats never land here (distinct horses)
+                        # keep the one WITH a tab_number, else lowest id
+                        grp.sort(key=lambda x: (x.tab_number is None, x.id))
+                        for extra in grp[1:]:
+                            await session.execute(
+                                sa_delete(HistoricalResultRow).where(HistoricalResultRow.id == extra.id))
                             deleted += 1
-                        else:
-                            seen_pos[r.position] = r.id
                 await session.commit()
             actions.append({"check": check, "action": "dedupe_positions",
                             "affected": deleted, "outcome": "healed" if deleted else "skipped"})
@@ -14489,22 +14483,33 @@ async def _run_quality_check(target: str) -> dict:
         })
 
     # ── Duplicate positions in HistoricalResultRow ────────────────
+    # Position 90-99 is the "unplaced" sentinel — MANY runners legitimately
+    # share it, so it is NOT a duplicate (2026-07-30: the old check flagged
+    # every 5+ runner race on its pos-99 rows and the heal DELETED real
+    # unplaced-runner rows). Only real finishing positions (1-89) count, and
+    # only when the SAME horse repeats a position (two DIFFERENT horses at one
+    # position is a dead-heat — legitimate).
     dup_pos_races: list[str] = []
     for rid in hr_race_ids:
-        seen = set()
+        pos_horses: dict[int, set] = {}
+        flagged = False
         for r in hr_result_rows:
-            if r.race_id != rid or not r.position or r.position <= 0:
+            if r.race_id != rid or not r.position or not (1 <= r.position < 90):
                 continue
-            if r.position in seen:
-                dup_pos_races.append(rid)
+            key = _normalize_horse(r.horse_name or "")
+            if r.position in pos_horses and key in pos_horses[r.position]:
+                flagged = True  # exact duplicate (same horse + same real position)
                 break
-            seen.add(r.position)
+            pos_horses.setdefault(r.position, set()).add(key)
+        if flagged:
+            dup_pos_races.append(rid)
     if dup_pos_races:
         critical.append({
             "check": "duplicate_positions_in_result",
             "n_races": len(dup_pos_races),
-            "example_race_ids": dup_pos_races[:20],
-            "reason": "Same finishing position twice per race; actual_top3 becomes wrong → false bet hits",
+            "example_race_ids": dup_pos_races,   # FULL list — heal must cover all
+            "reason": "The SAME horse recorded twice at the same finishing position (double-seed). "
+                      "Dead-heats and unplaced (pos 99) runners are excluded.",
         })
 
     # ── Bet ledger: unsettled but race jumped > 24h ago ───────────
