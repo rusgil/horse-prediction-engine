@@ -24875,6 +24875,81 @@ async def admin_refresh_about_stats_now(
     return {"ok": True, "forced": force, "published": published}
 
 
+@app.get("/api/admin/backtest/debutants")
+async def backtest_debutants(
+    days: int = 180,
+    x_cron_secret: Optional[str] = Header(None),
+):
+    """Do our rank-1 picks that are RACE DEBUTANTS (no prior start;
+    days_since_last_run == -1) actually win at the rate we claim? Compares
+    debutant rank-1 picks vs experienced rank-1 picks: actual win/place rate
+    vs avg claimed win%. FIX-S reads.
+    """
+    _check_admin(x_cron_secret)
+    cutoff = (_today_aest() - timedelta(days=days)).isoformat()
+    async with get_session() as session:
+        hist = (await session.execute(
+            select(RunnerPredictionHistoryRow)
+            .where(RunnerPredictionHistoryRow.race_id >= cutoff)
+            .where(RunnerPredictionHistoryRow.source == "live")
+            .where(RunnerPredictionHistoryRow.model_rank == 1)
+            .where(RunnerPredictionHistoryRow.cancelled.is_(False) | RunnerPredictionHistoryRow.cancelled.is_(None))
+            .where(RunnerPredictionHistoryRow.win_probability.isnot(None))
+            .order_by(RunnerPredictionHistoryRow.enriched_at.desc())
+        )).scalars().all()
+        hr_rows = (await session.execute(
+            select(HistoricalResultRow.race_id, HistoricalResultRow.horse_name,
+                   HistoricalResultRow.position)
+            .where(HistoricalResultRow.race_id >= cutoff)
+        )).fetchall()
+    winners = {r.race_id: _normalize_horse(r.horse_name) for r in hr_rows if r.position == 1}
+    placed = {}
+    for r in hr_rows:
+        if r.position and 1 <= r.position <= 3:
+            placed.setdefault(r.race_id, set()).add(_normalize_horse(r.horse_name))
+
+    seen: set = set()
+    picks = []
+    for row in hist:
+        if row.race_id in seen:
+            continue
+        seen.add(row.race_id)
+        picks.append(row)
+
+    def _blank():
+        return {"n": 0, "wins": 0, "placed": 0, "claimed": 0.0}
+    deb, exp = _blank(), _blank()
+    for row in picks:
+        if row.race_id not in winners:
+            continue
+        d = None
+        try:
+            e = json.loads(row.enriched_json) if isinstance(row.enriched_json, str) else (row.enriched_json or {})
+            d = e.get("days_since_last_run")
+        except Exception:
+            pass
+        bucket = deb if d == -1 else exp
+        bucket["n"] += 1
+        bucket["claimed"] += row.win_probability or 0
+        nh = _normalize_horse(row.horse_name)
+        if nh == winners[row.race_id]:
+            bucket["wins"] += 1
+        if nh in placed.get(row.race_id, set()):
+            bucket["placed"] += 1
+    def _fmt(b):
+        n = b["n"]
+        return {
+            "rank1_picks": n,
+            "win_rate_pct": round(b["wins"] / n * 100, 1) if n else None,
+            "place_rate_pct": round(b["placed"] / n * 100, 1) if n else None,
+            "avg_claimed_win_pct": round(b["claimed"] / n * 100, 1) if n else None,
+            "calibration_gap_pp": round((b["wins"] / n * 100) - (b["claimed"] / n * 100), 1) if n else None,
+        }
+    return {"window_days": days,
+            "debutant_rank1_picks": _fmt(deb),
+            "experienced_rank1_picks": _fmt(exp)}
+
+
 @app.get("/api/admin/backtest/quinella-shape")
 async def backtest_quinella_shape(
     days: int = 150,
