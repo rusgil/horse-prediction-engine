@@ -29,6 +29,14 @@
       "destination": "/funkmeup.html"
     },
     {
+      "source": "/hotbook",
+      "destination": "/hot-book.html"
+    },
+    {
+      "source": "/hot-book",
+      "destination": "/hot-book.html"
+    },
+    {
       "source": "/about",
       "destination": "/about.html"
     },

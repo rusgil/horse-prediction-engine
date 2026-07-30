@@ -909,6 +909,25 @@
     @media (max-width: 600px) {
       .page-title { font-size: 28px; }
     }
+    .hotbook-cta {
+      display: flex; align-items: center; gap: 14px;
+      max-width: 760px; margin: 0 auto 20px;
+      background: linear-gradient(120deg, rgba(251,146,60,0.14), rgba(251,146,60,0.05));
+      border: 1px solid rgba(251,146,60,0.45);
+      border-radius: 14px; padding: 14px 18px;
+      text-decoration: none; color: inherit;
+      transition: transform .12s ease, box-shadow .12s ease, border-color .12s ease;
+    }
+    .hotbook-cta:hover { transform: translateY(-1px); border-color: rgba(251,146,60,0.8); box-shadow: 0 8px 24px rgba(251,146,60,0.18); }
+    .hotbook-cta .hb-emoji { font-size: 30px; line-height: 1; flex-shrink: 0; }
+    .hotbook-cta .hb-text { display: flex; flex-direction: column; gap: 2px; }
+    .hotbook-cta .hb-text b { font-size: 15px; color: #fb923c; }
+    .hotbook-cta .hb-text span { font-size: 12.5px; color: #9ca3af; line-height: 1.4; }
+    .hotbook-cta .hb-go { margin-left: auto; flex-shrink: 0; font-weight: 800; font-size: 13px; color: #fb923c; white-space: nowrap; }
+    @media (max-width: 600px) {
+      .hotbook-cta { gap: 11px; padding: 12px 14px; }
+      .hotbook-cta .hb-go { display: none; }
+    }
   </style>
   <script src="/site-warnings.js" defer></script>
 </head>
@@ -935,6 +954,14 @@
     <h1 class="page-title">🧪 Funky IQ Labs <span class="tier-badge tier-labs">Labs</span></h1>
     <p class="page-subtitle">Paper-trading · trifecta boxes at $1 a combination · P/L straight from the dividends · metro meetings only</p>
   </header>
+  <a href="/hotbook" class="hotbook-cta">
+    <span class="hb-emoji">🔥</span>
+    <span class="hb-text">
+      <b>New — the Hot Book</b>
+      <span>Just the model’s highest-conviction win picks, sized to your bankroll with fractional Kelly. The tier that actually made money.</span>
+    </span>
+    <span class="hb-go">Open →</span>
+  </a>
   <header>
     <div id="heroPick"></div>
     <div id="summary" class="summary"></div>
