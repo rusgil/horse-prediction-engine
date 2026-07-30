@@ -1538,7 +1538,9 @@ export CRON_SECRET='&lt;your CRON_SECRET&gt;'
       if (perfData?.summary?.length && document.getElementById('phase2Chart')) {
         const P2_DEPLOY = '2026-07-22';
         const P2_START  = '2026-07-08';
-        const p2days = [...perfData.summary].reverse().filter(d => d.date >= P2_START);
+        // Exclude today (AEST) — it's still settling; chart ends at yesterday.
+        const _todayAestP2 = new Date().toLocaleDateString('en-CA', { timeZone: 'Australia/Sydney' });
+        const p2days = [...perfData.summary].reverse().filter(d => d.date >= P2_START && d.date < _todayAestP2);
         if (p2days.length > 2) {
           const p2labels = p2days.map(d => fmtDate(d.date));
           const p2win    = p2days.map(d => +(d.win_rate * 100).toFixed(1));
@@ -1583,20 +1585,13 @@ export CRON_SECRET='&lt;your CRON_SECRET&gt;'
             }
           };
           const races = p2days.map(d => d.races || 0);
-          // Mark the current AEST day as PROVISIONAL — it's still settling
-          // (a 9-race morning shouldn't look like a finished result).
-          const _todayAest = new Date().toLocaleDateString('en-CA', { timeZone: 'Australia/Sydney' });
-          const partialIdx = p2days.findIndex(d => d.date === _todayAest);
-          const _hollowBg = getComputedStyle(document.body).getPropertyValue('--bg-card') || '#0e1220';
-          const ptRadius = (base) => p2days.map((d, i) => i === partialIdx ? base + 3 : base);
-          const ptBg = (col) => p2days.map((d, i) => i === partialIdx ? _hollowBg.trim() : col);
           new Chart(document.getElementById('phase2Chart'), {
             type: 'line',
             data: {
               labels: p2labels,
               datasets: [
-                { label: 'Win %', data: p2win, borderColor: 'rgba(34,197,94,0.9)', backgroundColor: 'rgba(34,197,94,0.08)', tension: 0.3, pointRadius: ptRadius(3), pointBackgroundColor: ptBg('rgba(34,197,94,0.9)'), pointBorderColor: 'rgba(34,197,94,0.9)', pointBorderWidth: 2 },
-                { label: 'Place %', data: p2place, borderColor: 'rgba(59,130,246,0.9)', backgroundColor: 'rgba(59,130,246,0.06)', tension: 0.3, pointRadius: ptRadius(3), pointBackgroundColor: ptBg('rgba(59,130,246,0.9)'), pointBorderColor: 'rgba(59,130,246,0.9)', pointBorderWidth: 2 },
+                { label: 'Win %', data: p2win, borderColor: 'rgba(34,197,94,0.9)', backgroundColor: 'rgba(34,197,94,0.08)', tension: 0.3, pointRadius: 3 },
+                { label: 'Place %', data: p2place, borderColor: 'rgba(59,130,246,0.9)', backgroundColor: 'rgba(59,130,246,0.06)', tension: 0.3, pointRadius: 3 },
                 ...(baseWin != null ? [{ label: 'Baseline win', data: p2labels.map(() => +baseWin.toFixed(1)), borderColor: 'rgba(34,197,94,0.45)', borderDash: [6, 5], pointRadius: 0, borderWidth: 1 }] : []),
                 ...(basePlace != null ? [{ label: 'Baseline place', data: p2labels.map(() => +basePlace.toFixed(1)), borderColor: 'rgba(59,130,246,0.45)', borderDash: [6, 5], pointRadius: 0, borderWidth: 1 }] : []),
               ]
@@ -1605,8 +1600,7 @@ export CRON_SECRET='&lt;your CRON_SECRET&gt;'
               ...chartDefaults,
               plugins: { ...chartDefaults.plugins, tooltip: { callbacks: {
                 label: ctx => `${ctx.dataset.label}: ${ctx.parsed.y}%`,
-                afterLabel: ctx => ctx.datasetIndex < 2
-                  ? `Races: ${races[ctx.dataIndex]}${ctx.dataIndex === partialIdx ? ' · IN PROGRESS (day still settling)' : ''}` : '',
+                afterLabel: ctx => ctx.datasetIndex < 2 ? `Races: ${races[ctx.dataIndex]}` : '',
               }}},
               scales: { ...chartDefaults.scales, y: { ...chartDefaults.scales.y, min: 0, ticks: { ...chartDefaults.scales.y.ticks, callback: v => v + '%' } } }
             },
@@ -1616,7 +1610,8 @@ export CRON_SECRET='&lt;your CRON_SECRET&gt;'
       }
 
       if (perfData?.summary?.length) {
-        const days = [...perfData.summary].reverse().slice(-14);
+        const _todayAestW = new Date().toLocaleDateString('en-CA', { timeZone: 'Australia/Sydney' });
+        const days = [...perfData.summary].reverse().filter(d => d.date < _todayAestW).slice(-14);
         const labels      = days.map(d => fmtDate(d.date));
         const winRates    = days.map(d => +(d.win_rate * 100).toFixed(1));
         const raceCounts  = days.map(d => d.races || 0);
