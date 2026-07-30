@@ -56,6 +56,7 @@ from horse_engine.models.database import (
     HistoricalResultRow,
     NightlyReviewRow,
     OddsSnapshotRow,
+    RaceExoticDividendRow,
     QualityCheckRow,
     WeeklyReviewFollowUpRow,
     ResponseCacheRow,
@@ -573,6 +574,32 @@ async def _scheduled_enrich():
             n = await _seed_results_for_date(seed_date)
             if n:
                 log.info("[scheduler] Seeded %d results for %s", n, seed_date)
+        # Capture real tote exotic dividends (quinella EV data) for the freshly
+        # seeded races — TAB source, throttled inside the helper.
+        try:
+            for offset in (-1, 0):
+                cap_date = (_today_aest() + timedelta(days=offset)).isoformat()
+                async with get_session() as _s:
+                    _settled = (await _s.execute(
+                        select(HistoricalResultRow.race_id).distinct()
+                        .where(HistoricalResultRow.race_id.like(f"{_like_safe(cap_date)}_%"))
+                        .where(HistoricalResultRow.position == 1)
+                    )).scalars().all()
+                    _have = set((await _s.execute(
+                        select(RaceExoticDividendRow.race_id)
+                        .where(RaceExoticDividendRow.race_id.like(f"{_like_safe(cap_date)}_%"))
+                        .where(RaceExoticDividendRow.quinella.isnot(None))
+                    )).scalars().all())
+                for _rid in _settled:
+                    if _rid in _have:
+                        continue
+                    try:
+                        await _capture_exotic_dividends(_rid)
+                    except Exception:
+                        pass
+                    await asyncio.sleep(0.8)
+        except Exception as e:
+            log.warning("[scheduler] exotic-dividend capture failed: %s", e)
         log.info("[scheduler] Enrichment complete")
     except Exception as e:
         log.exception("[scheduler] Enrichment failed: %s", e)
@@ -6131,9 +6158,11 @@ async def _fetch_race_raw_from_tab(race_id: str) -> Optional[dict]:
     return None
 
 
-def _extract_trifecta_from_tab_response(raw: dict) -> Optional[float]:
-    """Best-effort trifecta dividend extraction. TAB's payload shape varies
-    between endpoints; check a few likely keys."""
+def _extract_pool_dividend(raw: dict, keyword: str, exclude: tuple = ()) -> Optional[float]:
+    """Best-effort tote pool dividend extraction by pool-name keyword
+    (QUINELLA / EXACTA / TRIFECTA / FIRST FOUR). TAB's payload shape varies
+    between endpoints; check the same likely keys for any pool."""
+    keyword = keyword.upper()
     if not isinstance(raw, dict):
         return None
     # Shape 1: top-level 'dividends' array of {poolName, price, ...}
@@ -6141,7 +6170,7 @@ def _extract_trifecta_from_tab_response(raw: dict) -> Optional[float]:
         if not isinstance(d, dict):
             continue
         name = (d.get("poolName") or d.get("name") or "").upper()
-        if "TRIFECTA" in name and "FIRST" not in name:  # exclude 'First Four'
+        if keyword in name and not any(x in name for x in exclude):
             for key in ("price", "amount", "dividend"):
                 v = d.get(key)
                 if isinstance(v, (int, float)) and v > 0:
@@ -6173,7 +6202,7 @@ def _extract_trifecta_from_tab_response(raw: dict) -> Optional[float]:
         pools = raw.get(pool_key)
         if isinstance(pools, dict):
             for k, v in pools.items():
-                if "TRIFECTA" in str(k).upper() and "FIRST" not in str(k).upper():
+                if keyword in str(k).upper() and not any(x in str(k).upper() for x in exclude):
                     if isinstance(v, (int, float)) and v > 0:
                         return float(v)
                     if isinstance(v, dict):
@@ -6184,6 +6213,10 @@ def _extract_trifecta_from_tab_response(raw: dict) -> Optional[float]:
     return None
 
 
+def _extract_trifecta_from_tab_response(raw: dict) -> Optional[float]:
+    return _extract_pool_dividend(raw, "TRIFECTA", exclude=("FIRST",))
+
+
 async def _fetch_trifecta_dividend(race_id: str) -> Optional[float]:
     """Pull the trifecta dividend via TAB's race endpoint. RA's Results.aspx
     does not include exotic dividends so we go to TAB directly."""
@@ -6191,6 +6224,83 @@ async def _fetch_trifecta_dividend(race_id: str) -> Optional[float]:
     if raw is None:
         return None
     return _extract_trifecta_from_tab_response(raw)
+
+
+async def _capture_exotic_dividends(race_id: str, force: bool = False) -> Optional[dict]:
+    """Capture real tote exotic dividends (quinella-first) for one settled
+    race and upsert into RaceExoticDividendRow. Idempotent: skips if a
+    quinella is already stored unless force=True. One TAB fetch per race;
+    callers throttle. Returns the stored dict or None."""
+    async with get_session() as session:
+        existing = (await session.execute(
+            select(RaceExoticDividendRow).where(RaceExoticDividendRow.race_id == race_id)
+        )).scalar_one_or_none()
+    if existing is not None and existing.quinella is not None and not force:
+        return {"quinella": existing.quinella, "cached": True}
+    raw = await _fetch_race_raw_from_tab(race_id)
+    if raw is None:
+        return None
+    vals = {
+        "quinella":   _extract_pool_dividend(raw, "QUINELLA"),
+        "exacta":     _extract_pool_dividend(raw, "EXACTA"),
+        "trifecta":   _extract_pool_dividend(raw, "TRIFECTA", exclude=("FIRST",)),
+        "first_four": _extract_pool_dividend(raw, "FIRST FOUR") or _extract_pool_dividend(raw, "FIRST 4"),
+    }
+    if not any(v is not None for v in vals.values()):
+        return None
+    async with get_session() as session:
+        row = (await session.execute(
+            select(RaceExoticDividendRow).where(RaceExoticDividendRow.race_id == race_id)
+        )).scalar_one_or_none()
+        if row is None:
+            row = RaceExoticDividendRow(race_id=race_id, source="tab")
+            session.add(row)
+        for k, v in vals.items():
+            if v is not None:
+                setattr(row, k, v)
+        row.source = "tab"
+        row.captured_at = datetime.utcnow()
+        await session.commit()
+    log.info("[exotic-div] captured %s: %s", race_id, {k: v for k, v in vals.items() if v})
+    return vals
+
+
+@app.post("/api/admin/capture-exotic-dividends")
+async def admin_capture_exotic_dividends(
+    race_date: Optional[str] = None,
+    x_cron_secret: Optional[str] = Header(None),
+):
+    """Sweep settled races for `race_date` (default yesterday+today) and
+    capture their tote exotic dividends from TAB. Bounded + throttled — safe
+    to call manually or from cron."""
+    _check_admin(x_cron_secret)
+    dates = [race_date] if race_date else [
+        (_today_aest() - timedelta(days=1)).isoformat(), _today_aest().isoformat()]
+    captured, skipped = 0, 0
+    for d in dates:
+        async with get_session() as session:
+            settled = (await session.execute(
+                select(HistoricalResultRow.race_id).distinct()
+                .where(HistoricalResultRow.race_id.like(f"{_like_safe(d)}_%"))
+                .where(HistoricalResultRow.position == 1)
+            )).scalars().all()
+            have = set((await session.execute(
+                select(RaceExoticDividendRow.race_id)
+                .where(RaceExoticDividendRow.race_id.like(f"{_like_safe(d)}_%"))
+                .where(RaceExoticDividendRow.quinella.isnot(None))
+            )).scalars().all())
+        for rid in settled:
+            if rid in have:
+                skipped += 1
+                continue
+            try:
+                r = await _capture_exotic_dividends(rid)
+                if r and not r.get("cached"):
+                    captured += 1
+            except Exception as e:
+                log.debug("[exotic-div] %s failed: %s", rid, e)
+            await asyncio.sleep(0.8)  # throttle — no-hammer rule
+    return {"dates": dates, "newly_captured": captured, "already_had": skipped}
 
 
 async def _settle_bets_for_race(race_id: str) -> int:
@@ -24796,6 +24906,15 @@ async def backtest_quinella(
         if r.starting_price:
             sp[(r.race_id, _normalize_horse(r.horse_name))] = float(r.starting_price)
 
+    # Real captured quinella dividends → actual EV (not the SP proxy).
+    async with get_session() as session:
+        _qd = (await session.execute(
+            select(RaceExoticDividendRow.race_id, RaceExoticDividendRow.quinella)
+            .where(RaceExoticDividendRow.race_id >= cutoff)
+            .where(RaceExoticDividendRow.quinella.isnot(None))
+        )).fetchall()
+    quin_div = {rid: float(q) for rid, q in _qd}
+
     seen: set = set()
     r1, r2 = {}, {}
     for row in hist:
@@ -24806,7 +24925,8 @@ async def backtest_quinella(
         (r1 if row.model_rank == 1 else r2)[row.race_id] = row
 
     def _blank():
-        return {"n": 0, "quin": 0, "exacta": 0, "one_won": 0, "csp_sum": 0.0, "csp_n": 0}
+        return {"n": 0, "quin": 0, "exacta": 0, "one_won": 0, "csp_sum": 0.0, "csp_n": 0,
+                "div_n": 0, "div_sum": 0.0}
     overall = _blank()
     gap_buckets = [("0-5pt", 0, 5), ("5-10pt", 5, 10), ("10-20pt", 10, 20), ("20pt+", 20, 1e9)]
     sum_buckets = [("<35%", 0, 35), ("35-45%", 35, 45), ("45-55%", 45, 55), ("55%+", 55, 1e9)]
@@ -24833,12 +24953,14 @@ async def backtest_quinella(
             sa, sb = sp.get((rid, na)), sp.get((rid, nb))
             if sa and sb:
                 csp = sa + sb
+        rdiv = quin_div.get(rid) if quin else None
         def _add(d):
             d["n"] += 1
             if quin: d["quin"] += 1
             if exacta: d["exacta"] += 1
             if one_won: d["one_won"] += 1
             if csp: d["csp_sum"] += csp; d["csp_n"] += 1
+            if rdiv: d["div_n"] += 1; d["div_sum"] += rdiv
         _add(overall)
         for n, lo, hi in gap_buckets:
             if lo <= gap < hi: _add(by_gap[n]); break
@@ -24853,6 +24975,12 @@ async def backtest_quinella(
             "exacta_hit_pct": round(d["exacta"] / n * 100, 1) if n else None,
             "one_of_two_won_pct": round(d["one_won"] / n * 100, 1) if n else None,
             "avg_combined_sp_on_hit": round(d["csp_sum"] / d["csp_n"], 2) if d["csp_n"] else None,
+            "real_quinella_dividends": d["div_n"],
+            "avg_real_quinella_div": round(d["div_sum"] / d["div_n"], 2) if d["div_n"] else None,
+            # $1 flat-stake ROI using REAL dividends: (sum of dividends on hits
+            # − races with a dividend known) / races. Only meaningful once
+            # real_quinella_dividends is a decent sample.
+            "flat_roi_pct_real": round((d["div_sum"] - d["n"]) / d["n"] * 100, 1) if (d["n"] and d["div_n"]) else None,
         }
     return {
         "window_days": days,

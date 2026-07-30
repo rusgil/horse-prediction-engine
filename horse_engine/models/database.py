@@ -54,6 +54,23 @@ def sched_to_utc_naive(value) -> "datetime | None":
     return dt
 
 
+class RaceExoticDividendRow(Base):
+    """Real tote exotic dividends captured post-race (quinella first-class,
+    plus exacta/trifecta/first-four when available). Source of truth for
+    measuring exotic-bet EV — win/place odds live elsewhere. One row per
+    race_id, upserted; nulls where a pool wasn't returned by the source."""
+    __tablename__ = "race_exotic_dividends"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    race_id = Column(String, index=True, unique=True)
+    quinella = Column(Float, nullable=True)
+    exacta = Column(Float, nullable=True)
+    trifecta = Column(Float, nullable=True)
+    first_four = Column(Float, nullable=True)
+    source = Column(String, nullable=True)          # "tab" | "ra"
+    captured_at = Column(DateTime, default=datetime.utcnow)
+
+
 class RacePredictionRow(Base):
     __tablename__ = "race_predictions"
 
