@@ -1333,50 +1333,24 @@ async def save_race_predictions(session: AsyncSession, race_id: str, predictions
         rows.append(row)
     await session.commit()
 
-    # Auto-cancel duplicates — bidirectional.
-    # A horse should only appear in the HIGHEST-numbered race it's nominated in.
-    # Cancel earlier race entries when this race is saved, and cancel THIS race's entry
-    # if the horse already has an uncancelled entry in a later race (handles re-enrichment
-    # of an earlier race after the later race was already saved).
-    date_venue = race_id.rsplit("_R", 1)[0]  # e.g. "2026-06-09_scone"
-    horse_names = [p.get("horse_name") for p in predictions if p.get("horse_name")]
-    try:
-        current_race_num = int(race_id.rsplit("_R", 1)[1])
-    except (IndexError, ValueError):
-        current_race_num = 0
-    if horse_names and date_venue:
-        from sqlalchemy import update as sa_update
-        # 1. Cancel same horses in any EARLIER race
-        await session.execute(
-            sa_update(RunnerPredictionRow)
-            .where(RunnerPredictionRow.race_id.like(f"{date_venue}_R%"))
-            .where(RunnerPredictionRow.race_id != race_id)
-            .where(RunnerPredictionRow.horse_name.in_(horse_names))
-            .where(RunnerPredictionRow.race_number < current_race_num)
-            .values(cancelled=True)
-        )
-        # 2. If any of these horses already exist uncancelled in a LATER race,
-        #    cancel them in THIS race (re-enrichment of an earlier race must not
-        #    resurrect a horse that was correctly moved to a higher race number).
-        in_later = (await session.execute(
-            select(RunnerPredictionRow.horse_name)
-            .where(RunnerPredictionRow.race_id.like(f"{date_venue}_R%"))
-            .where(RunnerPredictionRow.race_id != race_id)
-            .where(RunnerPredictionRow.horse_name.in_(horse_names))
-            .where(RunnerPredictionRow.race_number > current_race_num)
-            .where(
-                RunnerPredictionRow.cancelled.is_(False)
-                | RunnerPredictionRow.cancelled.is_(None)
-            )
-        )).scalars().all()
-        if in_later:
-            await session.execute(
-                sa_update(RunnerPredictionRow)
-                .where(RunnerPredictionRow.race_id == race_id)
-                .where(RunnerPredictionRow.horse_name.in_(in_later))
-                .values(cancelled=True)
-            )
-        await session.commit()
+    # Cross-entry handling (2026-07-31 root fix — false-scratch incident).
+    # A horse nominated in more than one race at a meeting (cross-entry) RUNS
+    # exactly one of them, decided by the trainer/stewards — and it is very
+    # often the EARLIER race, with the later entries scratched. The old code
+    # here assumed the opposite ("keep the highest-numbered race, cancel the
+    # earlier ones") and so falsely cancelled horses that actually ran: on
+    # 2026-07-30 alone it killed Lego Master (grange R1, ran), Sleepy Joe /
+    # Qickwit (gatton R3, ran) and Coral Cove (grange R2, ran) — every one the
+    # earlier leg of a cross-entry. The guess is unrecoverable pre-race and only
+    # the nightly result-reconciliation caught it after the fact.
+    #
+    # There is no reliable way to know which leg a cross-entered horse runs from
+    # the race number alone, so we NO LONGER guess. A cross-entry is left active
+    # in every race until an EXPLICIT scratch marker removes it from the ones it
+    # doesn't run — handled per-race by _apply_oddspro_scratches (OddsPro
+    # status=='SCRATCHED'). Same-race re-enrichment can't resurrect a real
+    # scratch either: existing cancelled=True rows are preserved above
+    # (existing_cancelled). Explicit signals only — never a race-number guess.
 
     # Force-mirror path: history already exists and the caller asked to overwrite.
     # Update the LATEST snapshot batch's rows with the fresh probabilities/rank so
