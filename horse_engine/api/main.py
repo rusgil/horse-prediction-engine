@@ -57,6 +57,7 @@ from horse_engine.models.database import (
     NightlyReviewRow,
     OddsSnapshotRow,
     RaceExoticDividendRow,
+    PredictionIntegrityRow,
     QualityCheckRow,
     WeeklyReviewFollowUpRow,
     ResponseCacheRow,
@@ -2870,6 +2871,11 @@ async def lifespan(app: FastAPI):
     # BUG-43: hourly (was 9am once) — each race snapshots inside its T-2h
     # window so the frozen market features reflect a live market.
     scheduler.add_job(_scheduled_prerace_snapshot, CronTrigger(hour="9-19", minute=0, timezone="Australia/Sydney"))
+    # Prediction-integrity audit: baseline each race JUST BEFORE it jumps
+    # (every 5 min, racing hours), then EOD verify + cross-ref at 23:15 AEST
+    # → feeds the morning report.
+    scheduler.add_job(_capture_integrity_baseline, CronTrigger(minute="*/5", hour="8-23", timezone="Australia/Sydney"))
+    scheduler.add_job(_scheduled_integrity_eod, CronTrigger(hour=23, minute=15, timezone="Australia/Sydney"))
     # Daily exotic-dividend capture — base 23:15 AEST with a LARGE ±1h jitter
     # so the SB fetch lands anywhere ~22:15-00:15 (never a predictable
     # fixed-second daily hit; idempotent, so drift across midnight is fine).
@@ -6265,6 +6271,130 @@ async def _capture_exotic_dividends_for_dates(dates: list[str]) -> int:
                 log.debug("[exotic-div] %s failed: %s", rid, e)
             await asyncio.sleep(1.5)  # gentle on SB (no-hammer rule)
     return captured
+
+
+async def _capture_integrity_baseline():
+    """Runs every 5 min in racing hours. Baselines each of today's races'
+    model 1st/2nd/3rd (from the live mutable prediction — the final pre-race
+    calc) in the window JUST BEFORE it jumps (from ~12 min out to ~5 min after
+    the off), once per race. This is the tamper reference: the frozen history
+    top-3 read at 11pm must still match it (allowing for late scratchings)."""
+    try:
+        today = _today_aest().isoformat()
+        now = datetime.utcnow()
+        lo = now - timedelta(minutes=5)     # a touch after the off (catch-up)
+        hi = now + timedelta(minutes=12)    # ~just before the jump
+        async with get_session() as session:
+            rows = (await session.execute(
+                select(RunnerPredictionRow.race_id, RunnerPredictionRow.horse_name,
+                       RunnerPredictionRow.model_rank, RunnerPredictionRow.scheduled_time)
+                .where(RunnerPredictionRow.race_id.like(f"{_like_safe(today)}_%"))
+                .where(RunnerPredictionRow.model_rank.in_([1, 2, 3]))
+                .where(RunnerPredictionRow.cancelled.is_(False) | RunnerPredictionRow.cancelled.is_(None))
+            )).all()
+        by_race: dict[str, dict] = {}
+        for rid, hn, rank, sched in rows:
+            by_race.setdefault(rid, {"_sched": sched})[rank] = hn
+        # only races jumping right about now (window around the off)
+        due = {}
+        for rid, d in by_race.items():
+            s = sched_to_utc_naive(d.get("_sched"))
+            if s is not None and lo <= s <= hi:
+                due[rid] = d
+        if not due:
+            return
+        n = 0
+        async with get_session() as session:
+            for rid, d in due.items():
+                row = (await session.execute(
+                    select(PredictionIntegrityRow).where(PredictionIntegrityRow.race_id == rid)
+                )).scalar_one_or_none()
+                if row is not None and row.jump_top1:
+                    continue  # baselined already
+                if row is None:
+                    row = PredictionIntegrityRow(race_id=rid, race_date=today)
+                    session.add(row)
+                row.scheduled_time = d.get("_sched")
+                row.jump_top1, row.jump_top2, row.jump_top3 = d.get(1), d.get(2), d.get(3)
+                row.jump_captured_at = datetime.utcnow()
+                n += 1
+            await session.commit()
+        if n:
+            log.info("[integrity] baselined %d race(s) about to jump (%s)", n, today)
+    except Exception as e:
+        log.exception("[integrity] baseline capture failed: %s", e)
+
+
+async def _integrity_eod_check(target_date: Optional[str] = None):
+    """23:00 AEST — re-read each baselined race's frozen HISTORY 1st/2nd/3rd
+    and diff vs the noon baseline. A change is only a MISMATCH (integrity
+    breach) when NONE of the baseline top-3 were later scratched — a scratch
+    re-rank is a legitimate pre-jump change. Feeds the morning report."""
+    try:
+        today = target_date or _today_aest().isoformat()
+        # frozen history top-3 per race (FIX-S: live, latest snapshot, uncancelled)
+        async with get_session() as session:
+            hrows = (await session.execute(
+                select(RunnerPredictionHistoryRow.race_id, RunnerPredictionHistoryRow.horse_name,
+                       RunnerPredictionHistoryRow.model_rank, RunnerPredictionHistoryRow.enriched_at)
+                .where(RunnerPredictionHistoryRow.race_id.like(f"{_like_safe(today)}_%"))
+                .where(RunnerPredictionHistoryRow.model_rank.in_([1, 2, 3]))
+                .where((RunnerPredictionHistoryRow.source == "live") | RunnerPredictionHistoryRow.source.is_(None))
+                .where(RunnerPredictionHistoryRow.cancelled.is_(False) | RunnerPredictionHistoryRow.cancelled.is_(None))
+                .order_by(RunnerPredictionHistoryRow.enriched_at.desc())
+            )).all()
+            scr = (await session.execute(
+                select(RunnerPredictionRow.race_id, RunnerPredictionRow.horse_name)
+                .where(RunnerPredictionRow.race_id.like(f"{_like_safe(today)}_%"))
+                .where(RunnerPredictionRow.cancelled.is_(True))
+            )).all()
+        seen: set = set()
+        hist_top: dict[str, dict] = {}
+        for rid, hn, rank, _en in hrows:
+            k = (rid, rank)
+            if k in seen:
+                continue
+            seen.add(k)
+            hist_top.setdefault(rid, {})[rank] = hn
+        scratched: dict[str, set] = {}
+        for rid, hn in scr:
+            scratched.setdefault(rid, set()).add(_normalize_horse(hn))
+        checked = mismatches = 0
+        async with get_session() as session:
+            rows = (await session.execute(
+                select(PredictionIntegrityRow)
+                .where(PredictionIntegrityRow.race_date == today)
+                .where(PredictionIntegrityRow.jump_top1.isnot(None))
+            )).scalars().all()
+            for row in rows:
+                cur = hist_top.get(row.race_id)
+                if not cur:
+                    continue  # never snapshotted to history (didn't run / abandoned)
+                row.eod_top1, row.eod_top2, row.eod_top3 = cur.get(1), cur.get(2), cur.get(3)
+                row.eod_captured_at = datetime.utcnow()
+                base = [row.jump_top1, row.jump_top2, row.jump_top3]
+                now3 = [row.eod_top1, row.eod_top2, row.eod_top3]
+                changed = [ (_normalize_horse(a or "") != _normalize_horse(b or "")) for a, b in zip(base, now3) ]
+                base_scratched = any(_normalize_horse(x or "") in scratched.get(row.race_id, set()) for x in base)
+                row.mismatch = any(changed) and not base_scratched
+                if any(changed):
+                    row.detail = (f"baseline {base} -> history {now3}" +
+                                  (" (explained: baseline pick scratched)" if base_scratched else " (UNEXPLAINED)"))
+                else:
+                    row.detail = "unchanged"
+                checked += 1
+                if row.mismatch:
+                    mismatches += 1
+            await session.commit()
+        log.info("[integrity] EOD check %s: %d races checked, %d MISMATCH", today, checked, mismatches)
+        return {"date": today, "checked": checked, "mismatches": mismatches}
+    except Exception as e:
+        log.exception("[integrity] EOD check failed: %s", e)
+        return {"error": str(e)[:120]}
+
+
+async def _scheduled_integrity_eod():
+    await _integrity_eod_check()
 
 
 async def _scheduled_capture_exotic_dividends():
@@ -14157,7 +14287,35 @@ async def _run_quality_check(target: str) -> dict:
                       "computed over a short field.",
         })
 
-    # ── History write-guard incidents (DB trigger catches, last 36h) ────────
+    # ── Prediction-integrity audit (independent post-jump tamper check) ─────
+    # Baseline (per-race, just before jump) vs frozen history at 23:15.
+    # A mismatch means a race's 1st/2nd/3rd changed after it jumped with no
+    # scratching to explain it — the write-guard trigger failed.
+    try:
+        async with get_session() as session:
+            _ir = (await session.execute(
+                select(PredictionIntegrityRow)
+                .where(PredictionIntegrityRow.race_date == target)
+                .where(PredictionIntegrityRow.eod_captured_at.isnot(None))
+            )).scalars().all()
+        if _ir:
+            _bad = [r for r in _ir if r.mismatch]
+            if _bad:
+                critical.append({
+                    "check": "prediction_integrity_mismatch",
+                    "races_checked": len(_ir),
+                    "mismatches": len(_bad),
+                    "examples": [{"race_id": r.race_id, "detail": (r.detail or "")[:160]} for r in _bad[:6]],
+                    "reason": "A race's model 1st/2nd/3rd CHANGED after it jumped with no scratching "
+                              "to explain it — the write-once guarantee was violated. Investigate the caller.",
+                })
+            else:
+                info.append({"check": "prediction_integrity",
+                             "status": f"clean — {len(_ir)} races, 1st/2nd/3rd unchanged post-jump"})
+    except Exception:
+        pass
+
+    # ── History write-guard incidents (DB trigger catches, last 36h) ────────    # ── History write-guard incidents (DB trigger catches, last 36h) ────────
     try:
         from sqlalchemy import text as sa_text
         async with get_session() as session:

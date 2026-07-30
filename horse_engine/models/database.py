@@ -54,6 +54,29 @@ def sched_to_utc_naive(value) -> "datetime | None":
     return dt
 
 
+class PredictionIntegrityRow(Base):
+    """Independent post-race tamper audit. Captures a race's model 1st/2nd/3rd
+    picks ONCE just after it jumps (the pre-race record), then re-reads at
+    11pm; a mismatch means the frozen prediction changed after the race
+    started — the write-guard trigger failed. Belt-and-braces on that trigger."""
+    __tablename__ = "prediction_integrity"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    race_id = Column(String, index=True, unique=True)
+    race_date = Column(String, index=True)
+    scheduled_time = Column(String, nullable=True)
+    jump_top1 = Column(String, nullable=True)   # rank-1 horse at/just-after jump
+    jump_top2 = Column(String, nullable=True)
+    jump_top3 = Column(String, nullable=True)
+    jump_captured_at = Column(DateTime, nullable=True)
+    eod_top1 = Column(String, nullable=True)     # rank-1 re-read at 11pm
+    eod_top2 = Column(String, nullable=True)
+    eod_top3 = Column(String, nullable=True)
+    eod_captured_at = Column(DateTime, nullable=True)
+    mismatch = Column(Boolean, default=False, nullable=True, index=True)
+    detail = Column(Text, nullable=True)
+
+
 class RaceExoticDividendRow(Base):
     """Real tote exotic dividends captured post-race (quinella first-class,
     plus exacta/trifecta/first-four when available). Source of truth for
