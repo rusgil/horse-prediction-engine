@@ -961,10 +961,19 @@
   <div class="bankroll-bar">
     <label for="bank">Bankroll $</label>
     <input id="bank" type="number" min="0" step="50" value="1000">
+    <span class="frac" id="modeSeg" role="radiogroup" aria-label="Staking method">
+      <button data-m="kelly" class="on">Kelly</button>
+      <button data-m="flat">Flat</button>
+    </span>
     <span class="frac" id="fracSeg" role="radiogroup" aria-label="Kelly fraction">
       <button data-f="0.125">Gentle</button>
       <button data-f="0.25" class="on">Calmer</button>
       <button data-f="0.5">Wild</button>
+    </span>
+    <span class="frac" id="flatSeg" role="radiogroup" aria-label="Flat stake per pick" style="display:none">
+      <button data-p="0.01">1% / pick</button>
+      <button data-p="0.02" class="on">2% / pick</button>
+      <button data-p="0.03">3% / pick</button>
     </span>
     <div class="total"><b id="totalStake">—</b><span>total recommended today</span></div>
   </div>
@@ -1008,14 +1017,19 @@
     return { label: `${Math.floor(h / 24)}d`, soon: false, past: false, urg: 'far' };
   }
 
-  const HB = { picks: null, yest: null, bank: 1000, frac: 0.25 };
+  const HB = { picks: null, yest: null, bank: 1000, frac: 0.25, mode: 'kelly', flat: 0.02 };
   const aestToday = (o=0) => new Date(Date.now()+o*86400000).toLocaleDateString('en-CA',{timeZone:'Australia/Sydney'});
   const isHot = p => (p.confidence_tier === 'hot') || ((p.model_pct||0) >= 46 && !p.going_offtrack);
-  // Recommended stake = fractional Kelly: f* = (odds*p - 1)/(odds - 1),
-  // scaled by the chosen fraction, capped at 3%, floored at 0 so short-priced
-  // picks the model doesn't beat get skipped.
+  // Recommended stake. Flat = equal % of bankroll on every Hot pick (matches
+  // the +13.4% flat-at-SP backtest which didn't condition on price edge).
+  // Kelly = f* = (odds*p - 1)/(odds - 1), scaled by the chosen fraction,
+  // capped at 3%, floored at 0 so short-priced picks the model doesn't beat
+  // get skipped.
   function kellyStake(p) {
     const odds = p.best_available_odds; const prob = (p.model_pct||0)/100;
+    if (HB.mode === 'flat') {
+      return { stake: HB.bank > 0 ? Math.round(HB.bank * HB.flat) : 0, kf: HB.flat };
+    }
     if (!odds || odds <= 1 || !prob) return { stake: null, kf: null };
     let kf = (odds*prob - 1)/(odds - 1);
     if (kf <= 0) return { stake: 0, kf };
@@ -1082,7 +1096,9 @@
       yHtml = `<div class="sec-t">Yesterday’s Hot Book <span class="day-pnl" style="color:${flatPnl>=0?'var(--mint)':'var(--red)'}">${wins}W · ${plc}P of ${settled.length} · flat ${flatPnl>=0?'+':''}${flatPnl.toFixed(1)}u (${roi>=0?'+':''}${roi}% ROI)</span></div>${rows}`;
     }
 
-    const methodLbl = `${HB.frac===0.125?'gentle':HB.frac===0.5?'wild':'calmer'} (${HB.frac===0.125?'⅛':HB.frac===0.5?'½':'¼'} Kelly)`;
+    const methodLbl = HB.mode === 'flat'
+      ? `flat ${Math.round(HB.flat*100)}% / pick`
+      : `${HB.frac===0.125?'gentle':HB.frac===0.5?'wild':'calmer'} (${HB.frac===0.125?'⅛':HB.frac===0.5?'½':'¼'} Kelly)`;
     el.innerHTML = (up.length
       ? `<div class="sec-t">Today’s Hot picks <span class="day-pnl" style="color:var(--text-3)">${up.length} · stake at ${methodLbl}</span></div>${cards}`
       : `<div class="empty"><div class="big">🔥</div>No Hot picks up next right now.<br><span style="font-size:0.8rem">The book only shows 46%+ confidence picks — come back closer to race time.</span></div>`)
@@ -1097,6 +1113,22 @@
     document.querySelectorAll('#fracSeg button').forEach(x=>x.classList.toggle('on', x===b));
     render();
   });
+  document.querySelectorAll('#flatSeg button').forEach(b => b.onclick = () => {
+    HB.flat = +b.dataset.p;
+    document.querySelectorAll('#flatSeg button').forEach(x=>x.classList.toggle('on', x===b));
+    render();
+  });
+  function applyMode() {
+    document.getElementById('fracSeg').style.display = HB.mode === 'flat' ? 'none' : '';
+    document.getElementById('flatSeg').style.display = HB.mode === 'flat' ? '' : 'none';
+    document.querySelectorAll('#modeSeg button').forEach(x=>x.classList.toggle('on', x.dataset.m===HB.mode));
+    try { localStorage.setItem('fiqHotbookMode', HB.mode); } catch(e){}
+  }
+  document.querySelectorAll('#modeSeg button').forEach(b => b.onclick = () => {
+    HB.mode = b.dataset.m; applyMode(); render();
+  });
+  try { const m = localStorage.getItem('fiqHotbookMode'); if (m === 'flat' || m === 'kelly') HB.mode = m; } catch(e){}
+  applyMode();
   load();
   setInterval(load, 60000);
 </script>
