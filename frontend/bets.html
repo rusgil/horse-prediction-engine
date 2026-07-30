@@ -968,7 +968,7 @@
   </nav>
   <header class="page-header labs">
     <h1 class="page-title">🧪 Funky IQ Labs <span class="tier-badge tier-labs">Labs</span></h1>
-    <p class="page-subtitle">Paper-trading · trifecta boxes at $1 a combination · P/L straight from the dividends · metro meetings only</p>
+    <p class="page-subtitle">Paper-trading · $1 per suggested box · a winning box pays the full dividend · metro meetings only</p>
   </header>
   <a href="/hotbook" class="hotbook-cta">
     <span class="hb-emoji">🔥</span>
@@ -1126,11 +1126,11 @@
     return flipped ? !defaultCollapsed : defaultCollapsed;
   }
 
-  // Odds-based accounting (2026-07-29): the $2-flexi framing is gone.
-  // Every box is costed at $1 a combination — cost = permutations,
-  // return = the listed dividend itself. P/L and ROI derive purely from
-  // the odds, so numbers read like a form guide, not a bankroll.
-  function unitStake(b) { return b.num_permutations || 0; }
+  // Box-unit accounting (2026-07-31): each suggested box is ONE $1 bet, the
+  // way you'd actually place them. Cost = $1 per box; a winning box returns
+  // the full trifecta dividend. So a strategy's stake = its number of boxes,
+  // and one hit whose dividend beats that stake is a profit.
+  function unitStake(b) { return 1; }
   function unitPayout(b) {
     if (!b.settled || !b.is_hit) return 0;
     return b.trifecta_dividend != null ? b.trifecta_dividend : null;  // null = hit, div pending
@@ -1305,7 +1305,7 @@
             <span style="color:var(--text-muted);font-weight:700;margin-right:6px">${chevron}</span>
             <span class="strategy-block-name">${escHtml(meta.label)}</span>
             ${meta.isDefault ? '<span class="strategy-block-badge">★ DEFAULT</span>' : ''}
-            <span class="strategy-block-meta">· ${totalStake} combs · ${meta.tagline} · ${bets.length} box${bets.length === 1 ? '' : 'es'}</span>
+            <span class="strategy-block-meta">· ${bets.length} box${bets.length === 1 ? '' : 'es'} · $${totalStake} · ${meta.tagline}</span>
           </div>
           <span class="strategy-block-result ${resultCls}">${resultText}</span>
         </div>
@@ -1341,14 +1341,14 @@
       if (b.settled) {
         if (b.is_hit) {
           const netTxt = (b.trifecta_dividend != null)
-            ? ` · net ${fmtPnl(b.trifecta_dividend - unitStake(b))} @ $1/comb`
+            ? ` · net ${fmtPnl(b.trifecta_dividend - unitStake(b))} on a $1 box`
             : '';
-          meta = `${b.num_permutations} combinations${netTxt}`;
+          meta = `$1 box · ${b.num_permutations} orderings${netTxt}`;
         } else {
-          meta = `${b.num_permutations} combinations · top-3 outside box`;
+          meta = `$1 box · ${b.num_permutations} orderings · top-3 outside box`;
         }
       } else {
-        meta = `${b.num_permutations} combinations`;
+        meta = `$1 box · ${b.num_permutations} orderings`;
       }
       return `
         <div class="bet-row ${cls}">
@@ -1488,8 +1488,8 @@
 
   function render(data) {
     state.lastData = data;
-    // Odds-based conversion pass: every race re-costed at $1 a combination
-    // (stake = combinations, payout = real declared dividend).
+    // Box-unit conversion pass: every race re-costed at $1 a box
+    // (stake = number of boxes, payout = real declared dividend per hit box).
     for (const r of (data.races || [])) {
       // Cost the race on the SELECTED strategy only — these are alternative
       // ways to play one race, not a portfolio you'd bet together.
@@ -1655,17 +1655,15 @@
         // the $ P&L so users keep the at-a-glance hit signal even after
         // dividends populate.
         // Pnl colour:
-        //   pos green   — profitable
-        //   amber       — race hit but dividend didn't cover stake
-        //                  (so the model was right but the box was too wide)
+        //   pos green   — profitable (a hit whose dividend beat the box stake)
+        //   amber       — hit but the dividend was smaller than the $ staked
+        //                  across the strategy's boxes (rare, tiny dividends)
         //   neg red     — total miss
         const marker = hits > 0 ? `✓ Correct (${hits})` : '✗ Missed';
         const markerCls = hits > 0 ? 'pos' : 'neg';
         const pnlCls = pnl >= 0 ? 'pos' : (hits > 0 ? 'amber' : 'neg');
-        // Show the $ only when something HIT (win, or a hit whose dividend
-        // didn't cover the box). A pure miss shows just '✗ Missed' — the
-        // '-$126' (all boxed combinations) read as a fixed per-loss cost and
-        // was misleading; you don't stake every strategy at once.
+        // Show the $ only when something HIT. A pure miss shows just
+        // '✗ Missed' rather than a '-$N' that reads as a fixed per-loss cost.
         pnlEl = `<div class="race-pnl ${pnlCls}">
           <div style="font-size:11px;font-weight:600" class="${markerCls}">${marker}</div>
           ${hits > 0 ? `<div>${fmtPnl(pnl)}</div>` : ''}
@@ -1695,7 +1693,7 @@
           <div class="race-top">
             <div>
               <div class="race-id">${escHtml(venue)}${dateKey >= _todayAestKey() && window.FIQConditions ? FIQConditions.chip(r.venue) : ''} R${r.race_number}</div>
-              <div class="race-meta">${escHtml(r.date || '')} · <strong style="color:var(--teal-bright)">${escHtml(stratLabel)}</strong> · ${r._ustake} combinations${r.top3_sum_pct != null ? ` · <strong style="color:var(--green-bright)" title="Top-3 model probability — lower = more open race = higher hit rate">top-3 ${r.top3_sum_pct.toFixed(0)}%</strong>` : ''}${r.field_size != null ? ` · <strong style="color:var(--blue)" title="Runners in the race — smaller fields hit more often">${r.field_size}-horse</strong>` : ''}</div>
+              <div class="race-meta">${escHtml(r.date || '')} · <strong style="color:var(--teal-bright)">${escHtml(stratLabel)}</strong> · ${r._selCount} box${r._selCount === 1 ? '' : 'es'} ($${r._ustake})${r.top3_sum_pct != null ? ` · <strong style="color:var(--green-bright)" title="Top-3 model probability — lower = more open race = higher hit rate">top-3 ${r.top3_sum_pct.toFixed(0)}%</strong>` : ''}${r.field_size != null ? ` · <strong style="color:var(--blue)" title="Runners in the race — smaller fields hit more often">${r.field_size}-horse</strong>` : ''}</div>
               ${timeRow}
             </div>
             ${pnlEl}
@@ -1710,12 +1708,12 @@
               <span class="race-stat-label">Hits</span>
             </div>
             <div class="race-stat">
-              <span class="race-stat-num">${r._ustake}</span>
-              <span class="race-stat-label">Combinations</span>
+              <span class="race-stat-num">$${r._ustake}</span>
+              <span class="race-stat-label">Stake</span>
             </div>
             <div class="race-stat">
               <span class="race-stat-num">${r.status !== 'pending' ? '$' + (r._upayout || 0).toFixed(2) : '—'}</span>
-              <span class="race-stat-label">Dividends</span>
+              <span class="race-stat-label">Return</span>
             </div>
           </div>
           ${winningStrip}
