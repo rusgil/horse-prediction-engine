@@ -559,15 +559,86 @@
     document.getElementById('tabReviews').classList.toggle('active', tab === 'reviews');
     document.getElementById('tabQuality').classList.toggle('active', tab === 'quality');
     document.getElementById('tabFollowUps').classList.toggle('active', tab === 'followups');
+    document.getElementById('tabIntegrity').classList.toggle('active', tab === 'integrity');
     document.getElementById('panelWin').style.display = tab === 'win' ? '' : 'none';
     document.getElementById('panelExotic').style.display = tab === 'exotic' ? '' : 'none';
     document.getElementById('panelReviews').style.display = tab === 'reviews' ? '' : 'none';
     document.getElementById('panelQuality').style.display = tab === 'quality' ? '' : 'none';
     document.getElementById('panelFollowUps').style.display = tab === 'followups' ? '' : 'none';
+    document.getElementById('panelIntegrity').style.display = tab === 'integrity' ? '' : 'none';
     if (tab === 'exotic' && !exoticBacktestLoaded) loadExoticBacktest();
     if (tab === 'reviews' && !reviewsLoaded) loadReviews();
     if (tab === 'quality' && !qualityLoaded) loadQuality();
     if (tab === 'followups' && !followUpsLoaded) loadFollowUps();
+    if (tab === 'integrity') loadIntegrity();
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  //   PREDICTION INTEGRITY TAB
+  // ═══════════════════════════════════════════════════════════
+  function buildIntegrityPlaceholder() {
+    return `
+      <div style="display:flex;gap:10px;align-items:center;margin-bottom:14px;flex-wrap:wrap">
+        <input id="integrityDate" type="date" style="background:var(--bg-card);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:6px 10px">
+        <button class="btn" onclick="loadIntegrity(true)">🔄 Check</button>
+        <span class="btn-status" id="integrityStatus"></span>
+      </div>
+      <div style="font-size:0.82rem;color:var(--text-secondary);margin-bottom:12px">
+        Each race's model 1st/2nd/3rd is baselined just before it jumps, then re-read from the frozen history at 23:15 AEST.
+        A <b style="color:#ef4444">POST-RACE change</b> — a predicted place/win pick written or altered after the jump — is a breach.
+        Pre-jump re-ranks (scratchings, ballot-ins) are legitimate.
+      </div>
+      <div id="integrityBody">Loading…</div>`;
+  }
+
+  async function loadIntegrity(force) {
+    const el = document.getElementById('integrityBody');
+    const dInput = document.getElementById('integrityDate');
+    if (dInput && !dInput.value) {
+      // default to today (AEST)
+      const p = new Date().toLocaleDateString('en-AU', { timeZone: 'Australia/Sydney', year:'numeric', month:'2-digit', day:'2-digit' }).split('/');
+      dInput.value = `${p[2]}-${p[1]}-${p[0]}`;
+    }
+    const date = dInput ? dInput.value : '';
+    if (el) el.innerHTML = 'Loading…';
+    try {
+      const res = await fetch(`${API}/api/admin/prediction-integrity?date=${encodeURIComponent(date)}`, { headers: { 'x-cron-secret': adminSecret } });
+      const d = await res.json();
+      renderIntegrity(d);
+    } catch (e) {
+      if (el) el.innerHTML = `<div class="nr-empty">Failed to load: ${e.message}</div>`;
+    }
+  }
+
+  function renderIntegrity(d) {
+    const el = document.getElementById('integrityBody');
+    const recs = d.records || [];
+    const st = document.getElementById('integrityStatus');
+    if (st) st.textContent = `${d.races} races · ${d.mismatches} breach${d.mismatches === 1 ? '' : 'es'}`;
+    if (!recs.length) {
+      el.innerHTML = `<div class="nr-empty">No integrity records for ${d.date} yet. Baselines capture as each race nears its jump; the cross-reference runs at 23:15 AEST.</div>`;
+      return;
+    }
+    const banner = d.mismatches > 0
+      ? `<div style="background:rgba(239,68,68,0.1);border:1px solid rgba(239,68,68,0.4);border-radius:8px;padding:12px 14px;margin-bottom:14px;color:#fca5a5;font-weight:600">✗ ${d.mismatches} POST-RACE prediction change(s) detected — write-once violated. Details below.</div>`
+      : `<div style="background:rgba(34,197,94,0.08);border:1px solid rgba(34,197,94,0.35);border-radius:8px;padding:12px 14px;margin-bottom:14px;color:#86efac;font-weight:600">✓ Integrity clean — no predicted 1st/2nd/3rd changed after the jump.</div>`;
+    const fmt = t => t ? new Date(t).toLocaleTimeString('en-AU', { hour:'2-digit', minute:'2-digit', hour12:true }) : '—';
+    const rows = recs.map(r => {
+      const bad = r.mismatch;
+      const changed = JSON.stringify(r.baseline) !== JSON.stringify(r.rechecked);
+      const cls = bad ? 'color:#ef4444;font-weight:700' : changed ? 'color:#f59e0b' : 'color:var(--text-secondary)';
+      const tag = bad ? '✗ BREACH' : (r.rechecked_at ? (changed ? '~ re-rank (ok)' : '✓') : '⏳ baselined');
+      return `<tr style="border-bottom:1px solid var(--border)">
+        <td style="padding:6px 8px;font-family:'JetBrains Mono',monospace;font-size:0.72rem">${escHtml(r.race_id)}</td>
+        <td style="padding:6px 8px;${cls}">${tag}</td>
+        <td style="padding:6px 8px;font-size:0.74rem">${(r.baseline||[]).filter(Boolean).map(escHtml).join(' · ') || '—'}<div style="color:var(--text-muted);font-size:0.66rem">baselined ${fmt(r.baseline_at)}</div></td>
+        <td style="padding:6px 8px;font-size:0.74rem">${(r.rechecked||[]).filter(Boolean).map(escHtml).join(' · ') || '—'}<div style="color:var(--text-muted);font-size:0.66rem">${r.rechecked_at ? 'rechecked ' + fmt(r.rechecked_at) : 'awaiting 23:15'}</div></td>
+      </tr>`;
+    }).join('');
+    el.innerHTML = banner + `<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:0.8rem">
+      <thead><tr style="text-align:left;color:var(--text-muted);text-transform:uppercase;font-size:0.62rem;letter-spacing:0.05em">
+        <th style="padding:6px 8px">Race</th><th style="padding:6px 8px">Status</th><th style="padding:6px 8px">Baseline 1·2·3 (pre-jump)</th><th style="padding:6px 8px">History 1·2·3 (23:15)</th></tr></thead>
+      <tbody>${rows}</tbody></table></div>`;
   }
 
   // ═══════════════════════════════════════════════════════════
@@ -1047,12 +1118,14 @@
         <button class="model-tab reviews" id="tabReviews" onclick="switchTab('reviews')">Weekly Reviews</button>
         <button class="model-tab reviews" id="tabQuality" onclick="switchTab('quality')">Morning Report</button>
         <button class="model-tab reviews" id="tabFollowUps" onclick="switchTab('followups')">Follow-Ups</button>
+        <button class="model-tab reviews" id="tabIntegrity" onclick="switchTab('integrity')">Prediction Integrity</button>
       </div>
       <div id="panelWin">${winContent}</div>
       <div id="panelExotic" style="display:none">${exoContent}</div>
       <div id="panelReviews" style="display:none">${reviewsContent}</div>
       <div id="panelQuality" style="display:none">${qualityContent}</div>
       <div id="panelFollowUps" style="display:none">${followUpsContent}</div>
+      <div id="panelIntegrity" style="display:none">${buildIntegrityPlaceholder()}</div>
     `;
 
     mountWinCharts(calData, perfData);
