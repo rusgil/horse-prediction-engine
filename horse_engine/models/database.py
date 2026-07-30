@@ -69,6 +69,7 @@ class PredictionIntegrityRow(Base):
     jump_top2 = Column(String, nullable=True)
     jump_top3 = Column(String, nullable=True)
     jump_captured_at = Column(DateTime, nullable=True)
+    baseline_field = Column(Text, nullable=True)  # JSON: all runner names at baseline (detects late additions)
     eod_top1 = Column(String, nullable=True)     # rank-1 re-read at 11pm
     eod_top2 = Column(String, nullable=True)
     eod_top3 = Column(String, nullable=True)

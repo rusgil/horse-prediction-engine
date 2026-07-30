@@ -6289,12 +6289,14 @@ async def _capture_integrity_baseline():
                 select(RunnerPredictionRow.race_id, RunnerPredictionRow.horse_name,
                        RunnerPredictionRow.model_rank, RunnerPredictionRow.scheduled_time)
                 .where(RunnerPredictionRow.race_id.like(f"{_like_safe(today)}_%"))
-                .where(RunnerPredictionRow.model_rank.in_([1, 2, 3]))
                 .where(RunnerPredictionRow.cancelled.is_(False) | RunnerPredictionRow.cancelled.is_(None))
             )).all()
         by_race: dict[str, dict] = {}
         for rid, hn, rank, sched in rows:
-            by_race.setdefault(rid, {"_sched": sched})[rank] = hn
+            r = by_race.setdefault(rid, {"_sched": sched, "_field": set()})
+            r["_field"].add(_normalize_horse(hn))
+            if rank in (1, 2, 3):
+                r[rank] = hn
         # only races jumping right about now (window around the off)
         due = {}
         for rid, d in by_race.items():
@@ -6316,6 +6318,7 @@ async def _capture_integrity_baseline():
                     session.add(row)
                 row.scheduled_time = d.get("_sched")
                 row.jump_top1, row.jump_top2, row.jump_top3 = d.get(1), d.get(2), d.get(3)
+                row.baseline_field = json.dumps(sorted(d.get("_field") or []))
                 row.jump_captured_at = datetime.utcnow()
                 n += 1
             await session.commit()
@@ -6376,12 +6379,25 @@ async def _integrity_eod_check(target_date: Optional[str] = None):
                 now3 = [row.eod_top1, row.eod_top2, row.eod_top3]
                 changed = [ (_normalize_horse(a or "") != _normalize_horse(b or "")) for a, b in zip(base, now3) ]
                 base_scratched = any(_normalize_horse(x or "") in scratched.get(row.race_id, set()) for x in base)
-                row.mismatch = any(changed) and not base_scratched
-                if any(changed):
-                    row.detail = (f"baseline {base} -> history {now3}" +
-                                  (" (explained: baseline pick scratched)" if base_scratched else " (UNEXPLAINED)"))
-                else:
+                # Late addition: a horse now in the top-3 that wasn't in the
+                # field when we baselined = a legitimate late ballot-in/emergency
+                # gaining a start pre-jump, NOT a post-jump tamper.
+                try:
+                    base_field = set(json.loads(row.baseline_field or "[]"))
+                except Exception:
+                    base_field = set()
+                new_top = [_normalize_horse(x or "") for x in now3 if x]
+                late_added = [x for x in new_top if base_field and x not in base_field]
+                explained = base_scratched or bool(late_added)
+                row.mismatch = any(changed) and not explained
+                if not any(changed):
                     row.detail = "unchanged"
+                elif base_scratched:
+                    row.detail = f"baseline {base} -> history {now3} (explained: baseline pick scratched)"
+                elif late_added:
+                    row.detail = f"baseline {base} -> history {now3} (explained: LATE ADDITION {late_added})"
+                else:
+                    row.detail = f"baseline {base} -> history {now3} (UNEXPLAINED)"
                 checked += 1
                 if row.mismatch:
                     mismatches += 1
@@ -14300,6 +14316,15 @@ async def _run_quality_check(target: str) -> dict:
             )).scalars().all()
         if _ir:
             _bad = [r for r in _ir if r.mismatch]
+            _late = [r for r in _ir if not r.mismatch and r.detail and 'LATE ADDITION' in r.detail]
+            if _late:
+                info.append({
+                    "check": "prediction_late_additions",
+                    "races": len(_late),
+                    "examples": [{"race_id": r.race_id, "detail": (r.detail or "")[:160]} for r in _late[:6]],
+                    "note": "A horse entered the field after our pre-jump baseline and ranked top-3 "
+                            "(legitimate late ballot-in/emergency) — recorded, not a breach.",
+                })
             if _bad:
                 critical.append({
                     "check": "prediction_integrity_mismatch",
