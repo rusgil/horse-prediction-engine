@@ -14347,7 +14347,15 @@ async def _run_quality_check(target: str) -> dict:
     except Exception:
         pass
 
-    # ── History write-guard incidents (DB trigger catches, last 36h) ────────    # ── History write-guard incidents (DB trigger catches, last 36h) ────────
+    # ── History write-guard incidents (DB trigger catches, last 36h) ────────
+    # Split by kind. Only post_race_insert / post_race_update_blocked mean the
+    # DB trigger caught a caller trying to CHANGE a frozen prediction after the
+    # jump (horse / rank / win% / place%) — THOSE are the scary ones and raise a
+    # warning. result_reconciled_uncancel is the nightly heal un-cancelling a
+    # horse that was falsely scratched but actually ran; it flips ONLY the
+    # `cancelled` flag (never the prediction), so it is an INFO, not a breach.
+    # Lumping the heal into the warning read as "predictions are being
+    # overwritten post-race" when they are not — the exact false alarm.
     try:
         from sqlalchemy import text as sa_text
         async with get_session() as session:
@@ -14356,20 +14364,37 @@ async def _run_quality_check(target: str) -> dict:
                 "FROM history_guard_incidents "
                 "WHERE created_at > now() - interval '36 hours' "
                 "AND kind != 'manual_restore' "
-                "ORDER BY created_at DESC LIMIT 20"
+                "ORDER BY created_at DESC LIMIT 50"
             ))).fetchall()
-        if _gi:
+        _tamper = [g for g in _gi if g[2] in ("post_race_insert", "post_race_update_blocked")]
+        _uncancel = [g for g in _gi if g[2] == "result_reconciled_uncancel"]
+        _other = [g for g in _gi if g[2] not in
+                  ("post_race_insert", "post_race_update_blocked", "result_reconciled_uncancel")]
+        if _tamper or _other:
+            _rows = _tamper + _other
             warning.append({
                 "check": "history_write_guard_incidents",
-                "n": len(_gi),
+                "n": len(_rows),
                 "examples": [
                     {"race_id": g[0], "horse": g[1], "kind": g[2], "detail": (g[3] or "")[:120]}
-                    for g in _gi[:8]
+                    for g in _rows[:8]
                 ],
-                "reason": "The DB write-once trigger caught attempts to modify frozen "
-                          "pre-race snapshots after the jump. The writes were neutralised "
-                          "(insert→contaminated / update→old values kept) — find and fix "
-                          "the caller.",
+                "reason": "The DB write-once trigger caught a caller trying to CHANGE a "
+                          "frozen pre-race prediction after the jump (horse / rank / win% / "
+                          "place%). The write was neutralised (insert→contaminated / "
+                          "update→old values kept) — find and fix the caller.",
+            })
+        if _uncancel:
+            info.append({
+                "check": "false_scratch_reconciled",
+                "n": len(_uncancel),
+                "status": f"{len(_uncancel)} horse(s) that ran were auto-un-cancelled "
+                          "(false scratching healed). Only the `cancelled` flag was corrected "
+                          "— the prediction (horse / rank / win% / place%) was NOT changed. "
+                          "This is the reconciliation heal working, not a post-race edit.",
+                "examples": [
+                    {"race_id": g[0], "horse": g[1]} for g in _uncancel[:8]
+                ],
             })
     except Exception:
         pass  # table absent on SQLite dev DBs
