@@ -1589,9 +1589,13 @@
         const marker = hits > 0 ? `✓ Correct (${hits})` : '✗ Missed';
         const markerCls = hits > 0 ? 'pos' : 'neg';
         const pnlCls = pnl >= 0 ? 'pos' : (hits > 0 ? 'amber' : 'neg');
+        // Show the $ only when something HIT (win, or a hit whose dividend
+        // didn't cover the box). A pure miss shows just '✗ Missed' — the
+        // '-$126' (all boxed combinations) read as a fixed per-loss cost and
+        // was misleading; you don't stake every strategy at once.
         pnlEl = `<div class="race-pnl ${pnlCls}">
           <div style="font-size:11px;font-weight:600" class="${markerCls}">${marker}</div>
-          <div>${fmtPnl(pnl)}</div>
+          ${hits > 0 ? `<div>${fmtPnl(pnl)}</div>` : ''}
         </div>`;
       }
       const venue = venueDisplay(r.venue, {upper: true});
