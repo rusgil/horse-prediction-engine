@@ -1103,6 +1103,13 @@
   const aestToday = (off = 0) => new Date(Date.now() + off * 86400000).toLocaleDateString('en-CA', { timeZone: 'Australia/Sydney' });
   const fmtDate = d => new Date(d + 'T12:00:00').toLocaleDateString('en-AU', { weekday: 'short', day: 'numeric', month: 'short' });
 
+  function favChip(p) {
+    if (p.model_pct == null || p.rank2_pct == null) return '';
+    const gap = p.model_pct - p.rank2_pct;
+    if (gap >= 5) return '<span class="chip cf">👑 CLEAR FAV</span>';
+    if (gap < 2 && p.model_pct >= 25) return '<span class="chip tu">⚖️ TOSS-UP</span>';
+    return '';
+  }
   function tierChip(p) {
     const ct = p.confidence_tier;
     const conf = p.model_pct || 0;
@@ -1246,7 +1253,7 @@
         <div class="pk-horse">${esc(p.horse_name)}${streak}</div>
         <div class="pk-sub num">${[p.distance ? p.distance + 'm' : '', p.barrier ? 'B' + p.barrier : '', p.weight ? p.weight + 'kg' : ''].filter(Boolean).join(' · ')}${l10}</div>
         <div class="pk-sub">${p.jockey ? 'J: ' + esc(p.jockey) : ''}${p.trainer ? (p.jockey ? ' · ' : '') + 'T: ' + esc(p.trainer) : ''}</div>
-        <div class="pk-chips">${tierChip(p)}${isPremium(p) ? '<span class="chip prem">💎 PREMIUM</span>' : ''}${sharpOf(p) ? '<span class="chip sharp">🎯 SHARP</span>' : ''}${p.sportsbet_available === false ? '<span class="chip nosb">🚫 Not on Sportsbet</span>' : ''}</div>
+        <div class="pk-chips">${tierChip(p)}${isPremium(p) ? '<span class="chip prem">💎 PREMIUM</span>' : ''}${sharpOf(p) ? '<span class="chip sharp">🎯 SHARP</span>' : ''}${!isPast ? favChip(p) : ''}${p.sportsbet_available === false ? '<span class="chip nosb">🚫 Not on Sportsbet</span>' : ''}</div>
       </div>
       <div class="right">
         ${barsHtml((p.model_pct || 0) / 100, p.place_probability != null ? p.place_probability / 100 : null)}
