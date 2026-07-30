@@ -1415,14 +1415,13 @@
       return [...running, ...upcoming];
     }
     if (state.sort === 'recent') {
-      // 'Just ran' — past races first (most recently finished at top),
-      // then upcoming races below sorted by soonest jump.
-      const now = Date.now();
-      const past = races.filter(r => { const t = _jumpMs(r); return t == null || t <= now; });
-      const upcoming = races.filter(r => { const t = _jumpMs(r); return t != null && t > now; });
-      past.sort((a, b) => (_jumpMs(b) || 0) - (_jumpMs(a) || 0));
-      upcoming.sort((a, b) => (_jumpMs(a) || 0) - (_jumpMs(b) || 0));
-      return [...past, ...upcoming];
+      // 'Just ran' — YESTERDAY's card only (was the full 14-day fetch, which
+      // scrolled ~13 days of past races). Most-recent race first.
+      const y = new Date(new Date(_todayAestKey() + 'T12:00:00').getTime() - 86400000)
+        .toLocaleDateString('en-CA');
+      return races
+        .filter(r => _aestDateKey(r) === y)
+        .sort((a, b) => (_jumpMs(b) || 0) - (_jumpMs(a) || 0));
     }
     if (state.sort === 'pnl') {
       return [...races].sort((a, b) => {
