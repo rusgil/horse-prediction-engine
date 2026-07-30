@@ -358,6 +358,21 @@
     }
     .strategy-stat-roi.pos { color: var(--green-bright); }
     .strategy-stat-roi.neg { color: var(--red); }
+    /* The strip doubles as the strategy selector — the active strategy is
+       what every race card's P/L, combinations and payout are costed on. */
+    .strategy-stat { cursor: pointer; transition: border-color .12s, background .12s; }
+    .strategy-stat:hover { border-color: var(--teal); }
+    .strategy-stat.active {
+      border-color: var(--teal);
+      background: color-mix(in srgb, var(--teal) 12%, var(--bg-card));
+      box-shadow: 0 0 0 1px var(--teal) inset;
+    }
+    .strategy-stat.active .strategy-stat-name { color: var(--teal-bright); }
+    .strategy-stat-pick {
+      font-size: 9px; font-weight: 800; letter-spacing: 0.4px;
+      text-transform: uppercase; color: var(--teal-bright);
+      margin-top: 2px; min-height: 11px;
+    }
 
     .race {
       background: var(--bg-card);
@@ -1052,9 +1067,18 @@
 
   // race_id -> bool (expanded?); race_id -> array of bet rows (cached fetch)
   const STRATEGY_KEY = 'fiq_strategy';
+  const VALID_STRATEGIES = ['trio', 'stack', 'quad', 'spread'];
+  let _savedStrategy = 'trio';
+  try {
+    const s = localStorage.getItem(STRATEGY_KEY);
+    if (VALID_STRATEGIES.includes(s)) _savedStrategy = s;
+  } catch (e) {}
   const state = {
     expanded: new Set(), detail: {}, lastData: null, sort: 'next',
-    strategy: 'all',  // page no longer filters by strategy — each card shows all
+    // The active strategy every race card is costed on. You'd bet ONE of
+    // these per race, not all four — so P/L reflects just this one. Default
+    // Trio (best backtested ROI); switch via the strip below the summary.
+    strategy: _savedStrategy,
     strategyStats: [],
     // Lab Sharp mode — single toggle that bundles the trifecta-specific
     // niche filters (top-3 ≤55 + field ≤11). 14d backtest: 70% box-hit,
@@ -1468,32 +1492,38 @@
     // Odds-based conversion pass: every race re-costed at $1 a combination
     // (stake = combinations, payout = real or Harville-estimated dividend).
     for (const r of (data.races || [])) {
-      const bs = Object.values(r.bets_by_strategy || {}).flat().filter(b => !b.voided);
+      // Cost the race on the SELECTED strategy only — these are alternative
+      // ways to play one race, not a portfolio you'd bet together.
+      const bs = ((r.bets_by_strategy || {})[state.strategy] || []).filter(b => !b.voided);
+      r._selCount = bs.length;
+      r._hasStrat = bs.length > 0;
       r._ustake = bs.reduce((a, b) => a + unitStake(b), 0);
-      let pay = 0;
+      let pay = 0, uhits = 0;
       for (const b of bs) {
+        if (b.is_hit) uhits++;
         if (!b.settled || !b.is_hit) continue;
         const p = unitPayout(b);
         pay += (p != null) ? p : estUnitPayout(b);
       }
       r._upayout = pay;
-      r._upnl = (r.status === 'settled') ? pay - r._ustake : null;
+      r._uhits = uhits;
+      r._upnl = (r.status === 'settled' && bs.length) ? pay - r._ustake : null;
     }
-    const races = applySort(data.races || []);
+    const allRaces = applySort(data.races || []);
+    // Only races that carry the selected strategy render + feed the top card.
+    const races = allRaces.filter(r => r._hasStrat);
     const summary = document.getElementById('summary');
     const settled = races.filter(r => r.status === 'settled');
     const resulted = races.filter(r => r.status === 'settled' || r.status === 'settled_no_dividend');
     const totalPnl = settled.reduce((a, r) => a + (r._upnl || 0), 0);
-    const racesWithHit = resulted.filter(r => (r.hits || 0) > 0).length;
+    const racesWithHit = resulted.filter(r => (r._uhits || 0) > 0).length;
     const hitPct = resulted.length ? Math.round(racesWithHit / resulted.length * 100) : 0;
     const pendingCount = races.length - resulted.length;
     const anyEstimated = settled.some(r => r.dividend_estimated);
 
-    // Per-strategy stats use the same resulted set as the top card so
-    // the denominators line up (was previously today-only, which made
-    // 'X/6 today' under '16/31 races hit' look like a bug). Day label
-    // now reflects window: '14d' or the active filter range.
-    const dayResulted = resulted;
+    // The strip shows EVERY strategy's window stats (it's the selector), so
+    // it spans all resulted races, not just the selected strategy's subset.
+    const dayResulted = allRaces.filter(r => r.status === 'settled' || r.status === 'settled_no_dividend');
     const stratDayLabel = 'window';
     const stratStats = STRATEGY_DISPLAY.filter(s => !s.legacy).map(s => {
       const racesWithGroup = dayResulted.filter(r => {
@@ -1546,14 +1576,31 @@
     stripEl.innerHTML = stratStats.map(s => {
       const roiCls = s.roi == null ? '' : (s.roi >= 0 ? 'pos' : 'neg');
       const roiTxt = s.roi == null ? '—' : `${s.roi >= 0 ? '+' : ''}${s.roi}%`;
+      const active = s.key === state.strategy;
       return `
-      <div class="strategy-stat">
+      <div class="strategy-stat${active ? ' active' : ''}" data-strategy="${s.key}"
+           role="button" tabindex="0" aria-pressed="${active}"
+           title="Cost every race on ${s.label}">
         <div class="strategy-stat-name">${s.label}</div>
         <div class="strategy-stat-num">${s.pct === null ? '—' : s.pct + '%'}</div>
         <div class="strategy-stat-frac">${s.hits}/${s.total} hit</div>
         <div class="strategy-stat-roi ${roiCls}">${roiTxt} ROI</div>
+        <div class="strategy-stat-pick">${active ? '● Betting this' : ''}</div>
       </div>`;
     }).join('');
+    // Strip doubles as the strategy selector.
+    const pickStrategy = (key) => {
+      if (!VALID_STRATEGIES.includes(key) || key === state.strategy) return;
+      state.strategy = key;
+      try { localStorage.setItem(STRATEGY_KEY, key); } catch (e) {}
+      if (state.lastData) render(state.lastData);
+    };
+    stripEl.querySelectorAll('.strategy-stat[data-strategy]').forEach(elm => {
+      elm.addEventListener('click', () => pickStrategy(elm.dataset.strategy));
+      elm.addEventListener('keydown', e => {
+        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); pickStrategy(elm.dataset.strategy); }
+      });
+    });
 
     const main = document.getElementById('races');
     if (!races.length) {
@@ -1573,6 +1620,7 @@
       dayCounts[k] = (dayCounts[k] || 0) + 1;
     });
     let lastDateKey = null;
+    const stratLabel = (STRATEGY_DISPLAY.find(s => s.key === state.strategy) || {}).label || state.strategy;
     main.innerHTML = races.map(r => {
       const dateKey = _aestDateKey(r);
       let divider = '';
@@ -1590,7 +1638,7 @@
       const pending = r.status === 'pending';
       const noDiv = r.status === 'settled_no_dividend';
       const pnl = r._upnl;
-      const hits = r.hits || 0;
+      const hits = r._uhits || 0;
       // Card class drives the outline colour: green border if any bet hit
       // (whether or not we have a dividend), red/dimmed if all missed.
       const cls = pending ? 'pending' : (hits > 0 ? 'settled-hit' : 'settled-miss');
@@ -1649,18 +1697,18 @@
           <div class="race-top">
             <div>
               <div class="race-id">${escHtml(venue)}${dateKey >= _todayAestKey() && window.FIQConditions ? FIQConditions.chip(r.venue) : ''} R${r.race_number}</div>
-              <div class="race-meta">${escHtml(r.date || '')} · ${r.num_bets} bets · ${r._ustake} combinations${r.top3_sum_pct != null ? ` · <strong style="color:var(--green-bright)" title="Top-3 model probability — lower = more open race = higher hit rate">top-3 ${r.top3_sum_pct.toFixed(0)}%</strong>` : ''}${r.field_size != null ? ` · <strong style="color:var(--blue)" title="Runners in the race — smaller fields hit more often">${r.field_size}-horse</strong>` : ''}</div>
+              <div class="race-meta">${escHtml(r.date || '')} · <strong style="color:var(--teal-bright)">${escHtml(stratLabel)}</strong> · ${r._ustake} combinations${r.top3_sum_pct != null ? ` · <strong style="color:var(--green-bright)" title="Top-3 model probability — lower = more open race = higher hit rate">top-3 ${r.top3_sum_pct.toFixed(0)}%</strong>` : ''}${r.field_size != null ? ` · <strong style="color:var(--blue)" title="Runners in the race — smaller fields hit more often">${r.field_size}-horse</strong>` : ''}</div>
               ${timeRow}
             </div>
             ${pnlEl}
           </div>
           <div class="race-stats">
             <div class="race-stat">
-              <span class="race-stat-num">${r.num_bets}</span>
-              <span class="race-stat-label">Bets</span>
+              <span class="race-stat-num">${r._selCount}</span>
+              <span class="race-stat-label">Boxes</span>
             </div>
             <div class="race-stat">
-              <span class="race-stat-num">${r.hits || 0}</span>
+              <span class="race-stat-num">${r._uhits || 0}</span>
               <span class="race-stat-label">Hits</span>
             </div>
             <div class="race-stat">
@@ -1675,10 +1723,11 @@
           ${winningStrip}
           ${(() => {
             const bbs = r.bets_by_strategy || {};
-            return STRATEGY_DISPLAY
-              .filter(s => bbs[s.key] && bbs[s.key].length)
-              .map(s => renderStrategyBlock(r.race_id, s.key, bbs[s.key], r.status))
-              .join('');
+            // Selected strategy only — show just that strategy's boxes.
+            const bets = bbs[state.strategy];
+            return (bets && bets.length)
+              ? renderStrategyBlock(r.race_id, state.strategy, bets, r.status)
+              : '';
           })()}
         </div>`;
     }).join('');
