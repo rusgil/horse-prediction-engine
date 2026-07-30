@@ -1074,6 +1074,15 @@
     if (p >= 30)         return { cls: 'tier-strong', dot: 'strong', heat: 'heat-strong', label: 'STRONG' };
     return null;
   }
+  // Decisiveness chip: 👑 CLEAR FAV when rank1 leads rank2 by ≥5pt,
+  // ⚖️ TOSS-UP when <2pt with a 25%+ pick. (rank2_win_probability from payload)
+  function favChip(r) {
+    if (r.top_win_probability == null || r.rank2_win_probability == null) return '';
+    const gap = (r.top_win_probability - r.rank2_win_probability) * 100;
+    if (gap >= 5) return ` <span class="chip cf" style="font-size:0.56rem;padding:1px 5px">👑 CLEAR FAV</span>`;
+    if (gap < 2 && r.top_win_probability >= 0.25) return ` <span class="chip tu" style="font-size:0.56rem;padding:1px 5px">⚖️ TOSS-UP</span>`;
+    return '';
+  }
   const isSettled = r => r.model_correct !== null && r.model_correct !== undefined;
   // Outcome class for settled races — drives the green/amber/red borders.
   const resCls = r => r.model_correct === true ? 'res-win'
@@ -1390,6 +1399,7 @@
           <span class="chip ${g.cls}">${esc(g.label)}</span>
           ${hero.is_sharp ? `<span class="chip sharp">🎯 SHARP</span>` : ''}
           ${tier ? `<span class="chip ${tier.cls}">${tier.label}</span>` : ''}
+          ${favChip(hero)}
           ${watchBtn(hero._state)}
           <div class="clockbox"><div class="cd big ${cd.urg || ''}">${cd.label}</div><div class="wt num">${wallTime(hero.scheduled_time)}</div></div>
         </div>
@@ -1434,6 +1444,7 @@
         <div class="chips">
           ${r.is_sharp ? `<span class="chip sharp">🎯 SHARP</span>` : ''}
           ${tier ? `<span class="chip ${tier.cls}">${tier.label}</span>` : ''}
+          ${!done ? favChip(r) : ''}
         </div>
         ${fieldHtml(r)}
       </div>`;

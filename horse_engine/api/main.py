@@ -5188,6 +5188,9 @@ async def get_edge_picks():
                 "days_since_last_run": days_since_last_run,
                 "is_sharp": is_sharp,
                 "top3_sum_pct": round(top3_sum_pct, 1),
+                # rank-2's win % — lets Edge show 👑 CLEAR FAV (gap ≥5pt) like
+                # the Lounge/Hot Seat. field_top3 is rank-sorted.
+                "rank2_pct": round(field_top3[1]["win_pct"], 1) if len(field_top3) > 1 and field_top3[1].get("win_pct") is not None else None,
                 "trifecta": trifecta,
                 "hedge": hedge,
                 "two_funk": two_funk,
