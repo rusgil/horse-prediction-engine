@@ -6237,15 +6237,43 @@ async def _capture_exotic_dividends(race_id: str, force: bool = False) -> Option
         )).scalar_one_or_none()
     if existing is not None and existing.quinella is not None and not force:
         return {"quinella": existing.quinella, "cached": True}
+    vals = {"quinella": None, "exacta": None, "trifecta": None, "first_four": None}
     raw = await _fetch_race_raw_from_tab(race_id)
-    if raw is None:
-        return None
-    vals = {
-        "quinella":   _extract_pool_dividend(raw, "QUINELLA"),
-        "exacta":     _extract_pool_dividend(raw, "EXACTA"),
-        "trifecta":   _extract_pool_dividend(raw, "TRIFECTA", exclude=("FIRST",)),
-        "first_four": _extract_pool_dividend(raw, "FIRST FOUR") or _extract_pool_dividend(raw, "FIRST 4"),
-    }
+    if raw is not None:
+        vals = {
+            "quinella":   _extract_pool_dividend(raw, "QUINELLA"),
+            "exacta":     _extract_pool_dividend(raw, "EXACTA"),
+            "trifecta":   _extract_pool_dividend(raw, "TRIFECTA", exclude=("FIRST",)),
+            "first_four": _extract_pool_dividend(raw, "FIRST FOUR") or _extract_pool_dividend(raw, "FIRST 4"),
+        }
+    # RA fallback — TAB doesn't carry quinella for many country/NT/synthetic
+    # meetings (Darwin 2026-07-29). RA's Results.aspx DOES parse the exotic
+    # dividends; resolve the meeting key from stored venue+state. get_results
+    # is 6h-cached, so per-race calls across a meeting hit the page once.
+    if vals.get("quinella") is None:
+        try:
+            date_str, vc, race_num = _parse_race_id(race_id)
+            async with get_session() as _s:
+                _vs = (await _s.execute(
+                    select(RunnerPredictionRow.venue, RunnerPredictionRow.state)
+                    .where(RunnerPredictionRow.race_id == race_id).limit(1)
+                )).first()
+                if not _vs or not _vs[0] or not _vs[1]:
+                    _vs = (await _s.execute(
+                        select(RunnerPredictionHistoryRow.venue, RunnerPredictionHistoryRow.state)
+                        .where(RunnerPredictionHistoryRow.race_id == race_id).limit(1)
+                    )).first()
+            if _vs and _vs[0] and _vs[1]:
+                from horse_engine.clients.racing_australia import _ra_date as _mk
+                ra = get_tab_client()._ra
+                ra_key = f"{_mk(date_str)},{_vs[1].strip().upper()},{_vs[0].strip()}"
+                res = await ra.get_results(ra_key)
+                divs = (res.get(int(race_num)) or {}).get("dividends") or {}
+                for k in ("quinella", "exacta", "trifecta", "first_four"):
+                    if vals.get(k) is None and divs.get(k):
+                        vals[k] = float(divs[k])
+        except Exception as _e:
+            log.debug("[exotic-div] RA fallback failed for %s: %s", race_id, _e)
     if not any(v is not None for v in vals.values()):
         return None
     async with get_session() as session:
@@ -6258,7 +6286,7 @@ async def _capture_exotic_dividends(race_id: str, force: bool = False) -> Option
         for k, v in vals.items():
             if v is not None:
                 setattr(row, k, v)
-        row.source = "tab"
+        row.source = "tab" if (raw is not None and _extract_pool_dividend(raw, "QUINELLA")) else "ra"
         row.captured_at = datetime.utcnow()
         await session.commit()
     log.info("[exotic-div] captured %s: %s", race_id, {k: v for k, v in vals.items() if v})
