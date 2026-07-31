@@ -18907,19 +18907,21 @@ async def get_race(race_id: str):
     async with get_session() as session:
         hist_rows = (await session.execute(
             select(HistoricalResultRow.horse_name, HistoricalResultRow.winner,
-                   HistoricalResultRow.placed, HistoricalResultRow.race_id)
+                   HistoricalResultRow.placed, HistoricalResultRow.position,
+                   HistoricalResultRow.race_id)
             .where(HistoricalResultRow.horse_name.in_(horse_names))
             .where(HistoricalResultRow.race_id != race_id)
             .where(HistoricalResultRow.race_id >= two_years_ago)
             .order_by(HistoricalResultRow.race_id.desc())
         )).all()
 
-    hist_by_horse: dict[str, list[tuple[bool, bool]]] = {}
+    # (winner, placed, position) per start, newest first (race_id desc).
+    hist_by_horse: dict[str, list[tuple[bool, bool, int | None]]] = {}
     hist_last_run: dict[str, int] = {}  # horse_name → days since last tracked run
-    for horse_name, winner, placed, hist_race_id in hist_rows:
+    for horse_name, winner, placed, position, hist_race_id in hist_rows:
         bucket = hist_by_horse.setdefault(horse_name, [])
         if len(bucket) < 10:
-            bucket.append((bool(winner), bool(placed)))
+            bucket.append((bool(winner), bool(placed), position))
         if horse_name not in hist_last_run:
             run_date_str = hist_race_id[:10]  # "YYYY-MM-DD"
             try:
@@ -18928,11 +18930,29 @@ async def get_race(race_id: str):
             except ValueError:
                 pass
 
+    def _hist_form_figures(starts: list) -> str:
+        """Industry-standard form string from our own results (newest first):
+        1-9 = position, 0 = outside top 9 / unplaced. Backfill for when RA's
+        live form scrape is unavailable but we've captured the results."""
+        out = []
+        for w, p, pos in starts[:6]:
+            if pos is not None and 1 <= pos < 90:
+                out.append(str(pos) if pos <= 9 else "0")
+            elif pos is not None and pos >= 90:
+                out.append("0")        # unplaced sentinel
+            elif w:
+                out.append("1")        # position missing but won
+            elif p:
+                out.append("0")        # placed but exact position unknown
+            # else: unknown outcome — skip
+        return "".join(out)
+
     last10 = {
         name: {
-            "wins_last_10": sum(1 for w, _ in starts if w),
-            "places_last_10": sum(1 for w, p in starts if w or p),
+            "wins_last_10": sum(1 for w, _p, _pos in starts if w),
+            "places_last_10": sum(1 for w, p, _pos in starts if w or p),
             "starts_last_10": len(starts),
+            "form_figures": _hist_form_figures(starts),
             "days_since_last_run_hist": hist_last_run.get(name),
         }
         for name, starts in hist_by_horse.items()
@@ -29172,6 +29192,10 @@ def _runner_response(row: RunnerPredictionRow, last10: dict | None = None) -> di
         wins_last_10 = last10.get("wins_last_10", 0)
         places_last_10 = last10.get("places_last_10", 0)
         starts_last_10 = last10.get("starts_last_10", 0)
+    # form_figures: prefer the live-scraped string; fall back to the one built
+    # from our own historical_results when the RA form scrape came up empty
+    # (same fallback the counts above use).
+    form_figures = enriched.get("form_figures") or ((last10 or {}).get("form_figures") or None)
 
     return {
         "tab_number": row.tab_number,
@@ -29193,7 +29217,7 @@ def _runner_response(row: RunnerPredictionRow, last10: dict | None = None) -> di
         "wins_last_10": wins_last_10,
         "places_last_10": places_last_10,
         "starts_last_10": starts_last_10,
-        "form_figures": enriched.get("form_figures"),
+        "form_figures": form_figures,
         "distance_aptitude": enriched.get("distance_aptitude"),
         "sire_name": enriched.get("sire_name"),
         "pedigree_distance_match": enriched.get("pedigree_distance_match"),
