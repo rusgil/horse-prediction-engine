@@ -1021,17 +1021,20 @@
   const HB = { picks: null, yest: null, bank: 1000, frac: 0.25, mode: 'kelly', flat: 0.02 };
   const aestToday = (o=0) => new Date(Date.now()+o*86400000).toLocaleDateString('en-CA',{timeZone:'Australia/Sydney'});
   const isHot = p => (p.confidence_tier === 'hot') || ((p.model_pct||0) >= 46 && !p.going_offtrack);
-  // Recommended stake. Flat = equal % of bankroll on every Hot pick (matches
-  // the +13.4% flat-at-SP backtest which didn't condition on price edge).
-  // Kelly = f* = (odds*p - 1)/(odds - 1), scaled by the chosen fraction,
-  // capped at 3%, floored at 0 so short-priced picks the model doesn't beat
-  // get skipped.
+  // Recommended stake. Flat = equal % of bankroll on every VALUE Hot pick —
+  // it still skips negative-edge picks (the model doesn't beat the price), so
+  // it never backs a short-priced underlay; it just doesn't scale the stake by
+  // how big the edge is. Kelly = f* = (odds*p - 1)/(odds - 1), scaled by the
+  // chosen fraction, capped at 3%, floored at 0. Both share the same no-value
+  // floor: odds*p <= 1 (equivalently edge <= 0) => skip.
   function kellyStake(p) {
     const odds = p.best_available_odds; const prob = (p.model_pct||0)/100;
+    if (!odds || odds <= 1 || !prob) return { stake: null, kf: null };
+    const hasValue = (odds * prob - 1) > 0;   // model prob beats the price
     if (HB.mode === 'flat') {
+      if (!hasValue) return { stake: 0, kf: 0 };   // negative edge — skip
       return { stake: HB.bank > 0 ? Math.round(HB.bank * HB.flat) : 0, kf: HB.flat };
     }
-    if (!odds || odds <= 1 || !prob) return { stake: null, kf: null };
     let kf = (odds*prob - 1)/(odds - 1);
     if (kf <= 0) return { stake: 0, kf };
     kf = Math.min(kf * HB.frac, 0.03);        // fractional + 3% hard cap
