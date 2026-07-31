@@ -105,3 +105,5 @@ class EnrichedRunner(BaseModel):
     wins_last_10: int = 0                 # wins in last 10 starts
     places_last_10: int = 0              # top-3 finishes in last 10 starts
     starts_last_10: int = 0              # actual starts in last 10 (may be < 10 for lightly raced)
+    form_figures: str = ""               # industry-standard form string, MOST RECENT FIRST
+                                          # (e.g. "31285"); 1-9 = position, 0 = finished outside top 9

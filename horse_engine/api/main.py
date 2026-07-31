@@ -5125,6 +5125,7 @@ async def get_edge_picks():
             wins_last_10 = enriched_json_payload.get("wins_last_10")
             places_last_10 = enriched_json_payload.get("places_last_10")
             starts_last_10 = enriched_json_payload.get("starts_last_10")
+            form_figures = enriched_json_payload.get("form_figures")
             days_since_last_run = enriched_json_payload.get("days_since_last_run")
 
             # Off-going tier cap (2026-07-23). The model is badly over-confident on
@@ -5191,6 +5192,7 @@ async def get_edge_picks():
                 "wins_last_10": wins_last_10,
                 "places_last_10": places_last_10,
                 "starts_last_10": starts_last_10,
+                "form_figures": form_figures,
                 "days_since_last_run": days_since_last_run,
                 "is_sharp": is_sharp,
                 "top3_sum_pct": round(top3_sum_pct, 1),
@@ -5974,6 +5976,7 @@ async def get_edge_yesterday(for_date: Optional[str] = Query(None, alias="date")
             "wins_last_10": yst_enriched.get("wins_last_10"),
             "places_last_10": yst_enriched.get("places_last_10"),
             "starts_last_10": yst_enriched.get("starts_last_10"),
+            "form_figures": yst_enriched.get("form_figures"),
             "trifecta": yst_trifecta,
         })
 
@@ -29190,6 +29193,7 @@ def _runner_response(row: RunnerPredictionRow, last10: dict | None = None) -> di
         "wins_last_10": wins_last_10,
         "places_last_10": places_last_10,
         "starts_last_10": starts_last_10,
+        "form_figures": enriched.get("form_figures"),
         "distance_aptitude": enriched.get("distance_aptitude"),
         "sire_name": enriched.get("sire_name"),
         "pedigree_distance_match": enriched.get("pedigree_distance_match"),

@@ -890,6 +890,8 @@
     .stat-strip { gap: 12px; }
     .stat-strip .upd { flex-basis: 100%; margin-left: 0; }
   }
+
+  .ff { font-variant-numeric: tabular-nums; letter-spacing: 0.14em; font-weight: 800; }
 </style>
 </head>
 <body>
@@ -1240,8 +1242,10 @@
     const edgeLine = (!isPast && p.edge_pct != null && displayOdds)
       ? `<div class="edge-line"><span class="${p.edge_pct >= 0 ? 'pos' : 'neg'}">${p.edge_pct >= 0 ? 'Model beats market by ' + p.edge_pct + 'pt' : 'Market prefers by ' + Math.abs(p.edge_pct) + 'pt'}</span><span class="sub num">model ${p.model_pct}% vs market ${p.market_implied_pct}%</span></div>`
       : '';
-    const l10 = (p.wins_last_10 != null && p.places_last_10 != null)
-      ? ` · last ${p.starts_last_10 && p.starts_last_10 < 10 ? p.starts_last_10 : 10}: ${p.wins_last_10}W/${p.places_last_10} top-3` : '';
+    const l10 = p.form_figures
+      ? ` · <b class="ff">form ${p.form_figures}</b>`
+      : ((p.wins_last_10 != null && p.places_last_10 != null)
+        ? ` · last ${p.starts_last_10 && p.starts_last_10 < 10 ? p.starts_last_10 : 10}: ${p.wins_last_10}W/${p.places_last_10} top-3` : '');
     return `<div class="jcard pcard ${outcome} ${!isPast && (p.confidence_tier === 'hot' || p.hot_pick) ? 'hot' : ''} ${isPremium(p) ? 'prem' : ''}" style="${dim}" data-open="${esc(p.race_id)}" data-horse="${esc(p.horse_name)}">
       <div class="when">
         ${isPast
@@ -1434,7 +1438,7 @@
       <div class="info">
         <div class="hn">${esc(x.horse_name)}${(ourHorse && x.horse_name && x.horse_name.toLowerCase() === ourHorse.toLowerCase()) ? ' <span class="pick-tag">OUR PICK</span>' : ''}</div>
         <div class="jk">${x.jockey ? `J: ${esc(x.jockey)}` : ''}${x.jockey_overall_rate != null ? ` <b>${(+x.jockey_overall_rate).toFixed(0)}%</b>` : ''}${x.trainer ? ` · T: ${esc(x.trainer)}` : ''}${x.trainer_overall_rate != null ? ` <b>${(+x.trainer_overall_rate).toFixed(0)}%</b>` : ''}</div>
-        <div class="jk">${x.barrier ? `barrier ${x.barrier}` : ''}${x.weight ? ` · ${x.weight}kg` : ''}${x.starts_last_10 != null ? ` · last ${x.starts_last_10 < 10 ? x.starts_last_10 : 10}: ${x.wins_last_10 ?? 0}W / ${x.places_last_10 ?? 0} top-3` : ''}</div>
+        <div class="jk">${x.barrier ? `barrier ${x.barrier}` : ''}${x.weight ? ` · ${x.weight}kg` : ''}${x.form_figures ? ` · <b class="ff">form ${x.form_figures}</b>` : (x.starts_last_10 != null ? ` · last ${x.starts_last_10 < 10 ? x.starts_last_10 : 10}: ${x.wins_last_10 ?? 0}W / ${x.places_last_10 ?? 0} top-3` : '')}</div>
         ${(x.key_flags || []).length ? `<div class="rflags">${(x.key_flags || []).slice(0, 3).map(f => `<span class="rflag">${esc(f)}</span>`).join('')}</div>` : ''}
         <div class="rbars">${barsHtml(x.win_probability, x.place_probability)}</div>
       </div>

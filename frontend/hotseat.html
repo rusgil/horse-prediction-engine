@@ -1528,7 +1528,10 @@
       if (p.barrier) horseMeta.push(`B${p.barrier}`);
       if (p.weight) horseMeta.push(`${p.weight}kg`);
       if (p.jockey) horseMeta.push(`J: ${escHtml(p.jockey)}`);
-      if (p.starts_last_10 != null && p.starts_last_10 > 0) {
+      if (p.form_figures) {
+        // Industry-standard form string, most recent first (0 = outside top 9).
+        horseMeta.push(`Form ${p.form_figures}`);
+      } else if (p.starts_last_10 != null && p.starts_last_10 > 0) {
         const starts = p.starts_last_10;
         const wins = p.wins_last_10 ?? 0;
         // places_last_10 = top-3 finishes (INCLUDES wins per

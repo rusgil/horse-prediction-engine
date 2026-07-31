@@ -2299,9 +2299,11 @@
     // enriched.py. "1W / 2 on" was reading as "1 win plus 2 places =
     // 3 top-3", but 2 was actually the total. Use "1W · 2 top-3" so
     // the semantics are unambiguous.
-    const last10Chip = (pick.wins_last_10 != null && pick.places_last_10 != null)
+    const last10Chip = pick.form_figures
+      ? `<span class="chip" title="Recent form — most recent start first. 1–9 = finishing position, 0 = finished outside the top 9.">Form ${pick.form_figures}</span>`
+      : ((pick.wins_last_10 != null && pick.places_last_10 != null)
       ? `<span class="chip" title="${pick.wins_last_10} win(s) and ${pick.places_last_10} total top-3 finish(es) across the last ${pick.starts_last_10 || 10} start(s)">${last10Label}: ${pick.wins_last_10}W · ${pick.places_last_10} top-3</span>`
-      : '';
+      : '');
 
     const trackChip = pick.track_condition ? `<span class="pick-footer-chip"><strong>${escHtml(pick.track_condition)}</strong></span><span class="pick-footer-sep">·</span>` : '';
     const distChip  = pick.distance ? `<span class="pick-footer-chip"><strong>${pick.distance}m</strong></span><span class="pick-footer-sep">·</span>` : '';
@@ -3115,7 +3117,9 @@
     // Last-10 form — same logic as live picks block.
     const yLast10Label = (p.starts_last_10 != null && p.starts_last_10 < 10)
       ? `Last ${p.starts_last_10}` : 'Last 10';
-    const last10Chip = (p.wins_last_10 != null && p.places_last_10 != null)
+    const last10Chip = p.form_figures
+      ? `<span class="chip" title="Recent form — most recent start first. 1–9 = finishing position, 0 = finished outside the top 9.">Form ${p.form_figures}</span>`
+      : (p.wins_last_10 != null && p.places_last_10 != null)
       ? `<span class="chip" title="${p.wins_last_10} win(s) and ${p.places_last_10} total top-3 finish(es) across the last ${p.starts_last_10 || 10} start(s)">${yLast10Label}: ${p.wins_last_10}W · ${p.places_last_10} top-3</span>`
       : '';
 

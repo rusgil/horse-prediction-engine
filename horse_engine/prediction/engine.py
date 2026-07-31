@@ -65,6 +65,32 @@ class RunnerPrediction:
         self.key_flags: list[str] = []
 
 
+def _form_figures(starts: list, n: int = 6) -> str:
+    """Industry-standard form string, MOST RECENT FIRST.
+
+    Each recent start's finishing position as one char: 1-9 as-is, 10+ (or
+    'unplaced') shown as '0' (finished outside the top 9) — the universal AU
+    form-guide convention. Orientation is made robust to the two upstream
+    orderings: when starts carry dates (the scraped InteractiveForm path) we
+    sort newest-first by date; the dateless form-string fallback is documented
+    oldest->newest, so we reverse it. Capped at the last `n` runs.
+    """
+    if not starts:
+        return ""
+    dated = sum(1 for s in starts if (getattr(s, "date", "") or "").strip())
+    if dated >= max(1, len(starts) // 2):
+        seq = sorted(starts, key=lambda s: (getattr(s, "date", "") or ""), reverse=True)
+    else:
+        seq = list(reversed(starts))
+    out = []
+    for s in seq[:n]:
+        p = getattr(s, "position", None)
+        if not p or p <= 0:
+            continue
+        out.append(str(p) if 1 <= p <= 9 else "0")
+    return "".join(out)
+
+
 def enrich_runner(
     runner: Runner,
     race: Race,
@@ -303,6 +329,7 @@ def enrich_runner(
         wins_last_10=sum(1 for s in starts if s.position == 1),
         places_last_10=sum(1 for s in starts if s.position is not None and s.position <= 3),
         starts_last_10=len(starts),
+        form_figures=_form_figures(starts),
         # Live stream signals — passed through directly if populated
         steam_60=runner.steam_60,
         steam_30=runner.steam_30,
