@@ -29192,10 +29192,16 @@ def _runner_response(row: RunnerPredictionRow, last10: dict | None = None) -> di
         wins_last_10 = last10.get("wins_last_10", 0)
         places_last_10 = last10.get("places_last_10", 0)
         starts_last_10 = last10.get("starts_last_10", 0)
-    # form_figures: prefer the live-scraped string; fall back to the one built
-    # from our own historical_results when the RA form scrape came up empty
-    # (same fallback the counts above use).
-    form_figures = enriched.get("form_figures") or ((last10 or {}).get("form_figures") or None)
+    # form_figures: prefer the live-scraped string. Only fall back to the one
+    # built from our own historical_results when it's at least as complete as
+    # the known start count — otherwise our partial capture (e.g. 2 of a 5-run
+    # horse) would render a truncated, misleading form. Incomplete cases keep
+    # the summary until the race re-enriches and gains the real string.
+    form_figures = enriched.get("form_figures") or None
+    if not form_figures:
+        _hf = (last10 or {}).get("form_figures")
+        if _hf and len(_hf) >= (starts_last_10 or 0):
+            form_figures = _hf
 
     return {
         "tab_number": row.tab_number,
