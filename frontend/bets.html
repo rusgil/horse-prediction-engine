@@ -507,6 +507,33 @@
       letter-spacing: 0.3px;
     }
 
+    /* Full field (Hot Seat style) — horses / prediction / odds */
+    .field-toggle {
+      margin-top: 10px; text-align: center; font-size: 11px;
+      color: var(--text-muted); cursor: pointer; user-select: none;
+      padding: 7px 0 2px; border-top: 1px dashed var(--border);
+      font-weight: 700; letter-spacing: 0.04em;
+    }
+    .field-toggle:hover { color: var(--text-secondary); }
+    .field-table {
+      margin-top: 6px; width: 100%; border-collapse: collapse;
+      font-size: 12px; font-variant-numeric: tabular-nums;
+    }
+    .field-table th {
+      text-align: right; font-weight: 700; color: var(--text-muted);
+      text-transform: uppercase; letter-spacing: 0.04em; font-size: 9.5px;
+      padding: 5px 4px; border-bottom: 1px solid var(--border);
+    }
+    .field-table th.l { text-align: left; }
+    .field-table td { padding: 5px 4px; border-bottom: 1px solid var(--border); color: var(--text-secondary); }
+    .field-table td.name { text-align: left; color: var(--text-primary); font-weight: 600; }
+    .field-table td.name .jk { color: var(--text-muted); font-weight: 500; font-size: 11px; }
+    .field-table td.r { text-align: right; }
+    .field-table tr:last-child td { border-bottom: none; }
+    .field-table tr.rank1 td { color: var(--green-bright); }
+    .field-table tr.rank1 td.name { color: var(--green-bright); }
+    .field-table tr.scratched td { text-decoration: line-through; color: var(--text-muted); opacity: 0.6; }
+
     /* Bet detail expansion */
     /* Filters drawer — same right-hand popup pattern as the Hot Seat */
     .foverlay {
@@ -1092,7 +1119,23 @@
     // opposite of the default. By default Trio is expanded, others
     // collapsed; flipping a section toggles its entry in this set.
     collapsedFlip: new Set(),
+    // Full-field expansion (Hot Seat style) — which race_ids are open, plus
+    // a per-race runner cache from /api/races/{race_id}.
+    fieldOpen: new Set(),
+    runners: {},
   };
+
+  // Lazy-load a race's full field (horses / win% / place% / odds). Caches only
+  // non-empty successes so a transient failure doesn't stick as "no field".
+  async function fetchFieldRunners(raceId) {
+    if (state.runners[raceId] && state.runners[raceId].length) return state.runners[raceId];
+    try {
+      const res = await fetch(`${API}/api/races/${encodeURIComponent(raceId)}`);
+      const rs = res.ok ? ((await res.json()).runners || []) : [];
+      if (rs.length) state.runners[raceId] = rs;
+      return rs;
+    } catch (e) { return []; }
+  }
 
   // Lab Sharp toggle — pins both filters to the high-conviction defaults
   // when on, releases them to 'All' so the user can fine-tune when off.
@@ -1725,6 +1768,28 @@
               ? renderStrategyBlock(r.race_id, state.strategy, bets, r.status)
               : '';
           })()}
+          ${(() => {
+            // Full field (Hot Seat style) — horses, prediction, odds.
+            if (!state.fieldOpen.has(r.race_id)) {
+              return `<div class="field-toggle" data-field="${escHtml(r.race_id)}">Full field${r.field_size ? ` (${r.field_size})` : ''} ▾</div>`;
+            }
+            const rs = (state.runners[r.race_id] || [])
+              .slice().sort((a, b) => (a.model_rank || 99) - (b.model_rank || 99) || (b.win_probability || 0) - (a.win_probability || 0));
+            if (!rs.length) return `<div class="field-toggle" data-field="${escHtml(r.race_id)}">Loading full field…</div>`;
+            const rows = rs.map(x => `
+              <tr class="${x.model_rank === 1 ? 'rank1' : ''} ${x.cancelled ? 'scratched' : ''}">
+                <td class="r num">${x.tab_number ?? '—'}</td>
+                <td class="name">${escHtml(x.horse_name)}${x.jockey ? `<span class="jk"> · ${escHtml(x.jockey)}</span>` : ''}</td>
+                <td class="r num">${x.win_probability != null ? (x.win_probability * 100).toFixed(1) + '%' : '—'}</td>
+                <td class="r num">${x.place_probability != null ? (x.place_probability * 100).toFixed(0) + '%' : '—'}</td>
+                <td class="r num">${x.best_available_odds > 1 ? '$' + (+x.best_available_odds).toFixed(2) : '—'}</td>
+              </tr>`).join('');
+            return `<div class="field-toggle" data-field="${escHtml(r.race_id)}">Hide full field ▴</div>
+              <table class="field-table">
+                <thead><tr><th class="r">#</th><th class="l">Horse</th><th class="r">Win</th><th class="r">Place</th><th class="r">Odds</th></tr></thead>
+                <tbody>${rows}</tbody>
+              </table>`;
+          })()}
         </div>`;
     }).join('');
   }
@@ -1943,6 +2008,24 @@
   // inline dividend save button. Cards re-render on refresh so all
   // listeners must be delegated from a stable parent.
   document.getElementById('races').addEventListener('click', async (e) => {
+    // Full-field toggle (Hot Seat style) — lazy-load runners on first open.
+    const fieldTog = e.target.closest('.field-toggle');
+    if (fieldTog) {
+      const raceId = fieldTog.dataset.field;
+      if (state.fieldOpen.has(raceId)) {
+        state.fieldOpen.delete(raceId);
+        if (state.lastData) render(state.lastData);
+      } else {
+        state.fieldOpen.add(raceId);
+        if (state.lastData) render(state.lastData);
+        if (!(state.runners[raceId] && state.runners[raceId].length)) {
+          await fetchFieldRunners(raceId);
+          if (state.lastData) render(state.lastData);
+        }
+      }
+      return;
+    }
+
     // Strategy block collapse toggle (whole block is clickable except
     // dividend input which has its own button).
     const stratBlock = e.target.closest('[data-strat-toggle]');
