@@ -1659,7 +1659,13 @@
       }
       r._upayout = pay;
       r._uhits = uhits;
-      r._upnl = (r.status === 'settled' && bs.length) ? pay - r._ustake : null;
+      // P/L only once the winning dividend has landed. A hit whose dividend
+      // isn't captured yet (common for first-four, which we don't always
+      // capture) must show as pending — NOT as -stake. A full miss (0 hits)
+      // is a real loss of the whole stake.
+      r._upnl = (r.status !== 'settled' || !bs.length) ? null
+              : (uhits > 0 && pay === 0) ? null
+              : pay - r._ustake;
     }
     const allRaces = applySort(data.races || []);
     // Only races that carry the selected strategy render + feed the top card.
@@ -1813,12 +1819,16 @@
         //   neg red     — total miss
         const marker = hits > 0 ? `✓ Correct (${hits})` : '✗ Missed';
         const markerCls = hits > 0 ? 'pos' : 'neg';
-        const pnlCls = pnl >= 0 ? 'pos' : (hits > 0 ? 'amber' : 'neg');
-        // Show the $ only when something HIT. A pure miss shows just
-        // '✗ Missed' rather than a '-$N' that reads as a fixed per-loss cost.
+        // A hit whose dividend hasn't landed (pnl == null) shows 'dividend
+        // pending' — never a bogus -$stake.
+        const divPending = hits > 0 && pnl == null;
+        const pnlCls = divPending ? 'pending' : (pnl >= 0 ? 'pos' : (hits > 0 ? 'amber' : 'neg'));
+        // Show the $ only when something HIT and the dividend is in. A pure
+        // miss shows just '✗ Missed'; a hit awaiting its dividend says so.
         pnlEl = `<div class="race-pnl ${pnlCls}">
           <div style="font-size:11px;font-weight:600" class="${markerCls}">${marker}</div>
-          ${hits > 0 ? `<div>${fmtPnl(pnl)}</div>` : ''}
+          ${divPending ? '<div style="font-size:11px;font-weight:600">dividend pending</div>'
+            : (hits > 0 ? `<div>${fmtPnl(pnl)}</div>` : '')}
         </div>`;
       }
       const venue = venueDisplay(r.venue, {upper: true});
