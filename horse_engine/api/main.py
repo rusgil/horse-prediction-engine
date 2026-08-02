@@ -8148,6 +8148,70 @@ async def _resolve_play_outcome(play: dict, target_date: str) -> dict:
                 if any_known else "Results pending"
             ),
         }
+    if kind in ("quaddie", "combo_doubles"):
+        legs = play.get("legs") or []
+        leg_hits = []
+        for l in legs:
+            rid = l.get("race_id")
+            pos = horse_pos(rid, l.get("horse_name")) if rid else None
+            won = pos == 1
+            sp = ((results.get(rid) or {}).get(1) or {}).get("sp") if won else None
+            leg_hits.append({
+                "race_id": rid,
+                "horse_name": l.get("horse_name"),
+                "tab_number": l.get("tab_number"),
+                "position": pos,
+                "won": bool(won),
+                "sp": sp,
+            })
+        any_known = any(h["position"] is not None for h in leg_hits)
+        n_won = sum(1 for h in leg_hits if h["won"])
+        stake = BASE
+        # Per-leg ✓/✗ line — this is the "which legs won/lost" the card shows.
+        parts = " · ".join(
+            f"{h['horse_name']} {'✓' if h['won'] else '✗' if h['position'] is not None else '–'}"
+            for h in leg_hits
+        )
+        if kind == "quaddie":
+            # 4-leg WIN multi: pays only if ALL legs win. Priced off SPs.
+            all_win = bool(leg_hits) and all(h["won"] for h in leg_hits)
+            profit = None
+            if all_win and all(h["sp"] for h in leg_hits):
+                mult = 1.0
+                for h in leg_hits:
+                    mult *= h["sp"]
+                profit = round(stake * mult - stake, 2)
+            elif any_known:
+                profit = -stake
+            return {
+                "status": "won" if all_win else ("lost" if any_known else "no_result"),
+                "won": all_win, "hit_count": n_won, "leg_count": len(leg_hits),
+                "leg_hits": leg_hits, "profit_dollars": round(profit, 2) if profit is not None else 0,
+                "summary": (
+                    (f"Quaddie landed — all 4 won!" if all_win else f"{n_won}/4 legs won") +
+                    f" · {parts}"
+                ) if any_known else "Results pending",
+            }
+        # combo_doubles: 6 doubles across 4 picks; a double pays when BOTH its
+        # legs win. Paying doubles = C(n_won, 2). Priced off winning-leg SPs.
+        from itertools import combinations as _combos
+        winners = [h for h in leg_hits if h["won"]]
+        paying = list(_combos(winners, 2))
+        unit = play.get("unit_stake_dollars") or 1
+        total_stake = (play.get("num_pairs") or len(play.get("pairs") or []) or 6) * unit
+        payout = sum((a["sp"] * b["sp"] * unit) for a, b in paying
+                     if a.get("sp") and b.get("sp"))
+        profit = round(payout - total_stake, 2) if any_known else 0
+        return {
+            "status": "won" if paying else ("lost" if any_known else "no_result"),
+            "hit_count": n_won, "leg_count": len(leg_hits), "paying_doubles": len(paying),
+            "leg_hits": leg_hits, "profit_dollars": profit,
+            "summary": (
+                (f"{len(paying)} paying double{'s' if len(paying) != 1 else ''} ({n_won}/4 won)"
+                 if paying else f"No paying double — {n_won}/4 won") +
+                f" · {parts}"
+            ) if any_known else "Results pending",
+        }
     return {}
 
 
