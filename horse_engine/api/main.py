@@ -10116,10 +10116,51 @@ async def late_nonmetro_winners(days: int = 60, x_cron_secret: Optional[str] = H
             "big_odds_$15+_pct": round(dow[n]["big_odds"] / w * 100, 1) if w else None,
         }
 
+    # Empirical strike-rate of OUR PREDICTED WINNER (model_rank==1) in late
+    # non-metro races: how often does our top win pick actually WIN, and how
+    # often does it PLACE (top-3, and field-size-aware paid-place)? This is the
+    # honest number to surface on the excluded late-country races.
+    pos_by = {(r.race_id, r.tab_number): r.position for r in res if r.tab_number is not None}
+    win_pick_tab: dict[str, int] = {}
+    for p in preds:
+        if p.model_rank == 1 and p.tab_number is not None:
+            win_pick_tab[p.race_id] = p.tab_number
+
+    def _pick_strike(want_metro: bool):
+        races = won = plc3 = plc_paid = 0
+        for rid, tab in win_pick_tab.items():
+            d, vc, rn = _parse_race_id(rid)
+            if rn is None:
+                continue
+            if rn < max_rn.get((d, vc), 0) - 1:      # late only
+                continue
+            if is_metro_venue(vc) != want_metro:
+                continue
+            pos = pos_by.get((rid, tab))
+            if not pos or pos >= 90:                  # no result / non-finisher
+                continue
+            races += 1
+            if pos == 1:
+                won += 1
+            if pos <= 3:
+                plc3 += 1
+            n = fs.get(rid, 0)
+            paid = 3 if n >= 8 else 2 if n >= 5 else 1   # AU paid-place rule
+            if pos <= paid:
+                plc_paid += 1
+        return {
+            "races_scored": races,
+            "our_winpick_win_pct": round(won / races * 100, 1) if races else None,
+            "our_winpick_place_top3_pct": round(plc3 / races * 100, 1) if races else None,
+            "our_winpick_paidplace_pct": round(plc_paid / races * 100, 1) if races else None,
+        }
+
     return {
         "days": days,
         "nonmetro_last2_winners": _profile(True),
         "baseline_metro_last2_winners": _profile(False, want_metro_late=True),
+        "nonmetro_late_our_winpick_strike": _pick_strike(want_metro=False),
+        "metro_late_our_winpick_strike": _pick_strike(want_metro=True),
         "nonmetro_late_by_weekday": by_weekday,
         "note": ("Compare nonmetro late (target) vs metro late (baseline). If nonmetro-late "
                  "winners skew to bigger SP and lower OUR model rank, the model is under-rating "
