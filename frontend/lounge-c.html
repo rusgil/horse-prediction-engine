@@ -1360,7 +1360,7 @@
       const picksHtml = rs.length ? rs.map((x, i) => `
         <div class="hrunner ${i === 0 ? 'top1' : ''}">
           <div class="saddle num">${x.tab_number ?? '–'}</div>
-          <div class="nm"><div class="h">${esc(x.horse_name)}</div><div class="j">${esc(x.jockey || '')}</div></div>
+          <div class="nm"><div class="h">${esc(x.horse_name)}${i === 0 ? placeChip(hero) : ''}</div><div class="j">${esc(x.jockey || '')}</div></div>
           ${x.best_available_odds > 1 ? `<div class="hodds num">$${(+x.best_available_odds).toFixed(2)}</div>` : ''}
           <div class="bars">${barsHtml(x.win_probability, x.place_probability)}</div>
         </div>`).join('')
@@ -1373,7 +1373,7 @@
             <div class="meta num">${hero.distance ? hero.distance + 'm · ' : ''}${hero.field_size ? hero.field_size + ' runners · ' : ''}<span></span></div>
           </div>
           <span class="chip ${g.cls}">${esc(g.label)}</span>
-          ${hero.is_sharp ? `<span class="chip sharp">🎯 SHARP</span>` : placeChip(hero, true)}
+          ${hero.is_sharp ? `<span class="chip sharp">🎯 SHARP</span>` : ''}
           ${tier ? `<span class="chip ${tier.cls}">${tier.label}</span>` : ''}
           ${watchBtn(hero._state)}
           <div class="clockbox"><div class="clock num">${wallTime(hero.scheduled_time)}</div><div class="cd ${cd.urg || ''}">${cd.label}</div></div>
@@ -1401,12 +1401,12 @@
           ${(() => {
             const nm = r.top_pick || (tp && tp.horse_name) || null;
             const od = (r.top_pick_odds > 1 ? +r.top_pick_odds : null) || (tp && tp.best_available_odds > 1 ? +tp.best_available_odds : null);
-            return `<div class="pname ${nm ? '' : 'ghost'}"><span class="pn-t">${nm ? esc(nm) : (r.top_win_probability != null ? 'Tap for our pick' : 'No prediction yet')}</span>${od ? `<span class="pk-odds num">$${od.toFixed(2)}</span>` : ''}</div>`;
+            return `<div class="pname ${nm ? '' : 'ghost'}"><span class="pn-t">${nm ? esc(nm) : (r.top_win_probability != null ? 'Tap for our pick' : 'No prediction yet')}</span>${isSettled(r) ? '' : placeChip(r)}${od ? `<span class="pk-odds num">$${od.toFixed(2)}</span>` : ''}</div>`;
           })()}
           ${barsHtml(r.top_win_probability, r.top_place_probability)}
         </div>
         <div class="chips">
-          ${r.is_sharp ? `<span class="chip sharp">🎯 SHARP</span>` : (isSettled(r) ? '' : placeChip(r, true))}
+          ${r.is_sharp ? `<span class="chip sharp">🎯 SHARP</span>` : ''}
           ${tier ? `<span class="chip ${tier.cls}">${tier.label}</span>` : ''}
         </div>
       </div>`;
