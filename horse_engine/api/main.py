@@ -8153,6 +8153,7 @@ async def _resolve_play_outcome(play: dict, target_date: str) -> dict:
         leg_hits = []
         for l in legs:
             rid = l.get("race_id")
+            resolved = rid in results          # race has a top-4 result on file
             pos = horse_pos(rid, l.get("horse_name")) if rid else None
             won = pos == 1
             sp = ((results.get(rid) or {}).get(1) or {}).get("sp") if won else None
@@ -8162,16 +8163,18 @@ async def _resolve_play_outcome(play: dict, target_date: str) -> dict:
                 "tab_number": l.get("tab_number"),
                 "position": pos,
                 "won": bool(won),
+                "resolved": resolved,          # ran (even if unplaced) vs no result yet
                 "sp": sp,
             })
-        any_known = any(h["position"] is not None for h in leg_hits)
+        any_known = any(h["resolved"] for h in leg_hits)
         n_won = sum(1 for h in leg_hits if h["won"])
         stake = BASE
-        # Per-leg ✓/✗ line — this is the "which legs won/lost" the card shows.
-        parts = " · ".join(
-            f"{h['horse_name']} {'✓' if h['won'] else '✗' if h['position'] is not None else '–'}"
-            for h in leg_hits
-        )
+        # Per-leg ✓/✗ line — the "which legs won/lost" the card shows. A leg
+        # whose race resolved but our horse didn't win is a loss (✗), even if
+        # it finished outside the top 4; only unresolved races show '–'.
+        def _mark(h):
+            return "✓" if h["won"] else ("✗" if h["resolved"] else "–")
+        parts = " · ".join(f"{h['horse_name']} {_mark(h)}" for h in leg_hits)
         if kind == "quaddie":
             # 4-leg WIN multi: pays only if ALL legs win. Priced off SPs.
             all_win = bool(leg_hits) and all(h["won"] for h in leg_hits)
