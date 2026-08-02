@@ -1225,6 +1225,18 @@
   function betTypeStrategies() {
     return isFirstFour() ? ['quad', 'spread'] : ['trio', 'stack', 'quad', 'spread'];
   }
+  // A strategy's boxes that are valid for the current bet type. First Four
+  // only plays 4+ horse boxes — a 3-horse box can't fill four placings.
+  function betTypeBoxes(bets) {
+    const bs = (bets || []).filter(b => !b.voided);
+    return isFirstFour() ? bs.filter(b => (b.box_horses || []).length >= 4) : bs;
+  }
+  // Display label per bet type (Trio+1 reads as "First 4" in first-four mode).
+  function stratLabel(key) {
+    const m = STRATEGY_DISPLAY.find(s => s.key === key) || {};
+    if (isFirstFour() && key === 'quad') return 'First 4';
+    return m.label || key;
+  }
   function fmtPnl(v) {
     if (v == null) return null;
     const s = v >= 0 ? '+' : '−';
@@ -1298,6 +1310,7 @@
   };
 
   function renderStrategyBlock(r, group, bets) {
+    bets = betTypeBoxes(bets);
     if (!bets || !bets.length) return '';
     const raceId = r.race_id, raceStatus = r.status;
     const meta = STRATEGY_DISPLAY.find(s => s.key === group);
@@ -1394,9 +1407,9 @@
         <div class="strategy-block-head">
           <div>
             <span style="color:var(--text-muted);font-weight:700;margin-right:6px">${chevron}</span>
-            <span class="strategy-block-name">${escHtml(meta.label)}</span>
+            <span class="strategy-block-name">${escHtml(stratLabel(group))}</span>
             ${meta.isDefault ? '<span class="strategy-block-badge">★ DEFAULT</span>' : ''}
-            <span class="strategy-block-meta">· ${bets.length} box${bets.length === 1 ? '' : 'es'} · $${totalStake} · ${meta.tagline}</span>
+            <span class="strategy-block-meta">· ${bets.length} box${bets.length === 1 ? '' : 'es'} · $${totalStake}${isFirstFour() ? ' · 4-horse first-four' : ' · ' + meta.tagline}</span>
           </div>
           <span class="strategy-block-result ${resultCls}">${resultText}</span>
         </div>
@@ -1589,7 +1602,7 @@
     for (const r of (data.races || [])) {
       // Cost the race on the SELECTED strategy only — these are alternative
       // ways to play one race, not a portfolio you'd bet together.
-      const bs = ((r.bets_by_strategy || {})[state.strategy] || []).filter(b => !b.voided);
+      const bs = betTypeBoxes((r.bets_by_strategy || {})[state.strategy]);
       r._selCount = bs.length;
       r._hasStrat = bs.length > 0;
       r._ustake = bs.reduce((a, b) => a + unitStake(b), 0);
@@ -1622,29 +1635,27 @@
     const stratDayLabel = 'window';
     const _btStrats = betTypeStrategies();
     const stratStats = STRATEGY_DISPLAY.filter(s => !s.legacy && _btStrats.includes(s.key)).map(s => {
-      const racesWithGroup = dayResulted.filter(r => {
-        const groupBets = (r.bets_by_strategy || {})[s.key];
-        return groupBets && groupBets.length > 0;
-      });
+      const racesWithGroup = dayResulted.filter(r =>
+        betTypeBoxes((r.bets_by_strategy || {})[s.key]).length > 0
+      );
       const groupHits = racesWithGroup.filter(r =>
-        r.bets_by_strategy[s.key].some(b => boxIsHit(b, r))
+        betTypeBoxes(r.bets_by_strategy[s.key]).some(b => boxIsHit(b, r))
       ).length;
       const pct = racesWithGroup.length
         ? Math.round(groupHits / racesWithGroup.length * 100)
         : null;
-      // Aggregate stake / payout across every bet (excluding voided)
-      // in this strategy's boxes so we can show ROI alongside hit %.
+      // Aggregate stake / payout across this strategy's valid boxes so we can
+      // show ROI alongside hit %.
       let stake = 0, payout = 0;
       for (const r of racesWithGroup) {
-        for (const b of r.bets_by_strategy[s.key]) {
-          if (b.voided) continue;
+        for (const b of betTypeBoxes(r.bets_by_strategy[s.key])) {
           stake += unitStake(b);
           payout += unitPayout(b, r) || 0;
         }
       }
       const pnl = payout - stake;
       const roi = stake > 0 ? Math.round(pnl / stake * 100) : null;
-      return { key: s.key, label: s.label, hits: groupHits, total: racesWithGroup.length, pct, roi, pnl };
+      return { key: s.key, label: stratLabel(s.key), hits: groupHits, total: racesWithGroup.length, pct, roi, pnl };
     });
 
     summary.innerHTML = `
@@ -1716,7 +1727,7 @@
       dayCounts[k] = (dayCounts[k] || 0) + 1;
     });
     let lastDateKey = null;
-    const stratLabel = (STRATEGY_DISPLAY.find(s => s.key === state.strategy) || {}).label || state.strategy;
+    const _stratLbl = stratLabel(state.strategy);
     main.innerHTML = races.map(r => {
       const dateKey = _aestDateKey(r);
       let divider = '';
@@ -1796,7 +1807,7 @@
           <div class="race-top">
             <div>
               <div class="race-id">${escHtml(venue)}${dateKey >= _todayAestKey() && window.FIQConditions ? FIQConditions.chip(r.venue) : ''} R${r.race_number}</div>
-              <div class="race-meta">${escHtml(r.date || '')} · <strong style="color:var(--teal-bright)">${escHtml(stratLabel)}</strong> · ${r._selCount} box${r._selCount === 1 ? '' : 'es'} ($${r._ustake})${r.top3_sum_pct != null ? ` · <strong style="color:var(--green-bright)" title="Top-3 model probability — lower = more open race = higher hit rate">top-3 ${r.top3_sum_pct.toFixed(0)}%</strong>` : ''}${r.field_size != null ? ` · <strong style="color:var(--blue)" title="Runners in the race — smaller fields hit more often">${r.field_size}-horse</strong>` : ''}</div>
+              <div class="race-meta">${escHtml(r.date || '')} · <strong style="color:var(--teal-bright)">${escHtml(_stratLbl)}</strong> · ${r._selCount} box${r._selCount === 1 ? '' : 'es'} ($${r._ustake})${r.top3_sum_pct != null ? ` · <strong style="color:var(--green-bright)" title="Top-3 model probability — lower = more open race = higher hit rate">top-3 ${r.top3_sum_pct.toFixed(0)}%</strong>` : ''}${r.field_size != null ? ` · <strong style="color:var(--blue)" title="Runners in the race — smaller fields hit more often">${r.field_size}-horse</strong>` : ''}</div>
               ${timeRow}
             </div>
             ${pnlEl}
