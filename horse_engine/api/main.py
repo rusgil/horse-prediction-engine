@@ -9967,6 +9967,94 @@ async def fav_fade_by_tier(
     }
 
 
+@app.get("/api/admin/analysis/late-nonmetro-winners")
+async def late_nonmetro_winners(days: int = 60, x_cron_secret: Optional[str] = Header(None)):
+    """Trait profile of the WINNERS of the last-2 races at NON-METRO meetings —
+    to see why the model misses these (often big-priced) late roughies. Reports
+    the winners' SP band, barrier, where OUR model/place-model ranked them, and
+    a metro-late + nonmetro-early baseline for contrast."""
+    _check_admin(x_cron_secret)
+    from collections import Counter
+    import statistics
+    from horse_engine.bets import is_metro_venue
+    days = max(14, min(int(days), 365))
+    cut = (_today_aest() - timedelta(days=days)).isoformat()
+    async with get_session() as session:
+        res = (await session.execute(
+            select(HistoricalResultRow.race_id, HistoricalResultRow.tab_number,
+                   HistoricalResultRow.position, HistoricalResultRow.starting_price,
+                   HistoricalResultRow.barrier)
+            .where(HistoricalResultRow.race_id >= cut)
+        )).all()
+        preds = (await session.execute(
+            select(RunnerPredictionHistoryRow.race_id, RunnerPredictionHistoryRow.tab_number,
+                   RunnerPredictionHistoryRow.model_rank, RunnerPredictionHistoryRow.place_model_rank,
+                   RunnerPredictionHistoryRow.win_probability)
+            .where(RunnerPredictionHistoryRow.race_id >= cut)
+            .where(RunnerPredictionHistoryRow.source == "live")
+            .where(RunnerPredictionHistoryRow.cancelled.is_(False) | RunnerPredictionHistoryRow.cancelled.is_(None))
+        )).all()
+    max_rn: dict[tuple, int] = {}
+    fs: Counter = Counter()
+    for r in res:
+        d, vc, rn = _parse_race_id(r.race_id)
+        if rn is None:
+            continue
+        if rn > max_rn.get((d, vc), 0):
+            max_rn[(d, vc)] = rn
+        if r.position and 1 <= r.position < 90:
+            fs[r.race_id] += 1
+    pred = {(p.race_id, p.tab_number): p for p in preds if p.tab_number is not None}
+
+    def _spband(sp):
+        if not sp: return "?"
+        return "$<4" if sp < 4 else "$4-8" if sp < 8 else "$8-15" if sp < 15 else "$15-25" if sp < 25 else "$25+"
+    def _rankband(rk):
+        return "unrated" if rk is None else "rank-1" if rk == 1 else "rank 2-3" if rk <= 3 else "rank 4-5" if rk <= 5 else "rank 6+"
+    def _barr(b):
+        return "?" if not b else "inside 1-3" if b <= 3 else "mid 4-7" if b <= 7 else "wide 8+"
+
+    def _profile(want_last2_nonmetro: bool, want_metro_late: bool = False):
+        rows = []
+        for r in res:
+            if r.position != 1:
+                continue
+            d, vc, rn = _parse_race_id(r.race_id)
+            if rn is None:
+                continue
+            m = max_rn.get((d, vc), 0)
+            is_late = rn >= m - 1              # last 2 races
+            metro = is_metro_venue(vc)
+            if want_last2_nonmetro and (metro or not is_late):
+                continue
+            if want_metro_late and (not metro or not is_late):
+                continue
+            pr = pred.get((r.race_id, r.tab_number))
+            rows.append((r.starting_price, r.barrier, pr.model_rank if pr else None,
+                         pr.place_model_rank if pr else None))
+        n = len(rows)
+        sps = [sp for sp, *_ in rows if sp]
+        return {
+            "winners": n,
+            "median_winner_sp": round(statistics.median(sps), 2) if sps else None,
+            "big_odds_share_$15+_pct": round(sum(1 for sp in sps if sp >= 15) / n * 100, 1) if n else 0,
+            "sp_band": dict(Counter(_spband(sp) for sp, *_ in rows)),
+            "our_model_rank_of_winner": dict(Counter(_rankband(rk) for _s, _b, rk, _p in rows)),
+            "winner_was_our_rank1_pct": round(sum(1 for _s, _b, rk, _p in rows if rk == 1) / n * 100, 1) if n else 0,
+            "winner_place_top4_pct": round(sum(1 for *_x, p in rows if p and p <= 4) / n * 100, 1) if n else 0,
+            "barrier": dict(Counter(_barr(b) for _s, b, *_ in rows)),
+        }
+
+    return {
+        "days": days,
+        "nonmetro_last2_winners": _profile(True),
+        "baseline_metro_last2_winners": _profile(False, want_metro_late=True),
+        "note": ("Compare nonmetro late (target) vs metro late (baseline). If nonmetro-late "
+                 "winners skew to bigger SP and lower OUR model rank, the model is under-rating "
+                 "roughies in weak late country fields."),
+    }
+
+
 @app.get("/api/admin/analysis/late-longshot-refine")
 async def late_longshot_refine(
     days: int = 90,
