@@ -215,6 +215,11 @@
   .chip.going-unknown { background: var(--surface-2); color: var(--text-3); }
   .chip.sharp { background: var(--mint-dim); color: var(--mint); border-color: var(--mint); }
   .chip.place-play { background: var(--blue-dim); color: var(--blue); border-color: var(--blue); }
+  .chip.roughie { background: var(--amber-dim); color: var(--amber); border-color: var(--amber); }
+  .roughie-note { padding: 7px 9px; margin: 6px 0; border-radius: 8px; background: var(--amber-dim); color: var(--text-2); font-size: 0.72rem; line-height: 1.35; border: 1px solid var(--amber); }
+  .roughie-note b { color: var(--amber); }
+  .field-table tr.roughie-row td { background: var(--amber-dim); }
+  .field-table tr.roughie-row td.name::after { content: ' 🐎'; }
   .chip.tier-hot    { background: var(--hot-dim);   color: var(--hot); }
   .chip.tier-high   { background: var(--blue-dim);  color: var(--blue); }
   .chip.tier-strong { background: var(--strong-dim); color: var(--strong); }
@@ -1072,10 +1077,23 @@
   // Place play — last-2 races at country meetings are excluded from Sharp
   // (our win pick is near-random there), but our top pick still PLACES ~43%.
   function placeChip(r, big) {
-    const pp = r.place_play;
-    if (!pp || !pp.paid_place_pct) return '';
     const style = big ? '' : ' style="font-size:0.56rem;padding:1px 5px;margin-left:4px"';
-    return `<span class="chip place-play"${style} title="Weak late country field — our win pick is a coin-flip here, but it places (pays) about ${pp.paid_place_pct}% of the time. Consider a place bet.">🅿️ PLACE ~${pp.paid_place_pct}%</span>`;
+    const pp = r.place_play;
+    if (pp && pp.paid_place_pct) {
+      return `<span class="chip place-play"${style} title="Weak late country field — our win pick is a coin-flip here, but it places (pays) about ${pp.paid_place_pct}% of the time. Consider a place bet.">🅿️ PLACE ~${pp.paid_place_pct}%</span>`;
+    }
+    const cr = r.country_roughie;
+    if (cr) {
+      return `<span class="chip roughie"${style} title="Small late country field — our pick is a coin-flip, but the $${cr.odds_min}-${cr.odds_max} outsiders win ~${cr.win_strike_pct}% flat here (+${cr.hist_roi_pct}% historical ROI). Open the field and spread small WIN bets across them.">🐎 ROUGHIE</span>`;
+    }
+    return '';
+  }
+  // The $8-15 outsiders in a small late-country field — the Country Roughie spread.
+  function roughieRunners(r) {
+    const cr = r.country_roughie;
+    if (!cr) return [];
+    return (S.runners[r.race_id] || []).filter(x => !x.cancelled
+      && x.best_available_odds >= cr.odds_min && x.best_available_odds <= cr.odds_max);
   }
   const isSettled = r => r.model_correct !== null && r.model_correct !== undefined;
   // Outcome class for settled races — drives the green/amber/red borders.
@@ -1633,13 +1651,20 @@
          : r.model_placed ? `<span class="chip outcome-place">✓ PLACED${posOrd(r.top_pick_position) ? ' ' + posOrd(r.top_pick_position) : ''}</span>`
          : '<span class="chip outcome-miss">✗ LOST</span>')
       : '';
-    body.innerHTML = offNote + settledNote + resultHtml + top.map((x, i) => {
+    const cr = r.country_roughie;
+    const shots = cr ? new Set(roughieRunners(r).map(x => x.tab_number)) : null;
+    const roughieNote = (cr && shots && shots.size && !isSettled(r))
+      ? `<div class="roughie-note">🐎 <b>Country Roughie</b> — our win pick is a coin-flip in this small field, but the ${shots.size} outsider${shots.size > 1 ? 's' : ''} at $${cr.odds_min}–${cr.odds_max} (🐎 below) win ~${cr.win_strike_pct}% flat here (+${cr.hist_roi_pct}% historical ROI). Spread small <b>WIN</b> bets across them.</div>`
+      : '';
+    body.innerHTML = offNote + settledNote + roughieNote + resultHtml + top.map((x, i) => {
       const isVal = (x.overlay || 0) > 0.05 && (x.best_available_odds || 0) >= 3;
+      const isShot = shots && shots.has(x.tab_number);
       return `<div class="runner ${i === 0 ? 'top1' : ''}">
         <div class="saddle num">${x.tab_number ?? '–'}</div>
         <div class="info">
           <div class="hn">${esc(x.horse_name)}
             <span class="pick-tag">${i === 0 ? 'OUR PICK' : (i + 1) + ['','','ND','RD'][i + 1 <= 3 ? i + 1 : 0] + (i + 1 <= 3 ? ' PICK' : 'TH PICK')}</span>${i === 0 ? pickOutcome : ''}
+            ${isShot ? '<span class="val-chip" style="background:var(--amber-dim);color:var(--amber)">🐎 ROUGHIE</span>' : ''}
             ${isVal ? '<span class="val-chip">VALUE</span>' : ''}</div>
           <div class="jk">${x.jockey ? `J: ${esc(x.jockey)}` : ''}${x.jockey_overall_rate != null ? ` <b>${(+x.jockey_overall_rate).toFixed(0)}%</b>` : ''}${x.trainer ? ` · T: ${esc(x.trainer)}` : ''}${x.trainer_overall_rate != null ? ` <b>${(+x.trainer_overall_rate).toFixed(0)}%</b>` : ''}</div>
           <div class="jk">${x.barrier ? `barrier ${x.barrier}` : ''}${x.weight ? ` · ${x.weight}kg` : ''}${x.form_figures ? ` · <b class="ff">form ${x.form_figures}</b>` : (x.starts_last_10 != null ? ` · last ${x.starts_last_10 < 10 ? x.starts_last_10 : 10}: ${x.wins_last_10 ?? 0}W / ${x.places_last_10 ?? 0} top-3` : '')}${x.days_since_last_run != null && x.days_since_last_run < 999 ? ` · ${x.days_since_last_run}d off` : ''}</div>
