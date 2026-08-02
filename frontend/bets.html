@@ -1237,6 +1237,49 @@
     if (isFirstFour() && key === 'quad') return 'First 4';
     return m.label || key;
   }
+  // First Four spread = 5 four-horse boxes built from the model's top-5 (each
+  // leaves out a different one of the top-5). We extract the top-5 (in rank
+  // order) from the committed boxes so it works for every race immediately.
+  function _topRunners(r) {
+    const bbs = r.bets_by_strategy || {};
+    const c4 = (bbs.quad || []).find(b => (b.box_horses || []).length === 4)
+      || (bbs.spread || []).find(b => b.strategy_label === 'core_top4')
+      || (bbs.spread || []).find(b => (b.box_horses || []).length >= 4);
+    if (!c4 || (c4.box_horses || []).length < 4) return null;
+    const order = c4.box_horses.slice(0, 4);
+    const nameOf = {};
+    (c4.box_horses || []).forEach((t, i) => nameOf[t] = (c4.box_horse_names || [])[i]);
+    const nfh = (bbs.spread || []).find(b => b.strategy_label === 'no_favourite_hedge')
+      || (bbs.spread || []).find(b => (b.box_horses || []).length >= 4 && b !== c4);
+    let t5 = null;
+    if (nfh) (nfh.box_horses || []).forEach((t, i) => {
+      if (!order.includes(t) && t5 == null) { t5 = t; nameOf[t] = (nfh.box_horse_names || [])[i]; }
+    });
+    return { tabs: (t5 != null ? order.concat([t5]) : order), nameOf };
+  }
+  const _FF_BOX_LABELS = ['Top 4', '+5th', 'Skip 3', 'Skip 2', 'No fav'];
+  function firstFourSpread(r) {
+    const tr = _topRunners(r);
+    if (!tr) return [];
+    const [a, b, c, d, e] = tr.tabs;
+    const combos = [[a, b, c, d]];
+    if (e != null) combos.push([a, b, c, e], [a, b, d, e], [a, c, d, e], [b, c, d, e]);
+    const settled = r.status !== 'pending';
+    return combos.map((tabs, i) => ({
+      strategy_label: 'ff_box' + (i + 1),
+      _ff_label: _FF_BOX_LABELS[i] || ('Box ' + (i + 1)),
+      box_horses: tabs,
+      box_horse_names: tabs.map(t => tr.nameOf[t] || ''),
+      num_permutations: 24,
+      settled,
+    }));
+  }
+  // Boxes for a strategy under the current bet type. First Four's Spread is the
+  // synthesized 5-box set; everything else is the committed boxes (filtered).
+  function strategyBoxes(r, key) {
+    if (isFirstFour() && key === 'spread') return firstFourSpread(r);
+    return betTypeBoxes((r.bets_by_strategy || {})[key]);
+  }
   function fmtPnl(v) {
     if (v == null) return null;
     const s = v >= 0 ? '+' : '−';
@@ -1352,7 +1395,7 @@
       : (Array.isArray(r.top3) ? r.top3.map(x => x.tab_number) : []);
     const boxes = collapsed ? '' : bets.map(b => {
       const isHit = boxIsHit(b, r);
-      const label = BOX_LABELS[b.strategy_label] || b.strategy_label;
+      const label = b._ff_label || BOX_LABELS[b.strategy_label] || b.strategy_label;
       const posOf = (tab) => {
         const i = actualTop4.indexOf(tab);
         return i >= 0 ? i + 1 : null;  // 1-indexed
@@ -1602,7 +1645,7 @@
     for (const r of (data.races || [])) {
       // Cost the race on the SELECTED strategy only — these are alternative
       // ways to play one race, not a portfolio you'd bet together.
-      const bs = betTypeBoxes((r.bets_by_strategy || {})[state.strategy]);
+      const bs = strategyBoxes(r, state.strategy);
       r._selCount = bs.length;
       r._hasStrat = bs.length > 0;
       r._ustake = bs.reduce((a, b) => a + unitStake(b), 0);
@@ -1636,10 +1679,10 @@
     const _btStrats = betTypeStrategies();
     const stratStats = STRATEGY_DISPLAY.filter(s => !s.legacy && _btStrats.includes(s.key)).map(s => {
       const racesWithGroup = dayResulted.filter(r =>
-        betTypeBoxes((r.bets_by_strategy || {})[s.key]).length > 0
+        strategyBoxes(r, s.key).length > 0
       );
       const groupHits = racesWithGroup.filter(r =>
-        betTypeBoxes(r.bets_by_strategy[s.key]).some(b => boxIsHit(b, r))
+        strategyBoxes(r, s.key).some(b => boxIsHit(b, r))
       ).length;
       const pct = racesWithGroup.length
         ? Math.round(groupHits / racesWithGroup.length * 100)
@@ -1648,7 +1691,7 @@
       // show ROI alongside hit %.
       let stake = 0, payout = 0;
       for (const r of racesWithGroup) {
-        for (const b of betTypeBoxes(r.bets_by_strategy[s.key])) {
+        for (const b of strategyBoxes(r, s.key)) {
           stake += unitStake(b);
           payout += unitPayout(b, r) || 0;
         }
@@ -1832,9 +1875,8 @@
           </div>
           ${winningStrip}
           ${(() => {
-            const bbs = r.bets_by_strategy || {};
-            // Selected strategy only — show just that strategy's boxes.
-            const bets = bbs[state.strategy];
+            // Selected strategy's boxes (First Four's Spread is synthesized).
+            const bets = strategyBoxes(r, state.strategy);
             return (bets && bets.length)
               ? renderStrategyBlock(r, state.strategy, bets)
               : '';
