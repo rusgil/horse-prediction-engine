@@ -1083,21 +1083,39 @@
     const settled = y.filter(p=>!p.scratched && !p.no_result);
     let yHtml = '';
     if (settled.length) {
-      let flatPnl=0, wins=0, plc=0;
+      let flatPnl=0, wins=0, plc=0, nBet=0, nSkip=0;
+      // Same discipline as the live book: only BET a Hot pick when the model
+      // beats the price (model_prob × SP > 1). Short-priced favourites the
+      // model rates below the market are SKIPS — they don't count in the P/L,
+      // so two odds-on winners can't be dragged down by a bet you'd never make.
       const rows = settled.map(p=>{
+        const sp=p.sp; const prob=(p.model_pct||0)/100;
+        const hasValue = !!(sp && sp>1 && prob>0 && sp*prob>1);
         const won=!!p.winner, placed=(!!p.placed && !won);
+        if (!hasValue) {
+          nSkip++;
+          return `<div class="hcard settled" style="opacity:0.5">
+            <div><div class="h-name" style="font-size:1.05rem">${esc(p.horse_name)}</div>
+              <div class="h-sub num">${esc(p.venue)} R${p.race_number}${sp?' · SP $'+(+sp).toFixed(2):''} · win ${p.model_pct}% · ${won?'won':placed?'placed':'lost'}</div></div>
+            <div class="h-when"><div class="cd" style="font-size:0.72rem;color:var(--text-3)">skip · no value</div></div>
+          </div>`;
+        }
+        nBet++;
         if(won) wins++; if(placed) plc++;
-        const sp=p.sp; const pl = won && sp ? +(sp-1).toFixed(2) : -1; flatPnl+=pl;
+        const pl = won && sp ? +(sp-1).toFixed(2) : -1; flatPnl+=pl;
         const cls = won?'res-win':placed?'res-place':'res-miss';
         const mark = won?'✓ WON':placed?'~ placed':'✗';
         return `<div class="hcard settled ${cls}">
           <div><div class="h-name" style="font-size:1.05rem">${esc(p.horse_name)}</div>
-            <div class="h-sub num">${esc(p.venue)} R${p.race_number}${sp?' · SP $'+(+sp).toFixed(2):''} · win ${p.model_pct}%</div></div>
+            <div class="h-sub num">${esc(p.venue)} R${p.race_number}${sp?' · SP $'+(+sp).toFixed(2):''} · win ${p.model_pct}% · value</div></div>
           <div class="h-when"><div class="cd" style="font-size:0.9rem;color:${won?'var(--mint)':placed?'var(--amber)':'var(--red)'}">${mark}</div></div>
         </div>`;
       }).join('');
-      const roi = Math.round(flatPnl/settled.length*100);
-      yHtml = `<div class="sec-t">Yesterday’s Hot Book <span class="day-pnl" style="color:${flatPnl>=0?'var(--mint)':'var(--red)'}">${wins}W · ${plc}P of ${settled.length} · flat ${flatPnl>=0?'+':''}${flatPnl.toFixed(1)}u (${roi>=0?'+':''}${roi}% ROI)</span></div>${rows}`;
+      const roi = nBet ? Math.round(flatPnl/nBet*100) : 0;
+      const summ = nBet
+        ? `${wins}W · ${plc}P of ${nBet} bet · flat ${flatPnl>=0?'+':''}${flatPnl.toFixed(1)}u (${roi>=0?'+':''}${roi}% ROI)${nSkip?` · ${nSkip} skipped`:''}`
+        : `no value bets${nSkip?` · ${nSkip} skipped (no value)`:''}`;
+      yHtml = `<div class="sec-t">Yesterday’s Hot Book <span class="day-pnl" style="color:${nBet===0?'var(--text-3)':flatPnl>=0?'var(--mint)':'var(--red)'}">${summ}</span></div>${rows}`;
     }
 
     const methodLbl = HB.mode === 'flat'
