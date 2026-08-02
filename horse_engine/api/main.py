@@ -4356,8 +4356,16 @@ _edge_odds_cache: dict[str, tuple[datetime, dict[str, float]]] = {}  # race_id �
 _EDGE_RESPONSE_TTL = 120
 # Bump _EDGE_CACHE_VERSION whenever threshold or response shape changes so
 # old cached responses are invalidated on deploy without a manual restart.
-_EDGE_CACHE_VERSION = 11  # 2026-06-30: Edge trifecta now sources from Lab's trio_only (place-model top-3)
+_EDGE_CACHE_VERSION = 12  # 2026-08-03: place_play on excluded late-country races
 _edge_response_cache: tuple[datetime, dict, int] | None = None
+
+# Empirical paid-place strike-rate of our predicted winner (model_rank==1) in
+# the last-2 races at NON-METRO meetings. These are excluded from Sharp (weak
+# late country fields where our WIN pick is near-random) — but our top pick
+# still PLACES (pays) ~43% of the time, so we surface a "place play" instead of
+# nothing. Field-size-aware paid-place; top-3 is ~54%. Refresh from
+# /api/admin/analysis/late-nonmetro-winners → nonmetro_late_our_winpick_strike.
+LATE_COUNTRY_PLACE_STRIKE_PCT = 43
 
 # Cache full list_meetings response for 10 min (weather + RA calls are expensive)
 _list_meetings_cache: dict[str, tuple[datetime, dict]] = {}  # date → (ts, response)
@@ -5234,6 +5242,15 @@ async def get_edge_picks():
                 "form_figures": form_figures,
                 "days_since_last_run": days_since_last_run,
                 "is_sharp": is_sharp,
+                # Place play — on the last-2 races at non-metro meetings we don't
+                # claim a Sharp WIN pick (our rank-1 wins ~20%, near field-average
+                # in weak country fields), but our top pick still PLACES ~43% of
+                # the time. Surface that instead of nothing so the race isn't dead.
+                "place_play": ({
+                    "horse_name": runner_row.horse_name,
+                    "paid_place_pct": LATE_COUNTRY_PLACE_STRIKE_PCT,
+                    "reason": "late_country",
+                } if _late_nonmetro else None),
                 "top3_sum_pct": round(top3_sum_pct, 1),
                 # rank-2's win % — lets Edge show 👑 CLEAR FAV (gap ≥5pt) like
                 # the Lounge/Hot Seat. field_top3 is rank-sorted.
