@@ -10224,6 +10224,7 @@ async def late_nonmetro_winners(days: int = 60, x_cron_secret: Optional[str] = H
 
 @app.get("/api/admin/analysis/late-longshot-traits")
 async def late_longshot_traits(days: int = 120, min_sp: float = 8.0,
+                               field_basis: str = "accepted",
                                x_cron_secret: Optional[str] = Header(None)):
     """Among LONGSHOTS (SP >= min_sp) in the last-2 races at NON-METRO meetings,
     which traits make a high-odds horse more likely to WIN or PLACE? Breaks the
@@ -10253,9 +10254,14 @@ async def late_longshot_traits(days: int = 120, min_sp: float = 8.0,
             .where(RunnerPredictionHistoryRow.source == "live")
             .where(RunnerPredictionHistoryRow.cancelled.is_(False) | RunnerPredictionHistoryRow.cancelled.is_(None))
         )).all()
-    # field size + max race number per venue-date
+    # field size + max race number per venue-date. Two field-size definitions:
+    #  - finishers: horses with a finishing position (post-scratch; what earlier
+    #    runs used).  - accepted: count of live prediction rows per race (pre-
+    #    scratch; what the LIVE Country Roughie gate uses). Default "accepted" so
+    #    the reported edge matches what the feature will actually select.
     max_rn: dict[tuple, int] = {}
-    fs: dict[str, int] = defaultdict(int)
+    fs_finish: dict[str, int] = defaultdict(int)
+    fs_accept: dict[str, int] = defaultdict(int)
     for r in res:
         d, vc, rn = _parse_race_id(r.race_id)
         if rn is None:
@@ -10263,7 +10269,10 @@ async def late_longshot_traits(days: int = 120, min_sp: float = 8.0,
         if rn > max_rn.get((d, vc), 0):
             max_rn[(d, vc)] = rn
         if r.position and 1 <= r.position < 90:
-            fs[r.race_id] += 1
+            fs_finish[r.race_id] += 1
+    for p in preds:
+        fs_accept[p.race_id] += 1
+    fs = fs_accept if (field_basis or "accepted").lower().startswith("acc") else fs_finish
     pred = {(p.race_id, p.tab_number): p for p in preds if p.tab_number is not None}
 
     # Collect longshot runners in late non-metro races
@@ -10366,7 +10375,7 @@ async def late_longshot_traits(days: int = 120, min_sp: float = 8.0,
     }
 
     return {
-        "days": days, "min_sp": min_sp,
+        "days": days, "min_sp": min_sp, "field_basis": field_basis,
         "baseline_all_longshots": {
             "runners": base_n,
             "win_pct": round(base_win / base_n * 100, 1) if base_n else 0,
