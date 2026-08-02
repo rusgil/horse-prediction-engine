@@ -19128,8 +19128,23 @@ async def get_meeting(race_date: str, venue_code: str):
             pass
 
     races_out = []
+    # Late-non-metro exclusion (2026-08-02) — this whole meeting is one venue,
+    # so compute its highest race number once. The last-2 races at a non-metro
+    # meeting never qualify as Sharp (our rank-1 win pick is near-random in weak
+    # late country fields); instead we surface a "place play" — our top pick
+    # PLACES (pays) ~43% of the time there. Mirrors the /api/edge computation.
+    from horse_engine.bets import is_metro_venue
+    _mtg_max_rn = max((r["race_number"] for r in race_list), default=0)
+    _mtg_nonmetro = not is_metro_venue(venue_code)
+
     for r in race_list:
         rid = r["race_id"]
+        _late_nonmetro = bool(
+            _mtg_nonmetro and _mtg_max_rn >= 5 and r["race_number"] >= _mtg_max_rn - 1
+        )
+        _is_sharp = is_sharp_map.get(rid)
+        if _late_nonmetro:
+            _is_sharp = False
         races_out.append({
             **r,
             "enriched_at": enriched_rows.get(rid).isoformat() if enriched_rows.get(rid) else None,
@@ -19142,7 +19157,12 @@ async def get_meeting(race_date: str, venue_code: str):
             "top_pick": top_picks.get(rid),
             "top_pick_odds": top_pick_odds.get(rid),
             "top_pick_place_odds": pick_place_odds.get(rid),
-            "is_sharp": is_sharp_map.get(rid),
+            "is_sharp": _is_sharp,
+            "place_play": ({
+                "horse_name": top_picks.get(rid),
+                "paid_place_pct": LATE_COUNTRY_PLACE_STRIKE_PCT,
+                "reason": "late_country",
+            } if _late_nonmetro and top_picks.get(rid) else None),
         })
 
     result = {
