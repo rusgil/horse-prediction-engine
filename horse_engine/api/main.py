@@ -2543,6 +2543,15 @@ async def _snapshot_prerace_predictions() -> int:
         await _set_model_unstable_banner_internal(True, f"distribution:{degraded_reason}")
 
     import uuid as _uuid
+    from horse_engine.bets import is_metro_venue
+    # Highest race number per venue in this batch — for the late-non-metro
+    # Sharp exclusion (mirrors the /api/edge live computation).
+    _snap_max_race: dict[str, int] = {}
+    for _rid in races.keys():
+        _v = _parse_race_id(_rid)[1]
+        _rn = _parse_race_id(_rid)[2]
+        if _rn is not None:
+            _snap_max_race[_v] = max(_snap_max_race.get(_v, 0), _rn)
     async with get_session() as session:
         for race_id, runners in races.items():
             batch_id = str(_uuid.uuid4())  # shared across all runners in this enrichment batch
@@ -2566,7 +2575,17 @@ async def _snapshot_prerace_predictions() -> int:
                     except Exception:
                         _days_off = None
                 _layoff_ok = not (isinstance(_days_off, (int, float)) and _days_off > 180)
-                race_is_sharp = bool(_high_conf and _layoff_ok)
+                # Late-non-metro exclusion (2026-08-02) — see /api/edge note.
+                # Last-2 races at country meetings are near-unpredictable for our
+                # rank-1 win pick, so they never qualify as Sharp.
+                _svenue = _parse_race_id(race_id)[1]
+                _srn = _parse_race_id(race_id)[2]
+                _smx = _snap_max_race.get(_svenue, 0)
+                _late_nonmetro = bool(
+                    (not is_metro_venue(_svenue))
+                    and _srn is not None and _smx >= 5 and _srn >= _smx - 1
+                )
+                race_is_sharp = bool(_high_conf and _layoff_ok and not _late_nonmetro)
             for r in runners:
                 try:
                     session.add(RunnerPredictionHistoryRow(
@@ -4882,6 +4901,14 @@ async def get_edge_picks():
         # do the work. Saves several hundred Acceptances/day.
         unique_venues = {_parse_race_id(r.race_id)[1] for r in rows}
         slug_map = {v: _meeting_slug(v, target_date) for v in unique_venues}
+        # Highest race number per venue on the card — used to identify the
+        # "late" races (last 2) for the late-non-metro Sharp exclusion below.
+        meeting_max_race: dict[str, int] = {}
+        for _r in rows:
+            _v = _parse_race_id(_r.race_id)[1]
+            _rn = _parse_race_id(_r.race_id)[2]
+            if _rn is not None:
+                meeting_max_race[_v] = max(meeting_max_race.get(_v, 0), _rn)
         race_times: dict[str, str | None] = {}
         live_odds_by_race: dict[str, dict[str, float]] = {}
         if not ra_blocked:
@@ -5150,7 +5177,19 @@ async def get_edge_picks():
             top3_sum_pct = sum(f.get("win_pct") or 0 for f in field_top3)
             _high_conf = (model_pct or 0) >= 30 or top3_sum_pct >= 60
             _layoff_ok = not (isinstance(days_since_last_run, (int, float)) and days_since_last_run > 180)
-            is_sharp = bool(_high_conf and _layoff_ok)
+            # Late-non-metro exclusion (2026-08-02). The model can only pick the
+            # winner of the last-2 races at NON-METRO meetings ~11% of the time
+            # (vs the field) — weak late country fields where our ranking is
+            # near-random. This holds every day of the week, not just Sunday.
+            # These races never qualify as Sharp; the edge there is longshots /
+            # place, not our rank-1 win pick.
+            from horse_engine.bets import is_metro_venue
+            _mx = meeting_max_race.get(venue_code, 0)
+            _late_nonmetro = bool(
+                (not is_metro_venue(venue_code))
+                and race_num is not None and _mx >= 5 and race_num >= _mx - 1
+            )
+            is_sharp = bool(_high_conf and _layoff_ok and not _late_nonmetro)
 
             picks.append({
                 "date": target_date,
