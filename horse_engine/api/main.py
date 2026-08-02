@@ -7431,6 +7431,18 @@ def _build_combo_doubles(edge_picks: list[dict]) -> Optional[dict]:
     probs = [(p.get("model_pct") or 0) / 100.0 for p in top4]
     odds = [p.get("best_available_odds") or 0.0 for p in top4]
 
+    # VALUE GATE (2026-08-02): a combo doubles stakes all 6 doubles ($60 at
+    # $10 unit), so it only makes sense when the legs pay enough that landing
+    # even your TWO SHORTEST winners returns the stake. On short-priced
+    # favourites the doubles pay too little — yesterday 3 of 4 won for just
+    # +$5.90 on $60, and 2 of 4 would have LOST ~$37. Break-even on a single
+    # paying double needs its combined odds ≥ number of doubles (6). Require the
+    # two shortest legs to clear that, so any 2 winners at least break even.
+    NUM_DOUBLES = 6  # C(4,2)
+    _short = sorted(o for o in odds if o and o > 1.0)
+    if len(_short) < 4 or (_short[0] * _short[1]) < NUM_DOUBLES:
+        return None
+
     # 6 doubles = every pair.
     from itertools import combinations
     pairs = []
