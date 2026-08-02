@@ -10045,13 +10045,47 @@ async def late_nonmetro_winners(days: int = 60, x_cron_secret: Optional[str] = H
             "barrier": dict(Counter(_barr(b) for _s, b, *_ in rows)),
         }
 
+    # Day-of-week breakdown for nonmetro-late winners — is the model-miss
+    # (winner not our rank-1) a Sunday problem or every day?
+    import datetime as _dt
+    dow_names = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
+    dow: dict[str, dict] = {n: {"winners": 0, "our_rank1": 0, "big_odds": 0} for n in dow_names}
+    for r in res:
+        if r.position != 1:
+            continue
+        d, vc, rn = _parse_race_id(r.race_id)
+        if rn is None or is_metro_venue(vc):
+            continue
+        if rn < max_rn.get((d, vc), 0) - 1:
+            continue
+        try:
+            wd = dow_names[_dt.date.fromisoformat(d).weekday()]
+        except Exception:
+            continue
+        pr = pred.get((r.race_id, r.tab_number))
+        dow[wd]["winners"] += 1
+        if pr and pr.model_rank == 1:
+            dow[wd]["our_rank1"] += 1
+        if r.starting_price and r.starting_price >= 15:
+            dow[wd]["big_odds"] += 1
+    by_weekday = {}
+    for n in dow_names:
+        w = dow[n]["winners"]
+        by_weekday[n] = {
+            "winners": w,
+            "we_picked_winner_rank1_pct": round(dow[n]["our_rank1"] / w * 100, 1) if w else None,
+            "big_odds_$15+_pct": round(dow[n]["big_odds"] / w * 100, 1) if w else None,
+        }
+
     return {
         "days": days,
         "nonmetro_last2_winners": _profile(True),
         "baseline_metro_last2_winners": _profile(False, want_metro_late=True),
+        "nonmetro_late_by_weekday": by_weekday,
         "note": ("Compare nonmetro late (target) vs metro late (baseline). If nonmetro-late "
                  "winners skew to bigger SP and lower OUR model rank, the model is under-rating "
-                 "roughies in weak late country fields."),
+                 "roughies in weak late country fields. by_weekday shows whether the miss is "
+                 "Sunday-specific or every day."),
     }
 
 
