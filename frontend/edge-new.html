@@ -242,7 +242,6 @@
   .chip.going-unknown { background: var(--surface-2); color: var(--text-3); }
   .chip.sharp { background: var(--mint-dim); color: var(--mint); border-color: var(--mint); }
   .chip.place-play { background: var(--blue-dim); color: var(--blue); border-color: var(--blue); }
-  .chip.roughie { background: var(--amber-dim); color: var(--amber); border-color: var(--amber); }
   .chip.tier-hot    { background: var(--hot-dim);   color: var(--hot); }
   .chip.tier-high   { background: var(--blue-dim);  color: var(--blue); }
   .chip.tier-strong { background: var(--strong-dim); color: var(--strong); }
@@ -1107,14 +1106,8 @@
   // (our win pick is near-random there), but our top pick still PLACES ~43%.
   function placeChip(p) {
     const pp = p.place_play;
-    if (pp && pp.paid_place_pct) {
-      return `<span class="chip place-play" title="Weak late country field — our win pick is a coin-flip here, but it places (pays) about ${pp.paid_place_pct}% of the time. Consider a place bet.">🅿️ PLACE ~${pp.paid_place_pct}%</span>`;
-    }
-    const cr = p.country_roughie;
-    if (cr) {
-      return `<span class="chip roughie" title="Small late country field — our pick is a coin-flip, but the $${cr.odds_min}-${cr.odds_max} outsiders win ~${cr.win_strike_pct}% flat here (+${cr.hist_roi_pct}% historical ROI). Spread small WIN bets across them.">🐎 ROUGHIE</span>`;
-    }
-    return '';
+    if (!pp || !pp.paid_place_pct) return '';
+    return `<span class="chip place-play" title="Weak late country field — our win pick is a coin-flip here, but it places (pays) about ${pp.paid_place_pct}% of the time. Consider a place bet.">🅿️ PLACE ~${pp.paid_place_pct}%</span>`;
   }
   const isPremium = p => p.model_pct >= 29.5 && p.best_available_odds != null && p.best_available_odds >= 3.0 && p.edge_pct != null && p.edge_pct > 5;
   const aestToday = (off = 0) => new Date(Date.now() + off * 86400000).toLocaleDateString('en-CA', { timeZone: 'Australia/Sydney' });
