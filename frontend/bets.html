@@ -952,6 +952,19 @@
     @media (max-width: 600px) {
       .page-title { font-size: 28px; }
     }
+    .bettype-seg {
+      display: flex; gap: 6px; max-width: 760px; margin: 0 auto 14px;
+      background: var(--bg-elevated); border: 1px solid var(--border);
+      border-radius: 12px; padding: 4px;
+    }
+    .bettype-seg button {
+      flex: 1; display: flex; flex-direction: column; align-items: center; gap: 1px;
+      border: none; background: none; cursor: pointer; border-radius: 9px;
+      padding: 8px 6px; color: var(--text-muted); font-family: inherit;
+    }
+    .bettype-seg button b { font-size: 15px; font-weight: 800; letter-spacing: 0.02em; }
+    .bettype-seg button span { font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.05em; }
+    .bettype-seg button.on { background: var(--bg-card); color: var(--teal-bright); box-shadow: 0 1px 4px rgba(0,0,0,0.2); }
     .hotbook-cta {
       display: flex; align-items: center; gap: 14px;
       max-width: 760px; margin: 0 auto 20px;
@@ -997,6 +1010,10 @@
     <h1 class="page-title">🧪 Funky IQ Labs <span class="tier-badge tier-labs">Labs</span></h1>
     <p class="page-subtitle">Paper-trading · $1 per suggested box · a winning box pays the full dividend · metro meetings only</p>
   </header>
+  <div class="bettype-seg" id="betTypeSeg" role="radiogroup" aria-label="Bet type">
+    <button data-bt="trifecta"><b>Trifecta</b><span>pick the top 3</span></button>
+    <button data-bt="first_four"><b>First Four</b><span>pick the top 4</span></button>
+  </div>
   <a href="/hotbook" class="hotbook-cta">
     <span class="hb-emoji">🔥</span>
     <span class="hb-text">
@@ -1094,14 +1111,23 @@
 
   // race_id -> bool (expanded?); race_id -> array of bet rows (cached fetch)
   const STRATEGY_KEY = 'fiq_strategy';
+  const BETTYPE_KEY = 'fiq_bettype';
   const VALID_STRATEGIES = ['trio', 'stack', 'quad', 'spread'];
   let _savedStrategy = 'trio';
   try {
     const s = localStorage.getItem(STRATEGY_KEY);
     if (VALID_STRATEGIES.includes(s)) _savedStrategy = s;
   } catch (e) {}
+  let _savedBetType = 'trifecta';
+  try {
+    const bt = localStorage.getItem(BETTYPE_KEY);
+    if (bt === 'trifecta' || bt === 'first_four') _savedBetType = bt;
+  } catch (e) {}
   const state = {
     expanded: new Set(), detail: {}, lastData: null, sort: 'next',
+    // Trifecta (top-3 boxes) or First Four (top-4 boxes). Drives grading,
+    // dividends and which strategies are selectable.
+    betType: _savedBetType,
     // The active strategy every race card is costed on. You'd bet ONE of
     // these per race, not all four — so P/L reflects just this one. Default
     // Trio (best backtested ROI); switch via the strip below the summary.
@@ -1174,9 +1200,30 @@
   // the full trifecta dividend. So a strategy's stake = its number of boxes,
   // and one hit whose dividend beats that stake is a profit.
   function unitStake(b) { return 1; }
-  function unitPayout(b) {
-    if (!b.settled || !b.is_hit) return 0;
-    return b.trifecta_dividend != null ? b.trifecta_dividend : null;  // null = hit, div pending
+  // Bet-type-aware grading. Trifecta: box wins if the top-3 are all in it
+  // (b.is_hit, pre-graded). First Four: box needs >=4 horses AND the actual
+  // top-4 all in it; pays the real first-four dividend (per race).
+  function isFirstFour() { return state.betType === 'first_four'; }
+  function boxIsHit(b, r) {
+    if (isFirstFour()) {
+      const box = b.box_horses || [];
+      const t4 = (r && Array.isArray(r.top4)) ? r.top4.map(x => x.tab_number) : null;
+      return !!(box.length >= 4 && t4 && t4.length === 4 && t4.every(t => box.includes(t)));
+    }
+    return b.is_hit === true;
+  }
+  function boxDividend(b, r) {   // winning dividend for this box; null = hit but div pending
+    if (isFirstFour()) return (r && r.first_four_dividend != null) ? r.first_four_dividend : null;
+    return b.trifecta_dividend != null ? b.trifecta_dividend : null;
+  }
+  function unitPayout(b, r) {
+    if (!b.settled || !boxIsHit(b, r)) return 0;
+    return boxDividend(b, r);
+  }
+  // Strategies selectable per bet type. First Four needs >=4-horse boxes, so
+  // 3-horse-box strategies (Trio, Stack) are hidden; Trio+1 (4-horse) leads.
+  function betTypeStrategies() {
+    return isFirstFour() ? ['quad', 'spread'] : ['trio', 'stack', 'quad', 'spread'];
   }
   function fmtPnl(v) {
     if (v == null) return null;
@@ -1250,19 +1297,20 @@
     stack_no_fav: 'No fav', stack_value: 'Value',
   };
 
-  function renderStrategyBlock(raceId, group, bets, raceStatus) {
+  function renderStrategyBlock(r, group, bets) {
     if (!bets || !bets.length) return '';
+    const raceId = r.race_id, raceStatus = r.status;
     const meta = STRATEGY_DISPLAY.find(s => s.key === group);
     if (!meta) return '';
     const totalStake = bets.reduce((a, b) => a + unitStake(b), 0);
-    const hits = bets.filter(b => b.is_hit).length;
-    // Sum the REAL declared trifecta dividends across hit boxes. P/L only
-    // shows once the dividend has landed (payTotal > 0); a hit whose
-    // dividend is still pending shows the hit count without a $ figure.
+    const hits = bets.filter(b => boxIsHit(b, r)).length;
+    // Sum the REAL declared dividends across hit boxes (trifecta or first-four
+    // per bet type). P/L only shows once the dividend has landed (payTotal > 0);
+    // a hit whose dividend is still pending shows the hit count without a $.
     let payTotal = 0;
     for (const b of bets) {
-      if (!b.is_hit) continue;
-      const rp = unitPayout(b);
+      if (!boxIsHit(b, r)) continue;
+      const rp = unitPayout(b, r);
       if (rp != null) payTotal += rp;
     }
     const boxPnl = (hits > 0 && payTotal > 0) ? (payTotal - totalStake) : null;
@@ -1285,13 +1333,13 @@
     // marker (✓) was shown, which under-represented partial hits like
     // "3 of our 4 boxed horses made the top-4 but not in the exact
     // trifecta positions".
+    // Actual finishing top-4 (tab numbers, position order) for the per-horse
+    // badges — from the race result, so it works in both bet types.
+    const actualTop4 = Array.isArray(r.top4) ? r.top4.map(x => x.tab_number)
+      : (Array.isArray(r.top3) ? r.top3.map(x => x.tab_number) : []);
     const boxes = collapsed ? '' : bets.map(b => {
-      const isHit = b.is_hit === true;
+      const isHit = boxIsHit(b, r);
       const label = BOX_LABELS[b.strategy_label] || b.strategy_label;
-      const actualTop = Array.isArray(b.actual_top3) ? b.actual_top3 : [];
-      // actual_top3 is stored as [1st_tab, 2nd_tab, 3rd_tab]. For
-      // first_four bets we get the 4th too when available on b.actual_top4
-      const actualTop4 = Array.isArray(b.actual_top4) ? b.actual_top4 : actualTop;
       const posOf = (tab) => {
         const i = actualTop4.indexOf(tab);
         return i >= 0 ? i + 1 : null;  // 1-indexed
@@ -1328,7 +1376,7 @@
         : '';
       const hitMark = isHit ? ' ✓' : '';
       // Real declared dividend only (shown once it lands).
-      const realDiv = unitPayout(b);
+      const realDiv = unitPayout(b, r);
       const payoutTag = (isHit && realDiv != null)
         ? ` <span class="strategy-block-payout">div $${realDiv.toFixed(2)}</span>`
         : '';
@@ -1531,6 +1579,11 @@
 
   function render(data) {
     state.lastData = data;
+    // Keep the selected strategy valid for the current bet type (First Four
+    // hides 3-horse-box strategies), and reflect the bet-type toggle state.
+    if (!betTypeStrategies().includes(state.strategy)) state.strategy = betTypeStrategies()[0];
+    document.querySelectorAll('#betTypeSeg button').forEach(b =>
+      b.classList.toggle('on', b.dataset.bt === state.betType));
     // Box-unit conversion pass: every race re-costed at $1 a box
     // (stake = number of boxes, payout = real declared dividend per hit box).
     for (const r of (data.races || [])) {
@@ -1542,9 +1595,10 @@
       r._ustake = bs.reduce((a, b) => a + unitStake(b), 0);
       let pay = 0, uhits = 0;
       for (const b of bs) {
-        if (b.is_hit) uhits++;
-        if (!b.settled || !b.is_hit) continue;
-        const p = unitPayout(b);
+        const hit = boxIsHit(b, r);
+        if (hit) uhits++;
+        if (!b.settled || !hit) continue;
+        const p = unitPayout(b, r);
         if (p != null) pay += p;
       }
       r._upayout = pay;
@@ -1566,13 +1620,14 @@
     // it spans all resulted races, not just the selected strategy's subset.
     const dayResulted = allRaces.filter(r => r.status === 'settled' || r.status === 'settled_no_dividend');
     const stratDayLabel = 'window';
-    const stratStats = STRATEGY_DISPLAY.filter(s => !s.legacy).map(s => {
+    const _btStrats = betTypeStrategies();
+    const stratStats = STRATEGY_DISPLAY.filter(s => !s.legacy && _btStrats.includes(s.key)).map(s => {
       const racesWithGroup = dayResulted.filter(r => {
         const groupBets = (r.bets_by_strategy || {})[s.key];
         return groupBets && groupBets.length > 0;
       });
       const groupHits = racesWithGroup.filter(r =>
-        r.bets_by_strategy[s.key].some(b => b.is_hit)
+        r.bets_by_strategy[s.key].some(b => boxIsHit(b, r))
       ).length;
       const pct = racesWithGroup.length
         ? Math.round(groupHits / racesWithGroup.length * 100)
@@ -1584,7 +1639,7 @@
         for (const b of r.bets_by_strategy[s.key]) {
           if (b.voided) continue;
           stake += unitStake(b);
-          payout += unitPayout(b) || 0;
+          payout += unitPayout(b, r) || 0;
         }
       }
       const pnl = payout - stake;
@@ -1718,17 +1773,22 @@
       const timeRow = jt
         ? `<div class="race-time"><span class="jump-time">🕐 ${jt}</span><span class="countdown ${cd ? cd.cls : ''}">${cd ? cd.text : ''}</span></div>`
         : '';
-      const top3 = Array.isArray(r.top3) ? r.top3 : null;
-      const winningStrip = top3 && top3.length === 3
+      // Result strip: top-3 for Trifecta, top-4 for First Four.
+      const _resN = isFirstFour() ? 4 : 3;
+      const resLegs = isFirstFour()
+        ? (Array.isArray(r.top4) && r.top4.length >= 4 ? r.top4 : null)
+        : (Array.isArray(r.top3) && r.top3.length === 3 ? r.top3 : null);
+      const _posLbl = p => p === 1 ? '1st' : p === 2 ? '2nd' : p === 3 ? '3rd' : '4th';
+      const winningStrip = resLegs
         ? `<div class="winning-strip">
              <span class="trophy">🏆</span>
              <span class="label">Result</span>
-             ${top3.map((leg, i) => `
+             ${resLegs.map((leg, i) => `
                <span class="leg">
-                 <span class="pos">${leg.position === 1 ? '1st' : leg.position === 2 ? '2nd' : '3rd'}</span>
+                 <span class="pos">${_posLbl(leg.position)}</span>
                  <span class="tab">${leg.tab_number ?? '—'}</span>
                  <span class="name">${escHtml(leg.horse_name || '')}</span>
-               </span>${i < 2 ? '<span class="sep">·</span>' : ''}`).join('')}
+               </span>${i < _resN - 1 ? '<span class="sep">·</span>' : ''}`).join('')}
            </div>`
         : '';
       return `${divider}
@@ -1765,7 +1825,7 @@
             // Selected strategy only — show just that strategy's boxes.
             const bets = bbs[state.strategy];
             return (bets && bets.length)
-              ? renderStrategyBlock(r.race_id, state.strategy, bets, r.status)
+              ? renderStrategyBlock(r, state.strategy, bets)
               : '';
           })()}
           ${(() => {
@@ -1918,6 +1978,20 @@
 
   // Filters drawer (right-hand popup, Hot Seat pattern)
   const _fd = document.getElementById('fdrawer');
+  // Bet-type toggle (Trifecta | First Four).
+  document.querySelectorAll('#betTypeSeg button').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const bt = btn.dataset.bt;
+      if (bt === state.betType) return;
+      state.betType = bt;
+      try { localStorage.setItem(BETTYPE_KEY, bt); } catch (e) {}
+      // snap the selected strategy to one valid for this bet type
+      if (!betTypeStrategies().includes(state.strategy)) state.strategy = betTypeStrategies()[0];
+      if (state.lastData) render(state.lastData);
+      loadHeroPick();
+    });
+  });
+
   const _fov = document.getElementById('foverlay');
   const _fdClose = () => { _fd.classList.remove('open'); _fov.classList.remove('open'); };
   document.getElementById('fdrawerBtn').addEventListener('click', () => {

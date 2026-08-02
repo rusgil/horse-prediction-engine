@@ -8901,22 +8901,22 @@ async def list_bet_races(
             for rid, tab, odds in odds_rows:
                 if odds and odds > 1.0:
                     odds_lookup[(rid, tab)] = odds
-        # Top-3 results per race (for the winning-combination strip on
-        # settled cards). Pull tab + horse name + position; group below.
-        top3_map: dict[str, list[dict]] = {}
+        # Top-4 results per race (top-3 for the trifecta winning strip; the 4th
+        # for the First Four lab). Pull tab + horse name + position; group below.
+        top4_map: dict[str, list[dict]] = {}
         if race_ids:
             top3_rows = (await session.execute(
                 select(HistoricalResultRow.race_id, HistoricalResultRow.position,
                        HistoricalResultRow.tab_number, HistoricalResultRow.horse_name)
                 .where(HistoricalResultRow.race_id.in_(race_ids))
-                .where(HistoricalResultRow.position.in_([1, 2, 3]))
+                .where(HistoricalResultRow.position.in_([1, 2, 3, 4]))
             )).fetchall()
             for rid, pos, tab, name in top3_rows:
-                top3_map.setdefault(rid, []).append({
+                top4_map.setdefault(rid, []).append({
                     "position": pos, "tab_number": tab, "horse_name": name,
                 })
             # Backfill missing tab numbers per race from prediction tables.
-            needs_backfill = {rid for rid, items in top3_map.items()
+            needs_backfill = {rid for rid, items in top4_map.items()
                               if any(it["tab_number"] is None for it in items)}
             if needs_backfill:
                 for src in (RunnerPredictionRow, RunnerPredictionHistoryRow):
@@ -8929,13 +8929,26 @@ async def list_bet_races(
                     for rid, name, tab in rows_with_tab:
                         lookups[(rid, _normalize_horse(name))] = tab
                     for rid in list(needs_backfill):
-                        for it in top3_map.get(rid, []):
+                        for it in top4_map.get(rid, []):
                             if it["tab_number"] is None:
                                 t = lookups.get((rid, _normalize_horse(it["horse_name"])))
                                 if t is not None:
                                     it["tab_number"] = t
-            for rid in top3_map:
-                top3_map[rid].sort(key=lambda x: x["position"])
+            for rid in top4_map:
+                top4_map[rid].sort(key=lambda x: x["position"])
+        # top-3 view derived from the top-4 pull
+        top3_map = {rid: [it for it in items if (it.get("position") or 9) <= 3]
+                    for rid, items in top4_map.items()}
+        # Real first-four dividends (Sportsbet racecard capture) for the FF lab.
+        ff_div_map: dict[str, float] = {}
+        if race_ids:
+            _ffd = (await session.execute(
+                select(RaceExoticDividendRow.race_id, RaceExoticDividendRow.first_four)
+                .where(RaceExoticDividendRow.race_id.in_(race_ids))
+                .where(RaceExoticDividendRow.first_four.isnot(None))
+            )).fetchall()
+            for rid, ff in _ffd:
+                ff_div_map[rid] = float(ff)
         # Scheduled time per race — pulled from mutable first (newer odds-
         # refresh enrichments may have set it), falling back to history.
         sched_map: dict[str, str] = {}
@@ -9060,6 +9073,9 @@ async def list_bet_races(
             "status": status,
             "hits": sum(1 for b in bets if b.is_hit),
             "top3": top3_map.get(race_id) or None,
+            # First Four lab: the actual top-4 (position-sorted) + real FF dividend.
+            "top4": (top4_map.get(race_id) if len(top4_map.get(race_id) or []) >= 4 else None),
+            "first_four_dividend": ff_div_map.get(race_id),
         }
         if include_bets:
             # Group bets by strategy_group for compact per-card rendering.
