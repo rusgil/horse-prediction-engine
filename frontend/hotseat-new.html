@@ -241,6 +241,7 @@
   .chip.going-synth { background: var(--blue-dim);  color: var(--blue); }
   .chip.going-unknown { background: var(--surface-2); color: var(--text-3); }
   .chip.sharp { background: var(--mint-dim); color: var(--mint); border-color: var(--mint); }
+  .chip.place-play { background: var(--blue-dim); color: var(--blue); border-color: var(--blue); }
   .chip.tier-hot    { background: var(--hot-dim);   color: var(--hot); }
   .chip.tier-high   { background: var(--blue-dim);  color: var(--blue); }
   .chip.tier-strong { background: var(--strong-dim); color: var(--strong); }
@@ -1085,6 +1086,15 @@
     if (gap < 2 && r.top_win_probability >= 0.25) return ` <span class="chip tu" style="font-size:0.56rem;padding:1px 5px">⚖️ TOSS-UP</span>`;
     return '';
   }
+  // Place play — last-2 races at country meetings are excluded from Sharp
+  // (our win pick is near-random there), but our top pick still PLACES ~43%.
+  // Show a blue "PLACE ~43%" chip in place of the Sharp chip.
+  function placeChip(r, big) {
+    const pp = r.place_play;
+    if (!pp || !pp.paid_place_pct) return '';
+    const style = big ? '' : ' style="font-size:0.56rem;padding:1px 5px;margin-left:4px"';
+    return `<span class="chip place-play"${style} title="Weak late country field — our win pick is a coin-flip here, but it places (pays) about ${pp.paid_place_pct}% of the time. Consider a place bet.">🅿️ PLACE ~${pp.paid_place_pct}%</span>`;
+  }
   const isSettled = r => r.model_correct !== null && r.model_correct !== undefined;
   // Outcome class for settled races — drives the green/amber/red borders.
   const resCls = r => r.model_correct === true ? 'res-win'
@@ -1399,7 +1409,7 @@
             <div class="meta num">${hero.distance ? hero.distance + 'm · ' : ''}${hero.field_size ? hero.field_size + ' runners · ' : ''}<span></span></div>
           </div>
           <span class="chip ${g.cls}">${esc(g.label)}</span>
-          ${hero.is_sharp ? `<span class="chip sharp">🎯 SHARP</span>` : ''}
+          ${hero.is_sharp ? `<span class="chip sharp">🎯 SHARP</span>` : placeChip(hero, true)}
           ${tier ? `<span class="chip ${tier.cls}">${tier.label}</span>` : ''}
           ${favChip(hero)}
           ${watchBtn(hero._state)}
@@ -1444,7 +1454,7 @@
           ${barsHtml(r.top_win_probability, r.top_place_probability)}
         </div>
         <div class="chips">
-          ${r.is_sharp ? `<span class="chip sharp">🎯 SHARP</span>` : ''}
+          ${r.is_sharp ? `<span class="chip sharp">🎯 SHARP</span>` : (!done ? placeChip(r, true) : '')}
           ${tier ? `<span class="chip ${tier.cls}">${tier.label}</span>` : ''}
           ${!done ? favChip(r) : ''}
         </div>
@@ -1536,7 +1546,7 @@
             if (gap >= 5) return ` <span class="chip cf" style="font-size:0.56rem;padding:1px 5px;margin-left:4px">👑 CLEAR FAV</span>`;
             if (gap < 2 && r.top_win_probability >= 0.25) return ` <span class="chip tu" style="font-size:0.56rem;padding:1px 5px;margin-left:4px">⚖️ TOSS-UP</span>`;
             return '';
-          })()}${r.is_sharp ? ` <span class="chip sharp" style="font-size:0.56rem;padding:1px 5px;margin-left:4px">🎯 SHARP</span>` : ''}</div>
+          })()}${r.is_sharp ? ` <span class="chip sharp" style="font-size:0.56rem;padding:1px 5px;margin-left:4px">🎯 SHARP</span>` : placeChip(r)}</div>
         </div>
         <div class="right">
           ${barsHtml(r.top_win_probability, r.top_place_probability)}
@@ -1678,7 +1688,7 @@
     document.getElementById('dwSub').innerHTML =
       `${esc(r.race_name || '')}${r.race_name ? ' · ' : ''}<span class="num">${r.distance ? r.distance + 'm · ' : ''}${wallTime(r.scheduled_time)}${r.field_size ? ' · ' + r.field_size + ' runners' : ''}</span>`;
     document.getElementById('dwChips').innerHTML =
-      (r.is_sharp ? `<span class="chip sharp">🎯 SHARP</span>` : '') +
+      (r.is_sharp ? `<span class="chip sharp">🎯 SHARP</span>` : placeChip(r, true)) +
       (tier ? `<span class="chip ${tier.cls}">${tier.label}</span>` : '') +
       watchBtn(r._state);
     const body = document.getElementById('dwBody');

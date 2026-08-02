@@ -241,6 +241,7 @@
   .chip.going-synth { background: var(--blue-dim);  color: var(--blue); }
   .chip.going-unknown { background: var(--surface-2); color: var(--text-3); }
   .chip.sharp { background: var(--mint-dim); color: var(--mint); border-color: var(--mint); }
+  .chip.place-play { background: var(--blue-dim); color: var(--blue); border-color: var(--blue); }
   .chip.tier-hot    { background: var(--hot-dim);   color: var(--hot); }
   .chip.tier-high   { background: var(--blue-dim);  color: var(--blue); }
   .chip.tier-strong { background: var(--strong-dim); color: var(--strong); }
@@ -1101,6 +1102,13 @@
     resultsMap: {}, resData: null, exotics: null, tr: null,
   };
   const sharpOf = p => (typeof isSharpEdgePick === 'function') ? isSharpEdgePick(p) : p.is_sharp === true;
+  // Place play — last-2 races at country meetings are excluded from Sharp
+  // (our win pick is near-random there), but our top pick still PLACES ~43%.
+  function placeChip(p) {
+    const pp = p.place_play;
+    if (!pp || !pp.paid_place_pct) return '';
+    return `<span class="chip place-play" title="Weak late country field — our win pick is a coin-flip here, but it places (pays) about ${pp.paid_place_pct}% of the time. Consider a place bet.">🅿️ PLACE ~${pp.paid_place_pct}%</span>`;
+  }
   const isPremium = p => p.model_pct >= 29.5 && p.best_available_odds != null && p.best_available_odds >= 3.0 && p.edge_pct != null && p.edge_pct > 5;
   const aestToday = (off = 0) => new Date(Date.now() + off * 86400000).toLocaleDateString('en-CA', { timeZone: 'Australia/Sydney' });
   const fmtDate = d => new Date(d + 'T12:00:00').toLocaleDateString('en-AU', { weekday: 'short', day: 'numeric', month: 'short' });
@@ -1257,7 +1265,7 @@
         <div class="pk-horse">${esc(p.horse_name)}${streak}</div>
         <div class="pk-sub num">${[p.distance ? p.distance + 'm' : '', p.barrier ? 'B' + p.barrier : '', p.weight ? p.weight + 'kg' : ''].filter(Boolean).join(' · ')}${l10}</div>
         <div class="pk-sub">${p.jockey ? 'J: ' + esc(p.jockey) : ''}${p.trainer ? (p.jockey ? ' · ' : '') + 'T: ' + esc(p.trainer) : ''}</div>
-        <div class="pk-chips">${tierChip(p)}${isPremium(p) ? '<span class="chip prem">💎 PREMIUM</span>' : ''}${sharpOf(p) ? '<span class="chip sharp">🎯 SHARP</span>' : ''}${!isPast ? favChip(p) : ''}${p.sportsbet_available === false ? '<span class="chip nosb">🚫 Not on Sportsbet</span>' : ''}</div>
+        <div class="pk-chips">${tierChip(p)}${isPremium(p) ? '<span class="chip prem">💎 PREMIUM</span>' : ''}${sharpOf(p) ? '<span class="chip sharp">🎯 SHARP</span>' : (!isPast ? placeChip(p) : '')}${!isPast ? favChip(p) : ''}${p.sportsbet_available === false ? '<span class="chip nosb">🚫 Not on Sportsbet</span>' : ''}</div>
       </div>
       <div class="right">
         ${barsHtml((p.model_pct || 0) / 100, p.place_probability != null ? p.place_probability / 100 : null)}
@@ -1426,7 +1434,7 @@
       || ((E.resData && E.resData.picks) || []).find(x => x.race_id === raceId);
     document.getElementById('dwTitle').innerHTML = p ? `${esc(p.venue)} <b class="dw-rnum">R${p.race_number}</b>` : 'Race';
     document.getElementById('dwSub').innerHTML = p ? `${esc(p.race_name || '')}${p.race_name ? ' · ' : ''}<span class="num">${p.distance ? p.distance + 'm · ' : ''}${wallTime(p.scheduled_time)}</span>` : '';
-    document.getElementById('dwChips').innerHTML = p ? (tierChip(p) + (sharpOf(p) ? '<span class="chip sharp">🎯 SHARP</span>' : '') + watchBtn(p.state)) : '';
+    document.getElementById('dwChips').innerHTML = p ? (tierChip(p) + (sharpOf(p) ? '<span class="chip sharp">🎯 SHARP</span>' : placeChip(p)) + watchBtn(p.state)) : '';
     const body = document.getElementById('dwBody');
     body.innerHTML = '<div class="loading"><div class="spin"></div>Loading full field…</div>';
     drawer.classList.add('open'); ovl.classList.add('open');
