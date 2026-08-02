@@ -241,7 +241,14 @@
   .chip.going-synth { background: var(--blue-dim);  color: var(--blue); }
   .chip.going-unknown { background: var(--surface-2); color: var(--text-3); }
   .chip.sharp { background: var(--mint-dim); color: var(--mint); border-color: var(--mint); }
-  .chip.place-play { background: var(--blue-dim); color: var(--blue); border-color: var(--blue); }
+  .chip.place-play { background: var(--blue-dim); color: var(--blue); border-color: var(--blue); position: relative; cursor: help; outline: none; }
+  .chip.place-play .chip-i { opacity: 0.75; margin-left: 1px; font-style: normal; }
+  .chip.place-play[data-tip]:hover::after, .chip.place-play[data-tip]:focus::after {
+    content: attr(data-tip); position: absolute; left: 0; top: calc(100% + 6px); z-index: 60;
+    width: max-content; max-width: 240px; padding: 8px 10px; border-radius: 8px;
+    background: var(--surface-2); color: var(--text); border: 1px solid var(--line);
+    font-size: 0.68rem; font-weight: 500; line-height: 1.4; letter-spacing: 0; text-transform: none;
+    white-space: normal; box-shadow: 0 6px 18px rgba(0,0,0,0.28); }
   .chip.tier-hot    { background: var(--hot-dim);   color: var(--hot); }
   .chip.tier-high   { background: var(--blue-dim);  color: var(--blue); }
   .chip.tier-strong { background: var(--strong-dim); color: var(--strong); }
@@ -1107,7 +1114,8 @@
   function placeChip(p) {
     const pp = p.place_play;
     if (!pp || !pp.paid_place_pct) return '';
-    return `<span class="chip place-play" title="Weak late country field — our win pick is a coin-flip here, but it places (pays) about ${pp.paid_place_pct}% of the time. Consider a place bet.">🅿️ PLACE ~${pp.paid_place_pct}%</span>`;
+    const tip = `Weak late country field — our win pick is a coin-flip here, so it's not a Sharp win bet. But it still PLACES (pays) about ${pp.paid_place_pct}% of the time — consider a place bet instead.`;
+    return `<span class="chip place-play" tabindex="0" onclick="event.stopPropagation()" data-tip="${esc(tip)}">🅿️ PLACE ~${pp.paid_place_pct}% <span class="chip-i">ⓘ</span></span>`;
   }
   const isPremium = p => p.model_pct >= 29.5 && p.best_available_odds != null && p.best_available_odds >= 3.0 && p.edge_pct != null && p.edge_pct > 5;
   const aestToday = (off = 0) => new Date(Date.now() + off * 86400000).toLocaleDateString('en-CA', { timeZone: 'Australia/Sydney' });
