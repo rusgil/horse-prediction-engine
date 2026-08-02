@@ -4367,6 +4367,21 @@ _edge_response_cache: tuple[datetime, dict, int] | None = None
 # /api/admin/analysis/late-nonmetro-winners → nonmetro_late_our_winpick_strike.
 LATE_COUNTRY_PLACE_STRIKE_PCT = 43
 
+# "Country Roughie" — in the SMALL (≤7 runner) late non-metro fields, the place
+# angle above breaks down (small fields pay only top-2, so our top pick's paid
+# place drops), but backing the mid-priced OUTSIDERS to WIN is genuinely +ROI:
+# over 150 days / 488 runners, $8-15 shots in ≤7-runner late country fields won
+# 11.9% flat for +21% ROI (vs -25% for blind longshots). So on small late
+# country fields we swap the place play for a "spread small win bets on the
+# $8-15 runners" call. Refresh from /api/admin/analysis/late-longshot-traits →
+# country_roughie["small + $8-15"]. Frontends build the runner list from the
+# field data they already hold; the backend just flags the race + ships stats.
+COUNTRY_ROUGHIE = {
+    "reason": "late_country_small_field",
+    "max_field": 7, "odds_min": 8, "odds_max": 15,
+    "win_strike_pct": 12, "hist_roi_pct": 21,
+}
+
 # Cache full list_meetings response for 10 min (weather + RA calls are expensive)
 _list_meetings_cache: dict[str, tuple[datetime, dict]] = {}  # date → (ts, response)
 
@@ -5261,7 +5276,17 @@ async def get_edge_picks():
                     "horse_name": runner_row.horse_name,
                     "paid_place_pct": LATE_COUNTRY_PLACE_STRIKE_PCT,
                     "reason": "late_country",
-                } if _late_nonmetro else None),
+                } if _late_nonmetro and not (
+                    isinstance(field_sizes.get(runner_row.race_id), int)
+                    and field_sizes.get(runner_row.race_id) <= COUNTRY_ROUGHIE["max_field"]
+                ) else None),
+                # Country Roughie — small (≤7) late country field: swap the place
+                # play for a win spread on the $8-15 outsiders (frontend lists them
+                # from `field`). See COUNTRY_ROUGHIE.
+                "country_roughie": (COUNTRY_ROUGHIE if _late_nonmetro and (
+                    isinstance(field_sizes.get(runner_row.race_id), int)
+                    and field_sizes.get(runner_row.race_id) <= COUNTRY_ROUGHIE["max_field"]
+                ) else None),
                 "top3_sum_pct": round(top3_sum_pct, 1),
                 # rank-2's win % — lets Edge show 👑 CLEAR FAV (gap ≥5pt) like
                 # the Lounge/Hot Seat. field_top3 is rank-sorted.
@@ -19320,6 +19345,10 @@ async def get_meeting(race_date: str, venue_code: str):
         _is_sharp = is_sharp_map.get(rid)
         if _late_nonmetro:
             _is_sharp = False
+        # Small late-country field → Country Roughie (win spread); bigger field
+        # → place play. They're mutually exclusive by field size (see COUNTRY_ROUGHIE).
+        _fsz = r.get("field_size")
+        _small = isinstance(_fsz, int) and _fsz <= COUNTRY_ROUGHIE["max_field"]
         races_out.append({
             **r,
             "enriched_at": enriched_rows.get(rid).isoformat() if enriched_rows.get(rid) else None,
@@ -19337,7 +19366,8 @@ async def get_meeting(race_date: str, venue_code: str):
                 "horse_name": top_picks.get(rid),
                 "paid_place_pct": LATE_COUNTRY_PLACE_STRIKE_PCT,
                 "reason": "late_country",
-            } if _late_nonmetro and top_picks.get(rid) else None),
+            } if _late_nonmetro and not _small and top_picks.get(rid) else None),
+            "country_roughie": (COUNTRY_ROUGHIE if _late_nonmetro and _small else None),
         })
 
     result = {
