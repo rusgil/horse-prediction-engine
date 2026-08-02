@@ -4909,12 +4909,23 @@ async def get_edge_picks():
         # do the work. Saves several hundred Acceptances/day.
         unique_venues = {_parse_race_id(r.race_id)[1] for r in rows}
         slug_map = {v: _meeting_slug(v, target_date) for v in unique_venues}
-        # Highest race number per venue on the card — used to identify the
+        # Highest race number per venue on the FULL card — used to identify the
         # "late" races (last 2) for the late-non-metro Sharp exclusion below.
+        # Must come from every enriched race, NOT `rows` (which only holds picks
+        # with win_prob ≥20%): a card's later races often fall below that
+        # threshold, which would undercount the card and mis-flag mid-card races
+        # as "late" (Goulburn R4/R5 vs the true R6/R7). RunnerPredictionRow
+        # persists a row for every enriched race, settled or not.
         meeting_max_race: dict[str, int] = {}
-        for _r in rows:
-            _v = _parse_race_id(_r.race_id)[1]
-            _rn = _parse_race_id(_r.race_id)[2]
+        async with get_session() as _mmr_sess:
+            _all_rids = (await _mmr_sess.execute(
+                select(RunnerPredictionRow.race_id)
+                .where(RunnerPredictionRow.race_id.like(f"{_like_safe(target_date)}_%"))
+                .distinct()
+            )).scalars().all()
+        for _rid in _all_rids:
+            _v = _parse_race_id(_rid)[1]
+            _rn = _parse_race_id(_rid)[2]
             if _rn is not None:
                 meeting_max_race[_v] = max(meeting_max_race.get(_v, 0), _rn)
         race_times: dict[str, str | None] = {}
