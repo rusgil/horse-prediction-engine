@@ -1232,7 +1232,7 @@
   const STRATEGY_DISPLAY = [
     { key: 'trio',   label: 'Trio',   tagline: '1 box · best ROI',  isDefault: true,  legacy: false },
     { key: 'stack',  label: 'Stack',  tagline: '5 × 3-horse',       isDefault: false, legacy: false },
-    { key: 'quad',   label: 'Quad',   tagline: '1 box · 4 horses',  isDefault: false, legacy: false },
+    { key: 'quad',   label: 'Trio+1', tagline: '1 box · 4 horses',  isDefault: false, legacy: false },
     { key: 'spread', label: 'Spread', tagline: '5 mixed boxes',     isDefault: false, legacy: false },
     // Legacy single-box wides — only rendered on older races that still
     // have these rows in the DB; no new rows are generated. Hidden from
@@ -1245,7 +1245,7 @@
     core_top3: 'Top 3', core_top4: 'Top 4',
     value_runner1: 'Value 1', value_runner2: 'Value 2',
     no_favourite_hedge: 'Hedge',
-    trio_only: 'Trio', quad_only: 'Quad',
+    trio_only: 'Trio', quad_only: 'Trio+1',
     stack_top3: 'Top 3', stack_skip3: 'Skip 3', stack_skip2: 'Skip 2',
     stack_no_fav: 'No fav', stack_value: 'Value',
   };
@@ -1815,7 +1815,7 @@
     const CANONICAL = [
       { strategy: 'trio',   label: 'The Trio',   tagline: '1 box · best ROI' },
       { strategy: 'stack',  label: 'The Stack',  tagline: '5 × 3-horse · most $' },
-      { strategy: 'quad',   label: 'The Quad',   tagline: '1 box · wider' },
+      { strategy: 'quad',   label: 'Trio +1',    tagline: '1 box · 4 horses (still a trifecta)' },
       { strategy: 'spread', label: 'The Spread', tagline: '5 mixed boxes' },
     ];
     const byKey = {};
