@@ -8180,49 +8180,52 @@ async def _resolve_play_outcome(play: dict, target_date: str) -> dict:
             })
         any_known = any(h["resolved"] for h in leg_hits)
         n_won = sum(1 for h in leg_hits if h["won"])
-        stake = BASE
-        # Per-leg ✓/✗ line — the "which legs won/lost" the card shows. A leg
-        # whose race resolved but our horse didn't win is a loss (✗), even if
-        # it finished outside the top 4; only unresolved races show '–'.
+        # These plays are shown in ODDS, not a fixed dollar stake — so we report
+        # the multi's price (what $1 returns), never a $10/$60 P/L.
+        def _prod(vals):
+            m = 1.0
+            for v in vals:
+                m *= v
+            return m
+        leg_odds = [l.get("best_available_odds") or 0 for l in legs]
+        have_odds = all(o and o > 1 for o in leg_odds)
+        # Per-leg ✓/✗ line. A leg whose race resolved but our horse didn't win
+        # is a loss (✗) even if it finished outside the top 4; '–' = no result.
         def _mark(h):
             return "✓" if h["won"] else ("✗" if h["resolved"] else "–")
         parts = " · ".join(f"{h['horse_name']} {_mark(h)}" for h in leg_hits)
         if kind == "quaddie":
-            # 4-leg WIN multi: pays only if ALL legs win. Priced off SPs.
+            # 4-leg WIN multi: pays only if ALL legs win. Priced off SPs (actual)
+            # or the offered leg odds (what it was showing pre-jump).
             all_win = bool(leg_hits) and all(h["won"] for h in leg_hits)
-            profit = None
-            if all_win and all(h["sp"] for h in leg_hits):
-                mult = 1.0
-                for h in leg_hits:
-                    mult *= h["sp"]
-                profit = round(stake * mult - stake, 2)
-            elif any_known:
-                profit = -stake
+            paid = round(_prod([h["sp"] for h in leg_hits]), 2) if (all_win and all(h["sp"] for h in leg_hits)) else None
+            offered = round(_prod(leg_odds), 2) if have_odds else None
             return {
                 "status": "won" if all_win else ("lost" if any_known else "no_result"),
-                "won": all_win, "hit_count": n_won, "leg_count": len(leg_hits),
-                "leg_hits": leg_hits, "profit_dollars": round(profit, 2) if profit is not None else 0,
+                "won": all_win, "hit_count": n_won, "leg_count": len(leg_hits), "leg_hits": leg_hits,
+                "multi_odds": (paid if all_win else offered),   # $ return per $1
+                "profit_dollars": None,                         # odds-based, no fixed stake
                 "summary": (
-                    (f"Quaddie landed — all 4 won!" if all_win else f"{n_won}/4 legs won") +
+                    ((f"Quaddie landed — paid ${paid:.2f} for $1" if (all_win and paid)
+                      else "Quaddie landed!") if all_win
+                     else (f"{n_won}/4 legs won" + (f" · would’ve paid ${offered:.2f} for $1" if offered else ""))) +
                     f" · {parts}"
                 ) if any_known else "Results pending",
             }
-        # combo_doubles: 6 doubles across 4 picks; a double pays when BOTH its
-        # legs win. Paying doubles = C(n_won, 2). Priced off winning-leg SPs.
+        # combo_doubles: 6 doubles; a double pays when BOTH its legs win. Each
+        # is one unit — report the winning doubles' odds ($ per $1), not a stake.
         from itertools import combinations as _combos
         winners = [h for h in leg_hits if h["won"]]
         paying = list(_combos(winners, 2))
-        unit = play.get("unit_stake_dollars") or 1
-        total_stake = (play.get("num_pairs") or len(play.get("pairs") or []) or 6) * unit
-        payout = sum((a["sp"] * b["sp"] * unit) for a, b in paying
-                     if a.get("sp") and b.get("sp"))
-        profit = round(payout - total_stake, 2) if any_known else 0
+        pay_odds = [round(a["sp"] * b["sp"], 2) for a, b in paying if a.get("sp") and b.get("sp")]
         return {
             "status": "won" if paying else ("lost" if any_known else "no_result"),
             "hit_count": n_won, "leg_count": len(leg_hits), "paying_doubles": len(paying),
-            "leg_hits": leg_hits, "profit_dollars": profit,
+            "paying_double_odds": pay_odds, "leg_hits": leg_hits, "profit_dollars": None,
             "summary": (
-                (f"{len(paying)} paying double{'s' if len(paying) != 1 else ''} ({n_won}/4 won)"
+                ((f"{len(paying)} paying double{'s' if len(paying) != 1 else ''}"
+                  + (f" @ {' + '.join('$'+format(o, '.2f') for o in pay_odds)} per $1" if pay_odds else "")
+                  + f" ({n_won}/4 won)")
                  if paying else f"No paying double — {n_won}/4 won") +
                 f" · {parts}"
             ) if any_known else "Results pending",

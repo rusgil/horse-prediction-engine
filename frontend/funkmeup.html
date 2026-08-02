@@ -1104,11 +1104,15 @@
     const outcome = p.outcome || null;
     const outcomeHtml = outcome ? (() => {
       const status = outcome.status || 'no_result';
-      const profit = outcome.profit_dollars || 0;
+      // Odds-based plays (quaddie / combo doubles) carry the multi's price and
+      // no fixed dollar stake; every other play shows its $ P/L.
+      const right = outcome.multi_odds
+        ? `$${(+outcome.multi_odds).toFixed(2)}`
+        : (outcome.profit_dollars != null ? fmtMoney(outcome.profit_dollars) : '');
       return `
         <div class="outcome-banner ${status}">
           <span>${escHtml(outcome.summary || '')}</span>
-          ${status !== 'no_result' ? `<span class="outcome-profit">${fmtMoney(profit)}</span>` : ''}
+          ${status !== 'no_result' && right ? `<span class="outcome-profit">${right}</span>` : ''}
         </div>`;
     })() : '';
 
