@@ -244,8 +244,8 @@
   .chip.place-play { background: var(--blue-dim); color: var(--blue); border-color: var(--blue); position: relative; cursor: help; outline: none; }
   .chip.place-play .chip-i { opacity: 0.75; margin-left: 1px; font-style: normal; }
   .chip.place-play[data-tip]:hover::after, .chip.place-play[data-tip]:focus::after {
-    content: attr(data-tip); position: absolute; left: 0; top: calc(100% + 6px); z-index: 60;
-    width: max-content; max-width: 240px; padding: 8px 10px; border-radius: 8px;
+    content: attr(data-tip); position: absolute; right: 0; top: calc(100% + 6px); z-index: 60;
+    width: max-content; max-width: min(240px, 76vw); padding: 8px 10px; border-radius: 8px;
     background: var(--surface-2); color: var(--text); border: 1px solid var(--line);
     font-size: 0.68rem; font-weight: 500; line-height: 1.4; letter-spacing: 0; text-transform: none;
     white-space: normal; box-shadow: 0 6px 18px rgba(0,0,0,0.28); }

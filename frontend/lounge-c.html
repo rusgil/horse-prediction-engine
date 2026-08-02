@@ -217,8 +217,8 @@
   .chip.place-play { background: var(--blue-dim); color: var(--blue); border-color: var(--blue); position: relative; cursor: help; outline: none; }
   .chip.place-play .chip-i { opacity: 0.75; margin-left: 1px; font-style: normal; }
   .chip.place-play[data-tip]:hover::after, .chip.place-play[data-tip]:focus::after {
-    content: attr(data-tip); position: absolute; left: 0; top: calc(100% + 6px); z-index: 60;
-    width: max-content; max-width: 240px; padding: 8px 10px; border-radius: 8px;
+    content: attr(data-tip); position: absolute; right: 0; top: calc(100% + 6px); z-index: 60;
+    width: max-content; max-width: min(240px, 76vw); padding: 8px 10px; border-radius: 8px;
     background: var(--surface-2); color: var(--text); border: 1px solid var(--line);
     font-size: 0.68rem; font-weight: 500; line-height: 1.4; letter-spacing: 0; text-transform: none;
     white-space: normal; box-shadow: 0 6px 18px rgba(0,0,0,0.28); }
@@ -467,14 +467,17 @@
     /* heat grid: slim the meeting column — smaller surface chip, weather
        icon wraps to its own line under the chip */
     .mcell { min-width: 102px; max-width: 116px; padding: 8px 8px 8px 10px !important; }
-    .mcell .vname { font-size: 0.88rem; }
+    /* Narrow cell: drop the flex row to block flow so the METRO badge sits on
+       its own line (as a pill) instead of spilling into the next race column. */
+    .mcell .vname { font-size: 0.88rem; display: block; line-height: 1.2; }
+    .mcell .vname .st { margin-left: 4px; }
     .mcell .vmeta { flex-direction: column; align-items: flex-start; gap: 3px; }
     .mcell .vmeta .chip { font-size: 0.54rem; padding: 1px 5px; letter-spacing: 0.02em; }
     .mcell .wx { font-size: 0.66rem; }
     /* best-pick %% made today's column much wider than the historical view —
        hide it in the heat-map meeting column on mobile (drill-in still has it) */
     .mcell .rs-c { display: none; }
-    .mcell .metro-badge { font-size: 0.48rem; padding: 0 4px; margin-left: 4px; }
+    .mcell .metro-badge { font-size: 0.48rem; padding: 1px 5px; margin: 2px 0 0; display: block; width: max-content; vertical-align: baseline; }
     .mcell .rstat { font-size: 0.62rem; gap: 3px; }
     .cell-tally .rs-w, .cell-tally .rs-p { font-size: 0.62rem; }
   }
