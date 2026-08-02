@@ -10197,6 +10197,132 @@ async def late_nonmetro_winners(days: int = 60, x_cron_secret: Optional[str] = H
     }
 
 
+@app.get("/api/admin/analysis/late-longshot-traits")
+async def late_longshot_traits(days: int = 120, min_sp: float = 8.0,
+                               x_cron_secret: Optional[str] = Header(None)):
+    """Among LONGSHOTS (SP >= min_sp) in the last-2 races at NON-METRO meetings,
+    which traits make a high-odds horse more likely to WIN or PLACE? Breaks the
+    field's outsiders down by SP band, barrier, field size, and — critically —
+    by OUR place-model rank and win-prob, to see if the model adds ANY signal
+    among roughies (i.e. can we filter the blind spread into a smarter one).
+    Reports win%, place-top3%, and flat $1-win ROI per bucket, with counts so
+    thin/noisy buckets are visible."""
+    _check_admin(x_cron_secret)
+    from collections import defaultdict
+    from horse_engine.bets import is_metro_venue
+    days = max(30, min(int(days), 400))
+    min_sp = max(4.0, min(float(min_sp), 100.0))
+    cut = (_today_aest() - timedelta(days=days)).isoformat()
+    async with get_session() as session:
+        res = (await session.execute(
+            select(HistoricalResultRow.race_id, HistoricalResultRow.tab_number,
+                   HistoricalResultRow.position, HistoricalResultRow.starting_price,
+                   HistoricalResultRow.barrier)
+            .where(HistoricalResultRow.race_id >= cut)
+        )).all()
+        preds = (await session.execute(
+            select(RunnerPredictionHistoryRow.race_id, RunnerPredictionHistoryRow.tab_number,
+                   RunnerPredictionHistoryRow.model_rank, RunnerPredictionHistoryRow.place_model_rank,
+                   RunnerPredictionHistoryRow.win_probability)
+            .where(RunnerPredictionHistoryRow.race_id >= cut)
+            .where(RunnerPredictionHistoryRow.source == "live")
+            .where(RunnerPredictionHistoryRow.cancelled.is_(False) | RunnerPredictionHistoryRow.cancelled.is_(None))
+        )).all()
+    # field size + max race number per venue-date
+    max_rn: dict[tuple, int] = {}
+    fs: dict[str, int] = defaultdict(int)
+    for r in res:
+        d, vc, rn = _parse_race_id(r.race_id)
+        if rn is None:
+            continue
+        if rn > max_rn.get((d, vc), 0):
+            max_rn[(d, vc)] = rn
+        if r.position and 1 <= r.position < 90:
+            fs[r.race_id] += 1
+    pred = {(p.race_id, p.tab_number): p for p in preds if p.tab_number is not None}
+
+    # Collect longshot runners in late non-metro races
+    shots = []  # (sp, barrier, pos, place_rank, model_rank, win_prob, field_size)
+    for r in res:
+        if not r.starting_price or r.starting_price < min_sp:
+            continue
+        if not r.position or r.position >= 90:      # DNF / no result
+            continue
+        d, vc, rn = _parse_race_id(r.race_id)
+        if rn is None or is_metro_venue(vc):
+            continue
+        if rn < max_rn.get((d, vc), 0) - 1:         # late only
+            continue
+        pr = pred.get((r.race_id, r.tab_number))
+        shots.append((
+            r.starting_price, r.barrier, r.position,
+            pr.place_model_rank if pr else None,
+            pr.model_rank if pr else None,
+            pr.win_probability if pr else None,
+            fs.get(r.race_id, 0),
+        ))
+
+    def _bucketise(keyfn):
+        agg = defaultdict(lambda: {"n": 0, "win": 0, "plc3": 0, "sp_win_sum": 0.0})
+        for sp, barr, pos, prank, mrank, wp, n in shots:
+            k = keyfn(sp, barr, pos, prank, mrank, wp, n)
+            if k is None:
+                continue
+            a = agg[k]
+            a["n"] += 1
+            if pos == 1:
+                a["win"] += 1
+                a["sp_win_sum"] += sp
+            if pos <= 3:
+                a["plc3"] += 1
+        out = {}
+        for k, a in agg.items():
+            n = a["n"]
+            out[k] = {
+                "runners": n,
+                "win_pct": round(a["win"] / n * 100, 1) if n else 0,
+                "place_top3_pct": round(a["plc3"] / n * 100, 1) if n else 0,
+                # flat $1 WIN bet ROI across every runner in the bucket
+                "win_roi_pct": round((a["sp_win_sum"] - n) / n * 100, 1) if n else 0,
+            }
+        return out
+
+    def _spband(sp, *_):
+        return "$8-12" if sp < 12 else "$12-20" if sp < 20 else "$20-35" if sp < 35 else "$35+"
+    def _barr(_sp, b, *_):
+        return "?" if not b else "inside 1-4" if b <= 4 else "mid 5-8" if b <= 8 else "wide 9+"
+    def _prank(_sp, _b, _p, prank, *_):
+        return "unrated" if prank is None else "place-rank 1-3" if prank <= 3 else "place-rank 4-6" if prank <= 6 else "place-rank 7+"
+    def _mrank(_sp, _b, _p, _pr, mrank, *_):
+        return "unrated" if mrank is None else "win-rank 1-3" if mrank <= 3 else "win-rank 4-6" if mrank <= 6 else "win-rank 7+"
+    def _fsz(*a):
+        n = a[6]
+        return "small ≤7" if n and n <= 7 else "mid 8-10" if n and n <= 10 else "big 11+" if n else "?"
+
+    base_n = len(shots)
+    base_win = sum(1 for s in shots if s[2] == 1)
+    base_plc = sum(1 for s in shots if s[2] <= 3)
+    base_roi = sum(s[0] for s in shots if s[2] == 1)
+    return {
+        "days": days, "min_sp": min_sp,
+        "baseline_all_longshots": {
+            "runners": base_n,
+            "win_pct": round(base_win / base_n * 100, 1) if base_n else 0,
+            "place_top3_pct": round(base_plc / base_n * 100, 1) if base_n else 0,
+            "win_roi_pct": round((base_roi - base_n) / base_n * 100, 1) if base_n else 0,
+        },
+        "by_sp_band": _bucketise(_spband),
+        "by_barrier": _bucketise(_barr),
+        "by_field_size": _bucketise(_fsz),
+        "by_our_place_rank": _bucketise(_prank),
+        "by_our_win_rank": _bucketise(_mrank),
+        "note": ("A bucket is only actionable if win/place% clears the baseline AND runners is "
+                 "large (>=40ish). win_roi_pct>0 means flat $1 win bets on that bucket profited. "
+                 "Watch by_our_place_rank / by_our_win_rank: if higher-ranked longshots hit more, "
+                 "the model DOES add signal among roughies and the spread can be filtered."),
+    }
+
+
 @app.get("/api/admin/analysis/late-longshot-refine")
 async def late_longshot_refine(
     days: int = 90,
