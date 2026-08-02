@@ -10303,6 +10303,43 @@ async def late_longshot_traits(days: int = 120, min_sp: float = 8.0,
     base_win = sum(1 for s in shots if s[2] == 1)
     base_plc = sum(1 for s in shots if s[2] <= 3)
     base_roi = sum(s[0] for s in shots if s[2] == 1)
+
+    # "COUNTRY ROUGHIE" — combined-filter intersections. paid_place respects the
+    # AU field-size place rule (8+ pays 3, 5-7 pays 2, <5 win-only) so we don't
+    # overstate what a place bet actually pays in the small fields this targets.
+    def _combo(pred_fn):
+        rows = [s for s in shots if pred_fn(*s)]
+        n = len(rows)
+        if not n:
+            return {"runners": 0}
+        win = sum(1 for s in rows if s[2] == 1)
+        plc3 = sum(1 for s in rows if s[2] <= 3)
+        paid = 0
+        for sp, barr, pos, prank, mrank, wp, fsz in rows:
+            pp = 3 if fsz >= 8 else 2 if fsz >= 5 else 1
+            if pos <= pp:
+                paid += 1
+        roi = sum(s[0] for s in rows if s[2] == 1)
+        return {
+            "runners": n,
+            "win_pct": round(win / n * 100, 1),
+            "place_top3_pct": round(plc3 / n * 100, 1),
+            "paid_place_pct": round(paid / n * 100, 1),
+            "win_roi_pct": round((roi - n) / n * 100, 1),
+            "avg_field_size": round(sum(s[6] for s in rows) / n, 1),
+        }
+
+    country_roughie = {
+        "small_field_≤7":            _combo(lambda sp, b, pos, pr, mr, wp, fs: fs and fs <= 7),
+        "small + $8-15":             _combo(lambda sp, b, pos, pr, mr, wp, fs: fs and fs <= 7 and sp <= 15),
+        "small + place-top3":        _combo(lambda sp, b, pos, pr, mr, wp, fs: fs and fs <= 7 and pr is not None and pr <= 3),
+        "small + $8-15 + place-top3":_combo(lambda sp, b, pos, pr, mr, wp, fs: fs and fs <= 7 and sp <= 15 and pr is not None and pr <= 3),
+        "small + $8-15 + place-top3 + inside(1-4)":
+                                     _combo(lambda sp, b, pos, pr, mr, wp, fs: fs and fs <= 7 and sp <= 15 and pr is not None and pr <= 3 and b is not None and 1 <= b <= 4),
+        "place-top3 + $8-15 (any field)":
+                                     _combo(lambda sp, b, pos, pr, mr, wp, fs: sp <= 15 and pr is not None and pr <= 3),
+    }
+
     return {
         "days": days, "min_sp": min_sp,
         "baseline_all_longshots": {
@@ -10311,6 +10348,7 @@ async def late_longshot_traits(days: int = 120, min_sp: float = 8.0,
             "place_top3_pct": round(base_plc / base_n * 100, 1) if base_n else 0,
             "win_roi_pct": round((base_roi - base_n) / base_n * 100, 1) if base_n else 0,
         },
+        "country_roughie": country_roughie,
         "by_sp_band": _bucketise(_spband),
         "by_barrier": _bucketise(_barr),
         "by_field_size": _bucketise(_fsz),
