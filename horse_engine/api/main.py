@@ -19067,6 +19067,18 @@ async def get_meeting(race_date: str, venue_code: str):
         )
         enriched_rows = {row.race_id: row.enriched_at for row in enriched_result}
 
+        # Actual field size per race (non-cancelled runner count). RacePredictionRow
+        # .field_size is frequently null, so derive it from the runner rows — needed
+        # for the late-country place-play vs Country-Roughie split (≤7 = roughie).
+        field_count: dict[str, int] = {}
+        for rid, cnt in (await session.execute(
+            select(RunnerPredictionRow.race_id, func.count())
+            .where(RunnerPredictionRow.race_id.in_(race_ids))
+            .where(RunnerPredictionRow.cancelled.is_(False) | RunnerPredictionRow.cancelled.is_(None))
+            .group_by(RunnerPredictionRow.race_id)
+        )).all():
+            field_count[rid] = cnt
+
         # Back-fill scheduled_time into DB for enriched races that were missing it
         if ra_times:
             from sqlalchemy import update as sa_update
@@ -19347,7 +19359,8 @@ async def get_meeting(race_date: str, venue_code: str):
             _is_sharp = False
         # Small late-country field → Country Roughie (win spread); bigger field
         # → place play. They're mutually exclusive by field size (see COUNTRY_ROUGHIE).
-        _fsz = r.get("field_size")
+        # Prefer the derived runner count (RacePredictionRow.field_size is often null).
+        _fsz = field_count.get(rid) or r.get("field_size")
         _small = isinstance(_fsz, int) and _fsz <= COUNTRY_ROUGHIE["max_field"]
         races_out.append({
             **r,
@@ -19362,6 +19375,7 @@ async def get_meeting(race_date: str, venue_code: str):
             "top_pick_odds": top_pick_odds.get(rid),
             "top_pick_place_odds": pick_place_odds.get(rid),
             "is_sharp": _is_sharp,
+            "field_size": _fsz if isinstance(_fsz, int) else r.get("field_size"),
             "place_play": ({
                 "horse_name": top_picks.get(rid),
                 "paid_place_pct": LATE_COUNTRY_PLACE_STRIKE_PCT,
