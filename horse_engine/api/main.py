@@ -18767,13 +18767,14 @@ async def list_meetings(race_date: str = _today()):
                 it["tier"] = "metro" if is_metro_venue(vc) else "country"
             it["max_prize_money"] = mx or None
 
-    # Metro flag — union of the curated METRO_VENUES set and the tier
-    # classifier (covers e.g. Kensington, which is tier=metro but not in
-    # the slug list).
+    # Metro flag — genuine metro VENUES only (curated slug set). We do NOT union
+    # the prize-money tier here: a rich feature race at a country track (e.g.
+    # Darwin's $220k Cup carnival) is metro by prize but country by field quality,
+    # and badging it METRO both misleads and contradicts the late-country
+    # place/flyer logic (which keys off is_metro_venue). Genuine metros missing a
+    # prize signal are covered by the curated set (Kensington added there).
     for it in items:
-        it["is_metro"] = bool(
-            _is_metro_venue(it.get("venue_code") or "") or it.get("tier") == "metro"
-        )
+        it["is_metro"] = bool(_is_metro_venue(it.get("venue_code") or ""))
 
     result = {"date": race_date, "meetings": items}
     _list_meetings_cache[race_date] = (datetime.utcnow(), result)

@@ -26,8 +26,8 @@ MAX_FIELD_SIZE = 13       # 14+ runners drops to 22% hit rate — skip
 # stake $10/race only on the venues where the math works.
 METRO_VENUES: set[str] = {
     # NSW
-    "randwick", "royal-randwick", "rosehill", "rosehill-gardens",
-    "canterbury-park", "warwick-farm",
+    "randwick", "royal-randwick", "kensington", "rosehill", "rosehill-gardens",
+    "canterbury-park", "canterbury", "warwick-farm",
     # VIC
     "caulfield", "caulfield-heath", "flemington", "moonee-valley",
     "sandown", "sandown-lakeside", "sandown-hillside", "the-valley",
