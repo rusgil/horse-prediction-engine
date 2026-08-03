@@ -100,7 +100,18 @@ def enrich_runner(
     field_avg_weight: float,
 ) -> EnrichedRunner:
     """Convert raw Runner + race context into EnrichedRunner with all features."""
-    starts = runner.last_10_starts
+    # Sort starts newest-first at source. Several form functions ASSUME this
+    # order — days_since_last_run reads starts[0].date, weighted_form_score
+    # weights by list index (RECENCY_WEIGHTS[i]) — but runner.last_10_starts is
+    # not guaranteed sorted, so an unsorted feed produced phantom long layoffs
+    # (KOMITO/Sandown-Lakeside 2026-08-02: 221d snapshot vs 39d real) and
+    # mis-weighted form scores. Sorting once here fixes the whole pipeline;
+    # runs_this_prep's own defensive sort becomes redundant but harmless.
+    starts = sorted(
+        runner.last_10_starts or [],
+        key=lambda s: (s.date or ""),
+        reverse=True,
+    )
     condition_cat = parse_condition_category(race.track_condition)
 
     # ── Form ─────────────────────────────────────────────────────────────
