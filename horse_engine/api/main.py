@@ -12050,6 +12050,114 @@ async def model_anomalies(
     }
 
 
+@app.get("/api/admin/analysis/layoff-phantom-audit")
+async def layoff_phantom_audit(days: int = 28, lookback_days: int = 730,
+                               x_cron_secret: Optional[str] = Header(None)):
+    """Ground-truth audit of the `long_layoff` tag WITHOUT re-enriching (no
+    upstream form calls). For each rank-1 pick whose SNAPSHOT days_since_last_run
+    tripped long_layoff (>180), look up the horse's ACTUAL most-recent prior race
+    in HistoricalResultRow and compute the TRUE gap. A tag is PHANTOM if the true
+    gap is <=180 (the unsorted-starts bug invented it); GENUINE if >180. This is
+    what the fix/form-starts-sort branch corrects, validated on stored data."""
+    _check_admin(x_cron_secret)
+    days = max(7, min(int(days), 120))
+    cut = (_today_aest() - timedelta(days=days)).isoformat()
+    look_cut = (_today_aest() - timedelta(days=days + lookback_days)).isoformat()
+    async with get_session() as session:
+        picks = (await session.execute(
+            select(RunnerPredictionHistoryRow.race_id, RunnerPredictionHistoryRow.horse_name,
+                   RunnerPredictionHistoryRow.enriched_json)
+            .where(RunnerPredictionHistoryRow.race_id >= f"{cut}_")
+            .where(RunnerPredictionHistoryRow.model_rank == 1)
+            .where(RunnerPredictionHistoryRow.source == "live")
+            .where(RunnerPredictionHistoryRow.cancelled.is_(False)
+                   | RunnerPredictionHistoryRow.cancelled.is_(None))
+        )).all()
+    # dedup latest per (race, horse); pull the SNAPSHOT days_off from enriched_json
+    seen: set = set()
+    tagged = []  # (race_id, horse_name, snapshot_days_off)
+    for p in picks:
+        key = (p.race_id, _normalize_horse(p.horse_name))
+        if key in seen:
+            continue
+        seen.add(key)
+        try:
+            dj = json.loads(p.enriched_json) if p.enriched_json else {}
+        except Exception:
+            dj = {}
+        snap = dj.get("days_since_last_run")
+        if isinstance(snap, (int, float)) and snap > 180:
+            tagged.append((p.race_id, p.horse_name, int(snap)))
+
+    names = {_normalize_horse(h) for _r, h, _s in tagged}
+    async with get_session() as session:
+        res = (await session.execute(
+            select(HistoricalResultRow.race_id, HistoricalResultRow.horse_name)
+            .where(HistoricalResultRow.race_id >= f"{look_cut}_")
+            .where(HistoricalResultRow.position.isnot(None))
+        )).all()
+    # per normalized horse → sorted list of race dates actually run
+    from collections import defaultdict
+    import datetime as _dt
+    hist_dates: dict[str, list[str]] = defaultdict(list)
+    for r in res:
+        nh = _normalize_horse(r.horse_name or "")
+        if nh in names:
+            d = (r.race_id or "")[:10]
+            if d:
+                hist_dates[nh].append(d)
+    for nh in hist_dates:
+        hist_dates[nh].sort()
+
+    def _true_gap(race_id, horse):
+        anom = race_id[:10]
+        try:
+            ad = _dt.date.fromisoformat(anom)
+        except Exception:
+            return None
+        prior = [d for d in hist_dates.get(_normalize_horse(horse), []) if d < anom]
+        if not prior:
+            return None
+        try:
+            return (ad - _dt.date.fromisoformat(prior[-1])).days
+        except Exception:
+            return None
+
+    phantom = genuine = unknown = 0
+    examples = []
+    for race_id, horse, snap in tagged:
+        tg = _true_gap(race_id, horse)
+        if tg is None:
+            unknown += 1
+            cls = "unknown_no_prior_result"
+        elif tg <= 180:
+            phantom += 1
+            cls = "PHANTOM"
+        else:
+            genuine += 1
+            cls = "genuine"
+        if cls in ("PHANTOM", "genuine") and len(examples) < 15:
+            examples.append({"race_id": race_id, "horse": horse,
+                             "snapshot_days_off": snap, "true_days_off": tg, "verdict": cls})
+    n = len(tagged)
+    resolved = phantom + genuine
+    return {
+        "window_days": days,
+        "long_layoff_tagged_rank1_picks": n,
+        "PHANTOM_le180": phantom,
+        "genuine_gt180": genuine,
+        "unknown_no_prior_result": unknown,
+        "phantom_pct_of_resolved": round(phantom / resolved * 100, 1) if resolved else None,
+        "estimated_post_fix_long_layoff": genuine,  # phantoms clear once starts are sorted
+        "examples": sorted(examples, key=lambda e: (e["verdict"] != "PHANTOM", e["snapshot_days_off"])),
+        "note": ("PHANTOM = snapshot said >180d off but the horse's real prior race "
+                 "(HistoricalResultRow) was <=180d earlier — the unsorted-starts bug "
+                 "invented the gap. estimated_post_fix_long_layoff = the genuine count "
+                 "that survives. 'unknown' = no prior AU result in our data (can't verify; "
+                 "may be first-starters or overseas gaps)."),
+    }
+
+
 @app.get("/api/admin/bets/going-calibration")
 async def going_calibration(
     days: int = 90,
