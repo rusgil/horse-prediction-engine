@@ -10356,6 +10356,40 @@ async def late_longshot_traits(days: int = 120, min_sp: float = 8.0,
                                      _combo(lambda sp, b, pos, pr, mr, wp, fs: sp <= 15 and pr is not None and pr <= 3),
     }
 
+    # BIG-FIELD (≥8) fine odds ladder — the honest "price vs strike-rate" map for
+    # late country races with 8+ runners (no small-field survivorship). Field ≥8
+    # pays 3 places, so place_top3 IS the payable place rate here.
+    def _fine_band(sp):
+        for lo, hi, lab in [(4, 6, "$4-6"), (6, 8, "$6-8"), (8, 10, "$8-10"),
+                            (10, 13, "$10-13"), (13, 16, "$13-16"), (16, 21, "$16-21"),
+                            (21, 26, "$21-26"), (26, 34, "$26-34"), (34, 1e9, "$34+")]:
+            if lo <= sp < hi:
+                return lab
+        return "?"
+    _lad = defaultdict(lambda: {"n": 0, "win": 0, "plc3": 0, "sp_win": 0.0})
+    for sp, barr, pos, pr, mr, wp, fsz in shots:
+        if not fsz or fsz < 8:
+            continue
+        a = _lad[_fine_band(sp)]
+        a["n"] += 1
+        if pos == 1:
+            a["win"] += 1
+            a["sp_win"] += sp
+        if pos <= 3:
+            a["plc3"] += 1
+    _order = ["$4-6", "$6-8", "$8-10", "$10-13", "$13-16", "$16-21", "$21-26", "$26-34", "$34+"]
+    big_field_sp_ladder = {}
+    for k in _order:
+        if k not in _lad:
+            continue
+        a = _lad[k]; n = a["n"]
+        big_field_sp_ladder[k] = {
+            "runners": n,
+            "win_pct": round(a["win"] / n * 100, 1),
+            "place_top3_pct": round(a["plc3"] / n * 100, 1),   # = paid place for 8+ fields
+            "win_roi_pct": round((a["sp_win"] - n) / n * 100, 1),
+        }
+
     return {
         "days": days, "min_sp": min_sp, "field_basis": field_basis,
         "baseline_all_longshots": {
@@ -10364,6 +10398,7 @@ async def late_longshot_traits(days: int = 120, min_sp: float = 8.0,
             "place_top3_pct": round(base_plc / base_n * 100, 1) if base_n else 0,
             "win_roi_pct": round((base_roi - base_n) / base_n * 100, 1) if base_n else 0,
         },
+        "big_field_8plus_sp_ladder": big_field_sp_ladder,
         "country_roughie": country_roughie,
         "by_sp_band": _bucketise(_spband),
         "by_barrier": _bucketise(_barr),
