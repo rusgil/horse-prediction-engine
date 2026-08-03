@@ -4367,6 +4367,19 @@ _edge_response_cache: tuple[datetime, dict, int] | None = None
 # /api/admin/analysis/late-nonmetro-winners → nonmetro_late_our_winpick_strike.
 LATE_COUNTRY_PLACE_STRIKE_PCT = 43
 
+# "FLYER" — an HONEST, clearly -EV small-stake punt marker for late country races
+# with 8+ runners. The $10-13 odds band is the least-bad mid-high band (the only
+# one that isn't a bloodbath): ~8% win, ~31% place, but still -9% ROI long-run.
+# So we tag the $10-13 runner as a FLYER and label it exactly as what it is — a
+# flutter, NOT an edge. Never dress this as a value/smart play. Frontends pick the
+# actual runner from the field; the backend flags the race + ships the real stats.
+# Refresh from /api/admin/analysis/late-longshot-traits → big_field_8plus_sp_ladder.
+LATE_COUNTRY_FLYER = {
+    "reason": "late_country_value_shot",
+    "min_field": 8, "odds_min": 10, "odds_max": 13,
+    "win_pct": 8, "place_pct": 31, "roi_pct": -9,
+}
+
 # NOTE: a "Country Roughie" win-spread on small (≤7) late-country fields was
 # prototyped and REVERTED 2026-08-03. The +21% ROI signal was a survivorship
 # artifact of measuring field size by FINISHERS (post-scratch); under the
@@ -5269,6 +5282,11 @@ async def get_edge_picks():
                     "paid_place_pct": LATE_COUNTRY_PLACE_STRIKE_PCT,
                     "reason": "late_country",
                 } if _late_nonmetro else None),
+                # FLYER — honest -EV flutter marker on 8+ late country fields.
+                # Frontend picks the $10-13 runner from `field`. See LATE_COUNTRY_FLYER.
+                "flyer": (LATE_COUNTRY_FLYER if _late_nonmetro and isinstance(
+                    field_sizes.get(runner_row.race_id), int
+                ) and field_sizes.get(runner_row.race_id) >= LATE_COUNTRY_FLYER["min_field"] else None),
                 "top3_sum_pct": round(top3_sum_pct, 1),
                 # rank-2's win % — lets Edge show 👑 CLEAR FAV (gap ≥5pt) like
                 # the Lounge/Hot Seat. field_top3 is rank-sorted.
@@ -19404,6 +19422,10 @@ async def get_meeting(race_date: str, venue_code: str):
                 "paid_place_pct": LATE_COUNTRY_PLACE_STRIKE_PCT,
                 "reason": "late_country",
             } if _late_nonmetro and top_picks.get(rid) else None),
+            # FLYER — honest -EV flutter on 8+ late country fields (frontend picks
+            # the $10-13 runner from the field it loads). See LATE_COUNTRY_FLYER.
+            "flyer": (LATE_COUNTRY_FLYER if _late_nonmetro and isinstance(_fsz, int)
+                      and _fsz >= LATE_COUNTRY_FLYER["min_field"] else None),
         })
 
     result = {
