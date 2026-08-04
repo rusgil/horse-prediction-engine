@@ -27,6 +27,8 @@
     --gold: #f5c842;
     --blue: #60a5fa;
     --blue-dim: rgba(96,165,250,0.14);
+    --purple: #b388ff;
+    --purple-dim: rgba(179,136,255,0.16);
     --hot: #fb923c;
     --hot-dim: rgba(251,146,60,0.16);
     --strong: #f472b6;
@@ -52,6 +54,8 @@
     --gold: #9c7c00;
     --blue: #2563c9;
     --blue-dim: rgba(37,99,201,0.10);
+    --purple: #7c3aed;
+    --purple-dim: rgba(124,58,237,0.10);
     --hot: #d95f0e;
     --hot-dim: rgba(217,95,14,0.13);
     --strong: #bb2d7f;
@@ -372,6 +376,8 @@
   .cell .cwpo .cw { color: var(--gold); }
   .cell .cwpo .cp { color: var(--blue); }
   .cell .cwpo .co { color: var(--text-3); }
+  .cell .cwpo .co.val { color: var(--purple); font-weight: 800; }
+  .cell.val-bet .in { background: var(--purple-dim); box-shadow: inset 0 0 0 1.5px color-mix(in srgb, var(--purple) 60%, transparent); }
   .cell .cout .res.win   { color: var(--mint); }
   .cell .cout .res.place { color: var(--amber); }
   .cell .cout .res.miss  { color: var(--red); }
@@ -1339,18 +1345,23 @@
           ? (r.top_win_probability - r.rank2_win_probability) * 100 : null;
         const clearFav = gap != null && gap >= 5;
         const tossUp   = gap != null && gap < 2 && (r.top_win_probability || 0) >= 0.25;
+        // VALUE (confidence vs odds): our win% beats the market-implied % (positive
+        // overlay) at a payable price → a good betting option. Odds go purple + 💎.
+        const impl = r.top_pick_odds > 1 ? 1 / r.top_pick_odds : null;
+        const overlay = (r.top_win_probability != null && impl != null) ? (r.top_win_probability - impl) : null;
+        const valueBet = overlay != null && overlay >= 0.05 && r.top_pick_odds >= 3;
         // Win%/plc% coloured to match the lounge bars: WIN = gold, PLACE = blue.
         const wpo = (win != null)
-          ? `<div class="cwpo num"><span class="cw">${win}%</span>${plc != null ? `<span class="cp">/${plc}%</span>` : ''}${od ? `<span class="co"> · ${od}</span>` : ''}</div>` : '';
+          ? `<div class="cwpo num"><span class="cw">${win}%</span>${plc != null ? `<span class="cp">/${plc}%</span>` : ''}${od ? `<span class="co${valueBet ? ' val' : ''}"> · ${od}</span>` : ''}</div>` : '';
         // Label line: confidence tier word + sharp/clear-fav markers.
-        const marks = (r.is_sharp ? '🎯' : '') + (clearFav ? '👑' : (tossUp ? '⚖️' : ''));
+        const marks = (r.is_sharp ? '🎯' : '') + (clearFav ? '👑' : (tossUp ? '⚖️' : '')) + (valueBet ? '💎' : '');
         const labelHtml = (tierWord || marks)
           ? `<div class="clab">${tierWord ? `<span class="cell-tier ${tier ? tier.dot : ''}">${tierWord}</span>` : ''}${marks ? `<span class="cmk">${marks}</span>` : ''}</div>`
           : '';
         const outcome = done ? `<div class="cout">${resultMarkBare(r)}</div>` : '';
         const tip = `${m.venue} R${r.race_number} · win ${win ?? '?'}% / place ${plc ?? '?'}%${od ? ' · ' + od : ''}`
           + (r.is_sharp ? ' · Sharp' : '') + (clearFav ? ' · Clear fav' : (tossUp ? ' · Toss-up' : ''));
-        return `<td class="cell ${cls}" data-open="${esc(r.race_id)}" title="${esc(tip)}">
+        return `<td class="cell ${cls} ${valueBet && !done ? 'val-bet' : ''}" data-open="${esc(r.race_id)}" title="${esc(tip)}${valueBet ? ' · 💎 value (odds beat our %)' : ''}">
           <div class="in"><div class="t num">${wallTime(r.scheduled_time)}</div>${wpo}${labelHtml}${outcome}</div></td>`;
       }).join('');
       return `<tr>
@@ -1380,6 +1391,7 @@
         <span><span class="sw" style="background:var(--strong-dim);box-shadow:inset 0 0 0 1px var(--strong)"></span>Strong pick</span>
         <span>🎯 Sharp race</span>
         <span>👑 Clear fav <span style="color:var(--text-3)">(top pick 5%+ clear)</span></span>
+        <span>💎 <span style="color:var(--purple)">Value</span> <span style="color:var(--text-3)">(odds beat our %)</span></span>
         <span>⚖️ Toss-up</span>
         <span><span class="res win">✓</span>/<span class="res place">✓</span>/<span class="res miss">✗</span> our pick's result (green won · amber placed)</span>
       </div>
