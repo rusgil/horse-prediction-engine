@@ -12070,7 +12070,8 @@ async def place_roi_rank1(days: int = 7, x_cron_secret: Optional[str] = Header(N
         )).all()
         results = (await session.execute(
             select(HistoricalResultRow.race_id, HistoricalResultRow.horse_name,
-                   HistoricalResultRow.position, HistoricalResultRow.field_size)
+                   HistoricalResultRow.position, HistoricalResultRow.field_size,
+                   HistoricalResultRow.starting_price)
             .where(HistoricalResultRow.race_id >= f"{cut}_")
         )).all()
         snaps = (await session.execute(
@@ -12101,7 +12102,7 @@ async def place_roi_rank1(days: int = 7, x_cron_secret: Optional[str] = Header(N
     # TRUE field size from the prediction-row count (see fs_rows above); fall back
     # to the stored column only if a race somehow has no prediction rows.
     res_map = {(r.race_id, _normalize_horse(r.horse_name or "")):
-               (r.position, pred_field.get(r.race_id) or r.field_size or 0)
+               (r.position, pred_field.get(r.race_id) or r.field_size or 0, r.starting_price)
                for r in results}
     # best place price per (race,horse): prefer pre-jump, nearest the jump
     best: dict[tuple, tuple] = {}
@@ -12117,6 +12118,10 @@ async def place_roi_rank1(days: int = 7, x_cron_secret: Optional[str] = Header(N
     fs_sum = 0
     divs = []
     staked = returned = 0.0
+    # Blended (all settled picks): real dividend where captured, else a
+    # quarter-odds place estimate off the real SP (place ≈ 1 + (SP-1)/4).
+    b_staked = b_returned = 0.0
+    b_n = b_est = b_noprice = 0
     missing_price = []
     for race_id, horse in rank1:
         k = (race_id, _normalize_horse(horse))
@@ -12124,21 +12129,35 @@ async def place_roi_rank1(days: int = 7, x_cron_secret: Optional[str] = Header(N
         if not rr or not rr[0] or rr[0] <= 0 or rr[0] >= 90:
             continue  # not settled / DNF
         settled += 1
-        pos, fsz = rr
-        po = place_price.get(k)
-        if not po or po <= 1.0:
-            missing_price.append({"race_id": race_id, "horse": horse, "position": pos})
-            continue
-        with_price += 1
-        staked += 1
-        fs_sum += (fsz or 0)
-        if pos <= 3:
-            top3_hits += 1
+        pos, fsz, sp = rr
         paid = 3 if (fsz or 0) >= 8 else 2 if (fsz or 0) >= 5 else 1
-        if pos <= paid:
-            paid_hits += 1
-            returned += po
-            divs.append(po)
+        placed_ok = pos <= paid
+        po = place_price.get(k)
+        # ── real-dividend track (priced subset) ──
+        if po and po > 1.0:
+            with_price += 1
+            staked += 1
+            fs_sum += (fsz or 0)
+            if pos <= 3:
+                top3_hits += 1
+            if placed_ok:
+                paid_hits += 1
+                returned += po
+                divs.append(po)
+        else:
+            missing_price.append({"race_id": race_id, "horse": horse, "position": pos})
+        # ── blended track (every settled pick) ──
+        price = po if (po and po > 1.0) else (
+            (1 + (sp - 1) / 4) if (sp and sp > 1.0) else None)
+        if price is None:
+            b_noprice += 1
+        else:
+            b_n += 1
+            b_staked += 1
+            if not (po and po > 1.0):
+                b_est += 1
+            if placed_ok:
+                b_returned += price
     pnl = returned - staked
     divs.sort()
     return {
@@ -12157,6 +12176,16 @@ async def place_roi_rank1(days: int = 7, x_cron_secret: Optional[str] = Header(N
         "returned": round(returned, 2),
         "pnl": round(pnl, 2),
         "place_roi_pct": round(pnl / staked * 100, 1) if staked else None,
+        "BLENDED_every_pick": {
+            "picks": b_n,
+            "real_dividend": b_n - b_est,
+            "estimated_quarter_odds": b_est,
+            "no_price_at_all": b_noprice,
+            "staked": round(b_staked, 2),
+            "returned": round(b_returned, 2),
+            "pnl": round(b_returned - b_staked, 2),
+            "place_roi_pct": round((b_returned - b_staked) / b_staked * 100, 1) if b_staked else None,
+        },
         "note": ("Flat $1 place bet on every rank-1 pick that has a captured place price. "
                  "Real place dividends (nearest-jump snapshot), field-size-aware paid-place "
                  "(8+ pay 3, 5-7 pay 2, <5 win-only). Picks with no captured place price are "
