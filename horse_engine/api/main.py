@@ -12050,6 +12050,96 @@ async def model_anomalies(
     }
 
 
+@app.get("/api/admin/bets/place-roi")
+async def place_roi_rank1(days: int = 7, x_cron_secret: Optional[str] = Header(None)):
+    """Flat $1 PLACE bet on every rank-1 pick over the window, using REAL place
+    dividends (OddsSnapshotRow.place_odds nearest the jump) and the field-size-
+    aware AU paid-place rule (8+ runners pay 3, 5-7 pay 2, <5 win-only). Reports
+    the exact ROI plus coverage (picks with vs without a captured place price)."""
+    _check_admin(x_cron_secret)
+    days = max(1, min(int(days), 60))
+    cut = (_today_aest() - timedelta(days=days)).isoformat()
+    async with get_session() as session:
+        picks = (await session.execute(
+            select(RunnerPredictionHistoryRow.race_id, RunnerPredictionHistoryRow.horse_name)
+            .where(RunnerPredictionHistoryRow.race_id >= f"{cut}_")
+            .where(RunnerPredictionHistoryRow.model_rank == 1)
+            .where(RunnerPredictionHistoryRow.source == "live")
+            .where(RunnerPredictionHistoryRow.cancelled.is_(False)
+                   | RunnerPredictionHistoryRow.cancelled.is_(None))
+        )).all()
+        results = (await session.execute(
+            select(HistoricalResultRow.race_id, HistoricalResultRow.horse_name,
+                   HistoricalResultRow.position, HistoricalResultRow.field_size)
+            .where(HistoricalResultRow.race_id >= f"{cut}_")
+        )).all()
+        snaps = (await session.execute(
+            select(OddsSnapshotRow.race_id, OddsSnapshotRow.horse_name,
+                   OddsSnapshotRow.place_odds, OddsSnapshotRow.minutes_to_jump)
+            .where(OddsSnapshotRow.race_id >= f"{cut}_")
+            .where(OddsSnapshotRow.place_odds.isnot(None))
+        )).all()
+    # dedup picks (latest per race+horse); one rank-1 per race
+    seen, rank1 = set(), []
+    for p in picks:
+        k = (p.race_id, _normalize_horse(p.horse_name))
+        if k in seen:
+            continue
+        seen.add(k)
+        rank1.append((p.race_id, p.horse_name))
+    res_map = {(r.race_id, _normalize_horse(r.horse_name or "")): (r.position, r.field_size)
+               for r in results}
+    # best place price per (race,horse): prefer pre-jump, nearest the jump
+    best: dict[tuple, tuple] = {}
+    for s in snaps:
+        k = (s.race_id, _normalize_horse(s.horse_name or ""))
+        mtj = s.minutes_to_jump if s.minutes_to_jump is not None else 999
+        key = (mtj < 0, abs(mtj))  # pre-jump first, then closest to jump
+        if k not in best or key < best[k][0]:
+            best[k] = (key, s.place_odds)
+    place_price = {k: v[1] for k, v in best.items()}
+
+    settled = with_price = paid_hits = 0
+    staked = returned = 0.0
+    missing_price = []
+    for race_id, horse in rank1:
+        k = (race_id, _normalize_horse(horse))
+        rr = res_map.get(k)
+        if not rr or not rr[0] or rr[0] <= 0 or rr[0] >= 90:
+            continue  # not settled / DNF
+        settled += 1
+        pos, fsz = rr
+        po = place_price.get(k)
+        if not po or po <= 1.0:
+            missing_price.append({"race_id": race_id, "horse": horse})
+            continue
+        with_price += 1
+        staked += 1
+        paid = 3 if (fsz or 0) >= 8 else 2 if (fsz or 0) >= 5 else 1
+        if pos <= paid:
+            paid_hits += 1
+            returned += po
+    pnl = returned - staked
+    return {
+        "days": days,
+        "settled_rank1_picks": settled,
+        "with_place_price": with_price,
+        "missing_place_price": len(missing_price),
+        "coverage_pct": round(with_price / settled * 100, 1) if settled else None,
+        "paid_place_hits": paid_hits,
+        "paid_place_strike_pct": round(paid_hits / with_price * 100, 1) if with_price else None,
+        "staked": round(staked, 2),
+        "returned": round(returned, 2),
+        "pnl": round(pnl, 2),
+        "place_roi_pct": round(pnl / staked * 100, 1) if staked else None,
+        "note": ("Flat $1 place bet on every rank-1 pick that has a captured place price. "
+                 "Real place dividends (nearest-jump snapshot), field-size-aware paid-place "
+                 "(8+ pay 3, 5-7 pay 2, <5 win-only). Picks with no captured place price are "
+                 "excluded from staked (see missing_place_price) — today's often missing."),
+        "missing_examples": missing_price[:8],
+    }
+
+
 @app.get("/api/admin/analysis/layoff-phantom-audit")
 async def layoff_phantom_audit(days: int = 28, lookback_days: int = 730,
                                x_cron_secret: Optional[str] = Header(None)):
