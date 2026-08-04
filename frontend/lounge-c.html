@@ -349,7 +349,9 @@
   .cell .sub { font-size: 0.64rem; margin-top: 1px; min-height: 14px; display:flex; align-items:center; justify-content:center; gap:3px; }
   .cell .cwpo { font-size: 0.58rem; font-weight: 700; color: var(--text-2); margin-top: 2px; font-variant-numeric: tabular-nums; white-space: nowrap; }
   .cell .clab { font-size: 0.52rem; font-weight: 800; letter-spacing: 0.02em; margin-top: 1px; display:flex; align-items:center; justify-content:center; gap:2px; min-height: 10px; }
-  .cell .cout { font-size: 0.68rem; margin-top: 1px; min-height: 12px; }
+  .cell .cout { font-size: 0.82rem; margin-top: 1px; min-height: 12px; }
+  .cell .clab .cmk { font-size: 0.82rem; line-height: 1; }
+  .heat-legend span { font-size: 0.72rem; }
   /* heat tints — the core idea: cell colour = our confidence */
   .cell.heat-hot .in    { background: var(--hot-dim);  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--hot) 45%, transparent); }
   .cell.heat-hot .t     { color: var(--hot); }
@@ -1342,7 +1344,7 @@
         // Label line: confidence tier word + sharp/clear-fav markers.
         const marks = (r.is_sharp ? '🎯' : '') + (clearFav ? '👑' : (tossUp ? '⚖️' : ''));
         const labelHtml = (tierWord || marks)
-          ? `<div class="clab">${tierWord ? `<span class="cell-tier ${tier ? tier.dot : ''}">${tierWord}</span>` : ''}${marks ? `<span>${marks}</span>` : ''}</div>`
+          ? `<div class="clab">${tierWord ? `<span class="cell-tier ${tier ? tier.dot : ''}">${tierWord}</span>` : ''}${marks ? `<span class="cmk">${marks}</span>` : ''}</div>`
           : '';
         const outcome = done ? `<div class="cout">${resultMarkBare(r)}</div>` : '';
         const tip = `${m.venue} R${r.race_number} · win ${win ?? '?'}% / place ${plc ?? '?'}%${od ? ' · ' + od : ''}`
@@ -1376,6 +1378,8 @@
         <span><span class="sw" style="background:var(--blue-dim);box-shadow:inset 0 0 0 1px var(--blue)"></span>High confidence</span>
         <span><span class="sw" style="background:var(--strong-dim);box-shadow:inset 0 0 0 1px var(--strong)"></span>Strong pick</span>
         <span>🎯 Sharp race</span>
+        <span>👑 Clear fav <span style="color:var(--text-3)">(top pick 5%+ clear)</span></span>
+        <span>⚖️ Toss-up</span>
         <span><span class="res win">✓</span>/<span class="res place">✓</span>/<span class="res miss">✗</span> our pick's result (green won · amber placed)</span>
       </div>
       <div class="hint">Cell colour = how strongly our model rates its top pick in that race. Tap any race for the win &amp; place predictions.</div>`;
