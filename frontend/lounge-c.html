@@ -348,11 +348,11 @@
   }
   .cell:hover { filter: brightness(1.25); }
   :root[data-theme="light"] .cell:hover { filter: brightness(0.96); }
-  .cell .in { border-radius: 7px; padding: 4px 2px 5px; margin: 0 2px; }
+  .cell .in { border-radius: 7px; padding: 4px 2px 5px; margin: 0 2px; height: 62px; box-sizing: border-box; display: flex; flex-direction: column; align-items: center; justify-content: flex-start; gap: 1px; overflow: hidden; }
   .cell .t { font-size: 0.78rem; font-weight: 700; color: var(--text-2); }
   .cell .sub { font-size: 0.64rem; margin-top: 1px; min-height: 14px; display:flex; align-items:center; justify-content:center; gap:3px; }
   .cell .cwpo { font-size: 0.58rem; font-weight: 700; color: var(--text-2); margin-top: 2px; font-variant-numeric: tabular-nums; white-space: nowrap; }
-  .cell .clab { font-size: 0.52rem; font-weight: 800; letter-spacing: 0.02em; margin-top: 1px; display:flex; align-items:center; justify-content:center; gap:2px; min-height: 10px; }
+  .cell .clab { font-size: 0.52rem; font-weight: 800; letter-spacing: 0.02em; margin-top: 1px; display:flex; align-items:center; justify-content:center; gap:2px; min-height: 10px; flex-wrap: nowrap; overflow: hidden; max-width: 100%; white-space: nowrap; }
   .cell .cout { font-size: 0.82rem; margin-top: 1px; min-height: 12px; }
   .cell .clab .cmk { font-size: 0.82rem; line-height: 1; }
   .heat-legend span { font-size: 0.72rem; }
@@ -1345,6 +1345,12 @@
           ? (r.top_win_probability - r.rank2_win_probability) * 100 : null;
         const clearFav = gap != null && gap >= 5;
         const tossUp   = gap != null && gap < 2 && (r.top_win_probability || 0) >= 0.25;
+        // Clear quinella = top-2 clear of 3rd; clear trifecta = top-3 dominate.
+        const r2p = r.rank2_win_probability, r3p = r.rank3_win_probability;
+        const clearQuin = (r2p != null && r3p != null) && (r2p - r3p) >= 0.04;
+        const top3sum = (r.top_win_probability != null && r2p != null && r3p != null)
+          ? (r.top_win_probability + r2p + r3p) : null;
+        const clearTri = top3sum != null && top3sum >= 0.70;
         // VALUE (confidence vs odds): our win% beats the market-implied % (positive
         // overlay) at a payable price → a good betting option. Odds go purple + 💎.
         const impl = r.top_pick_odds > 1 ? 1 / r.top_pick_odds : null;
@@ -1354,13 +1360,14 @@
         const wpo = (win != null)
           ? `<div class="cwpo num"><span class="cw">${win}%</span>${plc != null ? `<span class="cp">/${plc}%</span>` : ''}${od ? `<span class="co${valueBet ? ' val' : ''}"> · ${od}</span>` : ''}</div>` : '';
         // Label line: confidence tier word + sharp/clear-fav markers.
-        const marks = (r.is_sharp ? '🎯' : '') + (clearFav ? '👑' : (tossUp ? '⚖️' : '')) + (valueBet ? '💎' : '');
+        const marks = (r.is_sharp ? '🎯' : '') + (clearFav ? '👑' : (tossUp ? '⚖️' : '')) + (clearQuin ? '🥈' : '') + (clearTri ? '🥉' : '') + (valueBet ? '💎' : '');
         const labelHtml = (tierWord || marks)
           ? `<div class="clab">${tierWord ? `<span class="cell-tier ${tier ? tier.dot : ''}">${tierWord}</span>` : ''}${marks ? `<span class="cmk">${marks}</span>` : ''}</div>`
           : '';
         const outcome = done ? `<div class="cout">${resultMarkBare(r)}</div>` : '';
         const tip = `${m.venue} R${r.race_number} · win ${win ?? '?'}% / place ${plc ?? '?'}%${od ? ' · ' + od : ''}`
-          + (r.is_sharp ? ' · Sharp' : '') + (clearFav ? ' · Clear fav' : (tossUp ? ' · Toss-up' : ''));
+          + (r.is_sharp ? ' · Sharp' : '') + (clearFav ? ' · Clear fav' : (tossUp ? ' · Toss-up' : ''))
+          + (clearQuin ? ' · Clear quinella' : '') + (clearTri ? ' · Clear trifecta' : '');
         return `<td class="cell ${cls} ${valueBet && !done ? 'val-bet' : ''}" data-open="${esc(r.race_id)}" title="${esc(tip)}${valueBet ? ' · 💎 value (odds beat our %)' : ''}">
           <div class="in"><div class="t num">${wallTime(r.scheduled_time)}</div>${wpo}${labelHtml}${outcome}</div></td>`;
       }).join('');
@@ -1392,6 +1399,8 @@
         <span>🎯 Sharp race</span>
         <span>👑 Clear fav <span style="color:var(--text-3)">(top pick 5%+ clear)</span></span>
         <span>💎 <span style="color:var(--purple)">Value</span> <span style="color:var(--text-3)">(odds beat our %)</span></span>
+        <span>🥈 Clear quinella <span style="color:var(--text-3)">(top 2 clear)</span></span>
+        <span>🥉 Clear trifecta <span style="color:var(--text-3)">(top 3 dominate)</span></span>
         <span>⚖️ Toss-up</span>
         <span><span class="res win">✓</span>/<span class="res place">✓</span>/<span class="res miss">✗</span> our pick's result (green won · amber placed)</span>
       </div>
