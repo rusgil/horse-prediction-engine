@@ -12107,7 +12107,9 @@ async def place_roi_rank1(days: int = 7, x_cron_secret: Optional[str] = Header(N
             best[k] = (key, s.place_odds)
     place_price = {k: v[1] for k, v in best.items()}
 
-    settled = with_price = paid_hits = 0
+    settled = with_price = paid_hits = top3_hits = 0
+    fs_sum = 0
+    divs = []
     staked = returned = 0.0
     missing_price = []
     for race_id, horse in rank1:
@@ -12119,15 +12121,20 @@ async def place_roi_rank1(days: int = 7, x_cron_secret: Optional[str] = Header(N
         pos, fsz = rr
         po = place_price.get(k)
         if not po or po <= 1.0:
-            missing_price.append({"race_id": race_id, "horse": horse})
+            missing_price.append({"race_id": race_id, "horse": horse, "position": pos})
             continue
         with_price += 1
         staked += 1
+        fs_sum += (fsz or 0)
+        if pos <= 3:
+            top3_hits += 1
         paid = 3 if (fsz or 0) >= 8 else 2 if (fsz or 0) >= 5 else 1
         if pos <= paid:
             paid_hits += 1
             returned += po
+            divs.append(po)
     pnl = returned - staked
+    divs.sort()
     return {
         "days": days,
         "settled_rank1_picks": settled,
@@ -12136,6 +12143,10 @@ async def place_roi_rank1(days: int = 7, x_cron_secret: Optional[str] = Header(N
         "coverage_pct": round(with_price / settled * 100, 1) if settled else None,
         "paid_place_hits": paid_hits,
         "paid_place_strike_pct": round(paid_hits / with_price * 100, 1) if with_price else None,
+        "top3_strike_pct_priced": round(top3_hits / with_price * 100, 1) if with_price else None,
+        "avg_field_size_priced": round(fs_sum / with_price, 1) if with_price else None,
+        "avg_place_dividend_on_hits": round(sum(divs) / len(divs), 2) if divs else None,
+        "median_place_dividend": divs[len(divs) // 2] if divs else None,
         "staked": round(staked, 2),
         "returned": round(returned, 2),
         "pnl": round(pnl, 2),
