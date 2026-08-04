@@ -363,6 +363,16 @@
   .cell .sub .cell-tier.hot    { color: var(--hot); }
   .cell .sub .cell-tier.high   { color: var(--blue); }
   .cell .sub .cell-tier.strong { color: var(--strong); }
+  /* colour the new win-%/label lines by confidence tier so the cell reads at a glance */
+  .cell .clab .cell-tier.hot    { color: var(--hot); }
+  .cell .clab .cell-tier.high   { color: var(--blue); }
+  .cell .clab .cell-tier.strong { color: var(--strong); }
+  .cell.heat-hot    .cwpo { color: var(--hot); }
+  .cell.heat-high   .cwpo { color: var(--blue); }
+  .cell.heat-strong .cwpo { color: var(--strong); }
+  .cell .cout .res.win   { color: var(--mint); }
+  .cell .cout .res.place { color: var(--amber); }
+  .cell .cout .res.miss  { color: var(--red); }
   .cell.blank { cursor: default; }
   .cell.blank:hover { filter: none; }
   .heat-legend {
@@ -1328,7 +1338,7 @@
         const clearFav = gap != null && gap >= 5;
         const tossUp   = gap != null && gap < 2 && (r.top_win_probability || 0) >= 0.25;
         const wpo = (win != null)
-          ? `<div class="cwpo num">${win}${plc != null ? '/' + plc : ''}%${od ? ' · ' + od : ''}</div>` : '';
+          ? `<div class="cwpo num">${win}%${plc != null ? '/' + plc + '%' : ''}${od ? ' · ' + od : ''}</div>` : '';
         // Label line: confidence tier word + sharp/clear-fav markers.
         const marks = (r.is_sharp ? '🎯' : '') + (clearFav ? '👑' : (tossUp ? '⚖️' : ''));
         const labelHtml = (tierWord || marks)
