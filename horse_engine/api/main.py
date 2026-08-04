@@ -12079,6 +12079,17 @@ async def place_roi_rank1(days: int = 7, x_cron_secret: Optional[str] = Header(N
             .where(OddsSnapshotRow.race_id >= f"{cut}_")
             .where(OddsSnapshotRow.place_odds.isnot(None))
         )).all()
+        # TRUE field size = count of runners (HistoricalResultRow only stores the
+        # top-4 placegetters, so counting finishers there gives ~4 and wrongly
+        # collapses the paid-place rule to win-only).
+        fs_rows = (await session.execute(
+            select(RunnerPredictionHistoryRow.race_id, func.count())
+            .where(RunnerPredictionHistoryRow.race_id >= f"{cut}_")
+            .where(RunnerPredictionHistoryRow.cancelled.is_(False)
+                   | RunnerPredictionHistoryRow.cancelled.is_(None))
+            .group_by(RunnerPredictionHistoryRow.race_id)
+        )).all()
+    pred_field: dict[str, int] = {rid: cnt for rid, cnt in fs_rows}
     # dedup picks (latest per race+horse); one rank-1 per race
     seen, rank1 = set(), []
     for p in picks:
@@ -12087,15 +12098,10 @@ async def place_roi_rank1(days: int = 7, x_cron_secret: Optional[str] = Header(N
             continue
         seen.add(k)
         rank1.append((p.race_id, p.horse_name))
-    # Field size by COUNTING finishers per race (HistoricalResultRow.field_size is
-    # frequently null → would wrongly collapse the paid-place rule to win-only).
-    from collections import defaultdict as _dd
-    race_fs: dict[str, int] = _dd(int)
-    for r in results:
-        if r.position and 1 <= r.position < 90:
-            race_fs[r.race_id] += 1
+    # TRUE field size from the prediction-row count (see fs_rows above); fall back
+    # to the stored column only if a race somehow has no prediction rows.
     res_map = {(r.race_id, _normalize_horse(r.horse_name or "")):
-               (r.position, race_fs.get(r.race_id) or r.field_size or 0)
+               (r.position, pred_field.get(r.race_id) or r.field_size or 0)
                for r in results}
     # best place price per (race,horse): prefer pre-jump, nearest the jump
     best: dict[tuple, tuple] = {}
