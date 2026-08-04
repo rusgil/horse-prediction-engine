@@ -1034,7 +1034,7 @@
 
   async function loadDashboard() {
     try {
-      const [calRes, perfRes, analysisRes, prodRes, premRes] = await Promise.all([
+      const [calRes, perfRes, analysisRes, prodRes, premRes, placeRes] = await Promise.all([
         fetch(`${API}/api/admin/calibration/history?limit=14`, { headers: { 'x-cron-secret': adminSecret } }),
         fetch(`${API}/api/performance?days=60`),
         fetch(`${API}/api/admin/backtest/analysis`, { headers: { 'x-cron-secret': adminSecret } }),
@@ -1044,6 +1044,8 @@
         fetch(`${API}/api/admin/backtest/feature-ablation?holdout_days=14`, { headers: { 'x-cron-secret': adminSecret } }),
         // Live premium tier performance — what users actually see.
         fetch(`${API}/api/performance/premium/public`),
+        // Place-bet ROI on every rank-1 pick (real dividends, 7d).
+        fetch(`${API}/api/admin/bets/place-roi?days=7`, { headers: { 'x-cron-secret': adminSecret } }),
       ]);
 
       if (calRes.status === 403) {
@@ -1059,9 +1061,10 @@
       const analysisData = analysisRes.ok ? await analysisRes.json() : null;
       const prodData     = prodRes.ok     ? await prodRes.json()     : null;
       const premData     = premRes.ok     ? await premRes.json()     : null;
+      const placeData    = placeRes.ok    ? await placeRes.json()    : null;
 
       sessionStorage.setItem(SECRET_KEY, adminSecret);
-      renderShell(calData, perfData, analysisData, prodData, premData);
+      renderShell(calData, perfData, analysisData, prodData, premData, placeData);
     } catch (e) {
       document.getElementById('dashContent').innerHTML =
         `<div class="loading"><div style="font-size:1.5rem;margin-bottom:10px">⚠️</div>${e.message}</div>`;
@@ -1103,8 +1106,8 @@
     } catch (e) { /* non-critical */ }
   }
 
-  function renderShell(calData, perfData, analysisData, prodData, premData) {
-    const winContent     = buildWinContent(calData, perfData, analysisData, prodData, premData);
+  function renderShell(calData, perfData, analysisData, prodData, premData, placeData) {
+    const winContent     = buildWinContent(calData, perfData, analysisData, prodData, premData, placeData);
     const exoContent     = buildExoticPlaceholder();
     const reviewsContent = buildReviewsPlaceholder();
     const qualityContent = buildQualityPlaceholder();
@@ -1142,7 +1145,7 @@
      WIN & PLACEMENT TAB
   ══════════════════════════════════════════════════════════ */
 
-  function buildWinContent(calData, perfData, analysisData, prodData, premData) {
+  function buildWinContent(calData, perfData, analysisData, prodData, premData, placeData) {
     const cals   = calData?.calibrations || [];
     const latest = cals[0] || null;
 
@@ -1177,6 +1180,17 @@
               <div class="stat-card-label">Production Win Rate</div>
               <div class="stat-card-sub">Top-1 pick · ${races?.toLocaleString() ?? '—'} holdout races · last 14d</div>
             </div>` : ''}
+            ${placeData ? (() => {
+              const pr = placeData.place_roi_pct;
+              const prCol = pr == null ? 'var(--text-dim)' : pr >= 5 ? 'var(--green-bright)' : pr >= 0 ? 'var(--gold-light)' : '#f87171';
+              const blend = placeData.BLENDED_every_pick?.place_roi_pct;
+              return `
+            <div class="stat-card">
+              <div class="stat-card-num" style="color:${prCol}">${pr != null ? pr.toFixed(1) + '%' : '—'}</div>
+              <div class="stat-card-label">Place ROI — every pick (real $)</div>
+              <div class="stat-card-sub">${placeData.with_place_price ?? 0} priced picks · ${placeData.paid_place_strike_pct != null ? placeData.paid_place_strike_pct.toFixed(0) + '% place' : '—'} · 7d${blend != null ? ` · ~${blend.toFixed(0)}% blended incl. est.` : ''}</div>
+            </div>`;
+            })() : ''}
             ${premData ? `
             <div class="stat-card">
               <div class="stat-card-num" style="color:${premCol}">${premRoi != null ? premRoi.toFixed(1) + '%' : '—'}</div>
