@@ -19298,6 +19298,7 @@ async def _gather_lounge_snapshot(date: str) -> dict:
             "wins": sum(1 for r in settled_win if r.get("model_correct")),
             "placed": sum(1 for r in settled_place if r.get("model_placed")),
             "settled_total": len(settled_win),
+            "abandoned": bool(m_body.get("abandoned")),
         }
         return vc, stats
 
@@ -19461,6 +19462,15 @@ async def get_meeting(race_date: str, venue_code: str):
             .group_by(RunnerPredictionRow.race_id)
         )).all():
             field_count[rid] = cnt
+        # Abandoned = the meeting was enriched (has runner rows) but every runner
+        # is cancelled (all races voided via cancel-meeting). Distinguishes an
+        # abandoned card from a not-yet-enriched one (which has no rows at all).
+        total_runners = (await session.execute(
+            select(func.count()).select_from(RunnerPredictionRow)
+            .where(RunnerPredictionRow.race_id.in_(race_ids))
+        )).scalar() or 0
+        active_runners = sum(field_count.values())
+        meeting_abandoned = bool(total_runners > 0 and active_runners == 0)
 
         # Back-fill scheduled_time into DB for enriched races that were missing it
         if ra_times:
@@ -19793,6 +19803,7 @@ async def get_meeting(race_date: str, venue_code: str):
         "date": race_date,
         "venue": venue_code,
         "enriched": enriched,
+        "abandoned": meeting_abandoned,
         "races": races_out,
     }
     _get_meeting_cache[_cache_key] = (datetime.utcnow(), result)
