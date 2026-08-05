@@ -12194,6 +12194,58 @@ async def place_roi_rank1(days: int = 7, x_cron_secret: Optional[str] = Header(N
     }
 
 
+@app.get("/api/admin/analysis/phantom-layoff-live")
+async def phantom_layoff_live(x_cron_secret: Optional[str] = Header(None)):
+    """Find UPCOMING (unsettled) picks that still carry a phantom long layoff from
+    the pre-fix unsorted-starts bug: days_since_last_run > 180 BUT runs_this_prep
+    >= 2 (mid-prep — can't be a genuine spell). Groups by race so the affected
+    cards can be re-enriched. Read-only (no upstream calls)."""
+    _check_admin(x_cron_secret)
+    today = _today_aest().isoformat()
+    async with get_session() as session:
+        settled = {r for (r,) in (await session.execute(
+            select(HistoricalResultRow.race_id).where(HistoricalResultRow.race_id >= f"{today}_").distinct()
+        )).all()}
+        rows = (await session.execute(
+            select(RunnerPredictionRow.race_id, RunnerPredictionRow.horse_name,
+                   RunnerPredictionRow.model_rank, RunnerPredictionRow.enriched_json,
+                   RunnerPredictionRow.enriched_at)
+            .where(RunnerPredictionRow.race_id >= f"{today}_")
+            .where(RunnerPredictionRow.model_rank <= 4)
+            .where(RunnerPredictionRow.cancelled.is_(False) | RunnerPredictionRow.cancelled.is_(None))
+        )).all()
+    from collections import defaultdict
+    by_race: dict[str, list] = defaultdict(list)
+    total = 0
+    for r in rows:
+        if r.race_id in settled:
+            continue
+        try:
+            e = json.loads(r.enriched_json) if r.enriched_json else {}
+        except Exception:
+            e = {}
+        dslr = e.get("days_since_last_run")
+        rtp = e.get("runs_this_prep")
+        if isinstance(dslr, (int, float)) and dslr > 180 and isinstance(rtp, (int, float)) and rtp >= 2:
+            total += 1
+            by_race[r.race_id].append({
+                "horse": r.horse_name, "model_rank": r.model_rank,
+                "phantom_days_off": int(dslr), "runs_this_prep": int(rtp),
+                "enriched_at": r.enriched_at.isoformat() if r.enriched_at else None,
+            })
+    races = sorted(by_race.keys())
+    return {
+        "today": today,
+        "phantom_picks": total,
+        "affected_races": len(races),
+        "race_ids": races,
+        "detail": {rid: by_race[rid] for rid in races[:40]},
+        "note": ("Phantom = days_off>180 but runs_this_prep>=2 (mid-prep, so the layoff is the "
+                 "unsorted-starts bug, not real). Re-enrich these races (post-fix) to correct "
+                 "days_off + form_score. Race last enriched before 2026-08-04 = pre-fix."),
+    }
+
+
 @app.get("/api/admin/analysis/layoff-phantom-audit")
 async def layoff_phantom_audit(days: int = 28, lookback_days: int = 730,
                                x_cron_secret: Optional[str] = Header(None)):
