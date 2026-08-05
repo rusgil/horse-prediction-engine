@@ -29347,7 +29347,13 @@ async def _refresh_track_conditions(race_date: str) -> dict[str, str]:
                 continue
             parts = rid.split("_")
             slug = parts[1] if len(parts) >= 3 else ""
-            cond = conds.get(_sb_norm(slug))
+            slug_norm = _sb_norm(slug)
+            debrand_norm = _sb_norm(_debrand_venue(slug))
+            cond = conds.get(slug_norm) or conds.get(debrand_norm)
+            if not cond and slug_norm:
+                cond = next((v for k, v in conds.items()
+                             if k and (k in slug_norm or slug_norm in k
+                                       or k in debrand_norm or debrand_norm in k)), None)
             if not cond or (tc or "").strip().lower() == cond.lower():
                 continue
             changed[f"{slug} {parts[-1]}"] = f"{tc or '?'} -> {cond}"
