@@ -29352,6 +29352,56 @@ async def admin_refresh_track_conditions(
     }
 
 
+@app.post("/api/admin/set-track-condition")
+async def admin_set_track_condition(
+    venue: str = Query(..., description="Venue slug, e.g. 'southside-cranbourne'"),
+    condition: str = Query(..., description="Full going with rating, e.g. 'Soft 6'"),
+    date: Optional[str] = Query(None, description="YYYY-MM-DD, defaults to today"),
+    x_cron_secret: Optional[str] = Header(None),
+):
+    """Manually override a meeting's going when the Sportsbet auto-fetch misses it.
+    Sets track_condition (keep the rating #, e.g. 'Soft 6') on the mutable race +
+    runner rows AND rewrites enriched_json.track_condition_category so the model's
+    off-going cap fires (Soft/Heavy never headline Hot/High). Mutable only —
+    history stays immutable; results seeding syncs the official going later."""
+    _check_admin(x_cron_secret)
+    from sqlalchemy import update as sa_update
+    global _edge_response_cache
+    target = date or _today_aest().isoformat()
+    _validate_date(target)
+    cond = condition.strip()
+    cl = cond.lower()
+    category = ("heavy" if "heavy" in cl else "soft" if "soft" in cl
+                else "synthetic" if ("synth" in cl or "poly" in cl) else "good")
+    prefix = f"{_like_safe(target)}_{_like_safe(venue)}_%"
+    async with get_session() as session:
+        await session.execute(
+            sa_update(RacePredictionRow).where(RacePredictionRow.race_id.like(prefix))
+            .values(track_condition=cond)
+        )
+        runners = (await session.execute(
+            select(RunnerPredictionRow).where(RunnerPredictionRow.race_id.like(prefix))
+        )).scalars().all()
+        n = 0
+        for r in runners:
+            r.track_condition = cond
+            if r.enriched_json:
+                try:
+                    e = json.loads(r.enriched_json)
+                    e["track_condition_category"] = category
+                    r.enriched_json = json.dumps(e)
+                except Exception:
+                    pass
+            n += 1
+        await session.commit()
+    _edge_response_cache = None
+    _invalidate_meeting_caches(target, venue)
+    log.info("[admin] set-track-condition: %s %s -> %s (%s), %d runners", venue, target, cond, category, n)
+    return {"ok": True, "venue": venue, "date": target, "condition": cond,
+            "category": category, "runners_updated": n,
+            "note": "off-going cap now fires" if category in ("soft", "heavy") else "good/synthetic — no cap"}
+
+
 @app.post("/api/cron/enrich")
 async def cron_enrich(
     days: int = Query(3, ge=1, le=7),
