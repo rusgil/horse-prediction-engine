@@ -29395,6 +29395,37 @@ async def admin_refresh_track_conditions(
     }
 
 
+@app.get("/api/admin/debug/result-feeds")
+async def debug_result_feeds(date: str, venue: str = "", x_cron_secret: Optional[str] = Header(None)):
+    """What tracks do the OddsPro + Sportsbet RESULTS feeds actually return for a
+    date — and does a given venue (de-branded) appear? Diagnoses seed coverage
+    gaps vs name mismatches. Read-only, one fetch per feed (cached)."""
+    _check_admin(x_cron_secret)
+    _validate_date(date)
+    from horse_engine.clients.sportsbet_schedule import get_sportsbet_results, _norm as _sbn
+    out: dict = {"date": date}
+    try:
+        sb = await get_sportsbet_results(date)
+        out["sportsbet_result_tracks"] = sorted((sb or {}).keys())
+    except Exception as e:
+        out["sportsbet_error"] = str(e)
+    try:
+        op = await get_tab_client()._odds.get_results(date)
+        out["oddspro_result_tracks"] = sorted((op or {}).keys())
+    except Exception as e:
+        out["oddspro_error"] = str(e)
+    if venue:
+        db = _debrand_venue(venue)
+        dbn = _sbn(db)
+        out["venue"] = venue
+        out["debranded"] = db
+        out["in_sportsbet"] = any(dbn == _sbn(t) or dbn in _sbn(t) or _sbn(t) in dbn
+                                  for t in out.get("sportsbet_result_tracks", []))
+        out["in_oddspro"] = any(dbn == _sbn(t) or dbn in _sbn(t) or _sbn(t) in dbn
+                                for t in out.get("oddspro_result_tracks", []))
+    return out
+
+
 @app.post("/api/admin/set-track-condition")
 async def admin_set_track_condition(
     venue: str = Query(..., description="Venue slug, e.g. 'southside-cranbourne'"),
