@@ -234,6 +234,9 @@
   .chip.tier-strong { background: var(--strong-dim); color: var(--strong); }
   .chip.wet-note { background: var(--amber-dim); color: var(--amber); }
   .mcell .wx { font-size: 0.72rem; color: var(--text-3); }
+  .abandoned-row { opacity: 0.45; filter: grayscale(1); }
+  .abandoned-row .mcell { background: var(--surface-2); }
+  .chip.abandoned-chip { background: var(--surface-2); color: var(--text-3); border: 1px solid var(--line); font-weight: 800; letter-spacing: 0.03em; }
   .metro-badge {
     font-size: 0.54rem; font-weight: 800; letter-spacing: 0.1em;
     color: var(--gold); border: 1px solid color-mix(in srgb, var(--gold) 55%, transparent);
@@ -1181,7 +1184,9 @@
           const vc = vcOf(m);
           try {
             const res = await fetch(`${API}/api/meetings/${S.date}/${vc}`);
-            S.details[vc] = res.ok ? ((await res.json()).races || []) : [];
+            const j = res.ok ? await res.json() : {};
+            S.details[vc] = j.races || [];
+            if (j.abandoned) m.abandoned = true;   // grey out + exclude from results
           } catch { S.details[vc] = []; }
           if (seq === S.loadSeq) renderAll();
         }
@@ -1226,6 +1231,7 @@
   function allRaces() {
     const out = [];
     for (const m of S.meetings) {
+      if (m.abandoned) continue;   // abandoned meetings excluded from the feed/results
       const vc = vcOf(m);
       for (const r of (S.details[vc] || []))
         out.push({ ...r, _venue: m.venue, _vc: vc, _state: m.state, _wx: m.weather, _mtier: m.tier });
@@ -1308,6 +1314,17 @@
       const vc = vcOf(m);
       const races = S.details[vc];
       const g = goingInfo(races?.[0]?.track_condition);
+      const abandoned = !!m.abandoned;
+      // Abandoned meeting → greyed row, "ABANDONED" label, no cells/stats.
+      if (abandoned) {
+        if (S.sharpOnly) return '';
+        const blanks = Array.from({ length: maxR }, () => '<td class="cell blank"></td>').join('');
+        return `<tr class="abandoned-row">
+          <td class="mcell">
+            <div class="vname">${esc(m.venue)} <span class="st">${esc(m.state || '')}</span></div>
+            <div class="vmeta"><span class="chip abandoned-chip">✖ ABANDONED</span></div>
+          </td>${blanks}</tr>`;
+      }
       if (S.sharpOnly && races && !races.some(r => r.is_sharp === true)) return '';
       const settledRaces = (races || []).filter(isSettled);
       const aWins = settledRaces.filter(r => r.model_correct === true).length;
