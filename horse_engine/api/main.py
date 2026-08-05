@@ -29272,7 +29272,14 @@ async def _refresh_track_conditions(race_date: str) -> dict[str, str]:
         for r in rows:
             parts = (r.race_id or "").split("_")
             slug = parts[1] if len(parts) >= 3 else ""
-            cond = conds.get(_sb_norm(r.venue or "")) or conds.get(_sb_norm(slug))
+            slug_norm = _sb_norm(slug)
+            cond = conds.get(_sb_norm(r.venue or "")) or conds.get(slug_norm)
+            if not cond and slug_norm:
+                # Sponsor-branded slugs (southside-cranbourne, thomas-farms-rc-
+                # murray-bridge, picklebet-park-warwick) don't match SB's plain
+                # meeting name ("Cranbourne") — fall back to substring overlap.
+                cond = next((v for k, v in conds.items()
+                             if k and (k in slug_norm or slug_norm in k)), None)
             if not cond:
                 continue
             if (r.track_condition or "").strip().lower() == cond.lower():
