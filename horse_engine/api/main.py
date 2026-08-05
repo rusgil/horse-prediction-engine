@@ -29423,6 +29423,25 @@ async def debug_result_feeds(date: str, venue: str = "", x_cron_secret: Optional
                                   for t in out.get("sportsbet_result_tracks", []))
         out["in_oddspro"] = any(dbn == _sbn(t) or dbn in _sbn(t) or _sbn(t) in dbn
                                 for t in out.get("oddspro_result_tracks", []))
+        # Raw AllRacing events for this meeting — shows WHY results are dropped
+        # (statusCode not 'R', empty result, etc.).
+        try:
+            from horse_engine.clients.sportsbet_schedule import _fetch_allracing, _iter_au_horse_meetings
+            data = await _fetch_allracing(date)
+            for m in _iter_au_horse_meetings(data or {}):
+                tn = _sbn(m.get("name"))
+                if tn == dbn or dbn in tn or tn in dbn:
+                    out["raw_meeting_name"] = m.get("name")
+                    out["raw_events"] = [
+                        {"race": e.get("raceNumber"), "statusCode": e.get("statusCode"),
+                         "result": e.get("result")}
+                        for e in (m.get("events") or [])
+                    ][:12]
+                    break
+            else:
+                out["raw_meeting_name"] = "(meeting not found in AllRacing payload)"
+        except Exception as e:
+            out["raw_error"] = str(e)
     return out
 
 
