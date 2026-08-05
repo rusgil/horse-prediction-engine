@@ -37,6 +37,8 @@ METRO_VENUES: set[str] = {
     "morphettville", "morphettville-parks",
     # WA
     "ascot", "belmont",
+    # TAS — Hobart (Elwick) is Tasmania's principal metro track
+    "hobart", "elwick",
 }
 
 
