@@ -29467,6 +29467,11 @@ async def debug_result_feeds(date: str, venue: str = "", x_cron_secret: Optional
                                                   "position", "place", "outcome", "status", "runnerNumber", "number")})
                         break
                 out["racecard_sample_selections"] = sels
+                out["racecard_status"] = {k: (card or {}).get(k) for k in
+                    ("statusCode", "bettingStatus", "livePriceResultConfirmed",
+                     "livePriceSettled", "nonLivePriceSettled")}
+                out["racecard_results_field"] = (card or {}).get("results")
+                out["racecard_exoticResults"] = (card or {}).get("exoticResults")
         except Exception as e:
             out["racecard_error"] = str(e)
     return out
