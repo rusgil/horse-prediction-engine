@@ -993,16 +993,18 @@
   }
 
   function goingInfo(tc) {
-    // Category word only — no numeric rating (e.g. "Good 4" → "SURFACE: GOOD").
+    // Category word + rating number (e.g. "Good 4" → "SURFACE: GOOD 4").
     const s = (tc || '').trim();
     const l = s.toLowerCase();
     if (!s) return { cls: 'going-unknown', label: 'SURFACE: TBC' };
-    if (l.startsWith('heavy')) return { cls: 'going-heavy', label: 'SURFACE: HEAVY' };
-    if (l.startsWith('soft'))  return { cls: 'going-soft',  label: 'SURFACE: SOFT' };
-    if (l.startsWith('synth')) return { cls: 'going-synth', label: 'SURFACE: SYNTHETIC' };
-    if (l.startsWith('firm'))  return { cls: 'going-good',  label: 'SURFACE: FIRM' };
-    if (l.startsWith('good'))  return { cls: 'going-good',  label: 'SURFACE: GOOD' };
-    return { cls: 'going-unknown', label: `SURFACE: ${s.split(/\s/)[0].toUpperCase()}` };
+    const num = (s.match(/\d+/) || [''])[0];
+    const suf = num ? ' ' + num : '';
+    if (l.startsWith('heavy')) return { cls: 'going-heavy', label: 'SURFACE: HEAVY' + suf };
+    if (l.startsWith('soft'))  return { cls: 'going-soft',  label: 'SURFACE: SOFT' + suf };
+    if (l.startsWith('synth')) return { cls: 'going-synth', label: 'SURFACE: SYNTHETIC' + suf };
+    if (l.startsWith('firm'))  return { cls: 'going-good',  label: 'SURFACE: FIRM' + suf };
+    if (l.startsWith('good'))  return { cls: 'going-good',  label: 'SURFACE: GOOD' + suf };
+    return { cls: 'going-unknown', label: `SURFACE: ${s.split(/\s/)[0].toUpperCase()}${suf}` };
   }
   const isOffGoing = tc => /^(soft|heavy)/i.test((tc || '').trim());
 
