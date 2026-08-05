@@ -29442,6 +29442,33 @@ async def debug_result_feeds(date: str, venue: str = "", x_cron_secret: Optional
                 out["raw_meeting_name"] = "(meeting not found in AllRacing payload)"
         except Exception as e:
             out["raw_error"] = str(e)
+        # Dump a racecard's structure to find the finishing-position field.
+        try:
+            from horse_engine.clients.sportsbet_schedule import (
+                _fetch_allracing as _fa, _iter_au_horse_meetings as _it, _fetch_racecard)
+            data = await _fa(date)
+            ev_id = None
+            for m in _it(data or {}):
+                tn = _sbn(m.get("name"))
+                if tn == dbn or dbn in tn or tn in dbn:
+                    for e in (m.get("events") or []):
+                        if e.get("raceNumber") == 1:
+                            ev_id = e.get("id"); break
+                    break
+            if ev_id:
+                card = await _fetch_racecard(ev_id)
+                out["racecard_top_keys"] = sorted((card or {}).keys())
+                sels = []
+                for mk in (card or {}).get("markets") or []:
+                    if "win" in (mk.get("name") or "").lower():
+                        for sel in (mk.get("selections") or [])[:3]:
+                            sels.append({k: sel.get(k) for k in sel.keys()
+                                         if k in ("name", "result", "resultPlace", "finishingPosition",
+                                                  "position", "place", "outcome", "status", "runnerNumber", "number")})
+                        break
+                out["racecard_sample_selections"] = sels
+        except Exception as e:
+            out["racecard_error"] = str(e)
     return out
 
 
