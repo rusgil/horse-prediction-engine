@@ -19535,6 +19535,10 @@ async def get_meeting(race_date: str, venue_code: str):
         # Rank-3 win prob — with rank-1/2 lets the heat map flag clear
         # quinella (top-2 clear of 3rd) / clear trifecta (top-3 sum high).
         rank3_win_probs: dict[str, Optional[float]] = {race_id: None for race_id in race_ids}
+        # Rank-4 win prob — clear trifecta = top-3 clear of the 4th (rank3-rank4 gap).
+        rank4_win_probs: dict[str, Optional[float]] = {race_id: None for race_id in race_ids}
+        # Rank-5 win prob — clear first-4 = top-4 clear of the 5th (rank4-rank5 gap).
+        rank5_win_probs: dict[str, Optional[float]] = {race_id: None for race_id in race_ids}
         # Frozen server-side is_sharp flag from the rank-1 snapshot.
         # Used by the Lounge to filter meeting-tile counts + race pills
         # consistently with the date-pill Sharp metric.
@@ -19544,7 +19548,7 @@ async def get_meeting(race_date: str, venue_code: str):
             hist_tp_result = await session.execute(
                 select(RunnerPredictionHistoryRow)
                 .where(RunnerPredictionHistoryRow.race_id.in_(completed_ids))
-                .where(RunnerPredictionHistoryRow.model_rank.in_([1, 2, 3]))
+                .where(RunnerPredictionHistoryRow.model_rank.in_([1, 2, 3, 4, 5]))
                 .where(RunnerPredictionHistoryRow.cancelled.is_(False) | RunnerPredictionHistoryRow.cancelled.is_(None))
                 # FIX-S source leg — without it, quarantined/validation rows
                 # still drove top_pick + model_correct (MR CACCIATORE incident)
@@ -19577,6 +19581,10 @@ async def get_meeting(race_date: str, venue_code: str):
                     rank2_win_probs[p.race_id] = p.win_probability
                 elif p.model_rank == 3:
                     rank3_win_probs[p.race_id] = p.win_probability
+                elif p.model_rank == 4:
+                    rank4_win_probs[p.race_id] = p.win_probability
+                elif p.model_rank == 5:
+                    rank5_win_probs[p.race_id] = p.win_probability
 
         upcoming_ids = [rid for rid in race_ids if rid not in completed_ids]
         if upcoming_ids:
@@ -19586,7 +19594,7 @@ async def get_meeting(race_date: str, venue_code: str):
             tp_result = await session.execute(
                 select(RunnerPredictionRow)
                 .where(RunnerPredictionRow.race_id.in_(upcoming_ids))
-                .where(RunnerPredictionRow.model_rank.in_([1, 2, 3]))
+                .where(RunnerPredictionRow.model_rank.in_([1, 2, 3, 4, 5]))
                 .where(RunnerPredictionRow.cancelled.is_(False) | RunnerPredictionRow.cancelled.is_(None))
             )
             top3_by_race: dict[str, dict[int, tuple]] = {}
@@ -19600,6 +19608,10 @@ async def get_meeting(race_date: str, venue_code: str):
                     rank2_win_probs[p.race_id] = p.win_probability
                 elif p.model_rank == 3:
                     rank3_win_probs[p.race_id] = p.win_probability
+                elif p.model_rank == 4:
+                    rank4_win_probs[p.race_id] = p.win_probability
+                elif p.model_rank == 5:
+                    rank5_win_probs[p.race_id] = p.win_probability
                 top3_by_race.setdefault(p.race_id, {})[p.model_rank] = (
                     p.win_probability or 0,
                     getattr(p, "enriched_json", None),
@@ -19725,6 +19737,8 @@ async def get_meeting(race_date: str, venue_code: str):
             "top_place_probability": top_place_probs.get(rid),
             "rank2_win_probability": rank2_win_probs.get(rid),
             "rank3_win_probability": rank3_win_probs.get(rid),
+            "rank4_win_probability": rank4_win_probs.get(rid),
+            "rank5_win_probability": rank5_win_probs.get(rid),
             "top_pick": top_picks.get(rid),
             "top_pick_odds": top_pick_odds.get(rid),
             "top_pick_place_odds": pick_place_odds.get(rid),
