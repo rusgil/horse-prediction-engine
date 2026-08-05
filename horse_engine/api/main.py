@@ -887,7 +887,9 @@ async def _apply_oddspro_scratches(client, today: str) -> int:
         op_tracks = list(scratch_map.keys())
         for (vc, rn), active in active_by_race.items():
             track = (client._odds.find_matching_track(vc_display.get(vc, vc), op_tracks)
-                     or client._odds.find_matching_track(vc, op_tracks))
+                     or client._odds.find_matching_track(vc, op_tracks)
+                     or client._odds.find_matching_track(_debrand_venue(vc), op_tracks)
+                     or client._odds.find_matching_track(_debrand_venue(vc).replace("-", " "), op_tracks))
             if not track:
                 continue
             scratched_lower = (scratch_map.get(track) or scratch_map.get(track.lower()) or {}).get(rn) or set()
@@ -1596,7 +1598,9 @@ async def _seed_results_from_oddspro(
         op_tracks = list(op_results.keys())
         for vc, races_by_num in preds_by_vc.items():
             track = (client._odds.find_matching_track(vc_display.get(vc, vc), op_tracks)
-                     or client._odds.find_matching_track(vc, op_tracks))
+                     or client._odds.find_matching_track(vc, op_tracks)
+                     or client._odds.find_matching_track(_debrand_venue(vc), op_tracks)
+                     or client._odds.find_matching_track(_debrand_venue(vc).replace("-", " "), op_tracks))
             if not track:
                 continue
             track_results = op_results.get(track) or op_results.get(track.lower()) or {}
@@ -1727,8 +1731,10 @@ async def _seed_results_from_sportsbet(race_date: str, pred_rows_for_date: list,
         for vc, races in preds_by_vc.items():
             vnorm = _sb_norm(vc_display.get(vc, vc))
             vcnorm = _sb_norm(vc)
+            dbnorm = _sb_norm(_debrand_venue(vc))   # plain track name (branding stripped)
             track = next((t for t in sb_tracks
-                          if t in (vnorm, vcnorm) or t in vnorm or vnorm in t or t in vcnorm or vcnorm in t), None)
+                          if t in (vnorm, vcnorm, dbnorm) or t in vnorm or vnorm in t
+                          or t in vcnorm or vcnorm in t or t in dbnorm or dbnorm in t), None)
             if not track:
                 continue
             track_res = sb.get(track, {})
@@ -4306,6 +4312,34 @@ def _meeting_slug(venue: str, race_date: str) -> str:
 # ── Edge picks ───────────────────────────────────────────────────────────────
 
 _CALIBRATED_WIN_RATES = [(50, 88), (45, 82), (40, 76), (35, 71), (30, 66)]
+
+# Sponsor wrappers that upstream feeds (OddsPro / Sportsbet) DON'T use — they
+# key meetings by the plain track ('cranbourne', 'murray-bridge'), while our
+# slugs carry the naming-rights brand ('southside-cranbourne'). Longest first so
+# multi-token prefixes strip before shorter ones.
+_VENUE_SPONSOR_PREFIXES = (
+    "thomas-farms-rc-", "picklebet-park-", "tabtouch-park-",
+    "southside-", "sportsbet-", "picklebet-", "ladbrokes-", "neds-", "tab-",
+)
+_VENUE_SPONSOR_SUFFIXES = ("-synthetic", "-turf")
+
+
+def _debrand_venue(slug: str) -> str:
+    """Strip naming-rights branding from a venue slug to the plain track name so
+    it matches upstream feeds. e.g. 'southside-cranbourne' -> 'cranbourne',
+    'thomas-farms-rc-murray-bridge' -> 'murray-bridge',
+    'southside-pakenham-synthetic' -> 'pakenham'. Unbranded slugs pass through."""
+    s = (slug or "").strip().lower()
+    for p in _VENUE_SPONSOR_PREFIXES:
+        if s.startswith(p):
+            s = s[len(p):]
+            break
+    for suf in _VENUE_SPONSOR_SUFFIXES:
+        if s.endswith(suf):
+            s = s[:-len(suf)]
+            break
+    return s
+
 
 def _parse_race_id(race_id: str) -> tuple[str, str, int | None]:
     """Parse race_id '{date}_{venue}_R{num}' → (date, venue, race_number)."""
@@ -29273,13 +29307,16 @@ async def _refresh_track_conditions(race_date: str) -> dict[str, str]:
             parts = (r.race_id or "").split("_")
             slug = parts[1] if len(parts) >= 3 else ""
             slug_norm = _sb_norm(slug)
-            cond = conds.get(_sb_norm(r.venue or "")) or conds.get(slug_norm)
+            debrand_norm = _sb_norm(_debrand_venue(slug))
+            cond = (conds.get(_sb_norm(r.venue or "")) or conds.get(slug_norm)
+                    or conds.get(debrand_norm))
             if not cond and slug_norm:
                 # Sponsor-branded slugs (southside-cranbourne, thomas-farms-rc-
                 # murray-bridge, picklebet-park-warwick) don't match SB's plain
-                # meeting name ("Cranbourne") — fall back to substring overlap.
+                # meeting name — try the de-branded name, then substring overlap.
                 cond = next((v for k, v in conds.items()
-                             if k and (k in slug_norm or slug_norm in k)), None)
+                             if k and (k in slug_norm or slug_norm in k
+                                       or k in debrand_norm or debrand_norm in k)), None)
             if not cond:
                 continue
             if (r.track_condition or "").strip().lower() == cond.lower():
