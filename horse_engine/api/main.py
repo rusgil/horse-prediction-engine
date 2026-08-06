@@ -603,6 +603,13 @@ async def _scheduled_pre_race_enrich():
         async with get_session() as session:
             model = await _load_model(session)
             place_model = await _load_place_model(session)
+            # Load the exotic model too — without it, enrich_and_predict_race
+            # leaves exotic_model_rank=None, and this scheduler UNCONDITIONALLY
+            # overwrites the daily enrich for every race within 2h of the jump,
+            # so exotic ranks were being wiped in the final 2h (peak Lab/Edge
+            # window). The Edge trifecta strip filters exotic_model_rank>=1 and
+            # the scratch re-rank orders by it, so both degraded near jump.
+            exotic_model = await _load_exotic_model(session)
         meetings = await client.get_meetings(today)
 
         # Sportsbet allowlist (2026-07-23): only enrich AU thoroughbred meetings
@@ -685,7 +692,8 @@ async def _scheduled_pre_race_enrich():
                     race = await client.parse_race(full_event, today, venue_name, state)
                     async with get_session() as session:
                         await _inject_accumulated_stats(race, session)
-                    predictions, _ = await enrich_and_predict_race(race, model, place_model=place_model)
+                    predictions, _ = await enrich_and_predict_race(
+                        race, model, place_model=place_model, exotic_model=exotic_model)
                     async with get_session() as session:
                         await save_race_predictions(
                             session,
