@@ -6484,6 +6484,22 @@ async def _capture_integrity_baseline():
                 due[rid] = d
         if not due:
             return
+        # Baseline the rank-1 Sharp flag from the frozen pre-jump snapshot — the
+        # same value we lock and performance-track. Re-checked at 23:15; a
+        # post-jump change is a breach, exactly like the 1·2·3 picks.
+        due_ids = list(due.keys())
+        sharp_by_race: dict[str, bool] = {}
+        async with get_session() as session:
+            srows = (await session.execute(
+                select(RunnerPredictionHistoryRow.race_id, RunnerPredictionHistoryRow.is_sharp)
+                .where(RunnerPredictionHistoryRow.race_id.in_(due_ids))
+                .where(RunnerPredictionHistoryRow.model_rank == 1)
+                .where((RunnerPredictionHistoryRow.source == "live") | RunnerPredictionHistoryRow.source.is_(None))
+                .order_by(RunnerPredictionHistoryRow.enriched_at.desc())
+            )).all()
+        for _rid, _isharp in srows:
+            if _rid not in sharp_by_race:   # latest snapshot wins
+                sharp_by_race[_rid] = _isharp
         n = 0
         async with get_session() as session:
             for rid, d in due.items():
@@ -6498,6 +6514,7 @@ async def _capture_integrity_baseline():
                 row.scheduled_time = d.get("_sched")
                 row.jump_top1, row.jump_top2, row.jump_top3 = d.get(1), d.get(2), d.get(3)
                 row.baseline_field = json.dumps(sorted(d.get("_field") or []))
+                row.jump_is_sharp = sharp_by_race.get(rid)
                 row.jump_captured_at = datetime.utcnow()
                 n += 1
             await session.commit()
@@ -6523,7 +6540,7 @@ async def _integrity_eod_check(target_date: Optional[str] = None):
                 select(RunnerPredictionHistoryRow.race_id, RunnerPredictionHistoryRow.horse_name,
                        RunnerPredictionHistoryRow.model_rank, RunnerPredictionHistoryRow.enriched_at,
                        RunnerPredictionHistoryRow.recorded_at, RunnerPredictionHistoryRow.contaminated,
-                       RunnerPredictionHistoryRow.scheduled_time)
+                       RunnerPredictionHistoryRow.scheduled_time, RunnerPredictionHistoryRow.is_sharp)
                 .where(RunnerPredictionHistoryRow.race_id.like(f"{_like_safe(today)}_%"))
                 .where(RunnerPredictionHistoryRow.model_rank.in_([1, 2, 3]))
                 .where((RunnerPredictionHistoryRow.source == "live") | RunnerPredictionHistoryRow.source.is_(None))
@@ -6538,13 +6555,16 @@ async def _integrity_eod_check(target_date: Optional[str] = None):
         seen: set = set()
         hist_top: dict[str, dict] = {}      # race_id -> {rank: horse}
         hist_meta: dict[str, dict] = {}     # race_id -> {rank: (recorded_at, contaminated, sched)}
-        for rid, hn, rank, _en, rec, contam, sched in hrows:
+        hist_sharp: dict[str, bool] = {}    # race_id -> rank-1 is_sharp (frozen)
+        for rid, hn, rank, _en, rec, contam, sched, isharp in hrows:
             k = (rid, rank)
             if k in seen:
                 continue
             seen.add(k)
             hist_top.setdefault(rid, {})[rank] = hn
             hist_meta.setdefault(rid, {})[rank] = (rec, bool(contam), sched)
+            if rank == 1:
+                hist_sharp[rid] = isharp
         scratched: dict[str, set] = {}
         for rid, hn in scr:
             scratched.setdefault(rid, set()).add(_normalize_horse(hn))
@@ -6579,13 +6599,34 @@ async def _integrity_eod_check(target_date: Optional[str] = None):
                     rec, contam, _s = m
                     if contam or (jump is not None and rec is not None and rec > jump + timedelta(minutes=3)):
                         post_race.append(f"rank{rk}={now3[rk-1]}")
-                row.mismatch = bool(post_race)
-                if post_race:
-                    row.detail = f"POST-RACE change: {post_race} written/contaminated after jump. baseline {base} -> history {now3}"
-                elif changed:
-                    row.detail = f"pre-jump re-rank (legitimate): baseline {base} -> history {now3}"
+                # Sharp-flag integrity for the rank-1 pick — same breach rule as
+                # the picks: a change is only a breach if the rank-1 frozen row
+                # was written/contaminated post-jump (pre-jump re-evals are legit).
+                row.eod_is_sharp = hist_sharp.get(row.race_id)
+                rank1_postrace = any(p.startswith("rank1=") for p in post_race)
+                sharp_changed = (row.jump_is_sharp is not None
+                                 and bool(row.jump_is_sharp) != bool(row.eod_is_sharp))
+                row.sharp_mismatch = bool(sharp_changed and rank1_postrace)
+                row.mismatch = bool(post_race) or row.sharp_mismatch
+                if row.sharp_mismatch:
+                    sharp_note = f" | SHARP flag changed POST-RACE: {row.jump_is_sharp} -> {row.eod_is_sharp}"
+                elif sharp_changed:
+                    sharp_note = f" | sharp changed pre-jump (legit): {row.jump_is_sharp} -> {row.eod_is_sharp}"
                 else:
-                    row.detail = "unchanged"
+                    sharp_note = ""
+                if post_race:
+                    row.detail = f"POST-RACE change: {post_race} written/contaminated after jump. baseline {base} -> history {now3}{sharp_note}"
+                elif changed:
+                    row.detail = f"pre-jump re-rank (legitimate): baseline {base} -> history {now3}{sharp_note}"
+                else:
+                    row.detail = ("unchanged" + sharp_note) if sharp_note else "unchanged"
+                if row.sharp_mismatch:
+                    from sqlalchemy import text as _text
+                    await session.execute(_text(
+                        "INSERT INTO history_guard_incidents(race_id, horse_name, kind, detail) "
+                        "VALUES (:rid, :hn, 'sharp_flag_post_race', :detail)"
+                    ), {"rid": row.race_id, "hn": row.eod_top1 or "?",
+                        "detail": f"Sharp flag {row.jump_is_sharp} -> {row.eod_is_sharp} after jump"})
                 checked += 1
                 if row.mismatch:
                     mismatches += 1
@@ -16364,6 +16405,7 @@ async def admin_prediction_integrity(
         "date": target,
         "races": len(rows),
         "mismatches": sum(1 for r in rows if r.mismatch),
+        "sharp_mismatches": sum(1 for r in rows if r.sharp_mismatch),
         "records": [{
             "race_id": r.race_id,
             "scheduled_time": r.scheduled_time,
@@ -16372,6 +16414,9 @@ async def admin_prediction_integrity(
             "rechecked": [r.eod_top1, r.eod_top2, r.eod_top3],
             "rechecked_at": r.eod_captured_at.isoformat() if r.eod_captured_at else None,
             "mismatch": bool(r.mismatch),
+            "baseline_is_sharp": r.jump_is_sharp,
+            "rechecked_is_sharp": r.eod_is_sharp,
+            "sharp_mismatch": bool(r.sharp_mismatch),
             "detail": r.detail,
         } for r in rows],
     }

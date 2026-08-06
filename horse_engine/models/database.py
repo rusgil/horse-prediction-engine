@@ -76,6 +76,12 @@ class PredictionIntegrityRow(Base):
     eod_captured_at = Column(DateTime, nullable=True)
     mismatch = Column(Boolean, default=False, nullable=True, index=True)
     detail = Column(Text, nullable=True)
+    # Sharp-flag integrity — same idea as the 1·2·3 check, for the rank-1 pick's
+    # Sharp flag: baselined pre-jump, re-read from frozen history at 23:15. A
+    # post-jump change is a breach (the flag is a performance-tracked feature).
+    jump_is_sharp = Column(Boolean, nullable=True)
+    eod_is_sharp = Column(Boolean, nullable=True)
+    sharp_mismatch = Column(Boolean, default=False, nullable=True, index=True)
 
 
 class RaceExoticDividendRow(Base):
@@ -1081,6 +1087,9 @@ async def init_db() -> None:
         "ALTER TABLE prediction_integrity ADD COLUMN IF NOT EXISTS eod_captured_at TIMESTAMP",
         "ALTER TABLE prediction_integrity ADD COLUMN IF NOT EXISTS mismatch BOOLEAN DEFAULT FALSE",
         "ALTER TABLE prediction_integrity ADD COLUMN IF NOT EXISTS detail TEXT",
+        "ALTER TABLE prediction_integrity ADD COLUMN IF NOT EXISTS jump_is_sharp BOOLEAN",
+        "ALTER TABLE prediction_integrity ADD COLUMN IF NOT EXISTS eod_is_sharp BOOLEAN",
+        "ALTER TABLE prediction_integrity ADD COLUMN IF NOT EXISTS sharp_mismatch BOOLEAN DEFAULT FALSE",
         "CREATE INDEX IF NOT EXISTS ix_prediction_integrity_mismatch ON prediction_integrity (mismatch)",
     ]
     for stmt in migrations:

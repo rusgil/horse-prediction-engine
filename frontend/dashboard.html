@@ -583,9 +583,13 @@
         <button class="btn" onclick="loadIntegrity(true)">🔄 Check</button>
         <span class="btn-status" id="integrityStatus"></span>
       </div>
+      <div style="display:flex;gap:6px;margin-bottom:12px">
+        <button class="btn" id="ivPicks" onclick="setIntegrityView('picks')">Predictions (1·2·3)</button>
+        <button class="btn" id="ivSharp" onclick="setIntegrityView('sharp')">Sharp filter</button>
+      </div>
       <div style="font-size:0.82rem;color:var(--text-secondary);margin-bottom:12px">
-        Each race's model 1st/2nd/3rd is baselined just before it jumps, then re-read from the frozen history at 23:15 AEST.
-        A <b style="color:#ef4444">POST-RACE change</b> — a predicted place/win pick written or altered after the jump — is a breach.
+        Each race's model 1st/2nd/3rd <b>and its Sharp flag</b> are baselined just before it jumps, then re-read from the frozen history at 23:15 AEST.
+        A <b style="color:#ef4444">POST-RACE change</b> — a predicted pick or the Sharp flag written/altered after the jump — is a breach and is logged as an incident.
         Pre-jump re-ranks (scratchings, ballot-ins) are legitimate.
       </div>
       <div id="integrityBody">Loading…</div>`;
@@ -595,8 +599,10 @@
     const el = document.getElementById('integrityBody');
     const dInput = document.getElementById('integrityDate');
     if (dInput && !dInput.value) {
-      // default to today (AEST)
-      const p = new Date().toLocaleDateString('en-AU', { timeZone: 'Australia/Sydney', year:'numeric', month:'2-digit', day:'2-digit' }).split('/');
+      // default to YESTERDAY (AEST) — the EOD cross-reference runs at 23:15,
+      // so yesterday is the most recent fully re-checked day.
+      const y = new Date(Date.now() - 864e5);
+      const p = y.toLocaleDateString('en-AU', { timeZone: 'Australia/Sydney', year:'numeric', month:'2-digit', day:'2-digit' }).split('/');
       dInput.value = `${p[2]}-${p[1]}-${p[0]}`;
     }
     const date = dInput ? dInput.value : '';
@@ -604,16 +610,29 @@
     try {
       const res = await fetch(`${API}/api/admin/prediction-integrity?date=${encodeURIComponent(date)}`, { headers: { 'x-cron-secret': adminSecret } });
       const d = await res.json();
+      window._lastIntegrityData = d;
       renderIntegrity(d);
     } catch (e) {
       if (el) el.innerHTML = `<div class="nr-empty">Failed to load: ${e.message}</div>`;
     }
   }
 
+  let integrityView = 'picks';
+  function setIntegrityView(v) {
+    integrityView = v;
+    if (window._lastIntegrityData) renderIntegrity(window._lastIntegrityData);
+  }
   function renderIntegrity(d) {
     const el = document.getElementById('integrityBody');
     const recs = d.records || [];
     const st = document.getElementById('integrityStatus');
+    const bp = document.getElementById('ivPicks'), bs = document.getElementById('ivSharp');
+    if (bp) bp.style.opacity = integrityView === 'picks' ? '1' : '0.55';
+    if (bs) bs.style.opacity = integrityView === 'sharp' ? '1' : '0.55';
+    if (integrityView === 'sharp') {
+      if (st) st.textContent = `${d.races} races · ${d.sharp_mismatches || 0} sharp breach${(d.sharp_mismatches === 1) ? '' : 'es'}`;
+      return renderIntegritySharp(d, el);
+    }
     if (st) st.textContent = `${d.races} races · ${d.mismatches} breach${d.mismatches === 1 ? '' : 'es'}`;
     if (!recs.length) {
       el.innerHTML = `<div class="nr-empty">No integrity records for ${d.date} yet. Baselines capture as each race nears its jump; the cross-reference runs at 23:15 AEST.</div>`;
@@ -638,6 +657,38 @@
     el.innerHTML = banner + `<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:0.8rem">
       <thead><tr style="text-align:left;color:var(--text-muted);text-transform:uppercase;font-size:0.62rem;letter-spacing:0.05em">
         <th style="padding:6px 8px">Race</th><th style="padding:6px 8px">Status</th><th style="padding:6px 8px">Baseline 1·2·3 (pre-jump)</th><th style="padding:6px 8px">History 1·2·3 (23:15)</th></tr></thead>
+      <tbody>${rows}</tbody></table></div>`;
+  }
+
+  function renderIntegritySharp(d, el) {
+    const recs = d.records || [];
+    if (!recs.length) {
+      el.innerHTML = `<div class="nr-empty">No integrity records for ${d.date} yet. Baselines capture as each race nears its jump; the cross-reference runs at 23:15 AEST.</div>`;
+      return;
+    }
+    const sm = d.sharp_mismatches || 0;
+    const banner = sm > 0
+      ? `<div style="background:rgba(239,68,68,0.1);border:1px solid rgba(239,68,68,0.4);border-radius:8px;padding:12px 14px;margin-bottom:14px;color:#fca5a5;font-weight:600">✗ ${sm} race(s) had the Sharp flag CHANGE after the jump — logged as incidents.</div>`
+      : `<div style="background:rgba(34,197,94,0.08);border:1px solid rgba(34,197,94,0.35);border-radius:8px;padding:12px 14px;margin-bottom:14px;color:#86efac;font-weight:600">✓ Sharp flags locked — none changed after the jump.</div>`;
+    const sharpLbl = v => v === true ? '<b style="color:#f5c842">SHARP</b>'
+      : v === false ? '<span style="color:var(--text-muted)">not sharp</span>' : '—';
+    const rows = recs.map(r => {
+      const b = r.baseline_is_sharp, e = r.rechecked_is_sharp;
+      let tag, cls;
+      if (r.sharp_mismatch) { tag = '✗ CHANGED'; cls = 'color:#ef4444;font-weight:700'; }
+      else if (r.rechecked_at == null && e == null) { tag = '⏳ baselined'; cls = 'color:var(--text-secondary)'; }
+      else if (b === e) { tag = '✓ locked'; cls = 'color:#86efac'; }
+      else { tag = '~ pre-jump'; cls = 'color:#f59e0b'; }
+      return `<tr style="border-bottom:1px solid var(--border)">
+        <td style="padding:6px 8px;font-family:'JetBrains Mono',monospace;font-size:0.72rem">${escHtml(r.race_id)}</td>
+        <td style="padding:6px 8px">${sharpLbl(b)}</td>
+        <td style="padding:6px 8px">${sharpLbl(e)}</td>
+        <td style="padding:6px 8px;${cls}">${tag}</td>
+      </tr>`;
+    }).join('');
+    el.innerHTML = banner + `<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:0.8rem">
+      <thead><tr style="text-align:left;color:var(--text-muted);text-transform:uppercase;font-size:0.62rem;letter-spacing:0.05em">
+        <th style="padding:6px 8px">Race</th><th style="padding:6px 8px">Sharp @ jump</th><th style="padding:6px 8px">Sharp @ 23:15</th><th style="padding:6px 8px">Status</th></tr></thead>
       <tbody>${rows}</tbody></table></div>`;
   }
 
