@@ -139,7 +139,7 @@
   }
   .prev-pill .dp-arr:disabled { opacity: 0.3; cursor: default; }
   .prev-pill .dp-mid { background: none; border: none; color: inherit; font: inherit; font-weight: 700; cursor: pointer; padding: 0; }
-  .dp-acc { font-weight: 800; font-size: 0.76rem; }
+  .dp-acc { font-weight: 800; font-size: 0.76rem; color: var(--text-3); }
   .dp-acc.elite { color: #c084fc; text-shadow: 0 0 6px rgba(192,132,252,0.35); }
   .dp-acc.great { color: #60a5fa; }
   .dp-acc.good  { color: #10b981; }
@@ -1005,9 +1005,7 @@
     const accFor = d => {
       const st = S.perfByDate[d];
       if (!st) return '';
-      const cls = st.wins === 0 ? 'bad' : st.pct >= 38 ? 'elite' : st.pct >= 30 ? 'great'
-                : st.pct >= 22 ? 'good' : st.pct >= 15 ? 'ok' : 'bad';
-      return ` <span class="dp-acc ${cls} num">Win ${st.pct}% · Plc ${st.placePct}%</span>`;
+      return ` <span class="dp-acc num">Win ${st.pct}% · Plc ${st.placePct}%</span>`;
     };
     row.innerHTML = `
       <button class="date-pill ${S.date === yest ? 'on' : ''}" data-d="${yest}">Yesterday${accFor(yest)}</button>
