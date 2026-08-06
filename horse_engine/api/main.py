@@ -5953,14 +5953,20 @@ async def get_edge_yesterday(for_date: Optional[str] = Query(None, alias="date")
     for key in yst_trifecta_map:
         yst_trifecta_map[key].sort(key=lambda r: r.place_model_rank)
 
-    # Seed any missing results — wrapped in a 10s timeout so a slow upstream
-    # can't block the whole page load. Anything not seeded in time will just
-    # appear as 'no_result' on the response, which the frontend handles.
+    # Seed any missing results. We stop WAITING after 10s so a slow upstream
+    # can't block the page, but SHIELD the seed so it keeps running in the
+    # background and persists to HistoricalResultRow — the next load then has
+    # full data. Before this, a timed-out seed stranded results: a sub-threshold
+    # pick (e.g. a 25% Sharp pick, below this endpoint's ≥29.5% set) showed
+    # "pending" on Edge while the Lounge — which seeds without a timeout —
+    # already showed the result. (gosford R5 / DIETRICH 2026-08-06.)
     all_race_ids = list({p.race_id for p in picks} | {pr.race_id for pr in yst_place_rows})
+    _seed_task = asyncio.ensure_future(_seed_race_results_on_demand(all_race_ids))
+    _seed_task.add_done_callback(lambda t: t.cancelled() or t.exception())  # retrieve/swallow late errors
     try:
-        await asyncio.wait_for(_seed_race_results_on_demand(all_race_ids), timeout=10)
+        await asyncio.wait_for(asyncio.shield(_seed_task), timeout=10)
     except asyncio.TimeoutError:
-        log.warning("[edge/yesterday] seed timeout for %s (%d races) — proceeding with stored data", target_date, len(all_race_ids))
+        log.warning("[edge/yesterday] seed >10s for %s (%d races) — finishing in background", target_date, len(all_race_ids))
     async with get_session() as session:
         hr_result = await session.execute(
             select(HistoricalResultRow)

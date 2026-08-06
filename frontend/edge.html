@@ -3619,7 +3619,13 @@
           const rr = await fetch(`${API}/api/edge/yesterday?date=${todayStr}`);
           if (rr.ok) {
             const rd = await rr.json();
-            for (const r of rd.picks) resultsMap[r.race_id] = r;
+            for (const r of rd.picks) {
+              // Don't let a not-yet-seeded yesterday row (no_result) clobber a
+              // concrete result we already got from /api/edge's own annotation.
+              const existing = resultsMap[r.race_id];
+              if (existing && r.no_result && !existing.no_result) continue;
+              resultsMap[r.race_id] = r;
+            }
           }
         } catch (e) { /* results are best-effort */ }
       }
@@ -3710,7 +3716,11 @@
       const rr = await fetch(`${API}/api/edge/yesterday?date=${todayStr}`);
       if (rr.ok) {
         const rd = await rr.json();
-        for (const r of rd.picks) resultsMap[r.race_id] = r;
+        for (const r of rd.picks) {
+          const existing = resultsMap[r.race_id];
+          if (existing && r.no_result && !existing.no_result) continue;
+          resultsMap[r.race_id] = r;
+        }
       }
       if (picksData) {
         const stake = 10;  // input removed 2026-07-20
@@ -3759,7 +3769,11 @@
       const rr = await fetch(`${API}/api/edge/yesterday?date=${todayStr}`);
       if (rr.ok) {
         const rd = await rr.json();
-        for (const r of rd.picks) resultsMap[r.race_id] = r;
+        for (const r of rd.picks) {
+          const existing = resultsMap[r.race_id];
+          if (existing && r.no_result && !existing.no_result) continue;
+          resultsMap[r.race_id] = r;
+        }
       }
       if (picksData) {
         const stake = 10;  // input removed 2026-07-20
