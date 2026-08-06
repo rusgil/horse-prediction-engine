@@ -22,8 +22,8 @@
     --mint: #38e07b;
     --mint-ink: #06220f;
     --mint-dim: rgba(56,224,123,0.13);
-    --amber: #f5a623;
-    --amber-dim: rgba(245,166,35,0.14);
+    --amber: #f7b52e;
+    --amber-dim: rgba(247,181,46,0.15);
     --gold: #f5c842;
     --blue: #60a5fa;
     --blue-dim: rgba(96,165,250,0.14);
@@ -33,8 +33,8 @@
     --hot-dim: rgba(251,146,60,0.16);
     --strong: #f472b6;
     --strong-dim: rgba(244,114,182,0.13);
-    --red: #f87171;
-    --red-dim: rgba(248,113,113,0.13);
+    --red: #fa4d4d;
+    --red-dim: rgba(250,77,77,0.14);
     --shadow: 0 10px 30px rgba(0,0,0,0.45);
     --radius: 14px;
   }
@@ -144,7 +144,7 @@
   .dp-acc.great { color: #60a5fa; }
   .dp-acc.good  { color: #10b981; }
   .dp-acc.ok    { color: var(--gold, #b8901f); }
-  .dp-acc.bad   { color: #f87171; }
+  .dp-acc.bad   { color: var(--red); }
   :root[data-theme="light"] .dp-acc.elite { color: #7c3aed; text-shadow: none; }
   :root[data-theme="light"] .dp-acc.great { color: #245fc4; }
   :root[data-theme="light"] .dp-acc.good  { color: #0a7a41; }
@@ -264,9 +264,9 @@
   .brace.res-win   { box-shadow: inset 3px 0 0 var(--mint); }
   .brace.res-place { box-shadow: inset 3px 0 0 var(--amber); }
   .brace.res-miss  { box-shadow: inset 3px 0 0 var(--red); }
-  .cell.done.res-win .in   { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--mint)  55%, transparent); }
-  .cell.done.res-place .in { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--amber) 55%, transparent); }
-  .cell.done.res-miss .in  { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--red)   40%, transparent); }
+  .cell.done.res-win .in   { background: color-mix(in srgb, var(--mint)  20%, var(--surface)); box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--mint)  70%, transparent); }
+  .cell.done.res-place .in { background: color-mix(in srgb, var(--amber) 26%, var(--surface)); box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--amber) 82%, transparent); }
+  .cell.done.res-miss .in  { background: color-mix(in srgb, var(--red)   26%, var(--surface)); box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--red)   82%, transparent); }
   /* settled cards keep their outcome colour on hover (generic hover is mint) */
   .jcard.res-win:hover   { border-color: var(--mint); }
   .jcard.res-place:hover { border-color: var(--amber); }
@@ -281,9 +281,9 @@
   :root[data-theme="light"] .brace.res-win   { box-shadow: inset 5px 0 0 var(--mint); }
   :root[data-theme="light"] .brace.res-place { box-shadow: inset 5px 0 0 var(--amber); }
   :root[data-theme="light"] .brace.res-miss  { box-shadow: inset 5px 0 0 var(--red); }
-  :root[data-theme="light"] .cell.done.res-win .in   { box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--mint)  70%, transparent); }
-  :root[data-theme="light"] .cell.done.res-place .in { box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--amber) 70%, transparent); }
-  :root[data-theme="light"] .cell.done.res-miss .in  { box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--red)   55%, transparent); }
+  :root[data-theme="light"] .cell.done.res-win .in   { background: color-mix(in srgb, var(--mint)  15%, #fff); box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--mint)  75%, transparent); }
+  :root[data-theme="light"] .cell.done.res-place .in { background: color-mix(in srgb, var(--amber) 20%, #fff); box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--amber) 82%, transparent); }
+  :root[data-theme="light"] .cell.done.res-miss .in  { background: color-mix(in srgb, var(--red)   18%, #fff); box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--red)   72%, transparent); }
 
   .res { font-weight: 800; font-size: 0.8rem; }
   .res.win { color: var(--mint); }
