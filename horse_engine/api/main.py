@@ -6212,6 +6212,42 @@ async def _generate_bets_for_race(race_id: str, *, regenerate: bool = False) -> 
         bets = _build_bet_basket(runners)
         if not bets:
             return 0
+        # Self-heal stale boxes: if boxes already exist but the field has
+        # changed since they were built — a late scratching, or a scratched
+        # runner reinstated — the frozen boxes no longer match the model's
+        # current top-N. Rebuild them, but ONLY when nothing is settled yet,
+        # so we never rewrite a graded record. This lets the hourly generator
+        # correct races with no manual regenerate. (Ballarat R1 2026-08-06:
+        # tab 5 scratched at build time, reinstated later → box stuck at
+        # [3,4,1] while the model top-3 had become [3,4,5].)
+        if not regenerate and existing_labels:
+            stored = {
+                lbl: json.loads(bh or "[]")
+                for lbl, bh in (await session.execute(
+                    select(BetRecommendationRow.strategy_label,
+                           BetRecommendationRow.box_horses_json)
+                    .where(BetRecommendationRow.race_id == race_id)
+                    .where(BetRecommendationRow.settled.is_(False))
+                )).all()
+            }
+            # Compare as sets — a box is order-immaterial, so only a change in
+            # MEMBERSHIP (a horse in/out) should trigger a rebuild, not a mere
+            # re-rank of the same runners.
+            field_changed = any(
+                b["strategy_label"] in stored
+                and sorted(stored[b["strategy_label"]]) != sorted(b["box_horses"])
+                for b in bets
+            )
+            if field_changed:
+                any_settled = (await session.execute(
+                    select(BetRecommendationRow.id)
+                    .where(BetRecommendationRow.race_id == race_id)
+                    .where(BetRecommendationRow.settled.is_(True))
+                    .limit(1)
+                )).first()
+                if not any_settled:
+                    regenerate = True
+                    log.info("[bets] field changed for %s — regenerating stale boxes", race_id)
         if regenerate:
             await session.execute(
                 __import__("sqlalchemy").delete(BetRecommendationRow)
