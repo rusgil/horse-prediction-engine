@@ -865,6 +865,7 @@ async def init_db() -> None:
               OR NEW.model_rank IS DISTINCT FROM OLD.model_rank
               OR NEW.win_probability IS DISTINCT FROM OLD.win_probability
               OR NEW.place_probability IS DISTINCT FROM OLD.place_probability
+              OR NEW.is_sharp IS DISTINCT FROM OLD.is_sharp
             ) THEN
               INSERT INTO history_guard_incidents(race_id, horse_name, kind, detail)
               VALUES (OLD.race_id, OLD.horse_name, 'post_race_update_blocked',
@@ -877,6 +878,7 @@ async def init_db() -> None:
               NEW.place_probability := OLD.place_probability;
               NEW.place_model_rank := OLD.place_model_rank;
               NEW.exotic_model_rank := OLD.exotic_model_rank;
+              NEW.is_sharp := OLD.is_sharp;   -- lock the Sharp flag post-jump (tracked feature)
             END IF;
             RETURN NEW;
           END IF;
