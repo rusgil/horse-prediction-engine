@@ -886,6 +886,17 @@ async def init_db() -> None:
               NEW.exotic_model_rank := OLD.exotic_model_rank;
               NEW.is_sharp := OLD.is_sharp;   -- lock the Sharp flag post-jump (tracked feature)
             END IF;
+            -- A runner that already ran cannot be scratched after the jump.
+            -- Block a NEW post-jump cancellation (a false scratch that would drop
+            -- the pick from the board and skew win/Sharp stats). Un-cancelling
+            -- (True->False) stays allowed so the result-reconciliation heal can
+            -- still restore genuine false scratches.
+            IF jumped AND COALESCE(OLD.cancelled, false) = false AND NEW.cancelled IS TRUE THEN
+              INSERT INTO history_guard_incidents(race_id, horse_name, kind, detail)
+              VALUES (OLD.race_id, OLD.horse_name, 'post_race_cancel_blocked',
+                      'kept pre-race cancelled=false; a runner cannot be scratched after the jump');
+              NEW.cancelled := OLD.cancelled;
+            END IF;
             RETURN NEW;
           END IF;
         END
