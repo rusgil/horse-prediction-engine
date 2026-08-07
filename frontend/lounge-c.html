@@ -118,6 +118,11 @@
     display: flex; align-items: stretch; justify-content: flex-start; gap: 8px; overflow-x: auto;
     scrollbar-width: none;
   }
+  /* 3 zones: history selector hard-left, Yesterday/Today centered, equal-width
+     right spacer keeps the centre truly centred. */
+  .date-row .dr-left   { flex: 1 1 0; min-width: 0; display: flex; align-items: stretch; }
+  .date-row .dr-center { display: flex; align-items: stretch; gap: 8px; flex-shrink: 0; }
+  .date-row .dr-right  { flex: 1 1 0; min-width: 0; }
   .date-row::-webkit-scrollbar { display: none; }
   .date-pill {
     background: var(--surface-2); border: 1px solid var(--line); color: var(--text-2);
@@ -1001,14 +1006,18 @@
       return ` <span class="dp-acc num">Win ${st.pct}% · Plc ${st.placePct}%</span>`;
     };
     row.innerHTML = `
-      <button class="date-pill ${S.date === yest ? 'on' : ''}" data-d="${yest}">Yesterday${accFor(yest)}</button>
-      <button class="date-pill ${S.date === today ? 'on' : ''}" data-d="${today}">Today</button>
-      <span class="dr-sep"></span>
-      <span class="date-pill prev-pill ${off >= 2 ? 'on' : ''}">
-        <button class="dp-arr" id="dpBack" title="Earlier day" ${S.prevOffset >= 7 ? 'disabled' : ''}>‹</button>
-        <button class="dp-mid" data-d="${prevIso}">${dowName(prevIso).slice(0, 3)} ${fmtDayShort(prevIso)}${accFor(prevIso)}</button>
-        <button class="dp-arr" id="dpFwd" title="Later day" ${S.prevOffset <= 2 ? 'disabled' : ''}>›</button>
-      </span>`;
+      <div class="dr-left">
+        <span class="date-pill prev-pill ${off >= 2 ? 'on' : ''}">
+          <button class="dp-arr" id="dpBack" title="Earlier day" ${S.prevOffset >= 7 ? 'disabled' : ''}>‹</button>
+          <button class="dp-mid" data-d="${prevIso}">${dowName(prevIso).slice(0, 3)} ${fmtDayShort(prevIso)}${accFor(prevIso)}</button>
+          <button class="dp-arr" id="dpFwd" title="Later day" ${S.prevOffset <= 2 ? 'disabled' : ''}>›</button>
+        </span>
+      </div>
+      <div class="dr-center">
+        <button class="date-pill ${S.date === yest ? 'on' : ''}" data-d="${yest}">Yesterday${accFor(yest)}</button>
+        <button class="date-pill ${S.date === today ? 'on' : ''}" data-d="${today}">Today</button>
+      </div>
+      <div class="dr-right"></div>`;
     row.querySelectorAll('[data-d]').forEach(b => b.onclick = () => setDate(b.dataset.d));
     document.getElementById('dpBack').onclick = () => { S.prevOffset = Math.min(7, S.prevOffset + 1); setDate(aestToday(-S.prevOffset)); };
     document.getElementById('dpFwd').onclick  = () => { S.prevOffset = Math.max(2, S.prevOffset - 1); setDate(aestToday(-S.prevOffset)); };
