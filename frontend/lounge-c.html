@@ -359,12 +359,9 @@
   .cell .cout { font-size: 0.82rem; margin-top: 1px; min-height: 12px; }
   .cell .clab .cmk { font-size: 0.82rem; line-height: 1; }
   .heat-legend span { font-size: 0.72rem; }
-  /* heat tints — the core idea: cell colour = our confidence */
-  .cell.heat-hot .in    { background: var(--hot-dim);  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--hot) 45%, transparent); }
+  /* tier = coloured WORD only; no cell background tint (2026-08-07) */
   .cell.heat-hot .t     { color: var(--hot); }
-  .cell.heat-high .in   { background: var(--blue-dim); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--blue) 35%, transparent); }
   .cell.heat-high .t    { color: var(--blue); }
-  .cell.heat-strong .in { background: var(--strong-dim); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--strong) 30%, transparent); }
   .cell.heat-strong .t  { color: var(--strong); }
   .cell.done .t { color: var(--text-3); font-weight: 500; }
   .cell .sub .cell-sharp { font-size: 0.56rem; line-height: 1; opacity: 0.92; }
