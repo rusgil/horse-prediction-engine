@@ -1594,6 +1594,13 @@
             if (gap >= 5) return ` <span class="chip cf" style="font-size:0.56rem;padding:1px 5px;margin-left:4px">👑 CLEAR FAV</span>`;
             if (gap < 2 && r.top_win_probability >= 0.25) return ` <span class="chip tu" style="font-size:0.56rem;padding:1px 5px;margin-left:4px">⚖️ TOSS-UP</span>`;
             return '';
+          })()}${(() => {
+            // Value overlay (💎) — mirror the heat map: our win% beats the
+            // market-implied % by ≥5pp at a payable price (odds ≥ 3).
+            const od = r.top_pick_odds;
+            if (isSettled(r) || !od || od < 3 || r.top_win_probability == null) return '';
+            return (r.top_win_probability - (1 / od)) >= 0.05
+              ? ` <span class="chip" style="font-size:0.56rem;padding:1px 5px;margin-left:4px;background:var(--purple-dim);color:var(--purple);border:1px solid var(--purple)">💎 VALUE</span>` : '';
           })()}${r.is_sharp ? ` <span class="chip sharp" style="font-size:0.56rem;padding:1px 5px;margin-left:4px">🎯 SHARP</span>` : (isSettled(r) ? '' : placeChip(r))}</div>
         </div>
         <div class="right">
