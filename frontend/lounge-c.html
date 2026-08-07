@@ -115,13 +115,9 @@
 
   .date-row {
     max-width: 1220px; margin: 0 auto; padding: 0 16px 10px;
-    display: flex; align-items: stretch; justify-content: center; gap: 8px; overflow-x: auto;
+    display: flex; align-items: stretch; justify-content: flex-start; gap: 8px; overflow-x: auto;
     scrollbar-width: none;
   }
-  /* keep the left pill reachable if the row ever overflows on tiny screens
-     (center + overflow would clip it otherwise) */
-  .date-row > :first-child { margin-left: auto; }
-  .date-row > :last-child { margin-right: auto; }
   .date-row::-webkit-scrollbar { display: none; }
   .date-pill {
     background: var(--surface-2); border: 1px solid var(--line); color: var(--text-2);
