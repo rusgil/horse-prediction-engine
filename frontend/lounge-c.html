@@ -1008,12 +1008,13 @@
       <button class="date-pill ${isLatest ? 'on' : ''}" data-d="${latest}">Today</button>
       <span class="date-pill prev-pill">
         <button class="dp-arr" id="dpBack" title="Earlier day">‹</button>
-        <span class="dp-mid">${dowName(S.date).slice(0, 3)} ${fmtDayShort(S.date)}${accFor(S.date)}</span>
+        <span class="dp-mid" id="dpMid">${dowName(S.date).slice(0, 3)} ${fmtDayShort(S.date)}${accFor(S.date)}</span>
         <button class="dp-arr" id="dpFwd" title="Later day" ${isLatest ? 'disabled' : ''}>›</button>
       </span>`;
     row.querySelectorAll('[data-d]').forEach(b => b.onclick = () => setDate(b.dataset.d));
     document.getElementById('dpBack').onclick = () => setDate(shiftIso(S.date, -1));
     document.getElementById('dpFwd').onclick  = () => { if (S.date < latest) setDate(shiftIso(S.date, 1)); };
+    document.getElementById('dpMid').onclick  = () => { S.details = {}; S.runners = {}; loadAll(); };  // (re)load the shown day's card
   }
 
   function fmtDayShort(iso) {

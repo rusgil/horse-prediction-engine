@@ -1246,6 +1246,8 @@
     if (ef) ef.onclick = () => { if (!ef.disabled) edgeStepDate(1); };
     const lt = el.querySelector('#edgeLatest');
     if (lt) lt.onclick = () => { E.view = 'res'; E.resDate = aestToday(-1); E.resData = null; renderControls(); renderFeed(); };
+    const em = el.querySelector('#edgeMid');
+    if (em) em.onclick = () => { E.resData = null; renderFeed(); };  // (re)load the shown day's results
   }
   // Unified date bar: Latest = yesterday's results (newest settled day);
   // ‹ › steps through earlier dates, capped forward at yesterday.
@@ -1261,7 +1263,7 @@
     return `<button class="date-pill ${onLatest ? 'on' : ''}" id="edgeLatest">Today</button>`
       + `<span class="date-pill prev-pill">`
       + `<button class="dp-arr" id="edgeBack" title="Earlier day">‹</button>`
-      + `<span class="dp-mid">${fmtDate(shown)}${edgeAccFor(shown)}</span>`
+      + `<span class="dp-mid" id="edgeMid">${fmtDate(shown)}${edgeAccFor(shown)}</span>`
       + `<button class="dp-arr" id="edgeFwd" title="Later day"${onLatest ? ' disabled' : ''}>›</button>`
       + `</span>`;
   }
