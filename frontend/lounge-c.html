@@ -1005,7 +1005,7 @@
     };
     // Unified date bar: Latest (yesterday) button + ‹ date › arrows.
     row.innerHTML = `
-      <button class="date-pill ${isLatest ? 'on' : ''}" data-d="${latest}">Latest</button>
+      <button class="date-pill ${isLatest ? 'on' : ''}" data-d="${latest}">Today</button>
       <span class="date-pill prev-pill">
         <button class="dp-arr" id="dpBack" title="Earlier day">‹</button>
         <span class="dp-mid">${dowName(S.date).slice(0, 3)} ${fmtDayShort(S.date)}${accFor(S.date)}</span>

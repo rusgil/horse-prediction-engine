@@ -1258,7 +1258,7 @@
     const latest = aestToday(-1);
     const shown = E.resDate || latest;
     const onLatest = shown >= latest;
-    return `<button class="date-pill ${onLatest ? 'on' : ''}" id="edgeLatest">Latest</button>`
+    return `<button class="date-pill ${onLatest ? 'on' : ''}" id="edgeLatest">Today</button>`
       + `<span class="date-pill prev-pill">`
       + `<button class="dp-arr" id="edgeBack" title="Earlier day">‹</button>`
       + `<span class="dp-mid">${fmtDate(shown)}${edgeAccFor(shown)}</span>`
