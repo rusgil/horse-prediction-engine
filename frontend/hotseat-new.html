@@ -978,24 +978,27 @@
   function buildDateRow() {
     const row = document.getElementById('dateRow');
     const today = aestToday(0);
+    const latest = aestToday(-1);   // ‹ › navigator stops at yesterday; use Today button for today
     const isToday = S.date >= today;
+    const atLatest = S.date >= latest;
     const shiftIso = (iso, days) => { const d = new Date(iso + 'T00:00:00Z'); d.setUTCDate(d.getUTCDate() + days); return d.toISOString().slice(0, 10); };
     const accFor = d => {
       const st = S.perfByDate[d];
       if (!st) return '';
       return ` <span class="dp-acc num">Win ${st.pct}% · Plc ${st.placePct}%</span>`;
     };
-    // Unified date bar: Today button (defaults land on yesterday) + ‹ date › arrows.
+    // Unified date bar: Today button jumps to today; ‹ date › arrows browse
+    // history but stop at yesterday (today is reachable only via Today).
     row.innerHTML = `
       <button class="date-pill ${isToday ? 'on' : ''}" data-d="${today}">Today</button>
       <span class="date-pill prev-pill">
         <button class="dp-arr" id="dpBack" title="Earlier day">‹</button>
         <span class="dp-mid" id="dpMid">${dowName(S.date).slice(0, 3)} ${fmtDayShort(S.date)}${accFor(S.date)}</span>
-        <button class="dp-arr" id="dpFwd" title="Later day" ${isToday ? 'disabled' : ''}>›</button>
+        <button class="dp-arr" id="dpFwd" title="Later day" ${atLatest ? 'disabled' : ''}>›</button>
       </span>`;
     row.querySelectorAll('[data-d]').forEach(b => b.onclick = () => setDate(b.dataset.d));
     document.getElementById('dpBack').onclick = () => setDate(shiftIso(S.date, -1));
-    document.getElementById('dpFwd').onclick  = () => { if (S.date < today) setDate(shiftIso(S.date, 1)); };
+    document.getElementById('dpFwd').onclick  = () => { if (S.date < latest) setDate(shiftIso(S.date, 1)); };
     document.getElementById('dpMid').onclick  = () => { S.details = {}; S.runners = {}; loadAll(); };  // (re)load the shown day's card
   }
 

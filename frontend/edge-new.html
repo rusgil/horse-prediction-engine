@@ -1232,13 +1232,14 @@
   function edgeDateBarHTML() {
     const onToday = E.view === 'up';
     const shown = onToday ? aestToday() : (E.resDate || aestToday(-1));
+    const fwdDisabled = onToday || shown >= aestToday(-1);   // ‹ › stops at yesterday; Today button jumps to live
     const dow = new Date(shown + 'T12:00:00').toLocaleDateString('en-AU', { weekday: 'short' });
     const dm  = new Date(shown + 'T12:00:00').toLocaleDateString('en-AU', { day: 'numeric', month: 'short' });
     return `<button class="date-pill ${onToday ? 'on' : ''}" data-vw="up">Today</button>`
       + `<span class="date-pill prev-pill">`
       + `<button class="dp-arr" id="edgeBack" title="Earlier day">‹</button>`
       + `<span class="dp-mid" id="edgeMid">${dow} ${dm}${edgeAccFor(shown)}</span>`
-      + `<button class="dp-arr" id="edgeFwd" title="Later day"${onToday ? ' disabled' : ''}>›</button>`
+      + `<button class="dp-arr" id="edgeFwd" title="Later day"${fwdDisabled ? ' disabled' : ''}>›</button>`
       + `</span>`;
   }
   async function loadEdgePerf() {
@@ -1258,8 +1259,8 @@
     if (E.view === 'up') { E.view = 'res'; E.resDate = aestToday(-1); }
     else {
       const nd = new Date(new Date(E.resDate + 'T12:00:00').getTime() + days * 86400000).toLocaleDateString('en-CA');
-      if (nd >= aestToday()) { E.view = 'up'; }          // step forward past yesterday -> Today (live)
-      else { E.resDate = nd; E.resData = null; }
+      if (nd > aestToday(-1)) return;                    // ‹ › stops at yesterday; Today button jumps to live
+      E.resDate = nd; E.resData = null;
     }
     renderControls();
     renderFeed();
