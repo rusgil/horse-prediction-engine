@@ -1764,7 +1764,7 @@
   setInterval(() => { if (S.meetings.length) renderAll(); }, 45000);
 
   /* ── boot ── */
-  S.date = aestToday(-1);
+  S.date = aestToday(0);
   buildDateRow();
   applyVersion(loungeView() === 'heat' ? 'A' : 'C');
   loadAll();
