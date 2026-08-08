@@ -1372,7 +1372,7 @@
       const pnl = settled.reduce((s, p) => { const r = E.resultsMap[p.race_id]; return s + (r.winner && r.sp ? r.sp * 10 - 10 : -10); }, 0);
       const label = d === today ? 'Today' : d === tomorrow ? 'Tomorrow' : fmtDate(d);
       html += `<div class="day-head"><span class="t">${label}</span><span class="c num">${ps.length} pick${ps.length === 1 ? '' : 's'}</span>
-        ${settled.length ? `<span class="pnl num" style="color:${pnl >= 0 ? 'var(--mint)' : 'var(--red)'}">${w}W · ${pl}P settled · ${pnl >= 0 ? '+' : ''}$${pnl.toFixed(0)}</span>` : ''}</div>`;
+        ${settled.length ? `<span class="pnl num"><b>${settled.length}</b> settled · <b style="color:var(--mint)">${w}</b> won (${Math.round(w / settled.length * 100)}%) · <b style="color:var(--amber)">${pl}</b> more placed (${Math.round((w + pl) / settled.length * 100)}% placed incl. wins) · <b style="color:${pnl >= 0 ? 'var(--mint)' : 'var(--red)'}">${pnl >= 0 ? '+' : ''}$${pnl.toFixed(0)}</b></span>` : ''}</div>`;
       html += ps.map(p => card(p, E.resultsMap[p.race_id])).join('');
     });
     el.innerHTML = html;
