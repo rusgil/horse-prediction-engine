@@ -1163,6 +1163,24 @@
       const r = await fetch(API + '/api/edge/yesterday?date=' + aestToday());
       if (r.ok) for (const p of (await r.json()).picks || []) E.resultsMap[p.race_id] = p;
     } catch (e) {}
+    seedResultsFromPicks();
+  }
+  // Fill result gaps from /api/edge's own annotations. The /api/edge/yesterday
+  // feed only carries picks >=29.5% win, so a sub-threshold pick (e.g. a 25%
+  // Sharp pick) had no result there and showed "pending" — even though
+  // /api/edge already knows won/actual_position. Don't clobber a concrete
+  // feed result; only fill missing / not-yet-seeded ones. (DIETRICH gap.)
+  function seedResultsFromPicks() {
+    for (const p of (E.picks || [])) {
+      const has = p.won === true || p.won === false || p.placed === true || p.placed === false || typeof p.actual_position === 'number';
+      if (!has) continue;
+      const cur = E.resultsMap[p.race_id];
+      if (cur && !cur.no_result && (cur.winner === true || cur.placed === true || cur.position != null)) continue;
+      E.resultsMap[p.race_id] = {
+        winner: p.won === true, placed: p.placed === true, position: p.actual_position,
+        sp: p.sp, scratched: p.cancelled || false, no_result: false,
+      };
+    }
   }
   async function loadResultsDate(dateStr) {
     const r = await fetch(API + '/api/edge/yesterday?date=' + dateStr);
@@ -1507,7 +1525,7 @@
     renderFeed();
     loadTodayResults().then(() => { if (E.parent === 'wins' && E.view === 'up') renderFeed(); });
     setInterval(() => { if (E.parent === 'wins' && E.view === 'up') renderFeed(); }, 45000);
-    setInterval(() => { loadEdge().then(() => { renderStats(); if (E.parent === 'wins' && E.view === 'up') renderFeed(); }).catch(() => {}); }, 5 * 60 * 1000);
+    setInterval(() => { loadEdge().then(() => { renderStats(); seedResultsFromPicks(); if (E.parent === 'wins' && E.view === 'up') renderFeed(); }).catch(() => {}); }, 5 * 60 * 1000);
     setInterval(() => { loadTodayResults().then(() => { if (E.parent === 'wins' && E.view === 'up') renderFeed(); }); }, 4 * 60 * 1000);
   }
   boot();
