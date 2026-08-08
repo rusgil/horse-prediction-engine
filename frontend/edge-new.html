@@ -1210,7 +1210,7 @@
       `<button data-${attr}="${v}" class="${cur === v ? 'on' : ''}">${l}</button>`).join('')}</span>`;
     el.innerHTML = `<div class="row">
         ${seg([['wins', 'Win / Place'], ['exotics', 'Exotics <span style="font-size:0.58rem;opacity:0.7">BETA</span>']], E.parent, 'pt')}
-        ${E.parent === 'wins' ? seg([['up', 'Upcoming'], ['res', 'Results']], E.view, 'vw') : ''}
+        ${E.parent === 'wins' ? edgeDateBarHTML() : ''}
       </div>
       ${E.parent === 'wins' ? `<div class="row">
         ${seg([['sharp', '🎯 Sharp only'], ['all', 'All picks']], E.mode, 'md')}
@@ -1220,6 +1220,31 @@
     el.querySelectorAll('[data-vw]').forEach(b => b.onclick = () => { E.view = b.dataset.vw; renderControls(); renderFeed(); });
     el.querySelectorAll('[data-md]').forEach(b => b.onclick = () => { E.mode = b.dataset.md; localStorage.setItem('edgeModeNew', E.mode); renderControls(); renderFeed(); });
     el.querySelectorAll('[data-st]').forEach(b => b.onclick = () => { E.sort = b.dataset.st; localStorage.setItem('edgeSortNew', E.sort); renderControls(); renderFeed(); });
+    const eb = el.querySelector('#edgeBack'), ef = el.querySelector('#edgeFwd');
+    if (eb) eb.onclick = () => edgeStepDate(-1);
+    if (ef) ef.onclick = () => { if (!ef.disabled) edgeStepDate(1); };
+  }
+  // Unified date bar: Today = live upcoming picks; ‹ › steps through past
+  // dates' results (clamped to today). Reuses the up/res views + resDate.
+  function edgeDateBarHTML() {
+    const onToday = E.view === 'up';
+    const lbl = onToday ? fmtDate(aestToday()) : fmtDate(E.resDate || aestToday(-1));
+    return `<span class="seg seg-sm"><button data-vw="up" class="${onToday ? 'on' : ''}">Today</button></span>`
+      + `<span class="res-nav" style="margin-left:4px">`
+      + `<button class="vchip" id="edgeBack" title="Earlier day">‹</button>`
+      + `<span class="lbl">${lbl}</span>`
+      + `<button class="vchip" id="edgeFwd" title="Later day"${onToday ? ' disabled' : ''}>›</button>`
+      + `</span>`;
+  }
+  function edgeStepDate(days) {
+    if (E.view === 'up') { E.view = 'res'; E.resDate = aestToday(-1); }
+    else {
+      const nd = new Date(new Date(E.resDate + 'T12:00:00').getTime() + days * 86400000).toLocaleDateString('en-CA');
+      if (nd >= aestToday()) { E.view = 'up'; }          // clamp back to Today
+      else { E.resDate = nd; E.resData = null; }
+    }
+    renderControls();
+    renderFeed();
   }
 
   /* ── pick card ── */
@@ -1338,11 +1363,7 @@
   }
   function renderResults(el) {
     if (!E.resDate) E.resDate = aestToday(-1);
-    const nav = `<div class="res-nav">
-      <button class="vchip" id="resPrev">‹</button>
-      <span class="lbl">${fmtDate(E.resDate)}</span>
-      <button class="vchip" id="resNext" ${E.resDate >= aestToday(-1) ? 'disabled' : ''}>›</button>
-    </div>`;
+    const nav = '';  // date nav now lives in the controls bar (edgeDateBarHTML)
     if (!E.resData || E.resData._date !== E.resDate) {
       el.innerHTML = nav + '<div class="loading"><div class="spin"></div>Loading results…</div>';
       bindResNav(el);
