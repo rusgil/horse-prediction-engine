@@ -1840,9 +1840,13 @@
       <button class="parent-tab active" id="parentWins" onclick="switchParent('wins')">Wins / Place</button>
       <button class="parent-tab" id="parentExotics" onclick="switchParent('exotics')">Exotics <span class="beta-badge">beta</span></button>
     </div>
-    <div class="sub-tabs">
-      <button class="tab-btn active" id="subUpcoming" onclick="switchSub('upcoming')">Upcoming</button>
-      <button class="tab-btn" id="subYesterday" onclick="switchSub('yesterday')">Yesterday's Results</button>
+    <div class="sub-tabs" id="edgeDateBar" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+      <button class="tab-btn active" id="edgeToday" onclick="edgeGoToday()">Today</button>
+      <span style="display:inline-flex;align-items:center;gap:2px">
+        <button class="tab-btn" id="edgeBack" onclick="edgeShiftDate(-1)" title="Earlier day" style="padding:5px 11px;font-size:1rem;line-height:1">‹</button>
+        <span id="edgeDateLabel" style="font-size:0.82rem;color:var(--text-secondary);min-width:92px;text-align:center;font-weight:600"></span>
+        <button class="tab-btn" id="edgeFwd" onclick="edgeShiftDate(1)" title="Later day" style="padding:5px 11px;font-size:1rem;line-height:1">›</button>
+      </span>
       <button class="tab-btn" id="subInsights" onclick="switchSub('insights')">Track Record</button>
     </div>
   </div>
@@ -1944,11 +1948,6 @@
   <div id="panelYesterday" style="display:none">
     <!-- Stake-per-bet input removed 2026-07-20 (see panelUpcoming above). -->
 
-    <div style="display:flex;align-items:center;gap:10px;padding:0 0 12px">
-      <button id="ystPrev" onclick="shiftYesterdayDate(-1)" style="background:var(--bg-elevated);border:1px solid var(--border);color:var(--text-secondary);border-radius:6px;padding:5px 12px;cursor:pointer;font-size:0.85rem">← Prev</button>
-      <span id="ystDateLabel" style="font-size:0.82rem;color:var(--text-dim);flex:1;text-align:center"></span>
-      <button id="ystNext" onclick="shiftYesterdayDate(1)" style="background:var(--bg-elevated);border:1px solid var(--border);color:var(--text-secondary);border-radius:6px;padding:5px 12px;cursor:pointer;font-size:0.85rem">Next →</button>
-    </div>
     <div class="sort-bar">
       <span>Sort:</span>
       <button class="sort-btn active" id="ystSortBest" onclick="setYesterdaySort('best')">Best Pick ↓</button>
@@ -2944,9 +2943,8 @@
 
   function switchSub(sub) {
     currentSub = sub;
-    document.getElementById('subUpcoming').classList.toggle('active', sub === 'upcoming');
-    document.getElementById('subYesterday').classList.toggle('active', sub === 'yesterday');
     document.getElementById('subInsights').classList.toggle('active', sub === 'insights');
+    updateEdgeDateBar();
 
     const isWins = currentParent === 'wins';
     document.getElementById('panelUpcoming').style.display            = (isWins && sub === 'upcoming')  ? '' : 'none';
@@ -2962,6 +2960,32 @@
     if (isWins && sub === 'yesterday' && !yesterdayLoaded) loadYesterday();
     if (isWins && sub === 'insights' && !trackRecordLoaded) loadTrackRecord();
     if (!isWins && sub === 'upcoming' && !trifectasLoaded) loadTrifectas();
+  }
+
+  // ── Unified date bar: Today = live upcoming picks; ‹ › steps through past
+  // dates' results. Maps onto the existing upcoming/yesterday sub-panels.
+  function currentEdgeDate() {
+    return (currentSub === 'yesterday' && yesterdayViewDate) ? yesterdayViewDate : _aestToday();
+  }
+  function updateEdgeDateBar() {
+    const lbl = document.getElementById('edgeDateLabel');
+    if (lbl) lbl.textContent = fmtDate(currentEdgeDate());
+    const todayBtn = document.getElementById('edgeToday');
+    if (todayBtn) todayBtn.classList.toggle('active', currentSub === 'upcoming');
+    const fwd = document.getElementById('edgeFwd');
+    if (fwd) fwd.disabled = currentSub !== 'yesterday';   // can't go past today
+  }
+  function edgeGoToday() {
+    switchSub('upcoming');
+  }
+  function edgeShiftDate(delta) {
+    const dd = new Date(currentEdgeDate() + 'T00:00:00');
+    dd.setDate(dd.getDate() + delta);
+    const shifted = dd.toLocaleDateString('en-CA', { timeZone: 'Australia/Sydney' });
+    if (shifted >= _aestToday()) { edgeGoToday(); return; }   // clamp to Today
+    loadYesterday(shifted);      // sets yesterdayViewDate + fetches
+    switchSub('yesterday');
+    updateEdgeDateBar();
   }
 
   function switchTab(tab) {
@@ -3631,6 +3655,7 @@
       }
 
       renderContent(picksData, stake, resultsMap);
+      updateEdgeDateBar();
       refreshOdds();
       if (hasPast) refreshResults();
       fetchSparklines(picksData.picks);
