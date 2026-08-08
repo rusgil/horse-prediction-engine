@@ -111,13 +111,9 @@
 
   .date-row {
     max-width: 1220px; margin: 0 auto; padding: 0 16px 10px;
-    display: flex; align-items: stretch; justify-content: center; gap: 8px; overflow-x: auto;
+    display: flex; align-items: stretch; justify-content: flex-start; gap: 8px; overflow-x: auto;
     scrollbar-width: none;
   }
-  /* keep the left pill reachable if the row ever overflows on tiny screens
-     (center + overflow would clip it otherwise) */
-  .date-row > :first-child { margin-left: auto; }
-  .date-row > :last-child { margin-right: auto; }
   .date-row::-webkit-scrollbar { display: none; }
   .date-pill {
     background: var(--surface-2); border: 1px solid var(--line); color: var(--text-2);
@@ -135,7 +131,7 @@
   }
   .prev-pill .dp-arr:disabled { opacity: 0.3; cursor: default; }
   .prev-pill .dp-mid { background: none; border: none; color: inherit; font: inherit; font-weight: 700; cursor: pointer; padding: 0; }
-  .dp-acc { font-weight: 800; font-size: 0.76rem; }
+  .dp-acc { font-weight: 800; font-size: 0.76rem; color: var(--text-3); }
   .dp-acc.elite { color: #c084fc; text-shadow: 0 0 6px rgba(192,132,252,0.35); }
   .dp-acc.great { color: #60a5fa; }
   .dp-acc.good  { color: #10b981; }
@@ -980,30 +976,25 @@
 
   function buildDateRow() {
     const row = document.getElementById('dateRow');
-    const today = aestToday(0), yest = aestToday(-1);
-    const off = Math.round((Date.parse(today) - Date.parse(S.date)) / 86400000);
-    if (S.prevOffset == null) S.prevOffset = 2;
-    if (off >= 2 && off <= 7) S.prevOffset = off;      // keep arrow pill in sync
-    const prevIso = aestToday(-S.prevOffset);
+    const today = aestToday(0);
+    const isToday = S.date >= today;
+    const shiftIso = (iso, days) => { const d = new Date(iso + 'T00:00:00Z'); d.setUTCDate(d.getUTCDate() + days); return d.toISOString().slice(0, 10); };
     const accFor = d => {
       const st = S.perfByDate[d];
       if (!st) return '';
-      const cls = st.wins === 0 ? 'bad' : st.pct >= 38 ? 'elite' : st.pct >= 30 ? 'great'
-                : st.pct >= 22 ? 'good' : st.pct >= 15 ? 'ok' : 'bad';
-      return ` <span class="dp-acc ${cls} num">Win ${st.pct}% · Plc ${st.placePct}%</span>`;
+      return ` <span class="dp-acc num">Win ${st.pct}% · Plc ${st.placePct}%</span>`;
     };
+    // Unified date bar (mirrors the Lounge): Today button + ‹ date › arrows.
     row.innerHTML = `
-      <button class="date-pill ${S.date === yest ? 'on' : ''}" data-d="${yest}">Yesterday${accFor(yest)}</button>
-      <button class="date-pill ${S.date === today ? 'on' : ''}" data-d="${today}">Today</button>
-      <span class="dr-sep"></span>
-      <span class="date-pill prev-pill ${off >= 2 ? 'on' : ''}">
-        <button class="dp-arr" id="dpBack" title="Earlier day" ${S.prevOffset >= 7 ? 'disabled' : ''}>‹</button>
-        <button class="dp-mid" data-d="${prevIso}">${dowName(prevIso).slice(0, 3)} ${fmtDayShort(prevIso)}${accFor(prevIso)}</button>
-        <button class="dp-arr" id="dpFwd" title="Later day" ${S.prevOffset <= 2 ? 'disabled' : ''}>›</button>
+      <button class="date-pill ${isToday ? 'on' : ''}" data-d="${today}">Today</button>
+      <span class="date-pill prev-pill">
+        <button class="dp-arr" id="dpBack" title="Earlier day">‹</button>
+        <span class="dp-mid">${dowName(S.date).slice(0, 3)} ${fmtDayShort(S.date)}${accFor(S.date)}</span>
+        <button class="dp-arr" id="dpFwd" title="Later day" ${isToday ? 'disabled' : ''}>›</button>
       </span>`;
     row.querySelectorAll('[data-d]').forEach(b => b.onclick = () => setDate(b.dataset.d));
-    document.getElementById('dpBack').onclick = () => { S.prevOffset = Math.min(7, S.prevOffset + 1); setDate(aestToday(-S.prevOffset)); };
-    document.getElementById('dpFwd').onclick  = () => { S.prevOffset = Math.max(2, S.prevOffset - 1); setDate(aestToday(-S.prevOffset)); };
+    document.getElementById('dpBack').onclick = () => setDate(shiftIso(S.date, -1));
+    document.getElementById('dpFwd').onclick  = () => { if (S.date < today) setDate(shiftIso(S.date, 1)); };
   }
 
   function fmtDayShort(iso) {
