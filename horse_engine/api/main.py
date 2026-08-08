@@ -561,7 +561,7 @@ async def _scheduled_enrich():
             # Force today's races to always re-enrich so stale pre-enrichments
             # (from days-out bulk runs with no market data) get replaced with
             # fresh odds and features each morning.
-            await _enrich_date(race_date, client, model, force=(i == 0))
+            await _enrich_date(race_date, client, model, force=(i == 0), sb_filter=True)
         # Check for abandoned meetings after enrichment
         await _cancel_abandoned_meetings(client, _today_aest().isoformat())
         # Snapshot BEFORE seeding results — captures predictions before result
@@ -29317,8 +29317,13 @@ async def admin_calibrate_output_status(x_cron_secret: Optional[str] = Header(No
     }
 
 
-async def _enrich_date(race_date: str, client, model, force: bool = False, place_model: PlaceModel | None = None, exotic_model: ExoticModel | None = None) -> list[dict]:
-    """Enrich all meetings for a single date. Returns summary list."""
+async def _enrich_date(race_date: str, client, model, force: bool = False, place_model: PlaceModel | None = None, exotic_model: ExoticModel | None = None, sb_filter: bool = False) -> list[dict]:
+    """Enrich all meetings for a single date. Returns summary list.
+
+    sb_filter=True restricts to meetings on the Sportsbet allowlist (the daily
+    cron path) so non-SB picnic/TAB tracks don't leak onto the card. Off by
+    default so backfill / manual enrich keep every meeting.
+    """
     venue_cal = await _load_venue_calibration()
     output_cal = await _load_output_calibration_curve()
     if place_model is None:
@@ -29328,6 +29333,27 @@ async def _enrich_date(race_date: str, client, model, force: bool = False, place
         async with get_session() as session:
             exotic_model = await _load_exotic_model(session)
     meetings = await client.get_meetings(race_date)
+    # Sportsbet allowlist — only enrich AU thoroughbred meetings Sportsbet books.
+    # The pre-race pass already did this; the daily pass didn't, so non-SB
+    # picnic/TAB tracks (Nanango, Louth, …) leaked onto the card. Falls back to
+    # blocklist-only if the SB schedule is unavailable (e.g. a past-date backfill).
+    if sb_filter:
+        try:
+            from horse_engine.clients.sportsbet_schedule import (
+                get_sportsbet_au_meetings, venue_on_sportsbet,
+            )
+            _sb_allow = await get_sportsbet_au_meetings(race_date)
+            if _sb_allow:
+                _before = len(meetings)
+                meetings = [m for m in meetings
+                            if venue_on_sportsbet(m.get("venue") or "", _sb_allow)
+                            or venue_on_sportsbet(m.get("name") or "", _sb_allow)]
+                log.info("[enrich] Sportsbet allowlist: %d/%d meetings on SB for %s (skipped %d)",
+                         len(meetings), _before, race_date, _before - len(meetings))
+            else:
+                log.warning("[enrich] Sportsbet allowlist unavailable for %s — blocklist-only fallback", race_date)
+        except Exception as e:
+            log.warning("[enrich] Sportsbet allowlist skipped for %s (keeping all): %s", race_date, e)
     summary = []
     for m in meetings:
         slug = m.get("slug", "")
