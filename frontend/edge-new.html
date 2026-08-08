@@ -135,7 +135,7 @@
   }
   .prev-pill .dp-arr:disabled { opacity: 0.3; cursor: default; }
   .prev-pill .dp-mid { background: none; border: none; color: inherit; font: inherit; font-weight: 700; cursor: pointer; padding: 0; }
-  .dp-acc { font-weight: 800; font-size: 0.76rem; }
+  .dp-acc { font-weight: 800; font-size: 0.76rem; color: var(--text-3); }
   .dp-acc.elite { color: #c084fc; text-shadow: 0 0 6px rgba(192,132,252,0.35); }
   .dp-acc.great { color: #60a5fa; }
   .dp-acc.good  { color: #10b981; }
@@ -1260,10 +1260,12 @@
     const latest = aestToday(-1);
     const shown = E.resDate || latest;
     const onLatest = shown >= latest;
+    const dow = new Date(shown + 'T12:00:00').toLocaleDateString('en-AU', { weekday: 'short' });
+    const dm  = new Date(shown + 'T12:00:00').toLocaleDateString('en-AU', { day: 'numeric', month: 'short' });
     return `<button class="date-pill ${onLatest ? 'on' : ''}" id="edgeLatest">Today</button>`
       + `<span class="date-pill prev-pill">`
       + `<button class="dp-arr" id="edgeBack" title="Earlier day">‹</button>`
-      + `<span class="dp-mid" id="edgeMid">${fmtDate(shown)}${edgeAccFor(shown)}</span>`
+      + `<span class="dp-mid" id="edgeMid">${dow} ${dm}${edgeAccFor(shown)}</span>`
       + `<button class="dp-arr" id="edgeFwd" title="Later day"${onLatest ? ' disabled' : ''}>›</button>`
       + `</span>`;
   }
