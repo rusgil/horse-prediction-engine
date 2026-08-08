@@ -835,9 +835,6 @@
   .wrap { max-width: 980px; margin: 0 auto; padding: 0 16px 40px; }
   .stat-strip { display: flex; gap: 18px; flex-wrap: wrap; align-items: center; margin: 4px 0 14px; }
   .stat-strip .upd { margin-left: auto; font-size: 0.7rem; color: var(--text-3); }
-  .legend-row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-bottom: 14px; }
-  .legend-row .lg-tier { display: inline-flex; align-items: baseline; gap: 6px; background: var(--surface); border: 1px solid var(--line); border-radius: 999px; padding: 4px 12px; font-size: 0.72rem; color: var(--text-2); }
-  .legend-row .lg-tier b { font-weight: 800; color: var(--text); }
   .ctl-rows { display: flex; flex-direction: column; gap: 9px; margin-bottom: 16px; }
   .ctl-rows .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
   .pcard.prem:not(.res-win):not(.res-place):not(.res-miss) { border-color: color-mix(in srgb, var(--prem) 65%, var(--line)); box-shadow: 0 0 0 1px rgba(192,132,252,0.18), var(--shadow); }
@@ -934,7 +931,6 @@
 
 <main class="wrap">
   <div class="stat-strip" id="statStrip"></div>
-  <div class="legend-row" id="legendRow"></div>
   <div class="ctl-rows" id="ctlRows"></div>
   <div id="feed"><div class="loading"><div class="spin"></div>Loading picks…</div></div>
 </main>
@@ -1143,14 +1139,6 @@
   }
 
   /* ── loaders ── */
-  async function loadTrackRecord() {
-    try {
-      const r = await fetch(API + '/api/track-record');
-      if (!r.ok) return;
-      E.tr = await r.json();
-      renderLegend();
-    } catch (e) {}
-  }
   async function loadEdge() {
     const r = await fetch(API + '/api/edge');
     if (!r.ok) throw new Error(r.statusText);
@@ -1214,24 +1202,13 @@
       <div class="ds-divider"></div>
       <div class="ds-stat"><b class="num" style="color:var(--amber)">${pl}</b> more placed <span class="num">(${plcPct}% placed incl. wins)</span></div>`;
   }
-  function renderLegend() {
-    const el = document.getElementById('legendRow');
-    const tiers = (E.tr && E.tr.tiers) || [];
-    const g = (k) => (Array.isArray(tiers) ? tiers.find(t => t.badge === k) : tiers[k]) || {};
-    const t = (label, cls, k) => {
-      const w = g(k).win_pct, n = g(k).races;
-      return `<span class="lg-tier"><span class="chip ${cls}">${label}</span>${w != null ? `<b class="num">${w}%</b> win · <span class="num">${n}</span> races` : '<span style="color:var(--text-3)">—</span>'}</span>`;
-    };
-    el.innerHTML = t('🔥 HOT', 'tier-hot2', 'hot') + t('⚡ HIGH', 'tier-high2', 'high') + t('STRONG', 'tier-strong2', 'standard')
-      + `<span style="font-size:0.66rem;color:var(--text-3)">live track record — verified results only</span>`;
-  }
   function renderControls() {
     const el = document.getElementById('ctlRows');
     const seg = (items, cur, attr) => `<span class="seg seg-sm">${items.map(([v, l]) =>
       `<button data-${attr}="${v}" class="${cur === v ? 'on' : ''}">${l}</button>`).join('')}</span>`;
     el.innerHTML = `<div class="row">
-        ${seg([['wins', 'Win / Place'], ['exotics', 'Exotics <span style="font-size:0.58rem;opacity:0.7">BETA</span>']], E.parent, 'pt')}
         ${E.parent === 'wins' ? seg([['sharp', '🎯 Sharp only'], ['all', 'All picks']], E.mode, 'md') : ''}
+        ${seg([['wins', 'Win / Place'], ['exotics', 'Exotics <span style="font-size:0.58rem;opacity:0.7">BETA</span>']], E.parent, 'pt')}
         ${E.parent === 'wins' && E.view === 'up' ? seg([['best', 'Best pick'], ['next', 'Next race']], E.sort, 'st') : ''}
       </div>
       ${E.parent === 'wins' ? `<div class="row">${edgeDateBarHTML()}</div>` : ''}`;
@@ -1525,7 +1502,6 @@
   /* ── boot ── */
   async function boot() {
     renderControls();
-    loadTrackRecord();
     loadEdgePerf();
     try {
       await loadEdge();

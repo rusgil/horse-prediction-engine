@@ -159,12 +159,6 @@
   }
   .day-strip.show { display: flex; }
   .ds-row { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
-  .legend-row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-top: 2px; }
-  .legend-row .lg-tier { display: inline-flex; align-items: baseline; gap: 6px; background: var(--surface); border: 1px solid var(--line); border-radius: 999px; padding: 4px 12px; font-size: 0.72rem; color: var(--text-2); }
-  .legend-row .lg-tier b { font-weight: 800; color: var(--text); }
-  .legend-row .chip.tier-hot2 { background: var(--hot-dim); color: var(--hot); }
-  .legend-row .chip.tier-high2 { background: var(--blue-dim); color: var(--blue); }
-  .legend-row .chip.tier-strong2 { background: var(--strong-dim); color: var(--strong); }
   .ds-stat { display: flex; align-items: baseline; gap: 6px; font-size: 0.78rem; color: var(--text-3); }
   .ds-stat b { font-family: 'Barlow Condensed'; font-size: 1.25rem; color: var(--text); font-weight: 800; }
   .ds-stat b.g { color: var(--mint); }
@@ -977,10 +971,6 @@
           pct: Math.round((day.win_rate || 0) * 100), placePct: Math.round((day.place_rate || 0) * 100) };
       }
     } catch (e) { S.perfByDate = {}; }
-    try {
-      const tr = await fetch(`${API}/api/track-record`);
-      if (tr.ok) S.trackRecord = await tr.json();
-    } catch (e) {}
     buildDateRow();
     renderDayStrip();
   }
@@ -1256,22 +1246,11 @@
       </span>
       <button class="vchip ${activeFilters ? 'on' : ''}" id="hsFiltBtn">⚙️ Filters${activeFilters ? ` · ${activeFilters} active` : ''}</button>
     </div>`;
-    el.innerHTML = sharpHtml + tierStripHtml() + statsHtml;
+    el.innerHTML = sharpHtml + statsHtml;
     el.classList.add('show');
     el.querySelectorAll('[data-s]').forEach(b => b.onclick = () => applySharp(b.dataset.s));
     const fbtn = el.querySelector('#hsFiltBtn');
     if (fbtn) fbtn.onclick = () => openFilters();
-  }
-
-  // Live track-record tier strip (mirrors the Edge): 🔥 HOT / ⚡ HIGH / STRONG.
-  function tierStripHtml() {
-    const tiers = (S.trackRecord && S.trackRecord.tiers) || [];
-    const g = k => (Array.isArray(tiers) ? tiers.find(t => t.badge === k) : null) || {};
-    const t = (label, cls, k) => {
-      const w = g(k).win_pct, n = g(k).races;
-      return `<span class="lg-tier"><span class="chip ${cls}">${label}</span>${w != null ? `<b class="num">${w}%</b> win · <span class="num">${n}</span> races` : '<span style="color:var(--text-3)">—</span>'}</span>`;
-    };
-    return `<div class="legend-row">${t('🔥 HOT', 'tier-hot2', 'hot')}${t('⚡ HIGH', 'tier-high2', 'high')}${t('STRONG', 'tier-strong2', 'standard')}<span style="font-size:0.66rem;color:var(--text-3)">live track record — verified results only</span></div>`;
   }
 
   document.querySelectorAll('#loungeVerSeg button').forEach(b => b.onclick = () => {
