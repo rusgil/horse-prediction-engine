@@ -1103,12 +1103,13 @@
 
   /* ── page state ── */
   const E = {
-    parent: 'wins', view: 'up',
+    parent: 'wins', view: 'res',   // default to yesterday's results
     resDate: null,
     sort: localStorage.getItem('edgeSortNew') || 'best',
     mode: localStorage.getItem('edgeModeNew') || 'sharp',
     picks: null, generatedAt: null, threshold: 25,
     resultsMap: {}, resData: null, exotics: null, tr: null,
+    perfByDate: {},
   };
   const sharpOf = p => (typeof isSharpEdgePick === 'function') ? isSharpEdgePick(p) : p.is_sharp === true;
   // Place play — last-2 races at country meetings are excluded from Sharp
@@ -1244,15 +1245,33 @@
   }
   // Unified date bar: Today = live upcoming picks; ‹ › steps through past
   // dates' results (clamped to today). Reuses the up/res views + resDate.
+  const edgeAccFor = d => {
+    const st = E.perfByDate[d];
+    if (!st) return '';
+    return ` <span class="dp-acc num">Win ${st.pct}% · Plc ${st.placePct}%</span>`;
+  };
   function edgeDateBarHTML() {
     const onToday = E.view === 'up';
-    const lbl = onToday ? fmtDate(aestToday()) : fmtDate(E.resDate || aestToday(-1));
+    const shown = onToday ? aestToday() : (E.resDate || aestToday(-1));
     return `<button class="date-pill ${onToday ? 'on' : ''}" data-vw="up">Today</button>`
       + `<span class="date-pill prev-pill">`
       + `<button class="dp-arr" id="edgeBack" title="Earlier day">‹</button>`
-      + `<span class="dp-mid">${lbl}</span>`
+      + `<span class="dp-mid">${fmtDate(shown)}${edgeAccFor(shown)}</span>`
       + `<button class="dp-arr" id="edgeFwd" title="Later day"${onToday ? ' disabled' : ''}>›</button>`
       + `</span>`;
+  }
+  async function loadEdgePerf() {
+    try {
+      const res = await fetch(`${API}/api/performance?days=10${E.mode === 'sharp' ? '&sharp=true' : ''}`);
+      const d = res.ok ? await res.json() : {};
+      E.perfByDate = {};
+      for (const day of (d.summary || [])) {
+        if (day.races) E.perfByDate[day.date] = {
+          pct: Math.round((day.win_rate || 0) * 100),
+          placePct: Math.round((day.place_rate || 0) * 100) };
+      }
+    } catch (e) { E.perfByDate = {}; }
+    if (typeof renderControls === 'function') renderControls();
   }
   function edgeStepDate(days) {
     if (E.view === 'up') { E.view = 'res'; E.resDate = aestToday(-1); }
@@ -1515,6 +1534,7 @@
   async function boot() {
     renderControls();
     loadTrackRecord();
+    loadEdgePerf();
     try {
       await loadEdge();
     } catch (e) {
