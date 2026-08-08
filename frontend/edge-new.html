@@ -1231,12 +1231,10 @@
       `<button data-${attr}="${v}" class="${cur === v ? 'on' : ''}">${l}</button>`).join('')}</span>`;
     el.innerHTML = `<div class="row">
         ${seg([['wins', 'Win / Place'], ['exotics', 'Exotics <span style="font-size:0.58rem;opacity:0.7">BETA</span>']], E.parent, 'pt')}
+        ${E.parent === 'wins' ? seg([['sharp', '🎯 Sharp only'], ['all', 'All picks']], E.mode, 'md') : ''}
+        ${E.parent === 'wins' && E.view === 'up' ? seg([['best', 'Best pick'], ['next', 'Next race']], E.sort, 'st') : ''}
       </div>
-      ${E.parent === 'wins' ? `<div class="row">
-        ${seg([['sharp', '🎯 Sharp only'], ['all', 'All picks']], E.mode, 'md')}
-        ${E.view === 'up' ? seg([['best', 'Best pick'], ['next', 'Next race']], E.sort, 'st') : ''}
-      </div>
-      <div class="row">${edgeDateBarHTML()}</div>` : ''}`;
+      ${E.parent === 'wins' ? `<div class="row">${edgeDateBarHTML()}</div>` : ''}`;
     el.querySelectorAll('[data-pt]').forEach(b => b.onclick = () => { E.parent = b.dataset.pt; renderControls(); renderFeed(); });
     el.querySelectorAll('[data-vw]').forEach(b => b.onclick = () => { E.view = b.dataset.vw; renderControls(); renderFeed(); });
     el.querySelectorAll('[data-md]').forEach(b => b.onclick = () => { E.mode = b.dataset.md; localStorage.setItem('edgeModeNew', E.mode); renderControls(); renderFeed(); });
