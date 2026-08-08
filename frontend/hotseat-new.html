@@ -244,7 +244,7 @@
   .chip.going-unknown { background: var(--surface-2); color: var(--text-3); }
   .chip.sharp { background: var(--mint-dim); color: var(--mint); border-color: var(--mint); }
   .chip.flyer { background: var(--amber-dim); color: var(--amber); border-color: var(--amber); }
-  .flyer-note { padding: 8px 10px; margin: 6px 0; border-radius: 8px; background: var(--amber-dim); color: var(--text-2); font-size: 0.72rem; line-height: 1.4; border: 1px solid var(--amber); }
+  .flyer-note { grid-column: 1 / -1; padding: 8px 10px; margin: 6px 0; border-radius: 8px; background: var(--amber-dim); color: var(--text-2); font-size: 0.72rem; line-height: 1.4; border: 1px solid var(--amber); }
   .flyer-note b { color: var(--amber); }
   .field-table tr.flyer-row td { background: var(--amber-dim); }
   .field-table tr.flyer-row td.name::after { content: ' 🎲'; }
@@ -987,25 +987,25 @@
 
   function buildDateRow() {
     const row = document.getElementById('dateRow');
-    const latest = aestToday(-1);   // yesterday = newest selectable (today has no settled results)
-    const isLatest = S.date >= latest;
+    const today = aestToday(0);
+    const isToday = S.date >= today;
     const shiftIso = (iso, days) => { const d = new Date(iso + 'T00:00:00Z'); d.setUTCDate(d.getUTCDate() + days); return d.toISOString().slice(0, 10); };
     const accFor = d => {
       const st = S.perfByDate[d];
       if (!st) return '';
       return ` <span class="dp-acc num">Win ${st.pct}% · Plc ${st.placePct}%</span>`;
     };
-    // Unified date bar: Latest (yesterday) button + ‹ date › arrows.
+    // Unified date bar: Today button (defaults land on yesterday) + ‹ date › arrows.
     row.innerHTML = `
-      <button class="date-pill ${isLatest ? 'on' : ''}" data-d="${latest}">Today</button>
+      <button class="date-pill ${isToday ? 'on' : ''}" data-d="${today}">Today</button>
       <span class="date-pill prev-pill">
         <button class="dp-arr" id="dpBack" title="Earlier day">‹</button>
         <span class="dp-mid" id="dpMid">${dowName(S.date).slice(0, 3)} ${fmtDayShort(S.date)}${accFor(S.date)}</span>
-        <button class="dp-arr" id="dpFwd" title="Later day" ${isLatest ? 'disabled' : ''}>›</button>
+        <button class="dp-arr" id="dpFwd" title="Later day" ${isToday ? 'disabled' : ''}>›</button>
       </span>`;
     row.querySelectorAll('[data-d]').forEach(b => b.onclick = () => setDate(b.dataset.d));
     document.getElementById('dpBack').onclick = () => setDate(shiftIso(S.date, -1));
-    document.getElementById('dpFwd').onclick  = () => { if (S.date < latest) setDate(shiftIso(S.date, 1)); };
+    document.getElementById('dpFwd').onclick  = () => { if (S.date < today) setDate(shiftIso(S.date, 1)); };
     document.getElementById('dpMid').onclick  = () => { S.details = {}; S.runners = {}; loadAll(); };  // (re)load the shown day's card
   }
 

@@ -1197,7 +1197,7 @@
   /* ── header pieces ── */
   function renderStats() {
     const el = document.getElementById('statStrip');
-    if (E.parent !== 'wins') { el.innerHTML = ''; return; }
+    if (E.parent !== 'wins' || E.view !== 'res') { el.innerHTML = ''; return; }
     // Results-focused: settled summary for the shown date.
     if (!E.resData || E.resData._date !== E.resDate) { el.innerHTML = ''; return; }
     const picks = applyMode(E.resData.picks || []).picks;
@@ -1244,8 +1244,6 @@
     const eb = el.querySelector('#edgeBack'), ef = el.querySelector('#edgeFwd');
     if (eb) eb.onclick = () => edgeStepDate(-1);
     if (ef) ef.onclick = () => { if (!ef.disabled) edgeStepDate(1); };
-    const lt = el.querySelector('#edgeLatest');
-    if (lt) lt.onclick = () => { E.view = 'res'; E.resDate = aestToday(-1); E.resData = null; renderControls(); renderFeed(); };
     const em = el.querySelector('#edgeMid');
     if (em) em.onclick = () => { E.resData = null; renderFeed(); };  // (re)load the shown day's results
   }
@@ -1257,16 +1255,15 @@
     return ` <span class="dp-acc num">Win ${st.pct}% · Plc ${st.placePct}%</span>`;
   };
   function edgeDateBarHTML() {
-    const latest = aestToday(-1);
-    const shown = E.resDate || latest;
-    const onLatest = shown >= latest;
+    const onToday = E.view === 'up';
+    const shown = onToday ? aestToday() : (E.resDate || aestToday(-1));
     const dow = new Date(shown + 'T12:00:00').toLocaleDateString('en-AU', { weekday: 'short' });
     const dm  = new Date(shown + 'T12:00:00').toLocaleDateString('en-AU', { day: 'numeric', month: 'short' });
-    return `<button class="date-pill ${onLatest ? 'on' : ''}" id="edgeLatest">Today</button>`
+    return `<button class="date-pill ${onToday ? 'on' : ''}" data-vw="up">Today</button>`
       + `<span class="date-pill prev-pill">`
       + `<button class="dp-arr" id="edgeBack" title="Earlier day">‹</button>`
       + `<span class="dp-mid" id="edgeMid">${dow} ${dm}${edgeAccFor(shown)}</span>`
-      + `<button class="dp-arr" id="edgeFwd" title="Later day"${onLatest ? ' disabled' : ''}>›</button>`
+      + `<button class="dp-arr" id="edgeFwd" title="Later day"${onToday ? ' disabled' : ''}>›</button>`
       + `</span>`;
   }
   async function loadEdgePerf() {
@@ -1283,12 +1280,12 @@
     if (typeof renderControls === 'function') renderControls();
   }
   function edgeStepDate(days) {
-    const latest = aestToday(-1);
-    E.view = 'res';
-    if (!E.resDate) E.resDate = latest;
-    const nd = new Date(new Date(E.resDate + 'T12:00:00').getTime() + days * 86400000).toLocaleDateString('en-CA');
-    if (nd > latest) return;                 // don't step past yesterday (newest settled day)
-    E.resDate = nd; E.resData = null;
+    if (E.view === 'up') { E.view = 'res'; E.resDate = aestToday(-1); }
+    else {
+      const nd = new Date(new Date(E.resDate + 'T12:00:00').getTime() + days * 86400000).toLocaleDateString('en-CA');
+      if (nd >= aestToday()) { E.view = 'up'; }          // step forward past yesterday -> Today (live)
+      else { E.resDate = nd; E.resData = null; }
+    }
     renderControls();
     renderFeed();
   }
