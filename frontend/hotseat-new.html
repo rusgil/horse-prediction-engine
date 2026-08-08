@@ -471,6 +471,8 @@
     display: flex; align-items: center; gap: 7px; flex-wrap: wrap; min-width: 0;
   }
   .jcard .where .rmeta { font-family: 'Barlow'; font-size: 0.7rem; color: var(--text-3); font-weight: 500; }
+  .jcard .where .pk-meta { flex-basis: 100%; font-family: 'Barlow'; font-size: 0.66rem; color: var(--text-3); font-weight: 500; margin-top: 1px; line-height: 1.3; }
+  .jcard .where .pk-meta .ff { color: var(--text-2); font-weight: 700; }
   .jcard .chips { display: flex; gap: 5px; flex-wrap: wrap; align-self: start; }
   .jcard .pick { grid-row: span 2; text-align: right; min-width: 140px; }
   .jcard .pick .pname {
@@ -1450,6 +1452,16 @@
       const tier = tierOf(r.top_win_probability, off);
       const tp = topPickOf(r.race_id);
       const done = isSettled(r);
+      // Top-pick detail (from the meetings payload; falls back to a loaded runner).
+      const _tj = r.top_pick_jockey  || (tp && tp.jockey);
+      const _tt = r.top_pick_trainer || (tp && tp.trainer);
+      const _tw = r.top_pick_weight  || (tp && tp.weight);
+      const _tb = r.top_pick_barrier || (tp && tp.barrier);
+      const _tf = r.top_pick_form    || (tp && tp.form_figures);
+      const _subBits = [_tb ? 'B' + _tb : '', _tw ? _tw + 'kg' : ''].filter(Boolean).join(' · ');
+      const _formBit = _tf ? `${_subBits ? ' · ' : ''}<b class="ff">form ${esc(_tf)}</b>` : '';
+      const metaLine = (_subBits || _formBit) ? `<div class="pk-meta num">${_subBits}${_formBit}</div>` : '';
+      const jtLine = (_tj || _tt) ? `<div class="pk-meta">${_tj ? 'J: ' + esc(_tj) : ''}${_tt ? (_tj ? ' · ' : '') + 'T: ' + esc(_tt) : ''}</div>` : '';
       return `<div class="jcard ${settledCard ? 'settled' : ''} ${done ? resCls(r) : ''}" data-open="${esc(r.race_id)}">
         <div class="when">
           ${done
@@ -1457,7 +1469,8 @@
             : `<div class="cd big ${cd.urg || ''}">${cd.label || ''}</div><div class="wt num">${wallTime(r.scheduled_time)}</div>`}
         </div>
         <div class="where">${esc(r._venue)} <span style="color:var(--text-3)">R${r.race_number}</span>
-          <span class="rmeta num">${r.distance ? r.distance + 'm' : ''}${r.field_size ? ' · ' + r.field_size + ' rnrs' : ''}</span></div>
+          <span class="rmeta num">${r.distance ? r.distance + 'm' : ''}${r.field_size ? ' · ' + r.field_size + ' rnrs' : ''}</span>
+          ${metaLine}${jtLine}</div>
         <div class="pick">
           ${(() => {
             const nm = r.top_pick || (tp && tp.horse_name) || null;

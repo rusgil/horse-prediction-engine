@@ -19682,6 +19682,21 @@ async def get_meeting(race_date: str, venue_code: str):
         # Used by the Lounge to filter meeting-tile counts + race pills
         # consistently with the date-pill Sharp metric.
         is_sharp_map: dict[str, Optional[bool]] = {race_id: None for race_id in race_ids}
+        # Top-pick runner detail — surfaced so the Hot Seat cards can show
+        # jockey/trainer/weight/form without a per-race runner fetch.
+        top_pick_jockey = {race_id: None for race_id in race_ids}
+        top_pick_trainer = {race_id: None for race_id in race_ids}
+        top_pick_weight = {race_id: None for race_id in race_ids}
+        top_pick_barrier = {race_id: None for race_id in race_ids}
+        top_pick_form = {race_id: None for race_id in race_ids}
+
+        def _tp_form(js):
+            if not js:
+                return None
+            try:
+                return (json.loads(js) or {}).get("form_figures") or None
+            except Exception:
+                return None
 
         if completed_ids:
             hist_tp_result = await session.execute(
@@ -19706,6 +19721,11 @@ async def get_meeting(race_date: str, venue_code: str):
                     top_win_probs[p.race_id] = p.win_probability
                     top_place_probs[p.race_id] = p.place_probability
                     top_pick_odds[p.race_id] = p.best_available_odds
+                    top_pick_jockey[p.race_id] = p.jockey
+                    top_pick_trainer[p.race_id] = p.trainer
+                    top_pick_weight[p.race_id] = p.weight
+                    top_pick_barrier[p.race_id] = p.barrier
+                    top_pick_form[p.race_id] = _tp_form(p.enriched_json)
                     # is_sharp only True if the pick's horse actually
                     # finished. A scratched Sharp pick shouldn't count
                     # toward the meeting-tile Sharp total (aligns with
@@ -19743,6 +19763,11 @@ async def get_meeting(race_date: str, venue_code: str):
                     top_win_probs[p.race_id] = p.win_probability
                     top_place_probs[p.race_id] = p.place_probability
                     top_pick_odds[p.race_id] = p.best_available_odds
+                    top_pick_jockey[p.race_id] = p.jockey
+                    top_pick_trainer[p.race_id] = p.trainer
+                    top_pick_weight[p.race_id] = p.weight
+                    top_pick_barrier[p.race_id] = p.barrier
+                    top_pick_form[p.race_id] = _tp_form(p.enriched_json)
                 elif p.model_rank == 2:
                     rank2_win_probs[p.race_id] = p.win_probability
                 elif p.model_rank == 3:
@@ -19881,6 +19906,11 @@ async def get_meeting(race_date: str, venue_code: str):
             "top_pick": top_picks.get(rid),
             "top_pick_odds": top_pick_odds.get(rid),
             "top_pick_place_odds": pick_place_odds.get(rid),
+            "top_pick_jockey": top_pick_jockey.get(rid),
+            "top_pick_trainer": top_pick_trainer.get(rid),
+            "top_pick_weight": top_pick_weight.get(rid),
+            "top_pick_barrier": top_pick_barrier.get(rid),
+            "top_pick_form": top_pick_form.get(rid),
             "is_sharp": _is_sharp,
             "field_size": _fsz if isinstance(_fsz, int) else r.get("field_size"),
             "place_play": ({
