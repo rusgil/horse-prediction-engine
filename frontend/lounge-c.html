@@ -995,32 +995,25 @@
 
   function buildDateRow() {
     const row = document.getElementById('dateRow');
-    const today = aestToday(0), yest = aestToday(-1);
-    const off = Math.round((Date.parse(today) - Date.parse(S.date)) / 86400000);
-    if (S.prevOffset == null) S.prevOffset = 2;
-    if (off >= 2 && off <= 7) S.prevOffset = off;      // keep arrow pill in sync
-    const prevIso = aestToday(-S.prevOffset);
+    const today = aestToday(0);
+    const isToday = S.date >= today;
+    const shiftIso = (iso, days) => { const d = new Date(iso + 'T00:00:00Z'); d.setUTCDate(d.getUTCDate() + days); return d.toISOString().slice(0, 10); };
     const accFor = d => {
       const st = S.perfByDate[d];
       if (!st) return '';
       return ` <span class="dp-acc num">Win ${st.pct}% · Plc ${st.placePct}%</span>`;
     };
+    // Unified date bar (mirrors the Edge): Today button + ‹ date › arrows.
     row.innerHTML = `
-      <div class="dr-left">
-        <span class="date-pill prev-pill ${off >= 2 ? 'on' : ''}">
-          <button class="dp-arr" id="dpBack" title="Earlier day" ${S.prevOffset >= 7 ? 'disabled' : ''}>‹</button>
-          <button class="dp-mid" data-d="${prevIso}">${dowName(prevIso).slice(0, 3)} ${fmtDayShort(prevIso)}${accFor(prevIso)}</button>
-          <button class="dp-arr" id="dpFwd" title="Later day" ${S.prevOffset <= 2 ? 'disabled' : ''}>›</button>
-        </span>
-      </div>
-      <div class="dr-center">
-        <button class="date-pill ${S.date === yest ? 'on' : ''}" data-d="${yest}">Yesterday${accFor(yest)}</button>
-        <button class="date-pill ${S.date === today ? 'on' : ''}" data-d="${today}">Today</button>
-      </div>
-      <div class="dr-right"></div>`;
+      <button class="date-pill ${isToday ? 'on' : ''}" data-d="${today}">Today</button>
+      <span class="date-pill prev-pill">
+        <button class="dp-arr" id="dpBack" title="Earlier day">‹</button>
+        <span class="dp-mid">${dowName(S.date).slice(0, 3)} ${fmtDayShort(S.date)}${accFor(S.date)}</span>
+        <button class="dp-arr" id="dpFwd" title="Later day" ${isToday ? 'disabled' : ''}>›</button>
+      </span>`;
     row.querySelectorAll('[data-d]').forEach(b => b.onclick = () => setDate(b.dataset.d));
-    document.getElementById('dpBack').onclick = () => { S.prevOffset = Math.min(7, S.prevOffset + 1); setDate(aestToday(-S.prevOffset)); };
-    document.getElementById('dpFwd').onclick  = () => { S.prevOffset = Math.max(2, S.prevOffset - 1); setDate(aestToday(-S.prevOffset)); };
+    document.getElementById('dpBack').onclick = () => setDate(shiftIso(S.date, -1));
+    document.getElementById('dpFwd').onclick  = () => { if (S.date < today) setDate(shiftIso(S.date, 1)); };
   }
 
   function fmtDayShort(iso) {
