@@ -212,6 +212,33 @@ async def main():
     print("\n  ROI-exMax = ROI with the single biggest dividend removed (variance check).")
     print("  Small n => not significant; watch whether ROI survives ex-max and holds as n grows.")
 
+    # ── LOOSEN THE GATE — vary odds threshold + confidence (gap) ─────────────
+    print("\n" + "=" * 100)
+    print("LOOSEN THE GATE — same top-50 straight trifectas, varied odds + confidence gates")
+    print("=" * 100)
+    print(f"  {'gate':40} {'races':>6} {'hits':>5} {'hit%':>6} {'staked':>8} {'return':>8} "
+          f"{'net':>8} {'ROI':>8} {'ROI-exMax':>9}")
+    matrix = [
+        ("sharp + gap>5pts + odds>$3  (baseline)", True, 0.05, 3.0),
+        ("sharp + gap>5pts + odds>$2",             True, 0.05, 2.0),
+        ("sharp + gap>3pts + odds>$3",             True, 0.03, 3.0),
+        ("sharp + gap>3pts + odds>$2",             True, 0.03, 2.0),
+        ("sharp + gap>2pts + odds>$2",             True, 0.02, 2.0),
+        ("gap>3pts + odds>$2  (no sharp)",         False, 0.03, 2.0),
+        ("gap>3pts + odds>$3  (no sharp)",         False, 0.03, 3.0),
+    ]
+    for label, need_sharp, g, om in matrix:
+        sub = [r for r in allr
+               if (r["sharp"] or not need_sharp)
+               and r["gap"] > g and r["odds1"] and r["odds1"] > om]
+        if not sub:
+            print(f"  {label:40} {0:>6}  (no races)")
+            continue
+        nr, h, st, rt, net, roi, roi_ex, big = bt(sub)
+        flag = "  <== +EV" if roi > 0 and roi_ex > 0 else ("  (outlier)" if roi > 0 else "")
+        print(f"  {label:40} {nr:6d} {h:5d} {h/nr*100:5.1f}% {st:8.0f} {rt:8.0f} {net:+8.0f} "
+              f"{roi:+7.1f}% {roi_ex:+8.1f}%{flag}")
+
     # ── "HIT BIG" reality check: are the big dividends even reachable? ───────
     def buckets(divs):
         b = [0, 0, 0, 0, 0]  # <50, 50-100, 100-500, 500-1k, >=1k
