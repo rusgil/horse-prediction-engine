@@ -212,5 +212,66 @@ async def main():
     print("\n  ROI-exMax = ROI with the single biggest dividend removed (variance check).")
     print("  Small n => not significant; watch whether ROI survives ex-max and holds as n grows.")
 
+    # ── "HIT BIG" reality check: are the big dividends even reachable? ───────
+    def buckets(divs):
+        b = [0, 0, 0, 0, 0]  # <50, 50-100, 100-500, 500-1k, >=1k
+        for d in divs:
+            b[0 if d < 50 else 1 if d < 100 else 2 if d < 500 else 3 if d < 1000 else 4] += 1
+        return b
+
+    hitd, missd = [], []
+    for r in allr:
+        cs = {c for c, _ in top_trifectas(r["ranked"], r["wpn"])}
+        (hitd if r["actual"] in cs else missd).append(r["div"])
+    print("\n" + "=" * 78)
+    print("DOES IT HIT BIG?  trifecta dividend distribution, top-50 on all scoreable races")
+    print("=" * 78)
+    print(f"  {'bucket':>10} {'HITS(covered)':>14} {'MISSES':>9}")
+    names = ["<$50", "$50-100", "$100-500", "$500-1k", ">=$1k"]
+    hb, mb = buckets(hitd), buckets(missd)
+    for i, nm in enumerate(names):
+        print(f"  {nm:>10} {hb[i]:>14} {mb[i]:>9}")
+    alld = sorted([r["div"] for r in allr], reverse=True)
+    covered_big = [r["div"] for r in allr
+                   if r["actual"] in {c for c, _ in top_trifectas(r["ranked"], r["wpn"])} and r["div"] >= 500]
+    print(f"\n  biggest trifecta dividend in dataset: ${alld[0]:.0f}   (top-5: {', '.join('$%.0f'%d for d in alld[:5])})")
+    print(f"  our top-50 HITS >= $500: {len(covered_big)}   (biggest we actually covered: "
+          f"${max(covered_big) if covered_big else 0:.0f})")
+    print(f"  avg dividend WHEN WE HIT: ${sum(hitd)/len(hitd):.0f}   vs WHEN WE MISS: ${sum(missd)/len(missd):.0f}")
+
+    # ── "play for the big one": anchor top-pick to WIN, spread the placings ──
+    def anchor_wide(r, k):
+        a = r["ranked"][0]
+        return [(a, x, y) for x, y in permutations(r["ranked"][1:k], 2)]
+
+    print("\n" + "=" * 92)
+    print("PLAY-FOR-BIG — anchor our top pick to WIN, box ranks 2..k for 2nd/3rd (gate: odds>$3)")
+    print("=" * 92)
+    print(f"  {'structure':22} {'races':>6} {'hits':>5} {'hit%':>6} {'combos':>7} {'staked':>8} "
+          f"{'return':>8} {'ROI':>7} {'ROI-exMax':>9} {'biggest':>8}")
+    val = [r for r in allr if r["odds1"] and r["odds1"] > ODDS_MIN]
+    for k in (6, 8, 10, 14):
+        st = rt = big = 0.0
+        h = 0
+        combos_total = 0
+        for r in val:
+            combos = anchor_wide(r, k)
+            if not combos:
+                continue
+            combos_total += len(combos)
+            st += len(combos)
+            if r["actual"] in set(combos):
+                rt += r["div"]; h += 1; big = max(big, r["div"])
+        if not st:
+            continue
+        net = rt - st
+        roi = net / st * 100
+        roi_ex = (net - big) / st * 100
+        cr = combos_total / len(val)
+        flag = "  <== +EV" if roi > 0 and roi_ex > 0 else ("  (outlier)" if roi > 0 else "")
+        print(f"  {'anchor1+box2-'+str(k):22} {len(val):6d} {h:5d} {h/len(val)*100:5.1f}% {cr:7.0f} "
+              f"{st:8.0f} {rt:8.0f} {roi:+6.1f}% {roi_ex:+8.1f}% {big:8.0f}{flag}")
+    print("\n  (anchor structure only wins when OUR PICK wins; then a longshot 2nd/3rd = big dividend caught.)")
+
 
 asyncio.run(main())
