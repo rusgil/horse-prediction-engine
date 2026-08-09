@@ -1,7 +1,7 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>🧪 Labs — Exotic Spread Tracker | FunkyIQ</title>
-<meta name="description" content="Out-of-sample paper tracker for the top-50 straight trifecta and clear-tri box strategies, scored against real tote dividends." />
+<meta name="description" content="Out-of-sample paper tracker for the top-40 straight trifecta and clear-tri box strategies, scored against real tote dividends." />
 <link rel="preconnect" href="https://fonts.googleapis.com" />
 <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700;800&family=Outfit:wght@400;500;600;700&display=swap" rel="stylesheet" />
 <script src="/labs-gate.js"></script>
@@ -152,7 +152,7 @@
       ledger.innerHTML = d.races.length
         ? `<table><thead><tr>
             <th class="l">Date</th><th class="l">Race</th><th>Pick</th><th>Gap</th>
-            <th>Result</th><th>Trifecta $</th><th>Top-50 straight</th><th>Clear-tri box</th>
+            <th>Result</th><th>Trifecta $</th><th>Top-40 straight</th><th>Clear-tri box</th>
           </tr></thead><tbody>${d.races.map(row).join('')}</tbody></table>`
         : '<div class="empty">No settled qualifying races yet.</div>';
     } catch (e) {

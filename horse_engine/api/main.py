@@ -9187,7 +9187,7 @@ async def labs_exotic_track():
     """
     from collections import defaultdict
     from itertools import permutations as _perm
-    GAP, ODDS_LOOSE, ODDS_TIGHT, N_TOP, POOL = 0.05, 2.0, 3.0, 50, 8
+    GAP, ODDS_LOOSE, ODDS_TIGHT, N_TOP, POOL = 0.05, 2.0, 3.0, 40, 8
 
     async with get_session() as session:
         drows = (await session.execute(
@@ -9231,8 +9231,8 @@ async def labs_exotic_track():
         return {"label": label, "desc": desc, "stake": 0.0, "ret": 0.0,
                 "races": 0, "hits": 0, "big": 0.0, "hitdiv": []}
     strat = {
-        "straight_p3": _blank("Top-50 straight · pick > $3", "50 highest-probability 1-2-3 orders, $1 each"),
-        "straight_p2": _blank("Top-50 straight · pick > $2", "50 highest-probability 1-2-3 orders, $1 each"),
+        "straight_p3": _blank("Top-40 straight · pick > $3", "40 highest-probability 1-2-3 orders, $1 each"),
+        "straight_p2": _blank("Top-40 straight · pick > $2", "40 highest-probability 1-2-3 orders, $1 each"),
         "box_p3": _blank("Clear-tri box · pick > $3", "box the top-5 — 60 orders, $1 each"),
         "box_p2": _blank("Clear-tri box · pick > $2", "box the top-5 — 60 orders, $1 each"),
     }
