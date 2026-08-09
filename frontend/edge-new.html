@@ -1186,18 +1186,30 @@
   function renderStats() {
     const el = document.getElementById('statStrip');
     if (E.parent !== 'wins') { el.innerHTML = ''; return; }
-    // Stats reflect the date shown in the ‹ date › selector (navDate = yesterday
-    // by default) so the strip shows even on today's live view.
-    const yest = aestToday(-1);
-    const navDate = (E.view === 'up') ? yest : (E.resDate || yest);
-    const st = E.perfByDate[navDate];
-    if (!st || !st.races) { el.innerHTML = ''; return; }
+    // Stats reflect the SAME picks shown on screen (respecting the Sharp mode)
+    // so the strip always matches the visible cards.
+    let settled, w, pl;
+    if (E.view === 'res') {
+      if (!E.resData || E.resData._date !== E.resDate) { el.innerHTML = ''; return; }
+      const picks = applyMode(E.resData.picks || []).picks;
+      settled = picks.filter(p => !p.scratched && !p.no_result);
+      w = settled.filter(p => p.winner).length;
+      pl = settled.filter(p => p.placed && !p.winner).length;
+    } else {
+      const picks = applyMode(E.picks || []).picks;
+      settled = picks.filter(p => { const r = E.resultsMap[p.race_id]; return r && !r.scratched && !r.no_result && (r.winner === true || r.placed === true || r.position != null); });
+      w = settled.filter(p => E.resultsMap[p.race_id].winner).length;
+      pl = settled.filter(p => { const r = E.resultsMap[p.race_id]; return r.placed && !r.winner; }).length;
+    }
+    if (!settled.length) { el.innerHTML = ''; return; }
+    const wPct = Math.round(w / settled.length * 100);
+    const plcPct = Math.round((w + pl) / settled.length * 100);
     el.innerHTML = `
-      <div class="ds-stat"><b class="num">${st.races}</b> settled</div>
+      <div class="ds-stat"><b class="num">${settled.length}</b> settled</div>
       <div class="ds-divider"></div>
-      <div class="ds-stat"><b class="num" style="color:var(--mint)">${st.wins}</b> picks won <span class="num">(${st.pct}%)</span></div>
+      <div class="ds-stat"><b class="num" style="color:var(--mint)">${w}</b> picks won <span class="num">(${wPct}%)</span></div>
       <div class="ds-divider"></div>
-      <div class="ds-stat"><b class="num" style="color:var(--amber)">${st.placed}</b> more placed <span class="num">(${st.placePct}% placed incl. wins)</span></div>`;
+      <div class="ds-stat"><b class="num" style="color:var(--amber)">${pl}</b> more placed <span class="num">(${plcPct}% placed incl. wins)</span></div>`;
   }
   function renderControls() {
     const el = document.getElementById('ctlRows');
@@ -1516,10 +1528,10 @@
     }
     renderStats();
     renderFeed();
-    loadTodayResults().then(() => { if (E.parent === 'wins' && E.view === 'up') renderFeed(); });
+    loadTodayResults().then(() => { renderStats(); if (E.parent === 'wins' && E.view === 'up') renderFeed(); });
     setInterval(() => { if (E.parent === 'wins' && E.view === 'up') renderFeed(); }, 45000);
     setInterval(() => { loadEdge().then(() => { renderStats(); seedResultsFromPicks(); if (E.parent === 'wins' && E.view === 'up') renderFeed(); }).catch(() => {}); }, 5 * 60 * 1000);
-    setInterval(() => { loadTodayResults().then(() => { if (E.parent === 'wins' && E.view === 'up') renderFeed(); }); }, 4 * 60 * 1000);
+    setInterval(() => { loadTodayResults().then(() => { renderStats(); if (E.parent === 'wins' && E.view === 'up') renderFeed(); }); }, 4 * 60 * 1000);
   }
   boot();
 </script>

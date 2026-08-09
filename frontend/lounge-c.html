@@ -1245,17 +1245,22 @@
 
   /* ── shared: day strip ── */
   function renderDayStrip() {
+    // Stats reflect the SAME races shown on screen (S.date, respecting the
+    // Sharp filter) so the strip always matches the visible cells.
+    let races = allRaces();
+    if (S.sharpOnly) races = races.filter(r => r.is_sharp === true);
+    const settled = races.filter(isSettled);
     const el = document.getElementById('dayStrip');
-    // Stats reflect the date shown in the ‹ date › selector (navDate = yesterday
-    // by default) so the strip is never empty on today.
-    const _yest = aestToday(-1);
-    const _st = S.perfByDate[S.date < _yest ? S.date : _yest];
-    const statsHtml = (_st && _st.races) ? `<div class="ds-row">
-      <div class="ds-stat"><b class="num">${_st.races}</b> settled</div>
+    const wins = settled.filter(r => r.model_correct === true).length;
+    const placed = settled.filter(r => r.model_correct === false && r.model_placed === true).length;
+    const pct = settled.length ? Math.round(wins / settled.length * 100) : 0;
+    const placePct = settled.length ? Math.round((wins + placed) / settled.length * 100) : 0;
+    const statsHtml = settled.length ? `<div class="ds-row">
+      <div class="ds-stat"><b class="num">${settled.length}</b> settled</div>
       <div class="ds-divider"></div>
-      <div class="ds-stat"><b class="g num">${_st.wins}</b> picks won <span class="num">(${_st.pct}%)</span></div>
+      <div class="ds-stat"><b class="g num">${wins}</b> picks won <span class="num">(${pct}%)</span></div>
       <div class="ds-divider"></div>
-      <div class="ds-stat"><b class="a num">${_st.placed}</b> more placed <span class="num">(${_st.placePct}% placed incl. wins)</span></div>
+      <div class="ds-stat"><b class="a num">${placed}</b> more placed <span class="num">(${placePct}% placed incl. wins)</span></div>
     </div>` : '';
     const sharpHtml = `<div class="ds-row">
       <span class="seg seg-sm" role="radiogroup" aria-label="Sharp filter">

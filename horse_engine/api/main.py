@@ -19834,6 +19834,7 @@ async def get_meeting(race_date: str, venue_code: str):
                 .order_by(RunnerPredictionHistoryRow.enriched_at.desc())
             )
             seen_rank: dict[tuple[str, int], bool] = {}
+            _completed_sharp_ctx: dict[str, dict] = {}
             for p in hist_tp_result.scalars().all():
                 key = (p.race_id, p.model_rank)
                 if key in seen_rank:
@@ -19856,9 +19857,16 @@ async def get_meeting(race_date: str, venue_code: str):
                     # was Sharp-flagged but never crossed the line.
                     pick_finished = _normalize_horse(p.horse_name) in \
                         finished_horses.get(p.race_id, set())
-                    is_sharp_map[p.race_id] = (
-                        bool(p.is_sharp) if pick_finished else False
-                    )
+                    # Do NOT trust the frozen is_sharp flag — it proved
+                    # unreliable (Casterton R5 2026-08-09 froze False on a 39%
+                    # pick). Recompute below from the FROZEN win-probs so the
+                    # Lounge/Hot Seat agree with the Edge's live recomputation.
+                    _c_days = None
+                    try:
+                        _c_days = (json.loads(p.enriched_json or "{}") or {}).get("days_since_last_run")
+                    except Exception:
+                        pass
+                    _completed_sharp_ctx[p.race_id] = {"days_off": _c_days, "finished": pick_finished}
                 elif p.model_rank == 2:
                     rank2_win_probs[p.race_id] = p.win_probability
                 elif p.model_rank == 3:
@@ -19867,6 +19875,19 @@ async def get_meeting(race_date: str, venue_code: str):
                     rank4_win_probs[p.race_id] = p.win_probability
                 elif p.model_rank == 5:
                     rank5_win_probs[p.race_id] = p.win_probability
+
+            # Recompute is_sharp for completed races from the FROZEN win-probs
+            # (rank1 pct OR top-3 sum) + layoff + pick-finished. Matches the
+            # upcoming branch and the Edge; late-non-metro is applied at output.
+            for rid, ctx in _completed_sharp_ctx.items():
+                r1_pct = (top_win_probs.get(rid) or 0) * 100
+                t3_pct = ((top_win_probs.get(rid) or 0)
+                          + (rank2_win_probs.get(rid) or 0)
+                          + (rank3_win_probs.get(rid) or 0)) * 100
+                d = ctx["days_off"]
+                layoff_ok = not (isinstance(d, (int, float)) and d > 180)
+                high_conf = r1_pct >= 30 or t3_pct >= 60
+                is_sharp_map[rid] = bool(high_conf and layoff_ok and ctx["finished"])
 
         upcoming_ids = [rid for rid in race_ids if rid not in completed_ids]
         if upcoming_ids:
