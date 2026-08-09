@@ -17,6 +17,10 @@
       "destination": "/bets.html"
     },
     {
+      "source": "/lab-exotic",
+      "destination": "/lab-exotic.html"
+    },
+    {
       "source": "/playbook",
       "destination": "/funkmeup.html"
     },

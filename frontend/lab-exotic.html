@@ -1,0 +1,163 @@
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>🧪 Labs — Exotic Spread Tracker | FunkyIQ</title>
+<meta name="description" content="Out-of-sample paper tracker for the top-50 straight trifecta and clear-tri box strategies, scored against real tote dividends." />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700;800&family=Outfit:wght@400;500;600;700&display=swap" rel="stylesheet" />
+<script src="/labs-gate.js"></script>
+<style>
+  :root {
+    --bg-base:#07090f; --bg-card:#0e1220; --bg-elevated:#1a2035; --border:#1e2840;
+    --green:#22c55e; --green-bright:#4ade80; --red:#f87171; --gold:#e8a020;
+    --purple:#a855f7; --purple-bright:#c084fc; --teal:#2dd4bf; --teal-bright:#5eead4;
+    --text:#e6e9f0; --text-dim:#8a93a8; --text-muted:#5c6478;
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg-base); color:var(--text); font-family:'Outfit',system-ui,sans-serif; -webkit-font-smoothing:antialiased; }
+  a { color:inherit; text-decoration:none; }
+  .wrap { max-width:1080px; margin:0 auto; padding:0 16px 60px; }
+
+  .page-nav { display:flex; gap:6px; align-items:center; padding:12px 16px; max-width:1080px; margin:0 auto; flex-wrap:wrap; }
+  .page-nav-btn { display:inline-flex; align-items:center; gap:6px; padding:7px 12px; border-radius:10px; border:1px solid transparent; color:var(--text-dim); font-weight:600; font-size:13px; }
+  .page-nav-btn:hover { background:rgba(255,255,255,0.07); color:#fff; }
+  .page-nav-btn.labs.active { background:rgba(16,185,129,0.15); color:#34d399; border-color:rgba(16,185,129,0.45); }
+  .page-nav-btn.about { font-size:11px; padding:6px 9px; color:#6b7280; }
+  .nav-spacer { flex:1; }
+
+  header.hero { text-align:center; padding:22px 0 6px; }
+  header.hero h1 { font-family:'Barlow Condensed',sans-serif; font-weight:800; font-size:2rem; margin:0; letter-spacing:0.01em; }
+  header.hero p { color:var(--text-dim); margin:6px 0 0; font-size:0.9rem; }
+
+  .subtabs { display:flex; gap:8px; justify-content:center; margin:16px 0 6px; flex-wrap:wrap; }
+  .subtab { padding:8px 16px; border-radius:999px; border:1px solid var(--border); background:var(--bg-card); color:var(--text-dim); font-weight:700; font-size:0.82rem; }
+  .subtab.active { background:rgba(45,212,191,0.14); color:var(--teal-bright); border-color:rgba(45,212,191,0.5); }
+
+  .note { background:rgba(232,160,32,0.08); border:1px solid rgba(232,160,32,0.35); border-radius:12px; padding:12px 15px; margin:16px 0; font-size:0.82rem; color:#e9d7b0; line-height:1.5; }
+  .note b { color:var(--gold); }
+
+  .cards { display:grid; grid-template-columns:1fr 1fr; gap:14px; margin:18px 0; }
+  @media (max-width:640px){ .cards { grid-template-columns:1fr; } }
+  .card { background:var(--bg-card); border:1px solid var(--border); border-radius:16px; padding:18px; position:relative; overflow:hidden; }
+  .card.straight { border-color:rgba(45,212,191,0.4); }
+  .card.box { border-color:rgba(168,85,247,0.4); }
+  .card h2 { font-family:'Barlow Condensed',sans-serif; font-size:1.3rem; margin:0 0 2px; }
+  .card .desc { color:var(--text-muted); font-size:0.72rem; margin-bottom:14px; }
+  .roi { font-family:'Barlow Condensed',sans-serif; font-size:2.6rem; font-weight:800; line-height:1; }
+  .roi.pos { color:var(--green-bright); } .roi.neg { color:var(--red); }
+  .roi small { font-size:0.8rem; color:var(--text-dim); font-weight:600; margin-left:6px; }
+  .grid { display:grid; grid-template-columns:1fr 1fr; gap:10px 14px; margin-top:16px; }
+  .stat .k { font-size:0.64rem; text-transform:uppercase; letter-spacing:0.06em; color:var(--text-muted); }
+  .stat .v { font-family:'Barlow Condensed',sans-serif; font-size:1.25rem; font-weight:700; font-variant-numeric:tabular-nums; }
+  .v.pos { color:var(--green-bright); } .v.neg { color:var(--red); }
+
+  h3.sec { font-family:'Barlow Condensed',sans-serif; font-size:1.15rem; margin:26px 0 10px; color:var(--text-dim); text-transform:uppercase; letter-spacing:0.05em; }
+  .tbl-wrap { overflow-x:auto; border:1px solid var(--border); border-radius:14px; }
+  table { border-collapse:collapse; width:100%; min-width:720px; font-size:0.82rem; }
+  th, td { padding:9px 11px; text-align:right; white-space:nowrap; font-variant-numeric:tabular-nums; }
+  th { background:var(--bg-elevated); color:var(--text-dim); font-weight:700; font-size:0.68rem; text-transform:uppercase; letter-spacing:0.04em; position:sticky; top:0; }
+  th.l, td.l { text-align:left; }
+  tbody tr { border-top:1px solid var(--border); }
+  tbody tr:hover { background:rgba(255,255,255,0.02); }
+  .pill { display:inline-block; padding:1px 7px; border-radius:999px; font-weight:800; font-size:0.7rem; }
+  .pill.hit { background:rgba(34,197,94,0.16); color:var(--green-bright); }
+  .pill.miss { background:rgba(120,130,150,0.12); color:var(--text-muted); }
+  td.pos { color:var(--green-bright); } td.neg { color:var(--red); }
+  .big-div { color:var(--gold); font-weight:800; }
+  .loading, .empty { text-align:center; color:var(--text-dim); padding:40px 0; }
+</style>
+
+<nav class="page-nav">
+  <a href="/"        class="page-nav-btn lounge"><span>🛋️</span><span>Lounge</span></a>
+  <a href="/edge"    class="page-nav-btn edge"><span>🎯</span><span>Edge</span></a>
+  <a href="/hotseat" class="page-nav-btn hot"><span>🔥</span><span>Hot Seat</span></a>
+  <a href="/lab"     class="page-nav-btn labs active"><span>🧪</span><span>Labs</span></a>
+  <span class="nav-spacer"></span>
+  <a href="/about"   class="page-nav-btn about"><span>ℹ️</span><span>About</span></a>
+  <a href="/dashboard" class="page-nav-btn about"><span>⚙️</span><span>Admin</span></a>
+</nav>
+
+<div class="wrap">
+  <header class="hero">
+    <h1>🎯 Exotic Spread Tracker</h1>
+    <p>Straight-trifecta spread vs a box, scored against real tote dividends — paper only, tracked out-of-sample.</p>
+  </header>
+
+  <div class="subtabs">
+    <a href="/lab" class="subtab">📊 Box Ledger</a>
+    <span class="subtab active">🎯 Exotic Spread</span>
+  </div>
+
+  <div class="note">
+    <b>Read this first.</b> This is a <b>positive-skew gamble, not a proven edge</b> — offline backtests were −20% to −31% ROI at scale, and the model's coverage is well-calibrated so the tote takeout usually wins. The tight gate (<b>Sharp + clear trifecta + top pick &gt; $3</b>) fires on very few races, so early numbers are dominated by variance. This page exists to accumulate an <b>honest out-of-sample sample</b> — watch whether it survives past ~50–100 qualifying races. Nothing here is bet.
+  </div>
+
+  <div id="cards" class="cards"><div class="loading">Loading…</div></div>
+
+  <h3 class="sec">Race-by-race ledger</h3>
+  <div id="ledger" class="tbl-wrap"><div class="loading">Loading…</div></div>
+</div>
+
+<script>
+  const API = '';
+  const fmt = n => '$' + Math.round(n).toLocaleString();
+  const sign = n => (n >= 0 ? '+' : '−') + '$' + Math.abs(Math.round(n)).toLocaleString();
+
+  function strat(s) {
+    const cls = s.roi >= 0 ? 'pos' : 'neg';
+    const kind = s.id === 'top50_straight' ? 'straight' : 'box';
+    return `<div class="card ${kind}">
+      <h2>${s.label}</h2>
+      <div class="desc">${s.desc} · gate: ${s.gate}</div>
+      <div class="roi ${cls}">${s.roi >= 0 ? '+' : ''}${s.roi}%<small>ROI</small></div>
+      <div class="grid">
+        <div class="stat"><div class="k">Net P&L</div><div class="v ${cls}">${sign(s.pnl)}</div></div>
+        <div class="stat"><div class="k">Races · hits</div><div class="v">${s.races} · ${s.hits} (${s.hit_rate}%)</div></div>
+        <div class="stat"><div class="k">Staked</div><div class="v">${fmt(s.staked)}</div></div>
+        <div class="stat"><div class="k">Returned</div><div class="v">${fmt(s.returned)}</div></div>
+        <div class="stat"><div class="k">Biggest hit</div><div class="v">${fmt(s.biggest)}</div></div>
+        <div class="stat"><div class="k">Avg winning div</div><div class="v">${fmt(s.avg_hit_div)}</div></div>
+      </div>
+    </div>`;
+  }
+
+  function row(r) {
+    const st = r.results.top50_straight || {}, bx = r.results.clear_tri_box || {};
+    const cell = x => x.hit
+      ? `<span class="pill hit">HIT</span> <span class="pos">${sign(x.pnl)}</span>`
+      : `<span class="pill miss">–</span> <span class="neg">${sign(x.pnl)}</span>`;
+    const divCls = r.trifecta_dividend >= 200 ? 'big-div' : '';
+    return `<tr>
+      <td class="l">${r.date}</td>
+      <td class="l">${(r.venue||'').replace(/-/g,' ')} R${r.race_number||''}</td>
+      <td>$${(r.top_pick_odds||0).toFixed(2)}</td>
+      <td>${r.gap_pts}pt</td>
+      <td>${(r.actual_top3||[]).filter(x=>x!=null).join('-')}</td>
+      <td class="${divCls}">$${(r.trifecta_dividend||0).toFixed(0)}</td>
+      <td>${cell(st)}</td>
+      <td>${cell(bx)}</td>
+    </tr>`;
+  }
+
+  async function load() {
+    try {
+      const d = await (await fetch(API + '/api/labs/exotic-track')).json();
+      const cards = document.getElementById('cards');
+      const ledger = document.getElementById('ledger');
+      if (!d.strategies || !d.strategies.length) {
+        cards.innerHTML = '<div class="empty">No qualifying races yet.</div>';
+        ledger.innerHTML = '<div class="empty">Waiting for the first Sharp + clear-trifecta + $3+ pick to settle.</div>';
+        return;
+      }
+      cards.innerHTML = d.strategies.map(strat).join('');
+      ledger.innerHTML = d.races.length
+        ? `<table><thead><tr>
+            <th class="l">Date</th><th class="l">Race</th><th>Pick</th><th>Gap</th>
+            <th>Result</th><th>Trifecta $</th><th>Top-50 straight</th><th>Clear-tri box</th>
+          </tr></thead><tbody>${d.races.map(row).join('')}</tbody></table>`
+        : '<div class="empty">No settled qualifying races yet.</div>';
+    } catch (e) {
+      document.getElementById('cards').innerHTML = '<div class="empty">Could not load — ' + (e.message||e) + '</div>';
+    }
+  }
+  load();
+</script>
