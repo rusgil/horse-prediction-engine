@@ -1205,9 +1205,19 @@
     //   - Premium tier ROI / PnL / win rate (rolling 30d, what users would bet)
     //   - High-confidence threshold (≥30%) win rate / ROI from backtest analysis
     let productionHtml = '';
-    if (prodData?.baseline_win_rate_pct != null || premData?.win_pct != null) {
-      const winPct  = prodData?.baseline_win_rate_pct;
-      const races   = prodData?.holdout_races;
+    if (prodData?.baseline_win_rate_pct != null || perfData?.summary?.length || premData?.win_pct != null) {
+      // "What users see" MUST be the actual frozen top-1 picks' win rate from
+      // /api/performance — NOT the feature-ablation baseline, which re-predicts
+      // from features without the production multipliers/calibration and so
+      // diverges badly (17.1% vs the real ~30%). Aggregate the last 14 complete
+      // days of live results.
+      const _liveDays = (perfData?.summary || [])
+        .filter(d => d.data_complete && d.races)
+        .sort((a, b) => (a.date < b.date ? 1 : -1))
+        .slice(0, 14);
+      const _lw = _liveDays.reduce((a, d) => ({ races: a.races + (d.races || 0), wins: a.wins + (d.wins || 0) }), { races: 0, wins: 0 });
+      const winPct  = _lw.races ? (100 * _lw.wins / _lw.races) : prodData?.baseline_win_rate_pct;
+      const races   = _lw.races || prodData?.holdout_races;
       const winCol  = winPct == null ? 'var(--text-dim)'
                     : winPct >= 30   ? 'var(--green-bright)'
                     : winPct >= 25   ? 'var(--gold-light)' : '#f87171';
@@ -1229,7 +1239,7 @@
             <div class="stat-card">
               <div class="stat-card-num" style="color:${winCol}">${winPct.toFixed(1)}%</div>
               <div class="stat-card-label">Production Win Rate</div>
-              <div class="stat-card-sub">Top-1 pick · ${races?.toLocaleString() ?? '—'} holdout races · last 14d</div>
+              <div class="stat-card-sub">Top-1 pick · ${races?.toLocaleString() ?? '—'} settled races · last 14d (live)</div>
             </div>` : ''}
             ${placeData ? (() => {
               const pr = placeData.place_roi_pct;
