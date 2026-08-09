@@ -178,14 +178,18 @@ async def main():
             preds[rid][n] = float(wp)
             rank_names[rid].append(n)
 
-        # actual finishing order
+        # actual finishing order + starting prices (the market signal)
         res = (await s.execute(text(
-            "SELECT race_id, horse_name, position FROM historical_results "
-            "WHERE race_id = ANY(:ids) AND position IS NOT NULL"),
-            {"ids": race_ids})).fetchall()
-        order = defaultdict(dict)  # race_id -> {position: norm_name}
-        for rid, hn, pos in res:
-            order[rid][int(pos)] = norm(hn)
+            "SELECT race_id, horse_name, position, starting_price FROM historical_results "
+            "WHERE race_id = ANY(:ids)"), {"ids": race_ids})).fetchall()
+        order = defaultdict(dict)   # race_id -> {position: norm_name}
+        sp_map = defaultdict(dict)  # race_id -> {norm_name: starting_price}
+        for rid, hn, pos, sp in res:
+            n = norm(hn)
+            if pos is not None:
+                order[rid][int(pos)] = n
+            if sp is not None and sp > 1.0:
+                sp_map[rid][n] = float(sp)
 
     # build per-race records
     races = []
@@ -199,12 +203,17 @@ async def main():
         if tot <= 0:
             continue
         wpn = {k: v / tot for k, v in wp.items()}  # renormalise to sum 1
+        # market win probs from starting price, de-vigged (proportional)
+        sp = sp_map.get(rid, {})
+        inv = {n: 1.0 / s for n, s in sp.items() if s > 1.0}
+        mtot = sum(inv.values())
+        mwp = {n: v / mtot for n, v in inv.items()} if mtot > 0 else {}
         actual_ff = tuple(o.get(i) for i in (1, 2, 3, 4))
         actual_tri = tuple(o.get(i) for i in (1, 2, 3))
         r1 = wpn.get(ranked[0], 0.0)
         venue = rid.split("_")[1] if "_" in rid else ""
         races.append({
-            "rid": rid, "wpn": wpn, "ranked": ranked,
+            "rid": rid, "wpn": wpn, "mwp": mwp, "ranked": ranked,
             "ff": actual_ff if all(actual_ff) else None,
             "tri": actual_tri if all(actual_tri) else None,
             "div_ff": div[rid]["ff"], "div_tri": div[rid]["tri"],
@@ -274,8 +283,74 @@ async def main():
 
     run(FF_STRUCTS, 4, "div_ff", "ff", TAB_FIRST_FOUR_TAKEOUT)
     run(TRI_STRUCTS, 3, "div_tri", "tri", TAB_TRIFECTA_TAKEOUT)
+
+    # ── genuine market-vs-model overlay ─────────────────────────────────────
+    # Price every candidate combo TWO ways: P_model (our win-probs -> Harville)
+    # and P_market (starting-price win-probs, de-vigged -> Harville). Bet $1 on
+    # each combo where overlay = P_model / P_market >= T (the model thinks the
+    # market underrates that exact order). Breakeven overlay = 1/(1-takeout).
+    def run_overlay(legs, div_key, actual_key, takeout, topk=8):
+        fn = h_top4 if legs == 4 else h_top3
+        be = 1.0 / (1.0 - takeout)
+        thresholds = [1.0, round(be, 2), 1.5, 2.0, 3.0]
+        print("\n" + "=" * 100)
+        print(f"MARKET-vs-MODEL OVERLAY — {'FIRST FOUR' if legs == 4 else 'TRIFECTA'} "
+              f"(takeout {takeout:.0%}, breakeven overlay {be:.2f}, $1/combo, cand=top{topk})")
+        print("=" * 100)
+        print(f"{'overlay>=':>10} {'races':>6} {'combos':>7} {'c/race':>6} {'staked':>8} "
+              f"{'return':>9} {'ROI':>8} {'ROI-exMax':>9} {'hit%':>6} {'biggest':>9}")
+        agg = {T: dict(races=0, combos=0, cost=0.0, ret=0.0, hits=0, big=0.0) for T in thresholds}
+        n_mkt = 0
+        for r in races:
+            dv, actual, mwp, wpn = r[div_key], r[actual_key], r["mwp"], r["wpn"]
+            if dv is None or actual is None or not mwp:
+                continue
+            n_mkt += 1
+            cand = [n for n in r["ranked"] if n in mwp][:topk]
+            if len(cand) < legs:
+                continue
+            picks = {T: [] for T in thresholds}
+            for combo in permutations(cand, legs):
+                kp = [mwp.get(n, 0.0) for n in combo]
+                pk = fn(*kp)
+                if pk <= 0:
+                    continue
+                ov = fn(*[wpn.get(n, 0.0) for n in combo]) / pk
+                for T in thresholds:
+                    if ov >= T:
+                        picks[T].append(combo)
+            for T in thresholds:
+                bs = picks[T]
+                if not bs:
+                    continue
+                a = agg[T]
+                a["races"] += 1
+                a["combos"] += len(bs)
+                a["cost"] += len(bs)
+                if actual in set(bs):
+                    a["ret"] += dv
+                    a["hits"] += 1
+                    a["big"] = max(a["big"], dv)
+        for T in thresholds:
+            a = agg[T]
+            if not a["cost"]:
+                continue
+            roi = (a["ret"] - a["cost"]) / a["cost"]
+            roi_ex = (a["ret"] - a["big"] - a["cost"]) / a["cost"]
+            hit = a["hits"] / a["races"] * 100 if a["races"] else 0
+            cr = a["combos"] / a["races"] if a["races"] else 0
+            flag = "  <== +EV" if roi > 0 and roi_ex > 0 else ("  (outlier)" if roi > 0 else "")
+            print(f"{T:>10.2f} {a['races']:6d} {a['combos']:7d} {cr:6.1f} {a['cost']:8.0f} "
+                  f"{a['ret']:9.0f} {roi*100:7.1f}% {roi_ex*100:8.1f}% {hit:5.1f}% {a['big']:9.0f}{flag}")
+        print(f"(races with usable starting-price market: {n_mkt}/{len(races)})")
+
+    run_overlay(4, "div_ff", "ff", TAB_FIRST_FOUR_TAKEOUT)
+    run_overlay(3, "div_tri", "tri", TAB_TRIFECTA_TAKEOUT)
+
     print("\n(ROI>0 => the structure/gate returned more than it staked across the sample.")
-    print(" 'cover%' = model's own Harville hit-probability estimate. Strategy only — nothing live.)")
+    print(" 'cover%' = model's own Harville hit-probability estimate.")
+    print(" Overlay = P_model/P_market per combo; only combos above breakeven overlay are +EV")
+    print(" IF the model is right. Strategy only — nothing live.)")
 
 
 asyncio.run(main())
