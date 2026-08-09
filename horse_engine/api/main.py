@@ -9163,6 +9163,123 @@ async def get_bets_for_race(race_id: str, strategy: Optional[str] = None):
             "bets": [_row_to_bet_dict(b) for b in rows]}
 
 
+@app.get("/api/labs/exotic-track")
+async def labs_exotic_track():
+    """Out-of-sample paper tracker for two exotic spread ideas, computed ON
+    DEMAND from the frozen pre-race snapshot (runner_prediction_history) + real
+    results + real tote trifecta dividends. Nothing is stored or bet.
+
+    Gate (both strategies): Sharp race AND clear trifecta (rank3-rank4 win% gap
+    > 5 pts) AND our top pick's win odds > $3.
+      • top50_straight — the 50 highest-Harville-probability 1-2-3 orderings, $1 each.
+      • clear_tri_box  — box the top-5 (all 60 orderings), $1 each.
+    Payout = real trifecta dividend (per $1) if the exact finishing 1-2-3 is covered.
+    """
+    from collections import defaultdict
+    from itertools import permutations as _perm
+    GAP, ODDS_MIN, N_TOP, POOL = 0.05, 3.0, 50, 8
+
+    async with get_session() as session:
+        drows = (await session.execute(
+            select(RaceExoticDividendRow.race_id, RaceExoticDividendRow.trifecta)
+            .where(RaceExoticDividendRow.trifecta.isnot(None)))).all()
+        div = {r[0]: float(r[1]) for r in drows}
+        ids = list(div.keys())
+        if not ids:
+            return {"strategies": [], "races": []}
+        prows = (await session.execute(
+            select(RunnerPredictionHistoryRow.race_id, RunnerPredictionHistoryRow.horse_name,
+                   RunnerPredictionHistoryRow.win_probability, RunnerPredictionHistoryRow.model_rank,
+                   RunnerPredictionHistoryRow.tab_number, RunnerPredictionHistoryRow.is_sharp,
+                   RunnerPredictionHistoryRow.best_available_odds, RunnerPredictionHistoryRow.venue,
+                   RunnerPredictionHistoryRow.race_number, RunnerPredictionHistoryRow.scheduled_time)
+            .where(RunnerPredictionHistoryRow.race_id.in_(ids))
+            .where((RunnerPredictionHistoryRow.source == "live") | (RunnerPredictionHistoryRow.source.is_(None)))
+            .where((RunnerPredictionHistoryRow.cancelled.is_(False)) | (RunnerPredictionHistoryRow.cancelled.is_(None)))
+            .order_by(RunnerPredictionHistoryRow.race_id, RunnerPredictionHistoryRow.model_rank))).all()
+        preds, ranked, tabof, meta, seen = {}, {}, {}, {}, set()
+        for rid, hn, wp, rank, tab, sharp, odds, ven, rno, sched in prows:
+            n = _normalize_horse(hn)
+            if wp is None or (rid, n) in seen:
+                continue
+            seen.add((rid, n))
+            preds.setdefault(rid, {})[n] = float(wp)
+            ranked.setdefault(rid, []).append(n)
+            tabof.setdefault(rid, {})[n] = tab
+            if rank == 1:
+                meta[rid] = {"sharp": bool(sharp), "odds1": odds, "venue": ven or "",
+                             "rno": rno, "sched": sched}
+        rrows = (await session.execute(
+            select(HistoricalResultRow.race_id, HistoricalResultRow.horse_name, HistoricalResultRow.position)
+            .where(HistoricalResultRow.race_id.in_(ids))
+            .where(HistoricalResultRow.position.isnot(None)))).all()
+        order = {}
+        for rid, hn, pos in rrows:
+            order.setdefault(rid, {})[int(pos)] = _normalize_horse(hn)
+
+    strat = {
+        "top50_straight": {"label": "Top-50 straight trifectas",
+                           "desc": "50 highest-probability exact 1-2-3 orders, $1 each ($50)"},
+        "clear_tri_box": {"label": "Clear-tri box (top-5)",
+                          "desc": "box the top-5 runners — 60 orders, $1 each ($60)"},
+    }
+    for s in strat.values():
+        s.update(stake=0.0, ret=0.0, races=0, hits=0, big=0.0, hitdiv=[])
+    races_out = []
+
+    for rid in ids:
+        wp, rk, m, o = preds.get(rid, {}), ranked.get(rid, []), meta.get(rid, {}), order.get(rid, {})
+        if len(rk) < 5 or not m:
+            continue
+        tot = sum(wp.values())
+        if tot <= 0:
+            continue
+        wpn = {k: v / tot for k, v in wp.items()}
+        gap = wpn[rk[2]] - wpn[rk[3]]
+        odds1 = m.get("odds1")
+        actual = tuple(o.get(i) for i in (1, 2, 3))
+        if not (m.get("sharp") and gap > GAP and odds1 and odds1 > ODDS_MIN and all(actual)):
+            continue
+        allc = [(c, _harville_top3_prob(wpn[c[0]], wpn[c[1]], wpn[c[2]])) for c in _perm(rk[:POOL], 3)]
+        allc.sort(key=lambda x: -x[1])
+        straight = [c for c, _ in allc[:N_TOP]]
+        box = list(_perm(rk[:5], 3))
+        dv = div[rid]
+        rr = {"race_id": rid, "venue": m.get("venue"), "race_number": m.get("rno"),
+              "date": (str(m.get("sched") or "")[:10] or rid.split("_")[0]),
+              "top_pick_odds": round(odds1, 2), "gap_pts": round(gap * 100, 1),
+              "actual_top3": [tabof[rid].get(n) for n in actual],
+              "trifecta_dividend": round(dv, 2), "results": {}}
+        for key, combos in (("top50_straight", straight), ("clear_tri_box", box)):
+            hit = actual in set(combos)
+            stake = float(len(combos))
+            payout = dv if hit else 0.0
+            s = strat[key]
+            s["stake"] += stake; s["ret"] += payout; s["races"] += 1
+            if hit:
+                s["hits"] += 1; s["big"] = max(s["big"], dv); s["hitdiv"].append(dv)
+            rr["results"][key] = {"hit": hit, "stake": round(stake), "payout": round(payout, 2),
+                                  "pnl": round(payout - stake, 2)}
+        races_out.append(rr)
+
+    out = []
+    for key, s in strat.items():
+        st, ret = s["stake"], s["ret"]
+        net = ret - st
+        out.append({
+            "id": key, "label": s["label"], "desc": s["desc"],
+            "gate": "Sharp + clear-tri (r3-r4>5pts) + top pick > $3",
+            "races": s["races"], "hits": s["hits"],
+            "hit_rate": round(s["hits"] / s["races"] * 100, 1) if s["races"] else 0,
+            "staked": round(st), "returned": round(ret), "pnl": round(net),
+            "roi": round(net / st * 100, 1) if st else 0,
+            "biggest": round(s["big"]),
+            "avg_hit_div": round(sum(s["hitdiv"]) / len(s["hitdiv"])) if s["hitdiv"] else 0,
+        })
+    races_out.sort(key=lambda r: r["date"], reverse=True)
+    return {"strategies": out, "races": races_out}
+
+
 @app.get("/api/bets")
 async def list_bet_races(
     days: int = 7,
