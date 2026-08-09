@@ -2558,14 +2558,24 @@ async def _snapshot_prerace_predictions() -> int:
 
     import uuid as _uuid
     from horse_engine.bets import is_metro_venue
-    # Highest race number per venue in this batch — for the late-non-metro
-    # Sharp exclusion (mirrors the /api/edge live computation).
+    # Full-meeting max race number for the late-non-metro Sharp exclusion.
+    # MUST be the WHOLE meeting, not just this snapshot batch: a batch only
+    # holds races inside the pre-race window, so a mid-card race can look like
+    # the last race of the meeting and wrongly trip late-non-metro. That froze
+    # is_sharp=False on Casterton R5 2026-08-09 (batch max 5, real meeting 7),
+    # and the write-once insert locked the bad value. Query the full meeting.
     _snap_max_race: dict[str, int] = {}
-    for _rid in races.keys():
-        _v = _parse_race_id(_rid)[1]
-        _rn = _parse_race_id(_rid)[2]
-        if _rn is not None:
-            _snap_max_race[_v] = max(_snap_max_race.get(_v, 0), _rn)
+    _mtg_keys = {(_parse_race_id(_rid)[0], _parse_race_id(_rid)[1]) for _rid in races.keys()}
+    async with get_session() as _mxs:
+        for _d, _v in _mtg_keys:
+            if not (_d and _v):
+                continue
+            _mx = (await _mxs.execute(
+                select(func.max(RunnerPredictionRow.race_number))
+                .where(RunnerPredictionRow.race_id.like(f"{_d}_{_v}_R%"))
+            )).scalar()
+            if _mx:
+                _snap_max_race[_v] = int(_mx)
     async with get_session() as session:
         for race_id, runners in races.items():
             batch_id = str(_uuid.uuid4())  # shared across all runners in this enrichment batch
