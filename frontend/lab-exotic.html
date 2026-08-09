@@ -104,7 +104,7 @@
 
   function strat(s) {
     const cls = s.roi >= 0 ? 'pos' : 'neg';
-    const kind = s.id === 'top50_straight' ? 'straight' : 'box';
+    const kind = s.id.startsWith('straight') ? 'straight' : 'box';
     return `<div class="card ${kind}">
       <h2>${s.label}</h2>
       <div class="desc">${s.desc} · gate: ${s.gate}</div>
@@ -121,7 +121,7 @@
   }
 
   function row(r) {
-    const st = r.results.top50_straight || {}, bx = r.results.clear_tri_box || {};
+    const st = r.results.straight || {}, bx = r.results.box || {};
     const cell = x => x.hit
       ? `<span class="pill hit">HIT</span> <span class="pos">${sign(x.pnl)}</span>`
       : `<span class="pill miss">–</span> <span class="neg">${sign(x.pnl)}</span>`;

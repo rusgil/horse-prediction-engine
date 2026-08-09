@@ -9177,7 +9177,7 @@ async def labs_exotic_track():
     """
     from collections import defaultdict
     from itertools import permutations as _perm
-    GAP, ODDS_MIN, N_TOP, POOL = 0.05, 3.0, 50, 8
+    GAP, ODDS_LOOSE, ODDS_TIGHT, N_TOP, POOL = 0.05, 2.0, 3.0, 50, 8
 
     async with get_session() as session:
         drows = (await session.execute(
@@ -9217,14 +9217,15 @@ async def labs_exotic_track():
         for rid, hn, pos in rrows:
             order.setdefault(rid, {})[int(pos)] = _normalize_horse(hn)
 
+    def _blank(label, desc):
+        return {"label": label, "desc": desc, "stake": 0.0, "ret": 0.0,
+                "races": 0, "hits": 0, "big": 0.0, "hitdiv": []}
     strat = {
-        "top50_straight": {"label": "Top-50 straight trifectas",
-                           "desc": "50 highest-probability exact 1-2-3 orders, $1 each ($50)"},
-        "clear_tri_box": {"label": "Clear-tri box (top-5)",
-                          "desc": "box the top-5 runners — 60 orders, $1 each ($60)"},
+        "straight_p3": _blank("Top-50 straight · pick > $3", "50 highest-probability 1-2-3 orders, $1 each"),
+        "straight_p2": _blank("Top-50 straight · pick > $2", "50 highest-probability 1-2-3 orders, $1 each"),
+        "box_p3": _blank("Clear-tri box · pick > $3", "box the top-5 — 60 orders, $1 each"),
+        "box_p2": _blank("Clear-tri box · pick > $2", "box the top-5 — 60 orders, $1 each"),
     }
-    for s in strat.values():
-        s.update(stake=0.0, ret=0.0, races=0, hits=0, big=0.0, hitdiv=[])
     races_out = []
 
     for rid in ids:
@@ -9238,37 +9239,42 @@ async def labs_exotic_track():
         gap = wpn[rk[2]] - wpn[rk[3]]
         odds1 = m.get("odds1")
         actual = tuple(o.get(i) for i in (1, 2, 3))
-        if not (m.get("sharp") and gap > GAP and odds1 and odds1 > ODDS_MIN and all(actual)):
+        # superset gate: Sharp + clear-tri + pick > $2 (the $3 tier is a subset)
+        if not (m.get("sharp") and gap > GAP and odds1 and odds1 > ODDS_LOOSE and all(actual)):
             continue
         allc = [(c, _harville_top3_prob(wpn[c[0]], wpn[c[1]], wpn[c[2]])) for c in _perm(rk[:POOL], 3)]
         allc.sort(key=lambda x: -x[1])
         straight = [c for c, _ in allc[:N_TOP]]
         box = list(_perm(rk[:5], 3))
         dv = div[rid]
+        tiers = ["p2"] + (["p3"] if odds1 > ODDS_TIGHT else [])
         rr = {"race_id": rid, "venue": m.get("venue"), "race_number": m.get("rno"),
               "date": (str(m.get("sched") or "")[:10] or rid.split("_")[0]),
               "top_pick_odds": round(odds1, 2), "gap_pts": round(gap * 100, 1),
+              "tier3": odds1 > ODDS_TIGHT,
               "actual_top3": [tabof[rid].get(n) for n in actual],
               "trifecta_dividend": round(dv, 2), "results": {}}
-        for key, combos in (("top50_straight", straight), ("clear_tri_box", box)):
+        for shape, combos in (("straight", straight), ("box", box)):
             hit = actual in set(combos)
             stake = float(len(combos))
             payout = dv if hit else 0.0
-            s = strat[key]
-            s["stake"] += stake; s["ret"] += payout; s["races"] += 1
-            if hit:
-                s["hits"] += 1; s["big"] = max(s["big"], dv); s["hitdiv"].append(dv)
-            rr["results"][key] = {"hit": hit, "stake": round(stake), "payout": round(payout, 2),
-                                  "pnl": round(payout - stake, 2)}
+            rr["results"][shape] = {"hit": hit, "stake": round(stake), "payout": round(payout, 2),
+                                    "pnl": round(payout - stake, 2)}
+            for tier in tiers:
+                s = strat[shape + "_" + tier]
+                s["stake"] += stake; s["ret"] += payout; s["races"] += 1
+                if hit:
+                    s["hits"] += 1; s["big"] = max(s["big"], dv); s["hitdiv"].append(dv)
         races_out.append(rr)
 
     out = []
     for key, s in strat.items():
         st, ret = s["stake"], s["ret"]
         net = ret - st
+        tier_odds = "$3" if key.endswith("p3") else "$2"
         out.append({
             "id": key, "label": s["label"], "desc": s["desc"],
-            "gate": "Sharp + clear-tri (r3-r4>5pts) + top pick > $3",
+            "gate": f"Sharp + clear-tri (r3-r4>5pts) + top pick > {tier_odds}",
             "races": s["races"], "hits": s["hits"],
             "hit_rate": round(s["hits"] / s["races"] * 100, 1) if s["races"] else 0,
             "staked": round(st), "returned": round(ret), "pnl": round(net),
