@@ -9299,11 +9299,11 @@ async def labs_exotic_track():
 @app.get("/api/labs/exotic-sim")
 async def labs_exotic_sim(date: Optional[str] = None):
     """Simulation feed for the top-40 straight-trifecta play: for a date (default
-    today), return every qualifying race (Sharp + clear-tri + top pick > $2) with
+    today), return every qualifying race (Sharp + clear-tri + top pick > $3) with
     the ACTUAL 40 combos it would back, plus countdown/settlement so the frontend
     can show 'here are the 40 bets → race runs → result & payout'. Paper only."""
     from itertools import permutations as _perm
-    GAP, ODDS_MIN, N_TOP, POOL = 0.05, 2.0, 40, 8
+    GAP, ODDS_MIN, N_TOP, POOL = 0.05, 3.0, 40, 8
     day = date or _today_aest().isoformat()
 
     async with get_session() as session:
