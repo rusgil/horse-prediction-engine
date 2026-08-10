@@ -873,6 +873,16 @@
   .verdict-line .vl { color: var(--red); }
   .verdict-line .vn { color: var(--text-3); font-weight: 600; }
   .verdict-line .winner { color: var(--text-3); font-weight: 600; font-size: 0.7rem; }
+  /* TrifectaPro / First 4 strip (ported from the Trad edge) */
+  .trifecta-strip { grid-column: 1 / -1; display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; margin-top: 8px; padding-top: 7px; border-top: 1px dashed var(--line); font-size: 0.72rem; }
+  .tri-label, .tri-ff-label { font-weight: 800; color: var(--mint); letter-spacing: 0.04em; white-space: nowrap; }
+  .tri-legs, .tri-ff-legs { color: var(--text-2); font-weight: 600; white-space: nowrap; }
+  .tri-names, .tri-ff-names { color: var(--text-3); font-style: italic; min-width: 0; }
+  .tri-ff-row { flex-basis: 100%; display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; margin-top: 4px; }
+  .tri-combined { font-weight: 800; color: var(--mint); white-space: nowrap; }
+  .tri-hit { font-weight: 800; color: var(--mint); font-size: 0.78rem; }
+  .tri-miss { font-weight: 700; color: var(--red); font-size: 0.72rem; }
+  .tier-marker.tier-pro { font-size: 0.5rem; font-weight: 800; background: var(--mint-dim); color: var(--mint); border-radius: 4px; padding: 1px 4px; margin-left: 3px; vertical-align: 1px; letter-spacing: 0.02em; }
   .verdict-line .winner b { color: var(--text-2); }
   .day-head { display: flex; align-items: baseline; gap: 10px; margin: 22px 0 10px; }
   .day-head .t { font-family: 'Barlow Condensed'; font-weight: 800; font-size: 1.25rem; letter-spacing: 0.02em; }
@@ -1215,11 +1225,10 @@
     const el = document.getElementById('ctlRows');
     const seg = (items, cur, attr) => `<span class="seg seg-sm">${items.map(([v, l]) =>
       `<button data-${attr}="${v}" class="${cur === v ? 'on' : ''}">${l}</button>`).join('')}</span>`;
-    el.innerHTML = `${E.parent === 'wins' ? `<div class="row">${edgeDateBarHTML()}</div>` : ''}
+    el.innerHTML = `<div class="row">${edgeDateBarHTML()}</div>
       <div class="row">
-        ${E.parent === 'wins' ? seg([['sharp', '🎯 Sharp only'], ['all', 'All picks']], E.mode, 'md') : ''}
-        ${seg([['wins', 'Win / Place'], ['exotics', 'Exotics <span style="font-size:0.58rem;opacity:0.7">BETA</span>']], E.parent, 'pt')}
-        ${E.parent === 'wins' && E.view === 'up' ? seg([['best', 'Best pick'], ['next', 'Next race']], E.sort, 'st') : ''}
+        ${seg([['sharp', '🎯 Sharp only'], ['all', 'All picks']], E.mode, 'md')}
+        ${E.view === 'up' ? seg([['best', 'Best pick'], ['next', 'Next race']], E.sort, 'st') : ''}
       </div>`;
     el.querySelectorAll('[data-pt]').forEach(b => b.onclick = () => { E.parent = b.dataset.pt; renderControls(); renderFeed(); });
     el.querySelectorAll('[data-vw]').forEach(b => b.onclick = () => { E.view = b.dataset.vw; renderControls(); renderFeed(); });
@@ -1343,8 +1352,39 @@
         ${settledRes && res.winner && res.place_odds ? `<div class="odds-pill"><b class="num" style="font-size:1rem;color:var(--blue)">$${(+res.place_odds).toFixed(2)}</b>place</div>` : ''}
         ${!isPast ? `<div class="spark-slot" id="spark-${p.race_id.replace(/[^a-z0-9]/gi, '-')}"></div>` : ''}
       </div>
-      ${edgeLine}${verdict}
+      ${edgeLine}${verdict}${triStrip(p)}
     </div>`;
+  }
+
+  // TrifectaPro / First 4 strip — per-pick p.trifecta (ported from the Trad edge).
+  function triStrip(p) {
+    const tri = p.trifecta;
+    if (!tri || !tri.legs || !tri.legs.length) return '';
+    const posLabel = pos => pos === 1 ? '1st' : pos === 2 ? '2nd' : pos === 3 ? '3rd' : pos === 4 ? '4th' : pos ? pos + 'th' : '—';
+    const legHtml = l => {
+      const pos = l.position;
+      const inTop = pos && pos <= (tri.first_four ? 4 : 3) && !l.scratched;
+      const col = l.scratched ? 'var(--text-3)' : pos != null ? (inTop ? 'var(--mint)' : 'var(--red)') : 'var(--text-2)';
+      return `<span style="color:${col};font-weight:700">${l.tab_number || '?'}</span>`
+        + (l.place_pct != null ? `<span style="color:var(--text-3);font-size:0.65rem"> (${l.place_pct}%)</span>` : '')
+        + (pos != null ? `<span style="color:${col};font-size:0.7rem"> ${posLabel(pos)}</span>` : '');
+    };
+    const dot = ' <span style="color:var(--line)">·</span> ';
+    const triNums = tri.legs.map(legHtml).join(dot);
+    const triNames = tri.legs.map(l => esc(l.horse_name)).join(' · ');
+    const triPct = tri.combined_pct != null ? `<span class="tri-combined">~${tri.combined_pct}%</span>` : '';
+    const vd = tri.hit != null ? (tri.hit ? '<span class="tri-hit">✓ HIT</span>' : '<span class="tri-miss">✗ Missed</span>') : '';
+    const ffPart = (tri.first_four && tri.first_four.length) ? (() => {
+      const ffNums = tri.first_four.map(legHtml).join(dot);
+      const ffNames = tri.first_four.map(l => esc(l.horse_name)).join(' · ');
+      const ffPct = tri.first_four_combined_pct != null ? `<span class="tri-combined">~${tri.first_four_combined_pct}%</span>` : '';
+      const ffVd = tri.first_four_hit != null ? (tri.first_four_hit ? '<span class="tri-hit">✓ HIT</span>' : '<span class="tri-miss">✗ Missed</span>') : '';
+      return `<div class="tri-ff-row"><span class="tri-ff-label">First 4</span><span class="tri-ff-legs">${ffNums}</span>${ffPct}${ffVd}<span class="tri-ff-names">${ffNames}</span></div>`;
+    })() : '';
+    return `<div class="trifecta-strip">`
+      + `<span class="tri-label">🎯 Trifecta<span class="tier-marker tier-pro">Pro</span></span>`
+      + `<span class="tri-legs">${triNums}</span>${triPct}${vd}`
+      + `<span class="tri-names">${triNames}</span>${ffPart}</div>`;
   }
 
   /* ── feeds ── */
