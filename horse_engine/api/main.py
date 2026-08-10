@@ -22183,18 +22183,25 @@ async def test_ra_fetch(ra_key: Optional[str] = None,
     _check_admin(x_cron_secret)
     if not ra_key:
         async with get_session() as session:
-            row = (await session.execute(
-                select(HistoricalResultRow.race_id, HistoricalResultRow.venue,
-                       HistoricalResultRow.state)
-                .where(HistoricalResultRow.venue.isnot(None))
-                .where(HistoricalResultRow.state.isnot(None))
-                .order_by(HistoricalResultRow.race_id.desc())
-                .limit(1))).first()
+            # Most recent SETTLED race; take venue/state from the prediction
+            # snapshot (result rows don't carry venue/state after the 2026-07-23
+            # OddsPro/Sportsbet seeding switch, so joining history keeps it recent).
+            latest = (await session.execute(
+                select(HistoricalResultRow.race_id)
+                .order_by(HistoricalResultRow.race_id.desc()).limit(1))).scalar()
+            row = None
+            if latest:
+                row = (await session.execute(
+                    select(RunnerPredictionHistoryRow.venue, RunnerPredictionHistoryRow.state)
+                    .where(RunnerPredictionHistoryRow.race_id == latest)
+                    .where(RunnerPredictionHistoryRow.venue.isnot(None))
+                    .where(RunnerPredictionHistoryRow.state.isnot(None))
+                    .limit(1))).first()
         ra_key = "2026Jun08,NSW,Canterbury Park"  # fallback if the DB is empty
-        if row:
+        if latest and row:
             try:
-                _d = datetime.strptime(_parse_race_id(row[0])[0], "%Y-%m-%d").strftime("%Y%b%d")
-                ra_key = f"{_d},{row[2]},{row[1]}"
+                _d = datetime.strptime(_parse_race_id(latest)[0], "%Y-%m-%d").strftime("%Y%b%d")
+                ra_key = f"{_d},{row[1]},{row[0]}"
             except Exception:
                 pass
     client = get_tab_client()
