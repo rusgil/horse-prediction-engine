@@ -9296,6 +9296,87 @@ async def labs_exotic_track():
     return {"strategies": out, "races": races_out}
 
 
+@app.get("/api/labs/exotic-sim")
+async def labs_exotic_sim(date: Optional[str] = None):
+    """Simulation feed for the top-40 straight-trifecta play: for a date (default
+    today), return every qualifying race (Sharp + clear-tri + top pick > $2) with
+    the ACTUAL 40 combos it would back, plus countdown/settlement so the frontend
+    can show 'here are the 40 bets → race runs → result & payout'. Paper only."""
+    from itertools import permutations as _perm
+    GAP, ODDS_MIN, N_TOP, POOL = 0.05, 2.0, 40, 8
+    day = date or _today_aest().isoformat()
+
+    async with get_session() as session:
+        prows = (await session.execute(
+            select(RunnerPredictionHistoryRow.race_id, RunnerPredictionHistoryRow.horse_name,
+                   RunnerPredictionHistoryRow.win_probability, RunnerPredictionHistoryRow.model_rank,
+                   RunnerPredictionHistoryRow.tab_number, RunnerPredictionHistoryRow.is_sharp,
+                   RunnerPredictionHistoryRow.best_available_odds, RunnerPredictionHistoryRow.venue,
+                   RunnerPredictionHistoryRow.race_number, RunnerPredictionHistoryRow.scheduled_time)
+            .where(RunnerPredictionHistoryRow.race_id.like(f"{day}_%"))
+            .where((RunnerPredictionHistoryRow.source == "live") | (RunnerPredictionHistoryRow.source.is_(None)))
+            .where((RunnerPredictionHistoryRow.cancelled.is_(False)) | (RunnerPredictionHistoryRow.cancelled.is_(None)))
+            .where(RunnerPredictionHistoryRow.model_rank <= 8)
+            .order_by(RunnerPredictionHistoryRow.race_id, RunnerPredictionHistoryRow.model_rank))).all()
+        div = {r[0]: float(r[1]) for r in (await session.execute(
+            select(RaceExoticDividendRow.race_id, RaceExoticDividendRow.trifecta)
+            .where(RaceExoticDividendRow.race_id.like(f"{day}_%"))
+            .where(RaceExoticDividendRow.trifecta.isnot(None)))).all()}
+        rrows = (await session.execute(
+            select(HistoricalResultRow.race_id, HistoricalResultRow.horse_name, HistoricalResultRow.position)
+            .where(HistoricalResultRow.race_id.like(f"{day}_%"))
+            .where(HistoricalResultRow.position.isnot(None)))).all()
+
+    preds, ranked, tabof, nameof, meta, seen = {}, {}, {}, {}, {}, set()
+    for rid, hn, wp, rank, tab, sharp, odds, ven, rno, sched in prows:
+        n = _normalize_horse(hn)
+        if wp is None or (rid, n) in seen:
+            continue
+        seen.add((rid, n))
+        preds.setdefault(rid, {})[n] = float(wp)
+        ranked.setdefault(rid, []).append(n)
+        tabof.setdefault(rid, {})[n] = tab
+        nameof.setdefault(rid, {})[n] = hn
+        if rank == 1:
+            meta[rid] = {"sharp": bool(sharp), "odds1": odds, "venue": ven or "", "rno": rno, "sched": sched}
+    order = {}
+    for rid, hn, pos in rrows:
+        order.setdefault(rid, {})[int(pos)] = _normalize_horse(hn)
+
+    races = []
+    for rid in preds:
+        rk, wp, m = ranked[rid], preds[rid], meta.get(rid, {})
+        if len(rk) < 5 or not m:
+            continue
+        tot = sum(wp.values())
+        if tot <= 0:
+            continue
+        wpn = {k: v / tot for k, v in wp.items()}
+        gap = wpn[rk[2]] - wpn[rk[3]]
+        odds1 = m.get("odds1")
+        if not (m.get("sharp") and gap > GAP and odds1 and odds1 > ODDS_MIN):
+            continue
+        allc = sorted(((c, _harville_top3_prob(wpn[c[0]], wpn[c[1]], wpn[c[2]])) for c in _perm(rk[:POOL], 3)),
+                      key=lambda x: -x[1])[:N_TOP]
+        combos = [{"tabs": [tabof[rid].get(n) for n in c], "p": round(pr * 100, 2)} for c, pr in allc]
+        cset = {c for c, _ in allc}
+        actual = tuple(order.get(rid, {}).get(i) for i in (1, 2, 3))
+        dv = div.get(rid)
+        settled = all(actual) and dv is not None
+        rr = {"race_id": rid, "venue": m.get("venue"), "race_number": m.get("rno"),
+              "scheduled_time": m.get("sched"), "top_pick_odds": round(odds1, 2), "gap_pts": round(gap * 100, 1),
+              "stake": len(combos), "combos": combos, "settled": settled}
+        if settled:
+            hit = actual in cset
+            rr.update(actual_top3=[tabof[rid].get(n) for n in actual],
+                      actual_names=[nameof[rid].get(n) for n in actual],
+                      trifecta_dividend=round(dv, 2), hit=hit,
+                      payout=round(dv if hit else 0.0, 2), pnl=round((dv if hit else 0.0) - len(combos), 2))
+        races.append(rr)
+    races.sort(key=lambda r: r.get("scheduled_time") or "")
+    return {"date": day, "n": len(races), "races": races}
+
+
 @app.get("/api/bets")
 async def list_bet_races(
     days: int = 7,
