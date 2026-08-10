@@ -64,6 +64,27 @@
   td.pos { color:var(--green-bright); } td.neg { color:var(--red); }
   .big-div { color:var(--gold); font-weight:800; }
   .loading, .empty { text-align:center; color:var(--text-dim); padding:40px 0; }
+
+  .viewtabs { display:flex; gap:8px; justify-content:center; margin:16px 0 6px; flex-wrap:wrap; }
+  .vtab { padding:8px 16px; border-radius:999px; border:1px solid var(--border); background:var(--bg-card); color:var(--text-dim); font-weight:700; font-size:0.82rem; cursor:pointer; }
+  .vtab.active { background:rgba(45,212,191,0.14); color:var(--teal-bright); border-color:rgba(45,212,191,0.5); }
+  .sim-race { background:var(--bg-card); border:1px solid var(--border); border-radius:14px; padding:14px 16px; margin-bottom:12px; }
+  .sim-race.hit { border-color:rgba(34,197,94,0.5); }
+  .sim-head { display:flex; align-items:baseline; gap:10px; flex-wrap:wrap; }
+  .sim-venue { font-family:'Barlow Condensed',sans-serif; font-weight:800; font-size:1.15rem; }
+  .sim-meta { color:var(--text-muted); font-size:0.72rem; }
+  .sim-cd { margin-left:auto; font-family:'Barlow Condensed',sans-serif; font-weight:800; font-size:1.05rem; color:var(--text-dim); }
+  .sim-cd.soon { color:var(--gold); } .sim-cd.live { color:var(--green-bright); } .sim-cd.done { color:var(--text-muted); }
+  .sim-sub { color:var(--text-dim); font-size:0.72rem; margin:6px 0 8px; }
+  .sim-combos { display:flex; flex-wrap:wrap; gap:5px 8px; max-height:118px; overflow-y:auto; padding:8px 10px; background:var(--bg-elevated); border-radius:8px; font-variant-numeric:tabular-nums; }
+  .combo { font-size:0.74rem; font-weight:700; white-space:nowrap; }
+  .combo b { color:var(--teal-bright); font-weight:700; }
+  .combo .cp { color:var(--text-muted); font-size:0.62rem; font-weight:600; }
+  .combo.win b { color:var(--green-bright); }
+  .combo.win { background:rgba(34,197,94,0.14); border-radius:4px; padding:0 4px; }
+  .sim-result { margin-top:10px; padding-top:9px; border-top:1px solid var(--border); display:flex; align-items:baseline; gap:12px; flex-wrap:wrap; font-size:0.82rem; }
+  .sim-result .rlbl { color:var(--text-dim); } .sim-result b { color:var(--text); }
+  .sim-result .pos { color:var(--green-bright); font-weight:800; } .sim-result .neg { color:var(--red); font-weight:800; }
 </style>
 
 <nav class="page-nav">
@@ -87,14 +108,26 @@
     <span class="subtab active">🎯 Exotic Spread</span>
   </div>
 
-  <div class="note">
-    <b>Read this first.</b> This is a <b>positive-skew gamble, not a proven edge</b> — offline backtests were −20% to −31% ROI at scale, and the model's coverage is well-calibrated so the tote takeout usually wins. The tight gate (<b>Sharp + clear trifecta + top pick &gt; $3</b>) fires on very few races, so early numbers are dominated by variance. This page exists to accumulate an <b>honest out-of-sample sample</b> — watch whether it survives past ~50–100 qualifying races. Nothing here is bet.
+  <div class="viewtabs">
+    <button class="vtab active" data-v="tracker">📊 Tracker</button>
+    <button class="vtab" data-v="sim">🎬 Simulation · today</button>
   </div>
 
-  <div id="cards" class="cards"><div class="loading">Loading…</div></div>
+  <div id="trackerView">
+    <div class="note">
+      <b>Read this first.</b> This is a <b>positive-skew gamble, not a proven edge</b> — offline backtests were −20% to −31% ROI at scale, and the model's coverage is well-calibrated so the tote takeout usually wins. The tight gate (<b>Sharp + clear trifecta + top pick &gt; $3</b>) fires on very few races, so early numbers are dominated by variance. This page exists to accumulate an <b>honest out-of-sample sample</b> — watch whether it survives past ~50–100 qualifying races. Nothing here is bet.
+    </div>
+    <div id="cards" class="cards"><div class="loading">Loading…</div></div>
+    <h3 class="sec">Race-by-race ledger</h3>
+    <div id="ledger" class="tbl-wrap"><div class="loading">Loading…</div></div>
+  </div>
 
-  <h3 class="sec">Race-by-race ledger</h3>
-  <div id="ledger" class="tbl-wrap"><div class="loading">Loading…</div></div>
+  <div id="simView" style="display:none">
+    <div class="note" style="background:rgba(45,212,191,0.08);border-color:rgba(45,212,191,0.35);color:#bfeee7">
+      <b>Live sim.</b> Today's qualifying races (Sharp + clear-tri + top pick &gt; $2). Each shows the exact <b>40 straight-trifecta combos</b> it would back ($1 each = $40), a countdown to the jump, then the result and payout from the real tote dividend. Paper only — nothing is bet.
+    </div>
+    <div id="simRaces"><div class="loading">Loading today's card…</div></div>
+  </div>
 </div>
 
 <script>
@@ -160,4 +193,81 @@
     }
   }
   load();
+
+  // ── Simulation view ──────────────────────────────────────────────
+  let simLoaded = false;
+  function showView(v) {
+    document.querySelectorAll('.vtab').forEach(b => b.classList.toggle('active', b.dataset.v === v));
+    document.getElementById('trackerView').style.display = v === 'tracker' ? '' : 'none';
+    document.getElementById('simView').style.display = v === 'sim' ? '' : 'none';
+    if (v === 'sim' && !simLoaded) { simLoaded = true; loadSim(); }
+  }
+  document.querySelectorAll('.vtab').forEach(b => b.onclick = () => showView(b.dataset.v));
+
+  function cd(iso) {
+    if (!iso) return { txt: '', cls: '' };
+    const t = new Date(/[Z+]/.test(iso) ? iso : iso + 'Z').getTime();
+    if (isNaN(t)) return { txt: '', cls: '' };
+    const ms = t - Date.now();
+    if (ms <= -120000) return { txt: 'awaiting result', cls: 'done' };
+    if (ms <= 0) return { txt: 'JUMPING', cls: 'live' };
+    const m = Math.floor(ms / 60000), s = Math.floor((ms % 60000) / 1000);
+    if (m >= 60) return { txt: Math.floor(m / 60) + 'h ' + (m % 60) + 'm', cls: '' };
+    return { txt: (m ? m + 'm ' : '') + s + 's', cls: m < 5 ? 'soon' : '' };
+  }
+  const comboHtml = (c, winKey) => {
+    const key = (c.tabs || []).join('-');
+    return `<span class="combo ${winKey && key === winKey ? 'win' : ''}"><b>${key}</b> <span class="cp">${c.p}%</span></span>`;
+  };
+  function simCard(r) {
+    const winKey = r.settled ? (r.actual_top3 || []).join('-') : null;
+    const c = r.settled ? { txt: '✓ settled', cls: 'done' } : cd(r.scheduled_time);
+    const combos = r.combos.map(x => comboHtml(x, winKey)).join(' <span style="color:var(--text-muted)">·</span> ');
+    let result;
+    if (r.settled) {
+      const names = (r.actual_names || []).filter(Boolean).join(' · ');
+      result = `<div class="sim-result">
+        <span class="rlbl">Result <b>${(r.actual_top3 || []).join('-')}</b></span>
+        <span class="rlbl">Trifecta <b style="color:var(--gold)">$${(r.trifecta_dividend || 0).toFixed(0)}</b></span>
+        ${r.hit ? `<span class="pos">✓ HIT ${sign(r.payout - r.stake)}</span>` : `<span class="neg">✗ Missed −$${r.stake}</span>`}
+        ${names ? `<span class="rlbl" style="flex-basis:100%;font-style:italic">${names}</span>` : ''}
+      </div>`;
+    } else {
+      result = `<div class="sim-result"><span class="rlbl">Race hasn't run — awaiting jump &amp; result.</span></div>`;
+    }
+    return `<div class="sim-race ${r.hit ? 'hit' : ''}">
+      <div class="sim-head">
+        <span class="sim-venue">${(r.venue || '').replace(/-/g, ' ')} R${r.race_number || ''}</span>
+        <span class="sim-meta">pick $${(r.top_pick_odds || 0).toFixed(2)} · gap ${r.gap_pts}pt</span>
+        <span class="sim-cd ${c.cls}" data-sched="${r.scheduled_time || ''}" data-settled="${r.settled ? 1 : 0}">${c.txt}</span>
+      </div>
+      <div class="sim-sub">$${r.stake} book · ${r.combos.length} straight trifecta combos ($1 each)</div>
+      <div class="sim-combos">${combos}</div>
+      ${result}
+    </div>`;
+  }
+  async function loadSim() {
+    const el = document.getElementById('simRaces');
+    try {
+      const d = await (await fetch(API + '/api/labs/exotic-sim')).json();
+      el.innerHTML = (d.races && d.races.length)
+        ? d.races.map(simCard).join('')
+        : '<div class="empty">No qualifying races on today\'s card (Sharp + clear-tri + top pick &gt; $2). Check back when a card runs a strong clear-trifecta favourite.</div>';
+    } catch (e) {
+      el.innerHTML = '<div class="empty">Could not load — ' + (e.message || e) + '</div>';
+    }
+  }
+  // tick countdowns every second (update only the cd spans)
+  setInterval(() => {
+    document.querySelectorAll('#simRaces .sim-cd').forEach(sp => {
+      if (sp.dataset.settled === '1') return;
+      const c = cd(sp.dataset.sched);
+      sp.textContent = c.txt;
+      sp.className = 'sim-cd ' + c.cls;
+    });
+  }, 1000);
+  // reload sim data every 2 min so settlements/results land
+  setInterval(() => {
+    if (simLoaded && document.getElementById('simView').style.display !== 'none') loadSim();
+  }, 120000);
 </script>
