@@ -25828,12 +25828,46 @@ async def performance_summary(
             if p.race_id not in top_picks:
                 top_picks[p.race_id] = p
 
-        # Sharp filter — read the snapshot-time `is_sharp` flag straight
-        # off the rank-1 row. The flag is frozen at race time so future
-        # gate refinements don't retroactively rewrite historical Sharp
-        # counts. See RunnerPredictionHistoryRow.is_sharp.
+        # Sharp filter — RECOMPUTE from the frozen win-probs (rank1≥30% OR
+        # top3≥60%) + layoff + late-non-metro, NOT the stored is_sharp flag.
+        # The flag proved unreliable (Casterton R5 2026-08-09 froze False on a
+        # 39% winner → the Sharp win-rate wrongly read 0% while the Lounge cell
+        # showed the win). Recomputing from the locked win-probs mirrors the
+        # meetings-endpoint fix so the accFor and the heat-map cells agree.
         if sharp and top_picks:
-            top_picks = {rid: p for rid, p in top_picks.items() if p.is_sharp is True}
+            from horse_engine.bets import is_metro_venue
+            _t3rows = (await session.execute(
+                select(RunnerPredictionHistoryRow.race_id, RunnerPredictionHistoryRow.win_probability)
+                .where(RunnerPredictionHistoryRow.race_id.in_(list(top_picks.keys())))
+                .where(RunnerPredictionHistoryRow.model_rank.in_([1, 2, 3]))
+                .where((RunnerPredictionHistoryRow.source == "live") | RunnerPredictionHistoryRow.source.is_(None))
+                .where(RunnerPredictionHistoryRow.cancelled.is_(False) | RunnerPredictionHistoryRow.cancelled.is_(None))
+            )).all()
+            _t3: dict[str, float] = {}
+            for _rid, _wp in _t3rows:
+                _t3[_rid] = _t3.get(_rid, 0.0) + (_wp or 0.0)
+            _mtg_max: dict[tuple, int] = {}
+            for _rid in top_picks:
+                _d, _v, _rn = _parse_race_id(_rid)
+                if _rn is not None:
+                    _mtg_max[(_d, _v)] = max(_mtg_max.get((_d, _v), 0), _rn)
+
+            def _recompute_sharp(p) -> bool:
+                if not ((p.win_probability or 0.0) >= 0.30 or _t3.get(p.race_id, 0.0) >= 0.60):
+                    return False
+                try:
+                    _do = (json.loads(p.enriched_json or "{}") or {}).get("days_since_last_run")
+                except Exception:
+                    _do = None
+                if isinstance(_do, (int, float)) and _do > 180:
+                    return False
+                _d, _v, _rn = _parse_race_id(p.race_id)
+                _mx = _mtg_max.get((_d, _v), 0)
+                if (not is_metro_venue(_v)) and _rn is not None and _mx >= 5 and _rn >= _mx - 1:
+                    return False
+                return True
+
+            top_picks = {rid: p for rid, p in top_picks.items() if _recompute_sharp(p)}
 
     # Winner per race (position==1) — used for accurate act_won comparison
     winners: dict[str, str] = {}
