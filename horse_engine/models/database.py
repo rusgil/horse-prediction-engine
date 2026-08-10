@@ -212,6 +212,31 @@ class ModelWeightCandidateRow(Base):
     reviewed_note = Column(Text, nullable=True)
 
 
+class SecurityFindingRow(Base):
+    """Security events reported by the autonomous security agents — Dr Evil
+    (red-team: vulnerability + anomaly findings) and Thor (blue-team: real-time
+    detections + verifications). Read surface for the admin dashboard Security
+    tab: agents POST findings, a human triages via the status endpoint.
+
+    Append-mostly event log. Nothing here grants any capability, and callers
+    MUST mask secrets before posting — this is not a place for live credentials.
+    """
+    __tablename__ = "security_findings"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    agent = Column(String, nullable=False, index=True)      # 'dr_evil' | 'thor'
+    severity = Column(String, nullable=False, index=True)   # critical|high|medium|low|info
+    category = Column(String, nullable=True)                # sqli|auth|anomaly|cve|...
+    title = Column(String, nullable=False)
+    target = Column(String, nullable=True)                  # host / route / file
+    detail = Column(Text, nullable=True)                    # description + MASKED evidence
+    remediation = Column(Text, nullable=True)               # suggested fix
+    # open | verified | fixed | dismissed
+    status = Column(String, default="open", nullable=False, index=True)
+    created_at = Column(DateTime, default=datetime.utcnow, index=True)
+    updated_at = Column(DateTime, default=datetime.utcnow)
+
+
 class ModelWeightRow(Base):
     __tablename__ = "model_weights"
 

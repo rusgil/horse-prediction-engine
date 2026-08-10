@@ -74,6 +74,7 @@ from horse_engine.models.database import (
     promote_weight_candidate,
     reject_weight_candidate,
     ModelWeightCandidateRow,
+    SecurityFindingRow,
     load_place_model_weights,
     save_place_model_weights,
     load_exotic_model_weights,
@@ -3242,10 +3243,18 @@ async def lifespan(app: FastAPI):
     log.info("[scheduler] Shutdown")
 
 
+# API docs (Swagger/ReDoc/OpenAPI) are OFF in production — they publish the full
+# route inventory incl. every /api/admin/* path, which is free recon for an
+# attacker. Enable only where you want them (dev/staging) by setting
+# ENABLE_API_DOCS=1. Default off ⇒ /docs, /redoc, /openapi.json all 404.
+_docs_enabled = os.getenv("ENABLE_API_DOCS", "").strip().lower() in ("1", "true", "yes", "on")
 app = FastAPI(
     title="FunkyIQ Horse Prediction Engine",
     version="1.0.0",
     lifespan=lifespan,
+    docs_url="/docs" if _docs_enabled else None,
+    redoc_url="/redoc" if _docs_enabled else None,
+    openapi_url="/openapi.json" if _docs_enabled else None,
 )
 
 
@@ -9171,6 +9180,124 @@ async def get_bets_for_race(race_id: str, strategy: Optional[str] = None):
         rows = (await session.execute(q)).scalars().all()
     return {"race_id": race_id, "strategy": strategy or "all",
             "bets": [_row_to_bet_dict(b) for b in rows]}
+
+
+# ── Security findings — Dr Evil (red-team) + Thor (blue-team) ───────────────
+# Read/write surface for the admin dashboard Security tab. Agents POST events;
+# a human triages via the status endpoint. Everything is x-cron-secret gated
+# and cannot change any production state — it is an event log only.
+
+@app.get("/api/admin/security-findings")
+async def list_security_findings(
+    limit: int = 200,
+    status: Optional[str] = None,
+    agent: Optional[str] = None,
+    severity: Optional[str] = None,
+    x_cron_secret: Optional[str] = Header(None),
+):
+    _check_admin(x_cron_secret)
+    limit = max(1, min(limit, 500))
+    async with get_session() as session:
+        q = select(SecurityFindingRow)
+        if status:
+            q = q.where(SecurityFindingRow.status == status)
+        if agent:
+            q = q.where(SecurityFindingRow.agent == agent)
+        if severity:
+            q = q.where(SecurityFindingRow.severity == severity)
+        q = q.order_by(SecurityFindingRow.created_at.desc()).limit(limit)
+        rows = (await session.execute(q)).scalars().all()
+
+    def _fmt(r):
+        return {
+            "id": r.id, "agent": r.agent, "severity": r.severity,
+            "category": r.category, "title": r.title, "target": r.target,
+            "detail": r.detail, "remediation": r.remediation, "status": r.status,
+            "created_at": r.created_at.isoformat() if r.created_at else None,
+            "updated_at": r.updated_at.isoformat() if r.updated_at else None,
+        }
+    findings = [_fmt(r) for r in rows]
+    counts = {"open": 0, "critical": 0, "high": 0, "medium": 0, "low": 0,
+              "info": 0, "dr_evil": 0, "thor": 0}
+    for f in findings:
+        if f["status"] == "open":
+            counts["open"] += 1
+        counts[f["severity"]] = counts.get(f["severity"], 0) + 1
+        counts[f["agent"]] = counts.get(f["agent"], 0) + 1
+    return {"findings": findings, "counts": counts,
+            "generated_at": datetime.utcnow().isoformat()}
+
+
+@app.post("/api/admin/security-findings")
+async def create_security_finding(
+    request: Request,
+    x_cron_secret: Optional[str] = Header(None),
+):
+    """Agents (Dr Evil / Thor) submit a finding. Callers MUST mask secrets
+    before posting — this log is not a place for live credentials."""
+    _check_admin(x_cron_secret)
+    try:
+        payload = await request.json()
+    except Exception:
+        raise HTTPException(400, "invalid JSON body")
+    if not isinstance(payload, dict):
+        raise HTTPException(400, "body must be a JSON object")
+
+    agent = str(payload.get("agent") or "").strip().lower()
+    if agent not in ("dr_evil", "thor"):
+        raise HTTPException(400, "agent must be 'dr_evil' or 'thor'")
+    severity = str(payload.get("severity") or "info").strip().lower()
+    if severity not in ("critical", "high", "medium", "low", "info"):
+        raise HTTPException(400, "invalid severity")
+    title = str(payload.get("title") or "").strip()
+    if not title:
+        raise HTTPException(400, "title is required")
+
+    def _clip(v, n):
+        return str(v).strip()[:n] if v not in (None, "") else None
+
+    row = SecurityFindingRow(
+        agent=agent,
+        severity=severity,
+        category=_clip(payload.get("category"), 120),
+        title=title[:300],
+        target=_clip(payload.get("target"), 300),
+        detail=(str(payload.get("detail"))[:8000] if payload.get("detail") else None),
+        remediation=(str(payload.get("remediation"))[:4000] if payload.get("remediation") else None),
+        status="open",
+        created_at=datetime.utcnow(),
+        updated_at=datetime.utcnow(),
+    )
+    async with get_session() as session:
+        session.add(row)
+        await session.commit()
+        await session.refresh(row)
+        _id = row.id
+    return {"ok": True, "id": _id}
+
+
+@app.post("/api/admin/security-findings/{finding_id}/status")
+async def update_security_finding_status(
+    finding_id: int,
+    request: Request,
+    x_cron_secret: Optional[str] = Header(None),
+):
+    _check_admin(x_cron_secret)
+    try:
+        payload = await request.json()
+    except Exception:
+        raise HTTPException(400, "invalid JSON body")
+    new_status = str((payload or {}).get("status") or "").strip().lower()
+    if new_status not in ("open", "verified", "fixed", "dismissed"):
+        raise HTTPException(400, "invalid status")
+    async with get_session() as session:
+        row = await session.get(SecurityFindingRow, finding_id)
+        if not row:
+            raise HTTPException(404, "not found")
+        row.status = new_status
+        row.updated_at = datetime.utcnow()
+        await session.commit()
+    return {"ok": True, "id": finding_id, "status": new_status}
 
 
 @app.get("/api/labs/exotic-track")

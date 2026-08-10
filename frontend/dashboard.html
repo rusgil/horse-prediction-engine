@@ -137,7 +137,7 @@
 
     /* ── Model tabs ──────────────────────────────────────── */
     .model-tabs {
-      display: flex; gap: 4px;
+      display: flex; gap: 4px; flex-wrap: wrap;
       border-bottom: 1px solid var(--border);
       margin-bottom: 28px;
     }
@@ -428,6 +428,7 @@
       transition: all 0.15s;
     }
     .btn:hover { border-color: var(--blue); color: var(--blue); }
+    .btn.active { border-color: var(--blue); color: var(--blue); }
     .btn.primary { background: var(--blue); color: #fff; border-color: var(--blue); }
     .btn.primary:hover { opacity: 0.85; }
     .btn.teal { background: var(--teal); color: #fff; border-color: var(--teal); }
@@ -560,17 +561,20 @@
     document.getElementById('tabQuality').classList.toggle('active', tab === 'quality');
     document.getElementById('tabFollowUps').classList.toggle('active', tab === 'followups');
     document.getElementById('tabIntegrity').classList.toggle('active', tab === 'integrity');
+    document.getElementById('tabSecurity').classList.toggle('active', tab === 'security');
     document.getElementById('panelWin').style.display = tab === 'win' ? '' : 'none';
     document.getElementById('panelExotic').style.display = tab === 'exotic' ? '' : 'none';
     document.getElementById('panelReviews').style.display = tab === 'reviews' ? '' : 'none';
     document.getElementById('panelQuality').style.display = tab === 'quality' ? '' : 'none';
     document.getElementById('panelFollowUps').style.display = tab === 'followups' ? '' : 'none';
     document.getElementById('panelIntegrity').style.display = tab === 'integrity' ? '' : 'none';
+    document.getElementById('panelSecurity').style.display = tab === 'security' ? '' : 'none';
     if (tab === 'exotic' && !exoticBacktestLoaded) loadExoticBacktest();
     if (tab === 'reviews' && !reviewsLoaded) loadReviews();
     if (tab === 'quality' && !qualityLoaded) loadQuality();
     if (tab === 'followups' && !followUpsLoaded) loadFollowUps();
     if (tab === 'integrity') loadIntegrity();
+    if (tab === 'security' && !securityLoaded) loadSecurity();
   }
 
   // ═══════════════════════════════════════════════════════════
@@ -1157,6 +1161,186 @@
     } catch (e) { /* non-critical */ }
   }
 
+  // ═══════════════════════════════════════════════════════════
+  //   SECURITY TAB — Dr Evil (red) + Thor (blue)
+  // ═══════════════════════════════════════════════════════════
+  let securityLoaded = false;
+  let _securityCache = [];
+  let _securityFilter = 'all';
+  const _SEV_COLOR = { critical:'#ef4444', high:'#f59e0b', medium:'#eab308', low:'#3b82f6', info:'#8a9bc4' };
+  const _ST_COLOR  = { open:'#f59e0b', verified:'#a855f7', fixed:'#22c55e', dismissed:'#8a9bc4' };
+  const _SEV_RANK  = { critical:0, high:1, medium:2, low:3, info:4 };
+
+  function buildSecurityPlaceholder() {
+    return `
+      <div style="display:flex;gap:8px;align-items:center;margin-bottom:14px;flex-wrap:wrap">
+        <button class="btn" onclick="loadSecurity(true)">🔄 Refresh</button>
+        <span class="btn-status" id="securityStatus"></span>
+        <span style="flex:1;min-width:12px"></span>
+        <button class="btn active" id="secFilterAll" onclick="setSecurityFilter('all')">All</button>
+        <button class="btn" id="secFilterOpen" onclick="setSecurityFilter('open')">Open</button>
+        <button class="btn" id="secFilterEvil" onclick="setSecurityFilter('dr_evil')">🦹 Dr Evil</button>
+        <button class="btn" id="secFilterThor" onclick="setSecurityFilter('thor')">⚡ Thor</button>
+      </div>
+      <div style="display:flex;gap:8px;align-items:center;margin-bottom:14px;flex-wrap:wrap">
+        <input id="securitySearch" placeholder="Search title, target, detail…" oninput="setSecuritySearch(this.value)"
+          style="flex:1;min-width:180px;background:var(--bg-card);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:7px 10px;font-size:0.85rem">
+        <select id="securitySeverity" onchange="setSecuritySeverity(this.value)"
+          style="background:var(--bg-card);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:7px 10px;font-size:0.85rem">
+          <option value="">All severities</option>
+          <option value="critical">Critical</option>
+          <option value="high">High</option>
+          <option value="medium">Medium</option>
+          <option value="low">Low</option>
+          <option value="info">Info</option>
+        </select>
+        <button class="btn" id="secAutoBtn" onclick="toggleSecurityAuto()">⏱ Auto</button>
+      </div>
+      <div style="font-size:0.82rem;color:var(--text-secondary);margin-bottom:12px">
+        Security events from the autonomous agents — <b style="color:#f87171">Dr Evil</b> (red-team: vulnerability &amp; anomaly findings) and <b style="color:var(--blue)">Thor</b> (blue-team: real-time detections &amp; verifications). Read-only log; secrets are masked at source.
+      </div>
+      <div id="securitySummary" style="margin-bottom:14px"></div>
+      <div id="securityBody">Loading…</div>`;
+  }
+
+  function setSecurityFilter(f) { _securityFilter = f; renderSecurityList(); }
+  let _securitySearch = '';
+  let _securitySeverity = '';
+  let _securityAuto = null;
+  function setSecuritySearch(v) { _securitySearch = (v || '').toLowerCase(); renderSecurityList(); }
+  function setSecuritySeverity(v) { _securitySeverity = v || ''; renderSecurityList(); }
+  function toggleSecurityAuto() {
+    const b = document.getElementById('secAutoBtn');
+    if (_securityAuto) {
+      clearInterval(_securityAuto); _securityAuto = null;
+      if (b) { b.classList.remove('active'); b.textContent = '⏱ Auto'; }
+    } else {
+      _securityAuto = setInterval(() => {
+        const p = document.getElementById('panelSecurity');
+        if (p && p.style.display !== 'none') loadSecurity(true);
+      }, 45000);
+      if (b) { b.classList.add('active'); b.textContent = '⏱ Auto · on'; }
+    }
+  }
+
+  async function loadSecurity(force) {
+    const el = document.getElementById('securityBody');
+    const st = document.getElementById('securityStatus');
+    if (!force && securityLoaded) return;
+    try {
+      if (st) st.textContent = 'loading…';
+      const res = await fetch(`${API}/api/admin/security-findings?limit=200`, { headers: { 'x-cron-secret': adminSecret } });
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      const data = await res.json();
+      _securityCache = data.findings || [];
+      renderSecuritySummary(data.counts || {});
+      renderSecurityList();
+      securityLoaded = true;
+      if (st) st.textContent = '';
+    } catch (e) {
+      if (el) el.innerHTML = `<div style="color:#ef4444">Failed to load security findings: ${escapeHtml(String(e.message || e))}</div>`;
+      if (st) st.textContent = '';
+    }
+  }
+
+  function renderSecuritySummary(c) {
+    const el = document.getElementById('securitySummary');
+    if (!el) return;
+    const chip = (label, val, color) =>
+      `<span style="display:inline-flex;gap:6px;align-items:center;background:var(--bg-card);border:1px solid var(--border);border-radius:8px;padding:6px 12px;margin:0 8px 8px 0">
+        <b style="color:${color};font-size:1.1rem">${val || 0}</b>
+        <span style="font-size:0.72rem;color:var(--text-secondary);text-transform:uppercase;letter-spacing:0.05em">${label}</span></span>`;
+    let evilLast = '', thorLast = '';
+    _securityCache.forEach(r => {
+      if (r.agent === 'dr_evil' && (!evilLast || (r.created_at || '') > evilLast)) evilLast = r.created_at || '';
+      if (r.agent === 'thor' && (!thorLast || (r.created_at || '') > thorLast)) thorLast = r.created_at || '';
+    });
+    const fmtLast = iso => { if (!iso) return 'never'; try { return new Date(iso).toLocaleString(); } catch (e) { return iso; } };
+    el.innerHTML =
+      chip('Open', c.open, 'var(--text)') +
+      chip('Critical', c.critical, '#ef4444') +
+      chip('High', c.high, '#f59e0b') +
+      chip('🦹 Dr Evil', c.dr_evil, '#f87171') +
+      chip('⚡ Thor', c.thor, 'var(--blue)') +
+      `<div style="font-size:0.7rem;color:var(--text-dim);margin-top:4px">🦹 last event ${escapeHtml(fmtLast(evilLast))} &nbsp;·&nbsp; ⚡ last event ${escapeHtml(fmtLast(thorLast))}</div>`;
+  }
+
+  function renderSecurityList() {
+    const el = document.getElementById('securityBody');
+    if (!el) return;
+    ['all','open','dr_evil','thor'].forEach(f => {
+      const id = { all:'secFilterAll', open:'secFilterOpen', dr_evil:'secFilterEvil', thor:'secFilterThor' }[f];
+      const b = document.getElementById(id);
+      if (b) b.classList.toggle('active', _securityFilter === f);
+    });
+    let rows = _securityCache.slice();
+    if (_securityFilter === 'open') rows = rows.filter(r => r.status === 'open');
+    else if (_securityFilter === 'dr_evil') rows = rows.filter(r => r.agent === 'dr_evil');
+    else if (_securityFilter === 'thor') rows = rows.filter(r => r.agent === 'thor');
+    if (_securitySeverity) rows = rows.filter(r => r.severity === _securitySeverity);
+    if (_securitySearch) rows = rows.filter(r =>
+      ((r.title || '') + ' ' + (r.target || '') + ' ' + (r.detail || '') + ' ' + (r.category || ''))
+        .toLowerCase().includes(_securitySearch));
+
+    if (!rows.length) {
+      el.innerHTML = `<div style="padding:32px 20px;text-align:center;color:var(--text-secondary);border:1px dashed var(--border);border-radius:10px">
+        No security events${_securityFilter !== 'all' ? ' for this filter' : ''} yet.<br>
+        <span style="font-size:0.8rem">Dr Evil 🦹 and Thor ⚡ report here once their nightly / continuous runs are scheduled.</span></div>`;
+      return;
+    }
+    rows.sort((a, b) =>
+      (_SEV_RANK[a.severity] ?? 9) - (_SEV_RANK[b.severity] ?? 9) ||
+      (b.created_at || '').localeCompare(a.created_at || ''));
+
+    el.innerHTML = rows.map(r => {
+      const sev = _SEV_COLOR[r.severity] || '#8a9bc4';
+      const stc = _ST_COLOR[r.status] || '#8a9bc4';
+      const agentBadge = r.agent === 'dr_evil'
+        ? `<span style="color:#f87171">🦹 Dr Evil</span>`
+        : `<span style="color:var(--blue)">⚡ Thor</span>`;
+      let when = '';
+      try { when = r.created_at ? new Date(r.created_at).toLocaleString() : ''; } catch (e) { when = r.created_at || ''; }
+      const btn = (s, label) => r.status !== s
+        ? `<button class="btn" onclick="setSecStatus(${r.id},'${s}')">${label}</button>` : '';
+      return `<div style="border:1px solid var(--border);border-left:3px solid ${sev};border-radius:10px;padding:14px 16px;margin-bottom:10px;background:var(--bg-card);overflow-wrap:anywhere">
+        <div style="display:flex;gap:8px 10px;align-items:center;flex-wrap:wrap;margin-bottom:6px">
+          <span style="font-family:monospace;font-size:0.64rem;text-transform:uppercase;letter-spacing:0.08em;color:${sev};border:1px solid ${sev};border-radius:5px;padding:2px 7px">${escapeHtml(r.severity)}</span>
+          <b style="font-size:0.95rem">${escapeHtml(r.title)}</b>
+          <span style="flex:1;min-width:8px"></span>
+          <span style="font-size:0.75rem">${agentBadge}</span>
+          <span style="font-family:monospace;font-size:0.66rem;color:${stc};text-transform:uppercase">${escapeHtml(r.status)}</span>
+        </div>
+        ${r.target ? `<div style="font-family:monospace;font-size:0.72rem;color:var(--text-secondary);margin-bottom:5px;word-break:break-all">${escapeHtml(r.target)}</div>` : ''}
+        ${r.detail ? `<div style="font-size:0.83rem;color:var(--text-secondary);margin-bottom:6px;white-space:pre-wrap">${escapeHtml(r.detail)}</div>` : ''}
+        ${r.remediation ? `<div style="font-size:0.8rem;color:#22c55e;margin-bottom:8px">🔧 ${escapeHtml(r.remediation)}</div>` : ''}
+        <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+          <span style="font-size:0.68rem;color:var(--text-dim)">${escapeHtml(r.category || '')}${r.category ? ' · ' : ''}${escapeHtml(when)}</span>
+          <span style="flex:1;min-width:8px"></span>
+          ${btn('verified','Verify')}${btn('fixed','Fixed')}${btn('dismissed','Dismiss')}
+        </div>
+      </div>`;
+    }).join('');
+  }
+
+  async function setSecStatus(id, status) {
+    const st = document.getElementById('securityStatus');
+    try {
+      if (st) st.textContent = 'saving…';
+      const res = await fetch(`${API}/api/admin/security-findings/${id}/status`, {
+        method: 'POST',
+        headers: { 'x-cron-secret': adminSecret, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status }),
+      });
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      const f = _securityCache.find(x => x.id === id);
+      if (f) f.status = status;
+      renderSecurityList();
+      if (st) st.textContent = '';
+    } catch (e) {
+      if (st) st.textContent = 'update failed';
+    }
+  }
+
   function renderShell(calData, perfData, analysisData, prodData, premData, placeData) {
     const winContent     = buildWinContent(calData, perfData, analysisData, prodData, premData, placeData);
     const exoContent     = buildExoticPlaceholder();
@@ -1173,6 +1357,7 @@
         <button class="model-tab reviews" id="tabQuality" onclick="switchTab('quality')">Morning Report</button>
         <button class="model-tab reviews" id="tabFollowUps" onclick="switchTab('followups')">Follow-Ups</button>
         <button class="model-tab reviews" id="tabIntegrity" onclick="switchTab('integrity')">Prediction Integrity</button>
+        <button class="model-tab reviews" id="tabSecurity" onclick="switchTab('security')">🛡️ Security</button>
       </div>
       <div id="panelWin">${winContent}</div>
       <div id="panelExotic" style="display:none">${exoContent}</div>
@@ -1180,6 +1365,7 @@
       <div id="panelQuality" style="display:none">${qualityContent}</div>
       <div id="panelFollowUps" style="display:none">${followUpsContent}</div>
       <div id="panelIntegrity" style="display:none">${buildIntegrityPlaceholder()}</div>
+      <div id="panelSecurity" style="display:none">${buildSecurityPlaceholder()}</div>
     `;
 
     mountWinCharts(calData, perfData);
