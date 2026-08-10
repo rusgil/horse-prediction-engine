@@ -25846,10 +25846,24 @@ async def performance_summary(
             _t3: dict[str, float] = {}
             for _rid, _wp in _t3rows:
                 _t3[_rid] = _t3.get(_rid, 0.0) + (_wp or 0.0)
+            # Full-meeting max race number for the late-non-metro check — MUST
+            # come from the whole meeting, not just settled top_picks: an unsettled
+            # late race (R6/R7) missing here undercounts the max and wrongly flags
+            # a mid-card race as 'late' (dropped Casterton R5's 2026-08-09 win).
             _mtg_max: dict[tuple, int] = {}
-            for _rid in top_picks:
-                _d, _v, _rn = _parse_race_id(_rid)
-                if _rn is not None:
+            _pdates = {_parse_race_id(r)[0] for r in top_picks}
+            if _pdates:
+                _hi_next = (datetime.strptime(max(_pdates), "%Y-%m-%d") + timedelta(days=1)).strftime("%Y-%m-%d")
+                _maxrows = (await session.execute(
+                    select(RunnerPredictionHistoryRow.race_id, RunnerPredictionHistoryRow.race_number)
+                    .where(RunnerPredictionHistoryRow.model_rank == 1)
+                    .where(RunnerPredictionHistoryRow.race_id >= min(_pdates))
+                    .where(RunnerPredictionHistoryRow.race_id < _hi_next)
+                )).all()
+                for _rid, _rn in _maxrows:
+                    if _rn is None:
+                        continue
+                    _d, _v, _ = _parse_race_id(_rid)
                     _mtg_max[(_d, _v)] = max(_mtg_max.get((_d, _v), 0), _rn)
 
             def _recompute_sharp(p) -> bool:
