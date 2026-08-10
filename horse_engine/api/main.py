@@ -22173,10 +22173,30 @@ async def probe_tab(race_id: str = "", date: str = "", x_cron_secret: Optional[s
 
 
 @app.get("/api/admin/test-ra-fetch")
-async def test_ra_fetch(ra_key: str = "2026Jun08,NSW,Canterbury Park",
+async def test_ra_fetch(ra_key: Optional[str] = None,
                         x_cron_secret: Optional[str] = Header(None)):
-    """Directly call ra.get_results() with a key and return raw parse output."""
+    """Directly call ra.get_results() with a key and return raw parse output.
+
+    With no ra_key, derive a RECENT one from the latest settled meeting so the
+    probe tests a live page — the old hardcoded 2-month-old key errored on RA
+    independently of proxy health, making this a useless health check."""
     _check_admin(x_cron_secret)
+    if not ra_key:
+        async with get_session() as session:
+            row = (await session.execute(
+                select(HistoricalResultRow.race_id, HistoricalResultRow.venue,
+                       HistoricalResultRow.state)
+                .where(HistoricalResultRow.venue.isnot(None))
+                .where(HistoricalResultRow.state.isnot(None))
+                .order_by(HistoricalResultRow.race_id.desc())
+                .limit(1))).first()
+        ra_key = "2026Jun08,NSW,Canterbury Park"  # fallback if the DB is empty
+        if row:
+            try:
+                _d = datetime.strptime(_parse_race_id(row[0])[0], "%Y-%m-%d").strftime("%Y%b%d")
+                ra_key = f"{_d},{row[2]},{row[1]}"
+            except Exception:
+                pass
     client = get_tab_client()
     ra = client._ra
     from urllib.parse import quote

@@ -862,6 +862,70 @@ async def _persist_calendar_to_db(race_date: str, state: str, meetings: list, sl
         log.debug("calendar DB persist failed for %s/%s: %s", race_date, state, e)
 
 
+# Persistent FORM cache helpers — keyed by (kind 'h'|'j'|'t', code). The
+# in-memory form caches are wiped on every Railway redeploy; without DB
+# persistence a redeploy re-fetches every horse/jockey/trainer form page
+# through webshare, which drained the residential-proxy bandwidth (2026-08-10).
+# Batched at the _batch_fetch level: ONE session to load, ONE to persist — the
+# per-fetch DB variant (reverted 2026-07-18) exhausted the asyncpg pool.
+async def _load_forms_from_db(needed: list[tuple[str, str]]) -> dict:
+    """needed = [(kind, code), ...]. Return {(kind,code): (cached_at, payload)}
+    for rows fresher than the TTL. One session, best-effort — never raises."""
+    if not needed:
+        return {}
+    try:
+        from horse_engine.models.database import RAFormCacheRow
+        from horse_engine.api.database import get_session
+        from sqlalchemy import select as _select
+        import json as _json
+        needed_set = set(needed)
+        codes = list({c for (_k, c) in needed})
+        async with get_session() as session:
+            rows = (await session.execute(
+                _select(RAFormCacheRow).where(RAFormCacheRow.code.in_(codes))
+            )).scalars().all()
+        out = {}
+        now = datetime.utcnow()
+        for r in rows:
+            if (r.kind, r.code) not in needed_set:
+                continue
+            if (now - r.cached_at).total_seconds() > _PERSIST_TTL_SECONDS:
+                continue
+            try:
+                out[(r.kind, r.code)] = (r.cached_at, _json.loads(r.payload_json or "{}"))
+            except Exception:
+                pass
+        return out
+    except Exception as e:
+        log.debug("form DB load failed: %s", e)
+        return {}
+
+
+async def _persist_forms_to_db(items: list[tuple[str, str, dict]]):
+    """items = [(kind, code, payload_dict), ...]. Upsert freshly-fetched forms.
+    One session, best-effort — never raises upward."""
+    try:
+        from horse_engine.models.database import RAFormCacheRow
+        from horse_engine.api.database import get_session
+        from sqlalchemy.dialects.postgresql import insert as _pg_insert
+        import json as _json
+        now = datetime.utcnow()
+        values = [{"kind": k, "code": c, "payload_json": _json.dumps(p), "cached_at": now}
+                  for (k, c, p) in items if p]
+        if not values:
+            return
+        async with get_session() as session:
+            stmt = _pg_insert(RAFormCacheRow).values(values)
+            stmt = stmt.on_conflict_do_update(
+                index_elements=["kind", "code"],
+                set_={"payload_json": stmt.excluded.payload_json, "cached_at": stmt.excluded.cached_at},
+            )
+            await session.execute(stmt)
+            await session.commit()
+    except Exception as e:
+        log.debug("form DB persist failed: %s", e)
+
+
 # ── Client ────────────────────────────────────────────────────────────────────
 
 class RacingAustraliaClient:
@@ -1121,44 +1185,59 @@ class RacingAustraliaClient:
     # do 1 session for N codes instead of 2N sessions.
 
     async def _batch_fetch_runner_forms(self, selections: list[dict]) -> dict:
-        """Fetch horse/jockey/trainer forms for all selections in parallel."""
-        task_keys: list[str] = []
-        coros: list = []
-        seen: set[str] = set()
+        """Fetch horse/jockey/trainer forms for all selections in parallel.
 
+        Warms the in-memory caches from the persistent DB form cache first (one
+        session), so a Railway redeploy doesn't re-fetch every form page through
+        webshare; persists the freshly-fetched ones after (one session)."""
+        # 1. Collect unique (kind, code) needed + each horse's raceentry.
+        needed: list[tuple[str, str]] = []
+        raceentry_by_horse: dict[str, str] = {}
+        seen_codes: set[tuple[str, str]] = set()
         for sel in selections:
-            horsecode = sel.get("horsecode", "")
-            raceentry = sel.get("raceentry", "")
-            jockeycode = sel.get("jockeycode", "")
-            trainercode = sel.get("trainercode", "")
-
-            key = f"h:{horsecode}"
-            if horsecode and key not in seen:
-                seen.add(key)
-                task_keys.append(key)
-                coros.append(self._fetch_horse_form(horsecode, raceentry))
-
-            key = f"j:{jockeycode}"
-            if jockeycode and key not in seen:
-                seen.add(key)
-                task_keys.append(key)
-                coros.append(self._fetch_person_form(jockeycode, "jockey"))
-
-            key = f"t:{trainercode}"
-            if trainercode and key not in seen:
-                seen.add(key)
-                task_keys.append(key)
-                coros.append(self._fetch_person_form(trainercode, "trainer"))
-
-        if not coros:
+            h, j, t = sel.get("horsecode", ""), sel.get("jockeycode", ""), sel.get("trainercode", "")
+            if h and ("h", h) not in seen_codes:
+                seen_codes.add(("h", h)); needed.append(("h", h)); raceentry_by_horse[h] = sel.get("raceentry", "")
+            if j and ("j", j) not in seen_codes:
+                seen_codes.add(("j", j)); needed.append(("j", j))
+            if t and ("t", t) not in seen_codes:
+                seen_codes.add(("t", t)); needed.append(("t", t))
+        if not needed:
             return {}
 
-        results = await asyncio.gather(*coros, return_exceptions=True)
-        form_map: dict[str, dict] = {}
-        for key, result in zip(task_keys, results):
-            form_map[key] = result if isinstance(result, dict) else {}
+        # 2. Warm the in-memory caches from the persistent DB cache (survives redeploys).
+        db_forms = await _load_forms_from_db(needed)
+        loaded: set[tuple[str, str]] = set()
+        for (kind, code), (ts, payload) in db_forms.items():
+            cache = (self._horse_form_cache if kind == "h"
+                     else self._jockey_form_cache if kind == "j" else self._trainer_form_cache)
+            cache[code] = (ts, payload)
+            loaded.add((kind, code))
 
-        log.debug("Batch form fetch: %d requests for %d selections", len(coros), len(selections))
+        # 3. Fetch — the per-fetch in-memory check now hits the DB-warmed entries,
+        #    so only genuine misses go out to RA over webshare.
+        task_keys: list[str] = []
+        coros: list = []
+        for (kind, code) in needed:
+            task_keys.append(f"{kind}:{code}")
+            if kind == "h":
+                coros.append(self._fetch_horse_form(code, raceentry_by_horse.get(code, "")))
+            else:
+                coros.append(self._fetch_person_form(code, "jockey" if kind == "j" else "trainer"))
+        results = await asyncio.gather(*coros, return_exceptions=True)
+
+        form_map: dict[str, dict] = {}
+        to_persist: list[tuple[str, str, dict]] = []
+        for (kind, code), key, result in zip(needed, task_keys, results):
+            data = result if isinstance(result, dict) else {}
+            form_map[key] = data
+            if (kind, code) not in loaded and data:
+                to_persist.append((kind, code, data))
+
+        # 4. Persist the newly-fetched forms so the next restart reuses them.
+        await _persist_forms_to_db(to_persist)
+        log.debug("Batch form fetch: %d needed · %d from DB cache · %d fetched · %d persisted",
+                  len(needed), len(loaded), len(needed) - len(loaded), len(to_persist))
         return form_map
 
     # ── Calendar ──────────────────────────────────────────────────────────────
