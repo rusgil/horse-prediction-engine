@@ -9363,7 +9363,7 @@ async def labs_exotic_track():
             .where((RunnerPredictionHistoryRow.source == "live") | (RunnerPredictionHistoryRow.source.is_(None)))
             .where((RunnerPredictionHistoryRow.cancelled.is_(False)) | (RunnerPredictionHistoryRow.cancelled.is_(None)))
             .order_by(RunnerPredictionHistoryRow.race_id, RunnerPredictionHistoryRow.model_rank))).all()
-        preds, ranked, tabof, meta, seen = {}, {}, {}, {}, set()
+        preds, ranked, tabof, nameof, meta, seen = {}, {}, {}, {}, {}, set()
         for rid, hn, wp, rank, tab, sharp, odds, ven, rno, sched in prows:
             n = _normalize_horse(hn)
             if wp is None or (rid, n) in seen:
@@ -9372,6 +9372,7 @@ async def labs_exotic_track():
             preds.setdefault(rid, {})[n] = float(wp)
             ranked.setdefault(rid, []).append(n)
             tabof.setdefault(rid, {})[n] = tab
+            nameof.setdefault(rid, {})[n] = hn
             if rank == 1:
                 meta[rid] = {"sharp": bool(sharp), "odds1": odds, "venue": ven or "",
                              "rno": rno, "sched": sched}
@@ -9385,7 +9386,7 @@ async def labs_exotic_track():
 
     def _blank(label, desc):
         return {"label": label, "desc": desc, "stake": 0.0, "ret": 0.0,
-                "races": 0, "hits": 0, "big": 0.0, "hitdiv": []}
+                "races": 0, "hits": 0, "big": 0.0, "hitdiv": [], "confsum": 0.0}
     strat = {
         "straight_p3": _blank("Top-40 straight · pick > $3", "40 highest-probability 1-2-3 orders, $1 each"),
         "straight_p2": _blank("Top-40 straight · pick > $2", "40 highest-probability 1-2-3 orders, $1 each"),
@@ -9408,29 +9409,45 @@ async def labs_exotic_track():
         # superset gate: Sharp + clear-tri + pick > $2 (the $3 tier is a subset)
         if not (m.get("sharp") and gap > GAP and odds1 and odds1 > ODDS_LOOSE and all(actual)):
             continue
-        allc = [(c, _harville_top3_prob(wpn[c[0]], wpn[c[1]], wpn[c[2]])) for c in _perm(rk[:POOL], 3)]
-        allc.sort(key=lambda x: -x[1])
-        straight = [c for c, _ in allc[:N_TOP]]
-        box = list(_perm(rk[:5], 3))
+        ranked_perms = sorted(((c, _harville_top3_prob(wpn[c[0]], wpn[c[1]], wpn[c[2]])) for c in _perm(rk[:POOL], 3)),
+                              key=lambda x: -x[1])
+        straight_pairs = ranked_perms[:N_TOP]
+        box_perms = list(_perm(rk[:5], 3))
+        box_prob = {c: _harville_top3_prob(wpn[c[0]], wpn[c[1]], wpn[c[2]]) for c in box_perms}
+        box_pairs = sorted(box_perms, key=lambda c: -box_prob[c])
         dv = div[rid]
         tiers = ["p2"] + (["p3"] if odds1 > ODDS_TIGHT else [])
-        rr = {"race_id": rid, "venue": m.get("venue"), "race_number": m.get("rno"),
-              "date": (str(m.get("sched") or "")[:10] or rid.split("_")[0]),
-              "top_pick_odds": round(odds1, 2), "gap_pts": round(gap * 100, 1),
-              "tier3": odds1 > ODDS_TIGHT,
-              "actual_top3": [tabof[rid].get(n) for n in actual],
-              "trifecta_dividend": round(dv, 2), "results": {}}
-        for shape, combos in (("straight", straight), ("box", box)):
-            hit = actual in set(combos)
+        # the model's own confidence in the ACTUAL finishing order (Harville joint prob)
+        win_conf = _harville_top3_prob(wpn.get(actual[0], 0.0), wpn.get(actual[1], 0.0), wpn.get(actual[2], 0.0))
+
+        def _mk(c, pr):
+            return {"tabs": [tabof[rid].get(n) for n in c], "p": round(pr * 100, 2)}
+        shapes = {
+            "straight": ({c for c, _ in straight_pairs}, [_mk(c, pr) for c, pr in straight_pairs]),
+            "box": (set(box_perms), [_mk(c, box_prob[c]) for c in box_pairs]),
+        }
+        rr_legs = {}
+        for shape, (cset, combos) in shapes.items():
+            hit = actual in cset
             stake = float(len(combos))
             payout = dv if hit else 0.0
-            rr["results"][shape] = {"hit": hit, "stake": round(stake), "payout": round(payout, 2),
-                                    "pnl": round(payout - stake, 2)}
+            rr_legs[shape] = {"combos": combos, "stake": round(stake), "hit": hit,
+                              "payout": round(payout, 2), "pnl": round(payout - stake, 2)}
             for tier in tiers:
                 s = strat[shape + "_" + tier]
                 s["stake"] += stake; s["ret"] += payout; s["races"] += 1
                 if hit:
                     s["hits"] += 1; s["big"] = max(s["big"], dv); s["hitdiv"].append(dv)
+                    s["confsum"] += win_conf
+        rr = {"race_id": rid, "venue": m.get("venue"), "race_number": m.get("rno"),
+              "date": (str(m.get("sched") or "")[:10] or rid.split("_")[0]),
+              "scheduled_time": m.get("sched"),
+              "top_pick_odds": round(odds1, 2), "gap_pts": round(gap * 100, 1),
+              "tier3": odds1 > ODDS_TIGHT, "settled": True,
+              "actual_top3": [tabof[rid].get(n) for n in actual],
+              "actual_names": [nameof[rid].get(n) for n in actual],
+              "trifecta_dividend": round(dv, 2), "win_conf": round(win_conf * 100, 2),
+              "straight": rr_legs["straight"], "box": rr_legs["box"]}
         races_out.append(rr)
 
     out = []
@@ -9447,6 +9464,7 @@ async def labs_exotic_track():
             "roi": round(net / st * 100, 1) if st else 0,
             "biggest": round(s["big"]),
             "avg_hit_div": round(sum(s["hitdiv"]) / len(s["hitdiv"])) if s["hitdiv"] else 0,
+            "avg_hit_conf": round(s["confsum"] / s["hits"], 2) if s["hits"] else 0,
         })
     races_out.sort(key=lambda r: r["date"], reverse=True)
     return {"strategies": out, "races": races_out}

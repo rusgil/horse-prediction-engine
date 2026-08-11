@@ -143,6 +143,7 @@
         <div class="stat"><div class="k">Returned</div><div class="v">${fmt(s.returned)}</div></div>
         <div class="stat"><div class="k">Biggest hit</div><div class="v">${fmt(s.biggest)}</div></div>
         <div class="stat"><div class="k">Avg winning div</div><div class="v">${fmt(s.avg_hit_div)}</div></div>
+        <div class="stat"><div class="k">Avg hit confidence</div><div class="v">${s.avg_hit_conf || 0}%</div></div>
       </div>
     </div>`;
   }
@@ -176,29 +177,9 @@
         return;
       }
       cards.innerHTML = d.strategies.map(strat).join('');
-      if (d.races.length) {
-        let sSt = 0, sBx = 0, hSt = 0, hBx = 0, div = 0;
-        d.races.forEach(r => {
-          const st = r.results.straight || {}, bx = r.results.box || {};
-          sSt += st.pnl || 0; sBx += bx.pnl || 0;
-          if (st.hit) hSt++; if (bx.hit) hBx++;
-          div += r.trifecta_dividend || 0;
-        });
-        const totCell = (pnl, hits) =>
-          `<b><span class="${pnl >= 0 ? 'pos' : 'neg'}">${sign(pnl)}</span></b> <span style="color:var(--text-muted);font-weight:600">${hits}/${d.races.length}</span>`;
-        ledger.innerHTML = `<table><thead><tr>
-            <th class="l">Date</th><th class="l">Race</th><th>Pick</th><th>Gap</th>
-            <th>Result</th><th>Trifecta $</th><th>Top-40 straight</th><th>Clear-tri box</th>
-          </tr></thead><tbody>${d.races.map(row).join('')}</tbody>
-          <tfoot><tr style="border-top:2px solid var(--border);background:var(--bg-elevated);font-weight:700">
-            <td class="l" colspan="5"><b>TOTAL · ${d.races.length} races</b></td>
-            <td>$${div.toFixed(0)}</td>
-            <td>${totCell(sSt, hSt)}</td>
-            <td>${totCell(sBx, hBx)}</td>
-          </tr></tfoot></table>`;
-      } else {
-        ledger.innerHTML = '<div class="empty">No settled qualifying races yet.</div>';
-      }
+      ledger.innerHTML = d.races.length
+        ? d.races.map(simCard).join('')
+        : '<div class="empty">No settled qualifying races yet.</div>';
     } catch (e) {
       document.getElementById('cards').innerHTML = '<div class="empty">Could not load — ' + (e.message||e) + '</div>';
     }
@@ -259,6 +240,7 @@
       result = `<div class="sim-result">
         <span class="rlbl">Result <b>${(r.actual_top3 || []).join('-')}</b></span>
         <span class="rlbl">Trifecta <b style="color:var(--gold)">$${(r.trifecta_dividend || 0).toFixed(0)}</b></span>
+        ${('win_conf' in r) ? `<span class="rlbl">Model conf <b>${r.win_conf}%</b></span>` : ''}
         ${names ? `<span class="rlbl" style="flex-basis:100%;font-style:italic">${names}</span>` : ''}
       </div>`;
     } else {
@@ -268,7 +250,7 @@
     return `<div class="sim-race ${anyHit ? 'hit' : ''}">
       <div class="sim-head">
         <span class="sim-venue">${(r.venue || '').replace(/-/g, ' ')} R${r.race_number || ''}</span>
-        <span class="sim-meta">${startT ? '🕒 ' + startT + ' · ' : ''}pick $${(r.top_pick_odds || 0).toFixed(2)} · gap ${r.gap_pts}pt</span>
+        <span class="sim-meta">${startT ? '🕒 ' + startT + ' · ' : ''}pick $${(r.top_pick_odds || 0).toFixed(2)} · gap ${r.gap_pts}pt${('tier3' in r) ? ' · ' + (r.tier3 ? '$3 tier' : '$2 tier') : ''}</span>
         <span class="sim-cd ${c.cls}" data-sched="${r.scheduled_time || ''}" data-settled="${r.settled ? 1 : 0}">${c.txt}</span>
       </div>
       ${result}
