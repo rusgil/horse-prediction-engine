@@ -9387,11 +9387,14 @@ async def labs_exotic_track():
     def _blank(label, desc):
         return {"label": label, "desc": desc, "stake": 0.0, "ret": 0.0,
                 "races": 0, "hits": 0, "big": 0.0, "hitdiv": [], "confsum": 0.0}
+    EXP_PAYOUT_GATE = 80.0  # only bet when the model's projected trifecta payout clears this
     strat = {
         "straight_p3": _blank("Top-40 straight · pick > $3", "40 highest-probability 1-2-3 orders, $1 each"),
         "straight_p2": _blank("Top-40 straight · pick > $2", "40 highest-probability 1-2-3 orders, $1 each"),
         "box_p3": _blank("Clear-tri box · pick > $3", "box the top-5 — 60 orders, $1 each"),
         "box_p2": _blank("Clear-tri box · pick > $2", "box the top-5 — 60 orders, $1 each"),
+        "straight_g80": _blank("Straight-40 · proj payout ≥ $80", "40 orders, $1 each — only when the model's projected trifecta payout ≥ $80"),
+        "box_g80": _blank("Clear-tri box · proj payout ≥ $80", "top-5 boxed, 60 orders — only when projected payout ≥ $80"),
     }
     races_out = []
 
@@ -9419,6 +9422,11 @@ async def labs_exotic_track():
         tiers = ["p2"] + (["p3"] if odds1 > ODDS_TIGHT else [])
         # the model's own confidence in the ACTUAL finishing order (Harville joint prob)
         win_conf = _harville_top3_prob(wpn.get(actual[0], 0.0), wpn.get(actual[1], 0.0), wpn.get(actual[2], 0.0))
+        # pre-race PROJECTED trifecta payout: fair dividend of the model's top line
+        # ≈ (1 - takeout) / P(most-likely combo). Scales with how open the race is.
+        p_top = straight_pairs[0][1] if straight_pairs else 0.0
+        exp_payout = round(0.855 / p_top) if p_top > 0 else 0
+        gated = exp_payout >= EXP_PAYOUT_GATE
 
         def _mk(c, pr):
             return {"tabs": [tabof[rid].get(n) for n in c], "p": round(pr * 100, 2)}
@@ -9433,8 +9441,11 @@ async def labs_exotic_track():
             payout = dv if hit else 0.0
             rr_legs[shape] = {"combos": combos, "stake": round(stake), "hit": hit,
                               "payout": round(payout, 2), "pnl": round(payout - stake, 2)}
-            for tier in tiers:
-                s = strat[shape + "_" + tier]
+            acc_keys = [shape + "_" + tier for tier in tiers]
+            if gated:
+                acc_keys.append(shape + "_g80")
+            for k in acc_keys:
+                s = strat[k]
                 s["stake"] += stake; s["ret"] += payout; s["races"] += 1
                 if hit:
                     s["hits"] += 1; s["big"] = max(s["big"], dv); s["hitdiv"].append(dv)
@@ -9447,6 +9458,7 @@ async def labs_exotic_track():
               "actual_top3": [tabof[rid].get(n) for n in actual],
               "actual_names": [nameof[rid].get(n) for n in actual],
               "trifecta_dividend": round(dv, 2), "win_conf": round(win_conf * 100, 2),
+              "exp_payout": exp_payout, "gated": gated,
               "straight": rr_legs["straight"], "box": rr_legs["box"]}
         races_out.append(rr)
 
@@ -9454,10 +9466,14 @@ async def labs_exotic_track():
     for key, s in strat.items():
         st, ret = s["stake"], s["ret"]
         net = ret - st
-        tier_odds = "$3" if key.endswith("p3") else "$2"
+        if key.endswith("g80"):
+            gate = "Sharp + clear-tri (r3-r4>5pts) + pick > $2 + proj payout ≥ $80"
+        else:
+            tier_odds = "$3" if key.endswith("p3") else "$2"
+            gate = f"Sharp + clear-tri (r3-r4>5pts) + top pick > {tier_odds}"
         out.append({
             "id": key, "label": s["label"], "desc": s["desc"],
-            "gate": f"Sharp + clear-tri (r3-r4>5pts) + top pick > {tier_odds}",
+            "gate": gate,
             "races": s["races"], "hits": s["hits"],
             "hit_rate": round(s["hits"] / s["races"] * 100, 1) if s["races"] else 0,
             "staked": round(st), "returned": round(ret), "pnl": round(net),
@@ -9555,9 +9571,11 @@ async def labs_exotic_sim(date: Optional[str] = None):
                 leg.update(hit=hit, payout=round(dv if hit else 0.0, 2),
                            pnl=round((dv if hit else 0.0) - len(combos), 2))
             return leg
+        p_top = straight_pairs[0][1] if straight_pairs else 0.0
+        exp_payout = round(0.855 / p_top) if p_top > 0 else 0
         rr = {"race_id": rid, "venue": m.get("venue"), "race_number": m.get("rno"),
               "scheduled_time": m.get("sched"), "top_pick_odds": round(odds1, 2), "gap_pts": round(gap * 100, 1),
-              "settled": settled,
+              "settled": settled, "exp_payout": exp_payout, "gated": exp_payout >= 80,
               "straight": _leg(straight_combos, straight_set),
               "box": _leg(box_combos, box_set)}
         if settled:

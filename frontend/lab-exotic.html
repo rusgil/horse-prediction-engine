@@ -250,7 +250,7 @@
     return `<div class="sim-race ${anyHit ? 'hit' : ''}">
       <div class="sim-head">
         <span class="sim-venue">${(r.venue || '').replace(/-/g, ' ')} R${r.race_number || ''}</span>
-        <span class="sim-meta">${startT ? '🕒 ' + startT + ' · ' : ''}pick $${(r.top_pick_odds || 0).toFixed(2)} · gap ${r.gap_pts}pt${('tier3' in r) ? ' · ' + (r.tier3 ? '$3 tier' : '$2 tier') : ''}</span>
+        <span class="sim-meta">${startT ? '🕒 ' + startT + ' · ' : ''}pick $${(r.top_pick_odds || 0).toFixed(2)} · gap ${r.gap_pts}pt${('exp_payout' in r) ? ' · proj $' + r.exp_payout : ''}${('tier3' in r) ? ' · ' + (r.tier3 ? '$3 tier' : '$2 tier') : ''}${r.gated ? ' <span style="color:#4ade80;font-weight:700">✓ ≥$80</span>' : ''}</span>
         <span class="sim-cd ${c.cls}" data-sched="${r.scheduled_time || ''}" data-settled="${r.settled ? 1 : 0}">${c.txt}</span>
       </div>
       ${result}
