@@ -9512,22 +9512,40 @@ async def labs_exotic_sim(date: Optional[str] = None):
         odds1 = m.get("odds1")
         if not (m.get("sharp") and gap > GAP and odds1 and odds1 > ODDS_MIN):
             continue
-        allc = sorted(((c, _harville_top3_prob(wpn[c[0]], wpn[c[1]], wpn[c[2]])) for c in _perm(rk[:POOL], 3)),
-                      key=lambda x: -x[1])[:N_TOP]
-        combos = [{"tabs": [tabof[rid].get(n) for n in c], "p": round(pr * 100, 2)} for c, pr in allc]
-        cset = {c for c, _ in allc}
+        ranked_perms = sorted(((c, _harville_top3_prob(wpn[c[0]], wpn[c[1]], wpn[c[2]])) for c in _perm(rk[:POOL], 3)),
+                              key=lambda x: -x[1])
+        straight_pairs = ranked_perms[:N_TOP]
+        straight_set = {c for c, _ in straight_pairs}
+        # Clear-tri box: box the top-5 — all 60 orderings ($1 each), matching the tracker.
+        box_perms = list(_perm(rk[:5], 3))
+        box_prob = {c: _harville_top3_prob(wpn[c[0]], wpn[c[1]], wpn[c[2]]) for c in box_perms}
+        box_pairs = sorted(box_perms, key=lambda c: -box_prob[c])
+        box_set = set(box_perms)
+
+        def _mk(c, pr):
+            return {"tabs": [tabof[rid].get(n) for n in c], "p": round(pr * 100, 2)}
+        straight_combos = [_mk(c, pr) for c, pr in straight_pairs]
+        box_combos = [_mk(c, box_prob[c]) for c in box_pairs]
         actual = tuple(order.get(rid, {}).get(i) for i in (1, 2, 3))
         dv = div.get(rid)
         settled = all(actual) and dv is not None
+
+        def _leg(combos, cset):
+            leg = {"combos": combos, "stake": len(combos)}
+            if settled:
+                hit = actual in cset
+                leg.update(hit=hit, payout=round(dv if hit else 0.0, 2),
+                           pnl=round((dv if hit else 0.0) - len(combos), 2))
+            return leg
         rr = {"race_id": rid, "venue": m.get("venue"), "race_number": m.get("rno"),
               "scheduled_time": m.get("sched"), "top_pick_odds": round(odds1, 2), "gap_pts": round(gap * 100, 1),
-              "stake": len(combos), "combos": combos, "settled": settled}
+              "settled": settled,
+              "straight": _leg(straight_combos, straight_set),
+              "box": _leg(box_combos, box_set)}
         if settled:
-            hit = actual in cset
             rr.update(actual_top3=[tabof[rid].get(n) for n in actual],
                       actual_names=[nameof[rid].get(n) for n in actual],
-                      trifecta_dividend=round(dv, 2), hit=hit,
-                      payout=round(dv if hit else 0.0, 2), pnl=round((dv if hit else 0.0) - len(combos), 2))
+                      trifecta_dividend=round(dv, 2))
         races.append(rr)
     races.sort(key=lambda r: r.get("scheduled_time") or "")
     return {"date": day, "n": len(races), "races": races}
