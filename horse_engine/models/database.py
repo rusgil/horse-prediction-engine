@@ -238,6 +238,28 @@ class SecurityFindingRow(Base):
     updated_at = Column(DateTime, default=datetime.utcnow)
 
 
+class AutoPromotionRow(Base):
+    """Audit trail for the guarded auto-promotion pipeline. One row per
+    auto-promotion: which candidate went live, the prior batch (for rollback),
+    the backtest margin that cleared the guardrails, and the live-regression
+    outcome. Only written when AUTO_PROMOTE_ENABLED — the human gate otherwise.
+    """
+    __tablename__ = "auto_promotions"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    model_type = Column(String, nullable=False, index=True)  # win | place | exotic
+    batch_id = Column(String, nullable=False)                # the promoted candidate
+    prior_batch_id = Column(String, nullable=True)           # for auto-rollback
+    delta_pp = Column(Float, nullable=True)                  # OOS margin vs incumbent at promotion
+    races = Column(Integer, nullable=True)                   # backtest sample size
+    expected_hit_rate = Column(Float, nullable=True)         # candidate hit rate at promotion
+    # active | superseded | rolled_back
+    status = Column(String, default="active", nullable=False, index=True)
+    promoted_at = Column(DateTime, default=datetime.utcnow, index=True)
+    rolled_back_at = Column(DateTime, nullable=True)
+    note = Column(Text, nullable=True)
+
+
 class ModelWeightRow(Base):
     __tablename__ = "model_weights"
 

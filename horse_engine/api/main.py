@@ -75,6 +75,7 @@ from horse_engine.models.database import (
     reject_weight_candidate,
     ModelWeightCandidateRow,
     SecurityFindingRow,
+    AutoPromotionRow,
     load_place_model_weights,
     save_place_model_weights,
     load_exotic_model_weights,
@@ -141,12 +142,76 @@ def _validate_venue(venue_code: str) -> str:
     return venue_code
 
 
+# ── Guarded auto-promotion (AI-First ModelOps) ──────────────────────────────
+# When AUTO_PROMOTE_ENABLED, a fresh candidate promotes ITSELF to live the moment
+# it clears the guardrails — beats the incumbent out-of-sample by >= MARGIN pp on
+# >= MIN_RACES — and a nightly sentinel auto-rolls-back if the prior weights would
+# have beaten it on the live races since. Default OFF ⇒ human one-click gate stays.
+_AUTO_PROMOTE_ENABLED = os.getenv("AUTO_PROMOTE_ENABLED", "").strip().lower() in ("1", "true", "yes", "on")
+_AUTO_PROMOTE_MIN_RACES = int(os.getenv("AUTO_PROMOTE_MIN_RACES", "200"))
+_AUTO_PROMOTE_MIN_MARGIN_PP = float(os.getenv("AUTO_PROMOTE_MIN_MARGIN_PP", "1.5"))
+_AUTO_PROMOTE_ROLLBACK_MIN_RACES = int(os.getenv("AUTO_PROMOTE_ROLLBACK_MIN_RACES", "80"))
+_AUTO_PROMOTE_ROLLBACK_MARGIN_PP = float(os.getenv("AUTO_PROMOTE_ROLLBACK_MARGIN_PP", "2.0"))
+
+
 def _check_admin(x_secret: Optional[str]) -> None:
     """Fail-closed admin auth: requires CRON_SECRET env var to be set."""
     if not settings.cron_secret:
         raise HTTPException(403, "Admin access not configured")
     if not secrets.compare_digest(x_secret or "", settings.cron_secret):
         raise HTTPException(403, "Forbidden")
+
+
+async def _scheduled_auto_promote_rollback():
+    """Guardrail #2 for AI-First ModelOps: after a model auto-promotes, keep watching.
+    For each active auto-promotion (>= 2 days live), backtest the PRIOR weights against
+    the now-live model on the races since promotion. If the prior would have beaten the
+    promoted model by >= ROLLBACK_MARGIN_PP over >= ROLLBACK_MIN_RACES live races, revert
+    to prior automatically. No-op unless AUTO_PROMOTE_ENABLED."""
+    if not _AUTO_PROMOTE_ENABLED:
+        return
+    try:
+        async with get_session() as session:
+            actives = (await session.execute(
+                select(AutoPromotionRow).where(AutoPromotionRow.status == "active")
+            )).scalars().all()
+        for ap in actives:
+            if not ap.prior_batch_id or not ap.promoted_at:
+                continue
+            days = (datetime.utcnow() - ap.promoted_at).days
+            if days < 2:
+                continue  # let a couple of days of live races accrue before judging
+            async with get_session() as session:
+                prior_rows = (await session.execute(
+                    select(ModelWeightCandidateRow.feature_name, ModelWeightCandidateRow.weight)
+                    .where(ModelWeightCandidateRow.batch_id == ap.prior_batch_id)
+                )).all()
+            prior_weights = {n: w for n, w in prior_rows}
+            if not prior_weights:
+                continue
+            bt = await _backtest_weight_candidate(ap.model_type, prior_weights, holdout_days=max(days, 1))
+            if not bt or bt.get("error"):
+                continue
+            if (bt.get("races") or 0) < _AUTO_PROMOTE_ROLLBACK_MIN_RACES:
+                continue
+            if (bt.get("delta_pp") or 0) >= _AUTO_PROMOTE_ROLLBACK_MARGIN_PP:
+                async with get_session() as session:
+                    try:
+                        await promote_weight_candidate(
+                            session, ap.prior_batch_id,
+                            reviewer_note=f"AUTO-ROLLBACK: prior +{bt['delta_pp']}pp over {bt['races']} live races since promotion")
+                        row = await session.get(AutoPromotionRow, ap.id)
+                        if row:
+                            row.status = "rolled_back"
+                            row.rolled_back_at = datetime.utcnow()
+                            row.note = (row.note or "") + f" | ROLLED BACK: prior +{bt['delta_pp']}pp/{bt['races']} live races"
+                        await session.commit()
+                        log.warning("[auto-rollback] %s reverted #%s -> prior #%s (prior +%.2fpp / %d live races)",
+                                    ap.model_type, ap.batch_id[:8], ap.prior_batch_id[:8], bt["delta_pp"], bt["races"])
+                    except Exception as _re:
+                        log.warning("[auto-rollback] %s revert failed: %s", ap.model_type, _re)
+    except Exception as e:
+        log.warning("[auto-rollback] sweep failed: %s", e)
 
 
 def _like_safe(value: str) -> str:
@@ -2985,6 +3050,10 @@ async def lifespan(app: FastAPI):
     # the freshest model outputs available.
     scheduler.add_job(_scheduled_output_calibration,
                       CronTrigger(hour=3, minute=30, timezone="Australia/Sydney"))
+    # AI-First ModelOps: nightly auto-rollback sentinel (04:30 AEST, after the
+    # 2–3:30am retrain/calibrate jobs). No-op unless AUTO_PROMOTE_ENABLED.
+    scheduler.add_job(_scheduled_auto_promote_rollback,
+                      CronTrigger(hour=4, minute=30, timezone="Australia/Sydney"))
     # Nightly data-integrity check — runs at 04:00 AEST after every
     # 2am–3am modeling job has settled. Persists to quality_checks
     # table; critical findings log at ERROR level for monitoring.
@@ -9200,6 +9269,34 @@ async def get_bets_for_race(race_id: str, strategy: Optional[str] = None):
         rows = (await session.execute(q)).scalars().all()
     return {"race_id": race_id, "strategy": strategy or "all",
             "bets": [_row_to_bet_dict(b) for b in rows]}
+
+
+# ── AI-First ModelOps: guarded auto-promotion audit log ─────────────────────
+@app.get("/api/admin/auto-promotions")
+async def list_auto_promotions(limit: int = 50, x_cron_secret: Optional[str] = Header(None)):
+    _check_admin(x_cron_secret)
+    limit = max(1, min(limit, 200))
+    async with get_session() as session:
+        rows = (await session.execute(
+            select(AutoPromotionRow).order_by(AutoPromotionRow.promoted_at.desc()).limit(limit)
+        )).scalars().all()
+    return {
+        "enabled": _AUTO_PROMOTE_ENABLED,
+        "guardrails": {
+            "promote_min_races": _AUTO_PROMOTE_MIN_RACES,
+            "promote_min_margin_pp": _AUTO_PROMOTE_MIN_MARGIN_PP,
+            "rollback_min_races": _AUTO_PROMOTE_ROLLBACK_MIN_RACES,
+            "rollback_margin_pp": _AUTO_PROMOTE_ROLLBACK_MARGIN_PP,
+        },
+        "promotions": [{
+            "id": r.id, "model_type": r.model_type, "batch_id": r.batch_id,
+            "prior_batch_id": r.prior_batch_id, "delta_pp": r.delta_pp, "races": r.races,
+            "expected_hit_rate": r.expected_hit_rate, "status": r.status,
+            "promoted_at": r.promoted_at.isoformat() if r.promoted_at else None,
+            "rolled_back_at": r.rolled_back_at.isoformat() if r.rolled_back_at else None,
+            "note": r.note,
+        } for r in rows],
+    }
 
 
 # ── Security findings — Dr Evil (red-team) + Thor (blue-team) ───────────────
@@ -21133,6 +21230,43 @@ async def _seed_weight_candidate_review_followup(
                 except Exception as _e:
                     log.warning("[followup-seed] auto-reject failed for #%s: %s", batch_id[:8], _e)
                 return
+            # AUTO-PROMOTE gate (guarded, 2026-08-11) — the mirror of the auto-reject.
+            # If enabled and the candidate clears the guardrails (beats the live model
+            # by >= MARGIN pp on >= MIN_RACES held-out), promote it straight to
+            # production and record rollback state. Otherwise fall through to the
+            # human review queue. Default OFF ⇒ this block is skipped entirely.
+            if _AUTO_PROMOTE_ENABLED and (delta or 0) >= _AUTO_PROMOTE_MIN_MARGIN_PP and (races or 0) >= _AUTO_PROMOTE_MIN_RACES:
+                try:
+                    prior = (await session.execute(
+                        select(ModelWeightCandidateRow.batch_id)
+                        .where(ModelWeightCandidateRow.model_type == model_type)
+                        .where(ModelWeightCandidateRow.status == "active")
+                        .limit(1))).scalar()
+                    await promote_weight_candidate(
+                        session, batch_id,
+                        reviewer_note=f"AUTO-PROMOTE: +{delta}pp OOS over {races} races (guardrails passed)")
+                    await session.execute(
+                        sa_update(AutoPromotionRow)
+                        .where(AutoPromotionRow.model_type == model_type)
+                        .where(AutoPromotionRow.status == "active")
+                        .values(status="superseded"))
+                    session.add(AutoPromotionRow(
+                        model_type=model_type, batch_id=batch_id, prior_batch_id=prior,
+                        delta_pp=float(delta or 0), races=int(races or 0),
+                        expected_hit_rate=(float(candidate_pct or 0) / 100.0),
+                        status="active", promoted_at=datetime.utcnow(),
+                        note=f"auto-promoted +{delta}pp / {races} races; prior={(prior or 'none')[:8]}"))
+                    await session.commit()
+                    log.warning("[auto-promote] %s #%s PROMOTED (+%.2fpp OOS / %d races); prior=%s",
+                                model_type, batch_id[:8], float(delta or 0), int(races or 0), (prior or "none")[:8])
+                    try:
+                        await _seed_post_promotion_followup(model_type=model_type, batch_id=batch_id)
+                    except Exception:
+                        pass
+                    return
+                except Exception as _pe:
+                    log.warning("[auto-promote] %s #%s failed, queuing human review: %s",
+                                model_type, batch_id[:8], _pe)
             context = (
                 f"Candidate {model_type} weights #{batch_id[:8]}. "
                 f"Trained on {meta.get('sample_size', 0)} race groups · "
