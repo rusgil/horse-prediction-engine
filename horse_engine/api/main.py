@@ -9422,10 +9422,12 @@ async def labs_exotic_track():
         tiers = ["p2"] + (["p3"] if odds1 > ODDS_TIGHT else [])
         # the model's own confidence in the ACTUAL finishing order (Harville joint prob)
         win_conf = _harville_top3_prob(wpn.get(actual[0], 0.0), wpn.get(actual[1], 0.0), wpn.get(actual[2], 0.0))
-        # pre-race PROJECTED trifecta payout: fair dividend of the model's top line
-        # ≈ (1 - takeout) / P(most-likely combo). Scales with how open the race is.
-        p_top = straight_pairs[0][1] if straight_pairs else 0.0
-        exp_payout = round(0.855 / p_top) if p_top > 0 else 0
+        # pre-race PROJECTED (average) trifecta payout ≈ the expected dividend WHEN the
+        # top-40 line hits = (1 - takeout) * N / coverage, where coverage = Σ P(top-40
+        # combos). Rises as the race opens up (low coverage). Matches the "avg payout"
+        # a form guide quotes far better than the favourite-line floor.
+        cover = sum(pr for _, pr in straight_pairs)
+        exp_payout = round(0.855 * len(straight_pairs) / cover) if cover > 0 else 0
         gated = exp_payout >= EXP_PAYOUT_GATE
 
         def _mk(c, pr):
@@ -9571,8 +9573,8 @@ async def labs_exotic_sim(date: Optional[str] = None):
                 leg.update(hit=hit, payout=round(dv if hit else 0.0, 2),
                            pnl=round((dv if hit else 0.0) - len(combos), 2))
             return leg
-        p_top = straight_pairs[0][1] if straight_pairs else 0.0
-        exp_payout = round(0.855 / p_top) if p_top > 0 else 0
+        cover = sum(pr for _, pr in straight_pairs)
+        exp_payout = round(0.855 * len(straight_pairs) / cover) if cover > 0 else 0
         rr = {"race_id": rid, "venue": m.get("venue"), "race_number": m.get("rno"),
               "scheduled_time": m.get("sched"), "top_pick_odds": round(odds1, 2), "gap_pts": round(gap * 100, 1),
               "settled": settled, "exp_payout": exp_payout, "gated": exp_payout >= 80,
