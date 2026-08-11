@@ -114,12 +114,12 @@
   </div>
 
   <div class="note" style="background:rgba(45,212,191,0.08);border-color:rgba(45,212,191,0.35);color:#bfeee7">
-    <b>Live sim · today.</b> Every qualifying race (Sharp + clear-tri + top pick &gt; $3) with <b>both</b> plays it would back — the <b>Top-40 straight</b> (40 exact orders, $40) and the <b>Clear-tri box</b> (top-5 boxed, 60 orders, $60) — each combo list collapsible, with a countdown to the jump, then the result &amp; payout from the real tote dividend. Paper only — nothing is bet.
+    <b>Live sim · today.</b> Every qualifying race (Sharp + clear-tri + top pick &gt; $3) with <b>both</b> plays it would back — the <b>Top-40 straight lines</b> (40 exact lines, $40) and <b>Box the top 5</b> (all 60 orders, one ticket, $60) — each combo list collapsible, with a countdown to the jump, then the result &amp; payout from the real tote dividend. Paper only — nothing is bet.
   </div>
   <div style="background:rgba(232,160,32,0.08);border:1px solid rgba(232,160,32,0.42);border-radius:10px;padding:14px 16px;margin-bottom:16px;font-size:0.9rem;line-height:1.75">
     <div style="font-weight:800;color:var(--gold,#e8a020);letter-spacing:0.05em;margin-bottom:6px">📋 THE RULE</div>
     <div><b>1.</b> Only back races listed here — Sharp pick · clear trifecta · top pick &gt; $2.</div>
-    <div><b>2.</b> Play the <b style="color:var(--teal-bright,#2dd4bf)">Top-40 straight</b> — 40 lines, $1 each ($40). <span style="color:var(--text-secondary,#8a9bc4)">(The box underperforms ex-outlier — skip it.)</span></div>
+    <div><b>2.</b> Play the <b style="color:var(--teal-bright,#2dd4bf)">Top-40 straight lines</b> — 40 exact lines, $1 each ($40). <span style="color:var(--text-secondary,#8a9bc4)">(Boxing the top 5 underperforms ex-outlier — skip it.)</span></div>
     <div><b>3.</b> <b style="color:var(--gold,#e8a020)">Confirm the live trifecta approx before betting — only bet if it's ≥ $80.</b> Under $80, skip the race.</div>
     <div><b>4.</b> Paper only until it proves out over ~50–100 qualifying races.</div>
   </div>
@@ -261,8 +261,8 @@
         <span class="sim-cd ${c.cls}" data-sched="${r.scheduled_time || ''}" data-settled="${r.settled ? 1 : 0}">${c.txt}</span>
       </div>
       ${result}
-      ${comboBlock(st, '🎯 Top-40 straight', 'var(--teal-bright,#2dd4bf)', winKey, r.settled)}
-      ${comboBlock(bx, '📦 Clear-tri box', 'var(--purple-bright,#c084fc)', winKey, r.settled)}
+      ${comboBlock(st, '🎯 Top-40 straight lines', 'var(--teal-bright,#2dd4bf)', winKey, r.settled)}
+      ${comboBlock(bx, '📦 Box the top 5 (60 lines)', 'var(--purple-bright,#c084fc)', winKey, r.settled)}
     </div>`;
   }
   async function loadSim() {

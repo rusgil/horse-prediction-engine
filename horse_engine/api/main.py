@@ -9389,12 +9389,12 @@ async def labs_exotic_track():
                 "races": 0, "hits": 0, "big": 0.0, "hitdiv": [], "confsum": 0.0}
     EXP_PAYOUT_GATE = 80.0  # only bet when the model's projected trifecta payout clears this
     strat = {
-        "straight_p3": _blank("Top-40 straight · pick > $3", "40 highest-probability 1-2-3 orders, $1 each"),
-        "straight_p2": _blank("Top-40 straight · pick > $2", "40 highest-probability 1-2-3 orders, $1 each"),
-        "box_p3": _blank("Clear-tri box · pick > $3", "box the top-5 — 60 orders, $1 each"),
-        "box_p2": _blank("Clear-tri box · pick > $2", "box the top-5 — 60 orders, $1 each"),
-        "straight_g80": _blank("Straight-40 · proj payout ≥ $80", "40 orders, $1 each — only when the model's projected trifecta payout ≥ $80"),
-        "box_g80": _blank("Clear-tri box · proj payout ≥ $80", "top-5 boxed, 60 orders — only when projected payout ≥ $80"),
+        "straight_p3": _blank("Top-40 straight lines · pick > $3", "40 highest-probability 1-2-3 orders, $1 each"),
+        "straight_p2": _blank("Top-40 straight lines · pick > $2", "40 highest-probability 1-2-3 orders, $1 each"),
+        "box_p3": _blank("Box the top 5 · pick > $3", "box the top-5 — 60 orders, $1 each"),
+        "box_p2": _blank("Box the top 5 · pick > $2", "box the top-5 — 60 orders, $1 each"),
+        "straight_g80": _blank("Top-40 straight lines · proj payout ≥ $80", "40 exact lines, $1 each — only when the model's projected trifecta payout ≥ $80"),
+        "box_g80": _blank("Box the top 5 · proj payout ≥ $80", "box the top 5 (60 lines, one ticket) — only when projected payout ≥ $80"),
     }
     races_out = []
 
