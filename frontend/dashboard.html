@@ -1310,6 +1310,7 @@
           <span style="font-size:0.75rem">${agentBadge}</span>
           <span style="font-family:monospace;font-size:0.66rem;color:${stc};text-transform:uppercase">${escapeHtml(r.status)}</span>
         </div>
+        ${r.threat ? `<div style="margin-bottom:8px;padding:9px 12px;border-radius:7px;background:rgba(239,68,68,0.09);border:1px solid rgba(239,68,68,0.32);color:#fca5a5;font-size:0.83rem;font-style:italic">💀 ${escapeHtml(r.threat)}</div>` : ''}
         ${r.target ? `<div style="font-family:monospace;font-size:0.72rem;color:var(--text-secondary);margin-bottom:5px;word-break:break-all">${escapeHtml(r.target)}</div>` : ''}
         ${r.detail ? `<div style="font-size:0.83rem;color:var(--text-secondary);margin-bottom:6px;white-space:pre-wrap">${escapeHtml(r.detail)}</div>` : ''}
         ${r.remediation ? `<div style="font-size:0.8rem;color:#22c55e;margin-bottom:8px">🔧 ${escapeHtml(r.remediation)}</div>` : ''}

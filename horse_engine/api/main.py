@@ -9232,7 +9232,7 @@ async def list_security_findings(
         return {
             "id": r.id, "agent": r.agent, "severity": r.severity,
             "category": r.category, "title": r.title, "target": r.target,
-            "detail": r.detail, "remediation": r.remediation, "status": r.status,
+            "detail": r.detail, "remediation": r.remediation, "threat": r.threat, "status": r.status,
             "created_at": r.created_at.isoformat() if r.created_at else None,
             "updated_at": r.updated_at.isoformat() if r.updated_at else None,
         }
@@ -9284,6 +9284,7 @@ async def create_security_finding(
         target=_clip(payload.get("target"), 300),
         detail=(str(payload.get("detail"))[:8000] if payload.get("detail") else None),
         remediation=(str(payload.get("remediation"))[:4000] if payload.get("remediation") else None),
+        threat=(str(payload.get("threat"))[:4000] if payload.get("threat") else None),
         status="open",
         created_at=datetime.utcnow(),
         updated_at=datetime.utcnow(),
@@ -9307,17 +9308,25 @@ async def update_security_finding_status(
         payload = await request.json()
     except Exception:
         raise HTTPException(400, "invalid JSON body")
-    new_status = str((payload or {}).get("status") or "").strip().lower()
-    if new_status not in ("open", "verified", "fixed", "dismissed"):
+    _p = payload if isinstance(payload, dict) else {}
+    new_status = str(_p.get("status") or "").strip().lower()
+    threat = _p.get("threat")
+    if new_status and new_status not in ("open", "verified", "fixed", "dismissed"):
         raise HTTPException(400, "invalid status")
+    if not new_status and threat is None:
+        raise HTTPException(400, "nothing to update (status or threat required)")
     async with get_session() as session:
         row = await session.get(SecurityFindingRow, finding_id)
         if not row:
             raise HTTPException(404, "not found")
-        row.status = new_status
+        if new_status:
+            row.status = new_status
+        if threat is not None:
+            row.threat = str(threat)[:4000]
         row.updated_at = datetime.utcnow()
         await session.commit()
-    return {"ok": True, "id": finding_id, "status": new_status}
+        _st = row.status
+    return {"ok": True, "id": finding_id, "status": _st}
 
 
 @app.get("/api/labs/exotic-track")

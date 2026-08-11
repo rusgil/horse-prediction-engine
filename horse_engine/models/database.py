@@ -231,6 +231,7 @@ class SecurityFindingRow(Base):
     target = Column(String, nullable=True)                  # host / route / file
     detail = Column(Text, nullable=True)                    # description + MASKED evidence
     remediation = Column(Text, nullable=True)               # suggested fix
+    threat = Column(Text, nullable=True)                    # Dr Evil's villainous blast-radius line (attack -> capability -> consequence)
     # open | verified | fixed | dismissed
     status = Column(String, default="open", nullable=False, index=True)
     created_at = Column(DateTime, default=datetime.utcnow, index=True)
@@ -976,6 +977,10 @@ async def init_db() -> None:
         "CREATE INDEX IF NOT EXISTS ix_mwcand_batch ON model_weight_candidates (batch_id)",
         "CREATE INDEX IF NOT EXISTS ix_mwcand_type_status ON model_weight_candidates (model_type, status)",
         "CREATE INDEX IF NOT EXISTS ix_hist_batch_id ON runner_prediction_history (batch_id)",
+        # Security findings — Dr Evil's threat/blast-radius line (2026-08-11).
+        # Table is auto-created by create_all; this ALTER adds the column to the
+        # already-existing table on redeploy.
+        "ALTER TABLE security_findings ADD COLUMN IF NOT EXISTS threat TEXT",
         # UNIQUE index creation must be robust to pre-existing duplicates.
         # The 2026-07-18 incident: this CREATE UNIQUE INDEX ran on a table
         # that had duplicate (race_id, horse_name) rows from a prior settle
