@@ -1313,7 +1313,7 @@
         ${r.threat ? `<div style="margin-bottom:8px;padding:9px 12px;border-radius:7px;background:rgba(239,68,68,0.09);border:1px solid rgba(239,68,68,0.32);color:#fca5a5;font-size:0.83rem;font-style:italic">💀 ${escapeHtml(r.threat)}</div>` : ''}
         ${r.target ? `<div style="font-family:monospace;font-size:0.72rem;color:var(--text-secondary);margin-bottom:5px;word-break:break-all">${escapeHtml(r.target)}</div>` : ''}
         ${r.detail ? `<div style="font-size:0.83rem;color:var(--text-secondary);margin-bottom:6px;white-space:pre-wrap">${escapeHtml(r.detail)}</div>` : ''}
-        ${r.remediation ? `<div style="font-size:0.8rem;color:#22c55e;margin-bottom:8px">🔧 ${escapeHtml(r.remediation)}</div>` : ''}
+        ${r.remediation ? `<div style="font-size:0.8rem;margin-bottom:8px;padding:9px 12px;border-radius:7px;background:rgba(59,130,246,0.08);border:1px solid rgba(59,130,246,0.28)"><span style="color:var(--blue);font-weight:600">⚡ Thor</span> <span style="color:var(--text-dim,#4a5a7a)">— how you stop me:</span> <span style="color:#4ade80">${escapeHtml(r.remediation)}</span></div>` : ''}
         <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
           <span style="font-size:0.68rem;color:var(--text-dim)">${escapeHtml(r.category || '')}${r.category ? ' · ' : ''}${escapeHtml(when)}</span>
           <span style="flex:1;min-width:8px"></span>
