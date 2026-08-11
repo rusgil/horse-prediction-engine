@@ -980,6 +980,12 @@ async def _check_scratches_today() -> int:
 
     # Sync step: catch any mutable-cancelled runners whose history row predates this fix.
     # Runs every call so retroactive scratches (cancelled before this code was deployed) propagate.
+    #
+    # POST-JUMP GUARD (2026-08-11): once a race has jumped the frozen history snapshot is the
+    # prediction of record — flipping a frozen runner to cancelled=true is a post-race rewrite
+    # that the DB write-guard blocks, logging post_race_cancel_blocked on EVERY tick (was the
+    # bulk of the ~400 guard incidents — pure noise, no data effect). Only sync history for
+    # races that have NOT yet jumped; the mutable table is unaffected either way.
     affected_race_ids: set[str] = set()
     try:
         async with get_session() as session:
@@ -989,7 +995,21 @@ async def _check_scratches_today() -> int:
                 .where(RunnerPredictionRow.cancelled.is_(True))
             )).fetchall()
             if already_cancelled_mut:
+                # Which of today's races have already jumped? Skip their frozen snapshots.
+                _now = datetime.utcnow()
+                _sched_rows = (await session.execute(
+                    select(RunnerPredictionHistoryRow.race_id, RunnerPredictionHistoryRow.scheduled_time)
+                    .where(RunnerPredictionHistoryRow.race_id.like(f"{today}_%"))
+                    .distinct()
+                )).fetchall()
+                _jumped: set[str] = set()
+                for _rid, _st in _sched_rows:
+                    _j = sched_to_utc_naive(_st) if _st else None
+                    if _j is not None and _now > _j:
+                        _jumped.add(_rid)
                 for race_id, horse_name in already_cancelled_mut:
+                    if race_id in _jumped:
+                        continue  # frozen snapshot is the record of truth post-jump
                     affected_race_ids.add(race_id)
                     await session.execute(
                         sa_update(RunnerPredictionHistoryRow)
@@ -15425,21 +15445,35 @@ async def _auto_heal_findings(target: str, findings: list[dict]) -> list[dict]:
 
         elif check == "scratched_mutable_history_mismatch":
             # Sync cancelled flag between mutable and history for the mismatched runners.
+            # POST-JUMP GUARD (2026-08-11): still sync the mutable (live) row, but leave a
+            # jumped race's frozen snapshot untouched — the DB write-guard blocks a post-jump
+            # cancel and logs post_race_cancel_blocked. Same rationale as the scratch sweep.
             entries = f.get("mismatches") or []
             synced = 0
+            skipped_post_jump = 0
+            _now = datetime.utcnow()
             async with get_session() as session:
                 for e in entries:
                     rid = e.get("race_id")
                     hname = e.get("horse_name")
                     if not rid or not hname:
                         continue
-                    # Union: if EITHER has cancelled=true, both should
+                    # Union: if EITHER has cancelled=true, both should — mutable has no guard.
                     await session.execute(
                         sa_update(RunnerPredictionRow)
                         .where(RunnerPredictionRow.race_id == rid)
                         .where(RunnerPredictionRow.horse_name == hname)
                         .values(cancelled=True)
                     )
+                    _sched = (await session.execute(
+                        select(RunnerPredictionHistoryRow.scheduled_time)
+                        .where(RunnerPredictionHistoryRow.race_id == rid)
+                        .limit(1)
+                    )).scalar()
+                    _jump = sched_to_utc_naive(_sched) if _sched else None
+                    if _jump is not None and _now > _jump:
+                        skipped_post_jump += 1
+                        continue  # frozen snapshot is the record of truth post-jump
                     await session.execute(
                         sa_update(RunnerPredictionHistoryRow)
                         .where(RunnerPredictionHistoryRow.race_id == rid)
@@ -15449,7 +15483,8 @@ async def _auto_heal_findings(target: str, findings: list[dict]) -> list[dict]:
                     synced += 1
                 await session.commit()
             actions.append({"check": check, "action": "sync_cancelled_flag",
-                            "affected": synced, "outcome": "healed" if synced else "skipped"})
+                            "affected": synced, "skipped_post_jump": skipped_post_jump,
+                            "outcome": "healed" if synced else ("skipped_post_jump" if skipped_post_jump else "skipped")})
 
         elif check == "stale_response_cache":
             _edge_response_cache = None
