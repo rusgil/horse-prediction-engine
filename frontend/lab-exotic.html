@@ -79,8 +79,8 @@
   .sim-combos-wrap { margin:6px 0 4px; }
   .sim-combos-wrap summary { cursor:pointer; list-style:none; user-select:none; }
   .sim-combos-wrap summary::-webkit-details-marker { display:none; }
-  .combo-toggle::before { content:' — ▾ show the 40 bets'; color:var(--teal-bright); font-weight:700; }
-  .sim-combos-wrap[open] .combo-toggle::before { content:' — ▴ hide the 40 bets'; }
+  .combo-toggle::before { content:' — ▾ show combos'; color:var(--teal-bright); font-weight:700; }
+  .sim-combos-wrap[open] .combo-toggle::before { content:' — ▴ hide combos'; }
   .sim-combos { margin-top:6px; display:flex; flex-wrap:wrap; gap:5px 8px; max-height:118px; overflow-y:auto; padding:8px 10px; background:var(--bg-elevated); border-radius:8px; font-variant-numeric:tabular-nums; }
   .combo { font-size:0.74rem; font-weight:700; white-space:nowrap; }
   .combo b { color:var(--teal-bright); font-weight:700; }
@@ -239,9 +239,12 @@
     const combos = list.map(x => comboHtml(x, winKey)).join(' <span style="color:var(--text-muted)">·</span> ');
     let res = '';
     if (settled && ('hit' in leg)) {
-      res = leg.hit
-        ? ` <span class="pos">✓ HIT ${sign((leg.payout || 0) - stake)}</span>`
-        : ` <span class="neg">✗ −$${stake}</span>`;
+      if (leg.hit) {
+        const mult = stake ? ((leg.payout || 0) / stake) : 0;
+        res = ` <span class="pos">✓ HIT · returned $${Math.round(leg.payout || 0)} on $${stake} (${mult.toFixed(1)}× · ${sign((leg.payout || 0) - stake)})</span>`;
+      } else {
+        res = ` <span class="neg">✗ missed · −$${stake}</span>`;
+      }
     }
     return `<details class="sim-combos-wrap">
       <summary class="sim-sub"><span style="color:${color};font-weight:700">${label}</span> · $${stake} · ${list.length} combos ($1 each)${res}<span class="combo-toggle"></span></summary>
@@ -271,9 +274,9 @@
         <span class="sim-meta">${startT ? '🕒 ' + startT + ' · ' : ''}pick $${(r.top_pick_odds || 0).toFixed(2)} · gap ${r.gap_pts}pt</span>
         <span class="sim-cd ${c.cls}" data-sched="${r.scheduled_time || ''}" data-settled="${r.settled ? 1 : 0}">${c.txt}</span>
       </div>
+      ${result}
       ${comboBlock(st, '🎯 Top-40 straight', 'var(--teal-bright,#2dd4bf)', winKey, r.settled)}
       ${comboBlock(bx, '📦 Clear-tri box', 'var(--purple-bright,#c084fc)', winKey, r.settled)}
-      ${result}
     </div>`;
   }
   async function loadSim() {
