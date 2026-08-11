@@ -9464,7 +9464,7 @@ async def labs_exotic_track():
             "roi": round(net / st * 100, 1) if st else 0,
             "biggest": round(s["big"]),
             "avg_hit_div": round(sum(s["hitdiv"]) / len(s["hitdiv"])) if s["hitdiv"] else 0,
-            "avg_hit_conf": round(s["confsum"] / s["hits"], 2) if s["hits"] else 0,
+            "avg_hit_conf": round(s["confsum"] / s["hits"] * 100, 2) if s["hits"] else 0,
         })
     races_out.sort(key=lambda r: r["date"], reverse=True)
     return {"strategies": out, "races": races_out}
