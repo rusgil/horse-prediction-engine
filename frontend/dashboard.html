@@ -524,6 +524,7 @@
   const SECRET_KEY = 'fiq_admin_secret';
 
   let adminSecret = sessionStorage.getItem(SECRET_KEY) || '';
+  let _sharpSeries = null;   // /api/performance?days=60&sharp=true — for the Phase-2 sharp line
   let activeTab = 'win';
   let exoticLoaded = false;
 
@@ -1089,7 +1090,7 @@
 
   async function loadDashboard() {
     try {
-      const [calRes, perfRes, analysisRes, prodRes, premRes, placeRes] = await Promise.all([
+      const [calRes, perfRes, analysisRes, prodRes, premRes, placeRes, sharpRes] = await Promise.all([
         fetch(`${API}/api/admin/calibration/history?limit=14`, { headers: { 'x-cron-secret': adminSecret } }),
         fetch(`${API}/api/performance?days=60`),
         fetch(`${API}/api/admin/backtest/analysis`, { headers: { 'x-cron-secret': adminSecret } }),
@@ -1101,6 +1102,8 @@
         fetch(`${API}/api/performance/premium/public`),
         // Place-bet ROI on every rank-1 pick (real dividends, 7d).
         fetch(`${API}/api/admin/bets/place-roi?days=7`, { headers: { 'x-cron-secret': adminSecret } }),
+        // Sharp-filter recompute series for the Phase-2 chart's sharp win/place line.
+        fetch(`${API}/api/performance?days=60&sharp=true`),
       ]);
 
       if (calRes.status === 403) {
@@ -1117,6 +1120,7 @@
       const prodData     = prodRes.ok     ? await prodRes.json()     : null;
       const premData     = premRes.ok     ? await premRes.json()     : null;
       const placeData    = placeRes.ok    ? await placeRes.json()    : null;
+      _sharpSeries       = sharpRes.ok    ? await sharpRes.json()    : null;
 
       sessionStorage.setItem(SECRET_KEY, adminSecret);
       renderShell(calData, perfData, analysisData, prodData, premData, placeData);
@@ -1877,7 +1881,7 @@ export CRON_SECRET='&lt;your CRON_SECRET&gt;'
         const _todayAestP2 = new Date().toLocaleDateString('en-CA', { timeZone: 'Australia/Sydney' });
         const p2days = [...perfData.summary].reverse().filter(d => d.date >= P2_START && d.date < _todayAestP2);
         if (p2days.length > 2) {
-          const p2labels = p2days.map(d => fmtDate(d.date));
+          const p2labels = p2days.map(d => new Date(d.date).toLocaleDateString('en-AU', { weekday: 'short', day: 'numeric', month: 'short', timeZone: 'Australia/Sydney' }));
           const p2win    = p2days.map(d => +(d.win_rate * 100).toFixed(1));
           const p2place  = p2days.map(d => +((d.place_rate || 0) * 100).toFixed(1));
           const pre      = p2days.filter(d => d.date < P2_DEPLOY);
@@ -1924,6 +1928,11 @@ export CRON_SECRET='&lt;your CRON_SECRET&gt;'
             }
           };
           const races = p2days.map(d => d.races || 0);
+          // Sharp-filter series (recompute) mapped onto the same dates.
+          const sharpMap = {};
+          (_sharpSeries?.summary || []).forEach(r => { sharpMap[r.date] = r; });
+          const sharpWin   = p2days.map(d => { const r = sharpMap[d.date]; return r ? +((r.win_rate || 0) * 100).toFixed(1) : null; });
+          const sharpPlace = p2days.map(d => { const r = sharpMap[d.date]; return r ? +((r.place_rate || 0) * 100).toFixed(1) : null; });
           new Chart(document.getElementById('phase2Chart'), {
             type: 'line',
             data: {
@@ -1931,6 +1940,8 @@ export CRON_SECRET='&lt;your CRON_SECRET&gt;'
               datasets: [
                 { label: 'Win %', data: p2win, borderColor: 'rgba(34,197,94,0.9)', backgroundColor: 'rgba(34,197,94,0.08)', tension: 0.3, pointRadius: 3 },
                 { label: 'Place %', data: p2place, borderColor: 'rgba(59,130,246,0.9)', backgroundColor: 'rgba(59,130,246,0.06)', tension: 0.3, pointRadius: 3 },
+                { label: 'Sharp win %', data: sharpWin, borderColor: 'rgba(232,160,32,0.95)', backgroundColor: 'transparent', tension: 0.3, pointRadius: 2, spanGaps: true },
+                { label: 'Sharp place %', data: sharpPlace, borderColor: 'rgba(168,85,247,0.95)', backgroundColor: 'transparent', tension: 0.3, pointRadius: 2, borderDash: [4, 3], spanGaps: true },
                 ...(baseWin != null ? [{ label: 'Baseline win', data: p2labels.map(() => +baseWin.toFixed(1)), borderColor: 'rgba(34,197,94,0.45)', borderDash: [6, 5], pointRadius: 0, borderWidth: 1 }] : []),
                 ...(basePlace != null ? [{ label: 'Baseline place', data: p2labels.map(() => +basePlace.toFixed(1)), borderColor: 'rgba(59,130,246,0.45)', borderDash: [6, 5], pointRadius: 0, borderWidth: 1 }] : []),
                 ...(avgWin != null ? [{ label: `Avg win since 22 Jul (${avgWin.toFixed(1)}%)`, data: p2labels.map(() => +avgWin.toFixed(1)), borderColor: 'rgba(34,197,94,0.85)', borderDash: [2, 3], pointRadius: 0, borderWidth: 2 }] : []),
@@ -1941,7 +1952,11 @@ export CRON_SECRET='&lt;your CRON_SECRET&gt;'
               ...chartDefaults,
               plugins: { ...chartDefaults.plugins, tooltip: { callbacks: {
                 label: ctx => `${ctx.dataset.label}: ${ctx.parsed.y}%`,
-                afterLabel: ctx => ctx.datasetIndex < 2 ? `Races: ${races[ctx.dataIndex]}` : '',
+                afterLabel: ctx => {
+                  if (ctx.datasetIndex < 2) return `Races: ${races[ctx.dataIndex]}`;
+                  if (ctx.datasetIndex === 2 || ctx.datasetIndex === 3) { const r = sharpMap[p2days[ctx.dataIndex].date]; return r ? `Sharp races: ${r.races}` : ''; }
+                  return '';
+                },
               }}},
               scales: { ...chartDefaults.scales, y: { ...chartDefaults.scales.y, min: 0, ticks: { ...chartDefaults.scales.y.ticks, callback: v => v + '%' } } }
             },
