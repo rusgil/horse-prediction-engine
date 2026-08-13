@@ -160,8 +160,8 @@ _AUTO_PROMOTE_ROLLBACK_MARGIN_PP = float(os.getenv("AUTO_PROMOTE_ROLLBACK_MARGIN
 # and the edge holds across both chronological halves. This closes the Sharp
 # blind spot where high-confidence-but-two-strong-horses coin-flips leaked in
 # (the Aug-7 Sharp-worse-than-overall inversion). Fraction + percent scales.
-_SHARP_MIN_GAP = 0.06
-_SHARP_MIN_GAP_PCT = 6.0
+_SHARP_MIN_GAP = 0.08
+_SHARP_MIN_GAP_PCT = 8.0
 
 
 def _check_admin(x_secret: Optional[str]) -> None:
