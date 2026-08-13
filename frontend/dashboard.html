@@ -1924,6 +1924,15 @@ export CRON_SECRET='&lt;your CRON_SECRET&gt;'
                 c.textAlign = 'left';
                 c.fillText('22 Jul — Phase 2 live', x + 5, top + 12);
               }
+              if (typeof sharpStartIdx !== 'undefined' && sharpStartIdx >= 0) {
+                const xs = chart.scales.x.getPixelForValue(sharpStartIdx);
+                c.strokeStyle = 'rgba(232,160,32,0.5)'; c.setLineDash([2, 3]); c.lineWidth = 1;
+                c.beginPath(); c.moveTo(xs, top); c.lineTo(xs, bottom); c.stroke();
+                c.setLineDash([]);
+                c.fillStyle = 'rgba(232,160,32,0.9)'; c.font = '600 9px -apple-system, sans-serif';
+                c.textAlign = 'left';
+                c.fillText('Sharp tracked', xs + 4, top + 26);
+              }
               c.restore();
             }
           };
@@ -1931,8 +1940,11 @@ export CRON_SECRET='&lt;your CRON_SECRET&gt;'
           // Sharp-filter series (recompute) mapped onto the same dates.
           const sharpMap = {};
           (_sharpSeries?.summary || []).forEach(r => { sharpMap[r.date] = r; });
-          const sharpWin   = p2days.map(d => { const r = sharpMap[d.date]; return r ? +((r.win_rate || 0) * 100).toFixed(1) : null; });
-          const sharpPlace = p2days.map(d => { const r = sharpMap[d.date]; return r ? +((r.place_rate || 0) * 100).toFixed(1) : null; });
+          // Sharp lines only from when the integrity report began tracking is_sharp.
+          const SHARP_START = '2026-08-07';
+          const sharpWin   = p2days.map(d => { const r = sharpMap[d.date]; return (r && d.date >= SHARP_START) ? +((r.win_rate || 0) * 100).toFixed(1) : null; });
+          const sharpPlace = p2days.map(d => { const r = sharpMap[d.date]; return (r && d.date >= SHARP_START) ? +((r.place_rate || 0) * 100).toFixed(1) : null; });
+          const sharpStartIdx = p2days.findIndex(d => d.date >= SHARP_START);
           new Chart(document.getElementById('phase2Chart'), {
             type: 'line',
             data: {
