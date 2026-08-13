@@ -153,6 +153,16 @@ _AUTO_PROMOTE_MIN_MARGIN_PP = float(os.getenv("AUTO_PROMOTE_MIN_MARGIN_PP", "1.5
 _AUTO_PROMOTE_ROLLBACK_MIN_RACES = int(os.getenv("AUTO_PROMOTE_ROLLBACK_MIN_RACES", "80"))
 _AUTO_PROMOTE_ROLLBACK_MARGIN_PP = float(os.getenv("AUTO_PROMOTE_ROLLBACK_MARGIN_PP", "2.0"))
 
+# ── Sharp "clear favourite" gate (2026-08-14) ───────────────────────────────
+# is_sharp additionally requires a CLEAR top pick: the #1-#2 win-prob gap must
+# clear this threshold. Backtest (3,186 races): close-gap races (<3pp) win only
+# ~18%, while a clear favourite (gap≥6pp) wins ~31% overall / ~44% within Sharp,
+# and the edge holds across both chronological halves. This closes the Sharp
+# blind spot where high-confidence-but-two-strong-horses coin-flips leaked in
+# (the Aug-7 Sharp-worse-than-overall inversion). Fraction + percent scales.
+_SHARP_MIN_GAP = 0.06
+_SHARP_MIN_GAP_PCT = 6.0
+
 
 def _check_admin(x_secret: Optional[str]) -> None:
     """Fail-closed admin auth: requires CRON_SECRET env var to be set."""
@@ -2677,6 +2687,9 @@ async def _snapshot_prerace_predictions() -> int:
             race_is_sharp = None
             if rank1 is not None:
                 _high_conf = ((rank1.win_probability or 0) >= 0.30) or (top3_sum >= 0.60)
+                # Clear-favourite gate: #1-#2 win-prob gap must clear the threshold.
+                _rank2_wp = (active_sorted[1].win_probability or 0.0) if len(active_sorted) > 1 else 0.0
+                _clear_fav = ((rank1.win_probability or 0.0) - _rank2_wp) >= _SHARP_MIN_GAP
                 _days_off = None
                 if rank1.enriched_json:
                     try:
@@ -2695,7 +2708,7 @@ async def _snapshot_prerace_predictions() -> int:
                     (not is_metro_venue(_svenue))
                     and _srn is not None and _smx >= 5 and _srn >= _smx - 1
                 )
-                race_is_sharp = bool(_high_conf and _layoff_ok and not _late_nonmetro)
+                race_is_sharp = bool(_high_conf and _clear_fav and _layoff_ok and not _late_nonmetro)
             for r in runners:
                 try:
                     session.add(RunnerPredictionHistoryRow(
@@ -5365,6 +5378,10 @@ async def get_edge_picks():
             field_top3 = (field_map.get(runner_row.race_id, []) or [])[:3]
             top3_sum_pct = sum(f.get("win_pct") or 0 for f in field_top3)
             _high_conf = (model_pct or 0) >= 30 or top3_sum_pct >= 60
+            # Clear-favourite gate: #1-#2 win% gap must clear the threshold.
+            _other_pcts = sorted([f.get("win_pct") or 0 for f in field_top3], reverse=True)
+            _rank2_pct = _other_pcts[1] if len(_other_pcts) > 1 else 0
+            _clear_fav = ((model_pct or 0) - _rank2_pct) >= _SHARP_MIN_GAP_PCT
             _layoff_ok = not (isinstance(days_since_last_run, (int, float)) and days_since_last_run > 180)
             # Late-non-metro exclusion (2026-08-02). The model can only pick the
             # winner of the last-2 races at NON-METRO meetings ~11% of the time
@@ -5378,7 +5395,7 @@ async def get_edge_picks():
                 (not is_metro_venue(venue_code))
                 and race_num is not None and _mx >= 5 and race_num >= _mx - 1
             )
-            is_sharp = bool(_high_conf and _layoff_ok and not _late_nonmetro)
+            is_sharp = bool(_high_conf and _clear_fav and _layoff_ok and not _late_nonmetro)
 
             picks.append({
                 "date": target_date,
@@ -26286,8 +26303,10 @@ async def performance_summary(
                 .where(RunnerPredictionHistoryRow.cancelled.is_(False) | RunnerPredictionHistoryRow.cancelled.is_(None))
             )).all()
             _t3: dict[str, float] = {}
+            _probs: dict[str, list] = {}
             for _rid, _wp in _t3rows:
                 _t3[_rid] = _t3.get(_rid, 0.0) + (_wp or 0.0)
+                _probs.setdefault(_rid, []).append(_wp or 0.0)
             # Full-meeting max race number for the late-non-metro check — MUST
             # come from the whole meeting, not just settled top_picks: an unsettled
             # late race (R6/R7) missing here undercounts the max and wrongly flags
@@ -26310,6 +26329,10 @@ async def performance_summary(
 
             def _recompute_sharp(p) -> bool:
                 if not ((p.win_probability or 0.0) >= 0.30 or _t3.get(p.race_id, 0.0) >= 0.60):
+                    return False
+                # Clear-favourite gate: #1-#2 win-prob gap must clear the threshold.
+                _pr = sorted(_probs.get(p.race_id, []), reverse=True)
+                if len(_pr) < 2 or (_pr[0] - _pr[1]) < _SHARP_MIN_GAP:
                     return False
                 try:
                     _do = (json.loads(p.enriched_json or "{}") or {}).get("days_since_last_run")
