@@ -6070,6 +6070,30 @@ async def get_edge_yesterday(for_date: Optional[str] = Query(None, alias="date")
             .where(RunnerPredictionHistoryRow.source == "live")
         )
         yst_place_rows = yst_place_result.scalars().all()
+        # Top-3 WIN-model probs per race + full-meeting max race number — for the
+        # is_sharp recompute (clear-favourite gate) so the Edge Sharp toggle filters.
+        _yst_win_rows = (await session.execute(
+            select(RunnerPredictionHistoryRow.race_id, RunnerPredictionHistoryRow.win_probability)
+            .where(RunnerPredictionHistoryRow.race_id.in_(yst_race_ids))
+            .where(RunnerPredictionHistoryRow.model_rank.in_([1, 2, 3]))
+            .where(RunnerPredictionHistoryRow.cancelled.is_(False) | RunnerPredictionHistoryRow.cancelled.is_(None))
+            .where(RunnerPredictionHistoryRow.source == "live")
+        )).all()
+        _yst_maxrows = (await session.execute(
+            select(RunnerPredictionHistoryRow.race_id, RunnerPredictionHistoryRow.race_number)
+            .where(RunnerPredictionHistoryRow.race_id.like(f"{prefix}%"))
+            .where(RunnerPredictionHistoryRow.model_rank == 1)
+        )).all()
+
+    _yst_win_probs: dict[str, list] = {}
+    for _rid, _wp in _yst_win_rows:
+        _yst_win_probs.setdefault(_rid, []).append(_wp or 0.0)
+    _yst_mtg_max: dict[str, int] = {}
+    for _rid, _rn in _yst_maxrows:
+        if _rn is not None:
+            _yv = _parse_race_id(_rid)[1]
+            _yst_mtg_max[_yv] = max(_yst_mtg_max.get(_yv, 0), _rn)
+    from horse_engine.bets import is_metro_venue as _is_metro
 
     yst_trifecta_map: dict[str, list] = {}
     for pr in yst_place_rows:
@@ -6214,11 +6238,28 @@ async def get_edge_yesterday(for_date: Optional[str] = Query(None, alias="date")
             yst_enriched = json.loads(p.enriched_json) if p.enriched_json else {}
         except Exception:
             yst_enriched = {}
+        # is_sharp — recomputed with the clear-favourite gate (consistent with the
+        # meetings/performance surfaces) so the Edge Sharp/All toggle filters right.
+        _wps = sorted(_yst_win_probs.get(p.race_id, []), reverse=True)
+        _p1 = _wps[0] if _wps else (p.win_probability or 0.0)
+        _p2 = _wps[1] if len(_wps) > 1 else 0.0
+        _hc = (p.win_probability or 0) >= 0.30 or sum(_wps[:3]) >= 0.60
+        _cf = (_p1 - _p2) >= _SHARP_MIN_GAP
+        try:
+            _do = (json.loads(p.enriched_json or "{}") or {}).get("days_since_last_run")
+        except Exception:
+            _do = None
+        _lo = not (isinstance(_do, (int, float)) and _do > 180)
+        _mx = _yst_mtg_max.get(venue_code, 0)
+        _late = bool((not _is_metro(venue_code)) and race_num is not None and _mx >= 5 and race_num >= _mx - 1)
+        is_sharp_pick = bool(_hc and _cf and _lo and not _late)
+
         output.append({
             "race_id": p.race_id,
             "venue": venue_code,
             "race_number": race_num,
             "scheduled_time": p.scheduled_time,
+            "is_sharp": is_sharp_pick,
             "horse_name": p.horse_name,
             "jockey": p.jockey,
             "trainer": p.trainer,
