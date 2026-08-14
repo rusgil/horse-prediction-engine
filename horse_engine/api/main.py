@@ -2836,13 +2836,22 @@ async def _auto_repair_contaminated_snapshots():
     cutoff = now - timedelta(hours=24)
     async with get_session() as session:
         rows = (await session.execute(
-            select(RunnerPredictionHistoryRow.race_id)
+            select(RunnerPredictionHistoryRow.race_id,
+                   func.max(RunnerPredictionHistoryRow.scheduled_time))
             .where(RunnerPredictionHistoryRow.contaminated.is_(True))
             .where(RunnerPredictionHistoryRow.recorded_at >= cutoff)
-            .distinct()
+            .group_by(RunnerPredictionHistoryRow.race_id)
             .limit(_AUTO_REPAIR_MAX_PER_TICK * 3)  # extra headroom for de-dup
         )).all()
-    race_ids = list({r[0] for r in rows})[:_AUTO_REPAIR_MAX_PER_TICK]
+    # Skip races that have already jumped — the frozen snapshot can't be
+    # repaired (the write-once trigger blocks it), so re-enriching only spams
+    # guard incidents and, worse, keeps the backlog non-empty forever so the
+    # "model unstable" banner never clears. A jumped contaminated row ages out
+    # of the 24h window on its own.
+    def _repairable(_st):
+        _j = sched_to_utc_naive(_st) if _st else None
+        return _j is None or now <= _j + timedelta(minutes=5)
+    race_ids = list({rid for rid, _st in rows if _repairable(_st)})[:_AUTO_REPAIR_MAX_PER_TICK]
     if not race_ids:
         # Backlog is drained. If banner is still on for an upstream/distribution
         # reason (not a manual override), flip it off.
@@ -12291,19 +12300,31 @@ async def admin_backfill_is_sharp(x_cron_secret: Optional[str] = Header(None)):
     is a no-op once every rank-1 row has is_sharp set to True or False."""
     _check_admin(x_cron_secret)
     from sqlalchemy import text as _sa_text
+    # POST-JUMP GUARD (2026-08-14): is_sharp is a write-once frozen field. A
+    # rank-1 row whose flag is still NULL AFTER the race jumped (e.g. a runner
+    # promoted to rank-1 by a late scratch) can never be backfilled — the
+    # trigger reverts every attempt to NULL, so the row is re-selected on every
+    # run and logs post_race_update_blocked forever. Surfaces recompute Sharp at
+    # read-time from the frozen win-probs anyway, so a NULL flag is harmless.
+    # Only touch rows that have NOT jumped (same 5-min grace as the trigger).
+    _NOT_JUMPED = ("(scheduled_time IS NULL OR "
+                   "scheduled_time::timestamptz > (now() - interval '5 minutes'))")
     stages = [
-        ("stage_1_win_prob_ge_30", """
+        ("stage_1_win_prob_ge_30", f"""
             UPDATE runner_prediction_history
             SET is_sharp = TRUE
             WHERE model_rank = 1
               AND is_sharp IS NULL
               AND win_probability >= 0.30
+              AND {_NOT_JUMPED}
         """),
-        ("stage_2_top3_sum_ge_60", """
+        ("stage_2_top3_sum_ge_60", f"""
             UPDATE runner_prediction_history AS h
             SET is_sharp = TRUE
             WHERE h.model_rank = 1
               AND h.is_sharp IS NULL
+              AND (h.scheduled_time IS NULL OR
+                   h.scheduled_time::timestamptz > (now() - interval '5 minutes'))
               AND (
                 SELECT COALESCE(SUM(win_probability), 0)
                 FROM runner_prediction_history
@@ -12312,10 +12333,11 @@ async def admin_backfill_is_sharp(x_cron_secret: Optional[str] = Header(None)):
                   AND (cancelled IS FALSE OR cancelled IS NULL)
               ) >= 0.60
         """),
-        ("stage_3_remaining_false", """
+        ("stage_3_remaining_false", f"""
             UPDATE runner_prediction_history
             SET is_sharp = FALSE
             WHERE model_rank = 1 AND is_sharp IS NULL
+              AND {_NOT_JUMPED}
         """),
     ]
     results = {}
@@ -15566,6 +15588,14 @@ async def _auto_heal_findings(target: str, findings: list[dict]) -> list[dict]:
                     .where(RunnerPredictionHistoryRow.source == "live")
                 )).scalars().all()
                 for r in to_update:
+                    # POST-JUMP GUARD: is_sharp is frozen once the race jumps —
+                    # the write-once trigger reverts any change back to NULL, so
+                    # attempting a backfill here just spams post_race_update_blocked
+                    # every run. Surfaces recompute Sharp at read-time from the
+                    # frozen win-probs, so a NULL flag on a settled row is harmless.
+                    _jm = sched_to_utc_naive(r.scheduled_time) if r.scheduled_time else None
+                    if _jm is not None and datetime.utcnow() > _jm + timedelta(minutes=5):
+                        continue
                     # Get top-3 sum for the race
                     top3_rows = (await session.execute(
                         select(RunnerPredictionHistoryRow.win_probability)
