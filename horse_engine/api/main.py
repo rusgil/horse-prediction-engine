@@ -5986,7 +5986,7 @@ async def refresh_edge_results(request: Request):
 _yesterday_response_cache: dict[str, tuple[datetime, dict]] = {}
 _YESTERDAY_CACHE_TTL = 1800  # 30 min — past dates are stable
 _YESTERDAY_CACHE_TTL_TODAY = 60  # 1 min — today's results land throughout the day
-_YESTERDAY_CACHE_VERSION = 5  # v5: picks carry place_odds (SB-style results odds)
+_YESTERDAY_CACHE_VERSION = 6  # v6: is_sharp per pick + stale no-result races (>24h, no feed) dropped
 
 
 def _yesterday_cache_ttl(target_date: str) -> int:
@@ -6171,6 +6171,18 @@ async def get_edge_yesterday(for_date: Optional[str] = Query(None, alias="date")
         scratched = bool(p.race_id in seeded_race_ids and not r)
         # Race not seeded at all → result unavailable (RA had no data; don't show as Unplaced)
         no_result = bool(p.race_id not in seeded_race_ids and not r)
+        # Auto-finalize stale no-result races (2026-08-14): a race that jumped
+        # well over 24h ago and STILL has no result from ANY feed will never get
+        # one — it was abandoned or isn't covered by our AU result sources
+        # (e.g. Wellington, whose OddsPro + Sportsbet result feeds return nothing
+        # and whose racecard shows statusCode "B"). Drop it entirely so it stops
+        # sitting "Result pending…" forever and never pollutes the settled/
+        # pending tally. Fresh no-result races (<24h) still show as pending in
+        # case a late seed arrives.
+        if no_result:
+            _pj = sched_to_utc_naive(p.scheduled_time) if p.scheduled_time else None
+            if _pj is not None and datetime.utcnow() > _pj + timedelta(hours=24):
+                continue
         model_pct = round(p.win_probability * 100, 1)
         payout = round(sp * stake, 2) if winner and sp else 0
         # Profit logic:
