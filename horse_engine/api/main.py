@@ -2469,13 +2469,6 @@ async def _scheduled_webshare_headroom_check():
     await _send_ops_alert("webshare_headroom", "⚠️ FunkyIQ — Webshare bandwidth low", detail)
 
 
-@app.get("/api/admin/webshare-headroom")
-async def admin_webshare_headroom(x_cron_secret: Optional[str] = Header(None)):
-    """Read-only: current Webshare bandwidth headroom (limit, used, projection)."""
-    _check_admin(x_cron_secret)
-    return await _webshare_headroom()
-
-
 async def _set_model_unstable_banner_internal(active: bool, reason: str) -> None:
     """Flip the site-wide 'Predictions temporarily unavailable' splash from
     inside a scheduled job (no HTTP round-trip). Callable from any async
@@ -12398,6 +12391,13 @@ async def probe_tab_race(race_id: str, x_cron_secret: Optional[str] = Header(Non
         "runner_count": len(runners),
         "first_3_runners": trimmed_runners[:3],
     }
+
+
+@app.get("/api/admin/webshare-headroom")
+async def admin_webshare_headroom(x_cron_secret: Optional[str] = Header(None)):
+    """Read-only: current Webshare bandwidth headroom (limit, used, projection)."""
+    _check_admin(x_cron_secret)
+    return await _webshare_headroom()
 
 
 @app.post("/api/admin/backfill-is-sharp")
