@@ -2379,6 +2379,103 @@ async def _send_ops_alert(alert_key: str, subject: str, detail_html: str) -> boo
     return ok
 
 
+# ─────────────────────────────────────────────────────────────────────────
+# Webshare bandwidth headroom probe (Thor finding, 2026-08-16). Proactive
+# alert BEFORE the residential-proxy bandwidth exhausts and RA fetches 402
+# (the 2026-08-10 drain became a seeding outage — this is the head-start
+# defence). Read-only: queries the Webshare management API for this cycle's
+# usage vs the plan limit + Webshare's own projection. Alerts (rate-limited
+# email) when headroom < 15%, already throttled, or projected to exhaust
+# before renewal. Human tops up. No-ops if WEBSHARE_API_TOKEN is unset.
+# ─────────────────────────────────────────────────────────────────────────
+_WEBSHARE_API = "https://proxy.webshare.io/api/v2"
+_WEBSHARE_HEADROOM_MIN_PCT = 15.0
+
+
+async def _webshare_headroom() -> dict:
+    """Read-only Webshare bandwidth check. Returns ok=False+reason on failure."""
+    token = (os.getenv("WEBSHARE_API_TOKEN") or "").strip()
+    if not token:
+        return {"ok": False, "reason": "no_token"}
+    import httpx as _hx
+    headers = {"Authorization": f"Token {token}"}
+    try:
+        async with _hx.AsyncClient(timeout=15.0) as client:
+            sub = (await client.get(f"{_WEBSHARE_API}/subscription/", headers=headers)).json()
+            plan_id = sub.get("plan")
+            start, end = sub.get("start_date"), sub.get("end_date")
+            throttled = bool(sub.get("throttled"))
+            plan = (await client.get(f"{_WEBSHARE_API}/subscription/plan/{plan_id}/", headers=headers)).json()
+            limit_gb = float(plan.get("bandwidth_limit") or 0.0)
+            stats = (await client.get(f"{_WEBSHARE_API}/stats/aggregate/",
+                                      params=({"timestamp__gte": start} if start else None),
+                                      headers=headers)).json()
+            used_b = int(stats.get("bandwidth_total") or 0)
+            proj_b = int(stats.get("bandwidth_projected") or 0)
+    except Exception as e:
+        return {"ok": False, "reason": f"api_error:{type(e).__name__}"}
+    if limit_gb <= 0:  # 0 == unlimited
+        return {"ok": True, "unlimited": True, "headroom_pct": 100.0, "throttled": throttled}
+    limit_b = limit_gb * 1_000_000_000.0
+    headroom_pct = max(0.0, (limit_b - used_b) / limit_b * 100.0)
+    elapsed_pct = None
+    try:
+        s = datetime.fromisoformat(start.replace("Z", "+00:00"))
+        e = datetime.fromisoformat(end.replace("Z", "+00:00"))
+        now_dt = datetime.now(s.tzinfo)
+        elapsed_pct = round(max(0.0, min(100.0, (now_dt - s).total_seconds() / (e - s).total_seconds() * 100.0)), 1)
+    except Exception:
+        pass
+    return {"ok": True, "limit_gb": limit_gb, "used_gb": round(used_b / 1e9, 3),
+            "headroom_pct": round(headroom_pct, 1), "projected_gb": round(proj_b / 1e9, 3),
+            "projected_over": proj_b > limit_b, "throttled": throttled,
+            "cycle_end": end, "elapsed_pct": elapsed_pct}
+
+
+async def _scheduled_webshare_headroom_check():
+    h = await _webshare_headroom()
+    if not h.get("ok"):
+        if h.get("reason") != "no_token":
+            log.warning("[webshare] headroom probe failed: %s", h.get("reason"))
+        return
+    if h.get("unlimited"):
+        return
+    low = h["headroom_pct"] < _WEBSHARE_HEADROOM_MIN_PCT
+    throttled = bool(h.get("throttled"))
+    _used_pct = 100.0 - h["headroom_pct"]
+    _elapsed = h.get("elapsed_pct") or 0
+    # Trending to exhaust: projected over the limit AND burning >10pp faster than
+    # time elapses (self-calibrating — ignores a small early-cycle burst).
+    proj = bool(h.get("projected_over") and _elapsed >= 10 and _used_pct >= _elapsed + 10)
+    if not (low or throttled or proj):
+        log.info("[webshare] headroom OK: %.1f%% (used %.3f/%.1f GB, proj %.3f GB)",
+                 h["headroom_pct"], h["used_gb"], h["limit_gb"], h["projected_gb"])
+        return
+    trigger = ("THROTTLED (bandwidth exhausted)" if throttled
+               else f"headroom {h['headroom_pct']:.1f}% (< {_WEBSHARE_HEADROOM_MIN_PCT:.0f}%)" if low
+               else f"projected {h['projected_gb']:.2f} GB > {h['limit_gb']:.1f} GB limit")
+    log.warning("[webshare] LOW bandwidth — %s", trigger)
+    detail = (
+        "<p><b>Webshare residential bandwidth is low — top up before RA fetches start failing (402).</b></p>"
+        "<ul>"
+        f"<li>Trigger: <b>{trigger}</b></li>"
+        f"<li>Used this cycle: <b>{h['used_gb']:.3f} GB</b> of <b>{h['limit_gb']:.1f} GB</b> "
+        f"(headroom <b>{h['headroom_pct']:.1f}%</b>)</li>"
+        f"<li>Projected full-cycle: <b>{h['projected_gb']:.3f} GB</b>"
+        f"{' — OVER LIMIT' if h.get('projected_over') else ''}</li>"
+        f"<li>Cycle renews: {h.get('cycle_end')} ({h.get('elapsed_pct')}% elapsed)</li>"
+        "</ul><p>Fix: add bandwidth / upgrade at dashboard.webshare.io.</p>"
+    )
+    await _send_ops_alert("webshare_headroom", "⚠️ FunkyIQ — Webshare bandwidth low", detail)
+
+
+@app.get("/api/admin/webshare-headroom")
+async def admin_webshare_headroom(x_cron_secret: Optional[str] = Header(None)):
+    """Read-only: current Webshare bandwidth headroom (limit, used, projection)."""
+    _check_admin(x_cron_secret)
+    return await _webshare_headroom()
+
+
 async def _set_model_unstable_banner_internal(active: bool, reason: str) -> None:
     """Flip the site-wide 'Predictions temporarily unavailable' splash from
     inside a scheduled job (no HTTP round-trip). Callable from any async
@@ -3087,6 +3184,9 @@ async def lifespan(app: FastAPI):
     # 04:00 nightly. Runs at 10:00, 13:00, 16:00, 19:00 AEST.
     scheduler.add_job(_scheduled_racing_hours_heal,
                       CronTrigger(hour="10,13,16,19", minute=0, timezone="Australia/Sydney"))
+    # Webshare bandwidth headroom — proactive top-up alert before RA fetches 402.
+    scheduler.add_job(_scheduled_webshare_headroom_check,
+                      CronTrigger(hour="*/3", minute=17, timezone="Australia/Sydney"))
     # Follow-up resolver — daily at 05:30 AEST (was Sunday-only, but
     # once we started seeding daily follow-ups from candidate reviews
     # and same-day measurements like shortest_fav_rank1_confidence,
