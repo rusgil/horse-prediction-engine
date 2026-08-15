@@ -2,11 +2,11 @@
   "rewrites": [
     {
       "source": "/edge",
-      "destination": "/edge.html"
+      "destination": "/edge-new.html"
     },
     {
       "source": "/hotseat",
-      "destination": "/hotseat.html"
+      "destination": "/hotseat-new.html"
     },
     {
       "source": "/bets",
