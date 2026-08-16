@@ -238,6 +238,12 @@
   .abandoned-row { opacity: 0.45; filter: grayscale(1); }
   .abandoned-row .mcell { background: var(--surface-2); }
   .chip.abandoned-chip { background: var(--surface-2); color: var(--text-3); border: 1px solid var(--line); font-weight: 800; letter-spacing: 0.03em; }
+  .vq-badge { display: inline-flex; align-items: center; gap: 3px; font-size: 0.6rem; font-weight: 800;
+    padding: 1px 6px; border-radius: 100px; margin-left: 6px; vertical-align: middle; letter-spacing: .02em;
+    border: 1px solid transparent; cursor: help; white-space: nowrap; }
+  .vq-gold { background: rgba(245,200,66,0.16); color: #f5c842; border-color: rgba(245,200,66,0.35); }
+  .vq-silver { background: rgba(184,192,204,0.16); color: #c7ccd6; border-color: rgba(184,192,204,0.30); }
+  .vq-i { font-size: 0.58rem; opacity: 0.65; font-weight: 700; }
   .metro-badge {
     font-size: 0.54rem; font-weight: 800; letter-spacing: 0.1em;
     color: var(--gold); border: 1px solid color-mix(in srgb, var(--gold) 55%, transparent);
@@ -939,6 +945,15 @@
 <script>
 (() => {
   const API = '';
+  let VENUE_BADGES = {};  // { venueName: {badge:'gold'|'silver', win_pct, place_pct, sample, window_days} }
+  function venueBadge(name) {
+    const b = VENUE_BADGES[name];
+    if (!b || !b.badge) return '';
+    const medal = b.badge === 'gold' ? '🥇' : '🥈';
+    const label = b.badge === 'gold' ? 'Gold' : 'Silver';
+    const tip = `${label} venue — the model's top pick wins ${b.win_pct}% here over the last ${b.window_days} days (${b.sample} races). Gold = >40% win, Silver = >30%.`;
+    return `<span class="vq-badge vq-${b.badge}" title="${tip.replace(/"/g,'&quot;')}">${medal} ${label}<span class="vq-i">ⓘ</span></span>`;
+  }
   const S = {
     date: null,
     meetings: [],
@@ -1167,6 +1182,7 @@
       const d = await r.json();
       if (seq !== S.loadSeq) return;
       S.meetings = (d.meetings || d || []).filter(m => m.venue || m.venue_code);
+      try { const br = await fetch(`${API}/api/venue-badges`); if (br.ok) VENUE_BADGES = (await br.json()).badges || {}; } catch (e) {}
       // Legacy display alias: rows stored before the venue rename keep the
       // RA-era name; show the bookmaker/town name everywhere.
       const VENUE_DISPLAY = { 'Pioneer Park': 'Alice Springs' };
@@ -1319,7 +1335,7 @@
         const blanks = Array.from({ length: maxR }, () => '<td class="cell blank"></td>').join('');
         return `<tr class="abandoned-row">
           <td class="mcell">
-            <div class="vname">${esc(m.venue)} <span class="st">${esc(m.state || '')}</span></div>
+            <div class="vname">${esc(m.venue)} <span class="st">${esc(m.state || '')}</span>${venueBadge(m.venue)}</div>
             <div class="vmeta"><span class="chip abandoned-chip">✖ ABANDONED</span></div>
           </td>${blanks}</tr>`;
       }
@@ -1392,7 +1408,7 @@
       }).join('');
       return `<tr>
         <td class="mcell">
-          <div class="vname">${esc(m.venue)} <span class="st">${esc(m.state || '')}</span>${m.is_metro ? '<span class="metro-badge">METRO</span>' : ''}</div>
+          <div class="vname">${esc(m.venue)} <span class="st">${esc(m.state || '')}</span>${m.is_metro ? '<span class="metro-badge">METRO</span>' : ''}${venueBadge(m.venue)}</div>
           <div class="vmeta">
             <span class="chip ${g.cls}">${esc(g.label)}</span>
             ${m.weather ? `<span class="wx">${m.weather.icon || ''} ${Math.round(m.weather.temp_max ?? 0)}°</span>` : ''}
