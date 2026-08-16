@@ -1566,7 +1566,7 @@
           ${maxConf >= 25 && S.date >= aestToday(0) ? `<span class="rs-c ${maxConf >= 40 ? 'hi' : ''}">· ${maxConf}% best pick</span>` : ''}
         </div>` : '';
       return `<button class="rail-item ${vc === S.selVenue ? 'on' : ''}" data-sel="${esc(vc)}">
-        <div class="rv">${esc(m.venue)} <span class="st">${esc(m.state || '')}</span>${m.is_metro ? '<span class="metro-badge">METRO</span>' : ''}
+        <div class="rv">${esc(m.venue)} <span class="st">${esc(m.state || '')}</span>${m.is_metro ? '<span class="metro-badge">METRO</span>' : ''}${venueBadge(m.venue)}
           ${m.weather ? `<span class="wx">${m.weather.icon || ''} ${Math.round(m.weather.temp_max ?? 0)}°</span>` : ''}</div>
         <div class="rmeta">
           <span class="prog num">${done}/${races.length || '–'} raced${next ? ` · next ${wallTime(next.scheduled_time)}` : ''}</span>
