@@ -164,6 +164,45 @@ _SHARP_MIN_GAP = 0.06
 _SHARP_MIN_GAP_PCT = 6.0
 
 
+def _is_sharp_gate(
+    rank1_prob,
+    rank2_prob,
+    top3_sum,
+    days_since_last_run=None,
+    is_metro=True,
+    race_number=None,
+    meeting_max_race=0,
+):
+    """Single source of truth for the Sharp gate. ALL probabilities on the 0-1
+    scale (callers working in 0-100 percent must divide by 100 first).
+
+    A race's rank-1 pick is Sharp iff ALL hold:
+      1. high confidence  — rank1 >= 0.30 OR top-3 sum >= 0.60
+      2. clear favourite  — (rank1 - rank2) >= _SHARP_MIN_GAP
+      3. not a long layoff — NOT (days_since_last_run > 180)
+      4. not a late race at a non-metro meeting (weak late country field:
+         our rank-1 win pick is near-random in the last two races there)
+
+    Every surface that classifies Sharp (snapshot writer, /api/edge,
+    /api/edge/yesterday, get_meeting, /api/performance) MUST call this so the
+    gate can never drift between them again. `is_metro` / `race_number` /
+    `meeting_max_race` are the inputs for gate 4; leave them at their defaults
+    (metro, no race position) to skip that gate when a caller applies it
+    separately.
+    """
+    r1 = rank1_prob or 0.0
+    if not (r1 >= 0.30 or (top3_sum or 0.0) >= 0.60):
+        return False
+    if (r1 - (rank2_prob or 0.0)) < _SHARP_MIN_GAP:
+        return False
+    if isinstance(days_since_last_run, (int, float)) and days_since_last_run > 180:
+        return False
+    if (not is_metro) and race_number is not None and (meeting_max_race or 0) >= 5 \
+            and race_number >= (meeting_max_race or 0) - 1:
+        return False
+    return True
+
+
 def _check_admin(x_secret: Optional[str]) -> None:
     """Fail-closed admin auth: requires CRON_SECRET env var to be set."""
     if not settings.cron_secret:
@@ -2906,10 +2945,7 @@ async def _snapshot_prerace_predictions() -> int:
             top3_sum = sum((rr.win_probability or 0) for rr in active_sorted[:3])
             race_is_sharp = None
             if rank1 is not None:
-                _high_conf = ((rank1.win_probability or 0) >= 0.30) or (top3_sum >= 0.60)
-                # Clear-favourite gate: #1-#2 win-prob gap must clear the threshold.
                 _rank2_wp = (active_sorted[1].win_probability or 0.0) if len(active_sorted) > 1 else 0.0
-                _clear_fav = ((rank1.win_probability or 0.0) - _rank2_wp) >= _SHARP_MIN_GAP
                 _days_off = None
                 if rank1.enriched_json:
                     try:
@@ -2917,18 +2953,17 @@ async def _snapshot_prerace_predictions() -> int:
                         _days_off = _e.get("days_since_last_run")
                     except Exception:
                         _days_off = None
-                _layoff_ok = not (isinstance(_days_off, (int, float)) and _days_off > 180)
-                # Late-non-metro exclusion (2026-08-02) — see /api/edge note.
-                # Last-2 races at country meetings are near-unpredictable for our
-                # rank-1 win pick, so they never qualify as Sharp.
+                # Late-non-metro inputs (2026-08-02): last-2 races at country
+                # meetings are near-random for our rank-1 pick — never Sharp.
                 _svenue = _parse_race_id(race_id)[1]
                 _srn = _parse_race_id(race_id)[2]
                 _smx = _snap_max_race.get(_svenue, 0)
-                _late_nonmetro = bool(
-                    (not is_metro_venue(_svenue))
-                    and _srn is not None and _smx >= 5 and _srn >= _smx - 1
+                race_is_sharp = _is_sharp_gate(
+                    rank1_prob=rank1.win_probability, rank2_prob=_rank2_wp,
+                    top3_sum=top3_sum, days_since_last_run=_days_off,
+                    is_metro=is_metro_venue(_svenue), race_number=_srn,
+                    meeting_max_race=_smx,
                 )
-                race_is_sharp = bool(_high_conf and _clear_fav and _layoff_ok and not _late_nonmetro)
             for r in runners:
                 try:
                     session.add(RunnerPredictionHistoryRow(
@@ -5615,25 +5650,29 @@ async def get_edge_picks():
             # Gates: (model_pct ≥30 OR top-3 sum ≥60) AND days_off ≤180.
             field_top3 = (field_map.get(runner_row.race_id, []) or [])[:3]
             top3_sum_pct = sum(f.get("win_pct") or 0 for f in field_top3)
-            _high_conf = (model_pct or 0) >= 30 or top3_sum_pct >= 60
-            # Clear-favourite gate: #1-#2 win% gap must clear the threshold.
+            # Clear-favourite gate needs the #2 win% (percent scale here).
             _other_pcts = sorted([f.get("win_pct") or 0 for f in field_top3], reverse=True)
             _rank2_pct = _other_pcts[1] if len(_other_pcts) > 1 else 0
-            _clear_fav = ((model_pct or 0) - _rank2_pct) >= _SHARP_MIN_GAP_PCT
-            _layoff_ok = not (isinstance(days_since_last_run, (int, float)) and days_since_last_run > 180)
-            # Late-non-metro exclusion (2026-08-02). The model can only pick the
-            # winner of the last-2 races at NON-METRO meetings ~11% of the time
-            # (vs the field) — weak late country fields where our ranking is
-            # near-random. This holds every day of the week, not just Sunday.
-            # These races never qualify as Sharp; the edge there is longshots /
-            # place, not our rank-1 win pick.
+            # Late-non-metro (2026-08-02): the last-2 races at NON-METRO meetings
+            # are weak country fields where our rank-1 win pick is near-random
+            # (~11% vs the field) — never Sharp; the edge there is place/longshots.
             from horse_engine.bets import is_metro_venue
             _mx = meeting_max_race.get(venue_code, 0)
+            # Kept as a local because the flyer / place-play output fields below
+            # also branch on it (the helper applies the same gate internally).
             _late_nonmetro = bool(
                 (not is_metro_venue(venue_code))
                 and race_num is not None and _mx >= 5 and race_num >= _mx - 1
             )
-            is_sharp = bool(_high_conf and _clear_fav and _layoff_ok and not _late_nonmetro)
+            is_sharp = _is_sharp_gate(
+                rank1_prob=(model_pct or 0) / 100.0,
+                rank2_prob=(_rank2_pct or 0) / 100.0,
+                top3_sum=(top3_sum_pct or 0) / 100.0,
+                days_since_last_run=days_since_last_run,
+                is_metro=is_metro_venue(venue_code),
+                race_number=race_num,
+                meeting_max_race=_mx,
+            )
 
             picks.append({
                 "date": target_date,
@@ -6493,16 +6532,16 @@ async def get_edge_yesterday(for_date: Optional[str] = Query(None, alias="date")
         _wps = sorted(_yst_win_probs.get(p.race_id, []), reverse=True)
         _p1 = _wps[0] if _wps else (p.win_probability or 0.0)
         _p2 = _wps[1] if len(_wps) > 1 else 0.0
-        _hc = (p.win_probability or 0) >= 0.30 or sum(_wps[:3]) >= 0.60
-        _cf = (_p1 - _p2) >= _SHARP_MIN_GAP
         try:
             _do = (json.loads(p.enriched_json or "{}") or {}).get("days_since_last_run")
         except Exception:
             _do = None
-        _lo = not (isinstance(_do, (int, float)) and _do > 180)
         _mx = _yst_mtg_max.get(venue_code, 0)
-        _late = bool((not _is_metro(venue_code)) and race_num is not None and _mx >= 5 and race_num >= _mx - 1)
-        is_sharp_pick = bool(_hc and _cf and _lo and not _late)
+        is_sharp_pick = _is_sharp_gate(
+            rank1_prob=_p1, rank2_prob=_p2, top3_sum=sum(_wps[:3]),
+            days_since_last_run=_do, is_metro=_is_metro(venue_code),
+            race_number=race_num, meeting_max_race=_mx,
+        )
 
         output.append({
             "race_id": p.race_id,
@@ -20657,14 +20696,16 @@ async def get_meeting(race_date: str, venue_code: str):
             # (rank1 pct OR top-3 sum) + layoff + pick-finished. Matches the
             # upcoming branch and the Edge; late-non-metro is applied at output.
             for rid, ctx in _completed_sharp_ctx.items():
-                r1_pct = (top_win_probs.get(rid) or 0) * 100
-                t3_pct = ((top_win_probs.get(rid) or 0)
-                          + (rank2_win_probs.get(rid) or 0)
-                          + (rank3_win_probs.get(rid) or 0)) * 100
-                d = ctx["days_off"]
-                layoff_ok = not (isinstance(d, (int, float)) and d > 180)
-                high_conf = r1_pct >= 30 or t3_pct >= 60
-                is_sharp_map[rid] = bool(high_conf and layoff_ok and ctx["finished"])
+                _r1 = top_win_probs.get(rid) or 0
+                _r2 = rank2_win_probs.get(rid) or 0
+                _t3 = _r1 + _r2 + (rank3_win_probs.get(rid) or 0)
+                # gate 4 (late-non-metro) is applied at output below, so leave
+                # is_metro at its default here — this covers gates 1-3 incl. the
+                # clear-favourite gate the completed branch previously lacked.
+                is_sharp_map[rid] = bool(_is_sharp_gate(
+                    rank1_prob=_r1, rank2_prob=_r2, top3_sum=_t3,
+                    days_since_last_run=ctx["days_off"],
+                ) and ctx["finished"])
 
         upcoming_ids = [rid for rid in race_ids if rid not in completed_ids]
         if upcoming_ids:
@@ -20708,21 +20749,21 @@ async def get_meeting(race_date: str, venue_code: str):
                 if not r1:
                     continue
                 r1_prob, r1_enriched = r1
-                rank1_pct = (r1_prob or 0) * 100
-                top3_sum_pct = sum((ranks.get(k, (0, None))[0] or 0) * 100
-                                    for k in (1, 2, 3))
-                # Layoff check from enriched_json.days_since_last_run
-                layoff_ok = True
+                _days_off = None
                 if r1_enriched:
                     try:
-                        er = json.loads(r1_enriched)
-                        days_off = er.get("days_since_last_run")
-                        if isinstance(days_off, (int, float)) and days_off > 180:
-                            layoff_ok = False
+                        _days_off = json.loads(r1_enriched).get("days_since_last_run")
                     except Exception:
-                        pass
-                high_conf = rank1_pct >= 30 or top3_sum_pct >= 60
-                is_sharp = bool(high_conf and layoff_ok)
+                        _days_off = None
+                # gate 4 (late-non-metro) is applied at output below, so leave
+                # is_metro at its default — this now includes the clear-favourite
+                # gate the upcoming branch previously lacked.
+                is_sharp = _is_sharp_gate(
+                    rank1_prob=r1_prob or 0,
+                    rank2_prob=(ranks.get(2, (0, None))[0] or 0),
+                    top3_sum=sum((ranks.get(k, (0, None))[0] or 0) for k in (1, 2, 3)),
+                    days_since_last_run=_days_off,
+                )
                 # If this race is on a PAST date, treat "no seeded
                 # results" as "didn't run" and strip Sharp status.
                 # Prevents Wellington R4/R5 (2026-07-06, never seeded)
@@ -26673,23 +26714,21 @@ async def performance_summary(
                     _mtg_max[(_d, _v)] = max(_mtg_max.get((_d, _v), 0), _rn)
 
             def _recompute_sharp(p) -> bool:
-                if not ((p.win_probability or 0.0) >= 0.30 or _t3.get(p.race_id, 0.0) >= 0.60):
-                    return False
-                # Clear-favourite gate: #1-#2 win-prob gap must clear the threshold.
                 _pr = sorted(_probs.get(p.race_id, []), reverse=True)
-                if len(_pr) < 2 or (_pr[0] - _pr[1]) < _SHARP_MIN_GAP:
+                if len(_pr) < 2:
                     return False
                 try:
                     _do = (json.loads(p.enriched_json or "{}") or {}).get("days_since_last_run")
                 except Exception:
                     _do = None
-                if isinstance(_do, (int, float)) and _do > 180:
-                    return False
                 _d, _v, _rn = _parse_race_id(p.race_id)
-                _mx = _mtg_max.get((_d, _v), 0)
-                if (not is_metro_venue(_v)) and _rn is not None and _mx >= 5 and _rn >= _mx - 1:
-                    return False
-                return True
+                return _is_sharp_gate(
+                    rank1_prob=_pr[0], rank2_prob=_pr[1],
+                    top3_sum=_t3.get(p.race_id, 0.0),
+                    days_since_last_run=_do,
+                    is_metro=is_metro_venue(_v), race_number=_rn,
+                    meeting_max_race=_mtg_max.get((_d, _v), 0),
+                )
 
             top_picks = {rid: p for rid, p in top_picks.items() if _recompute_sharp(p)}
 
