@@ -243,6 +243,8 @@
     border: 1px solid transparent; cursor: help; white-space: nowrap; position: relative; outline: none; }
   .vq-gold { background: rgba(245,200,66,0.16); color: #f5c842; border-color: rgba(245,200,66,0.35); }
   .vq-silver { background: rgba(184,192,204,0.16); color: #c7ccd6; border-color: rgba(184,192,204,0.30); }
+  .vq-bronze { background: rgba(205,127,50,0.16); color: #d9955a; border-color: rgba(205,127,50,0.35); }
+  .vq-avoid { background: rgba(239,68,68,0.14); color: #f87171; border-color: rgba(239,68,68,0.32); }
   .vq-i { font-size: 0.58rem; opacity: 0.65; font-weight: 700; }
   .vq-badge[data-tip]:hover::after, .vq-badge[data-tip]:focus::after {
     content: attr(data-tip); position: absolute; left: 0; top: calc(100% + 6px); z-index: 60;
@@ -955,9 +957,12 @@
   function venueBadge(name) {
     const b = VENUE_BADGES[name];
     if (!b || !b.badge) return '';
-    const medal = b.badge === 'gold' ? '🥇' : '🥈';
-    const label = b.badge === 'gold' ? 'Gold' : 'Silver';
-    const tip = `${label} venue — the model's top pick wins ${b.win_pct}% here over the last ${b.window_days} days (${b.sample} races). Gold = >40% win, Silver = >30%.`;
+    const MED = { gold: '🥇', silver: '🥈', bronze: '🥉', avoid: '⚠️' };
+    const LBL = { gold: 'Gold', silver: 'Silver', bronze: 'Bronze', avoid: 'Avoid' };
+    const medal = MED[b.badge] || '', label = LBL[b.badge] || '';
+    const tip = b.badge === 'avoid'
+      ? `Avoid — the model's top pick wins only ${b.win_pct}% here over the last ${b.window_days} days (${b.sample} races), well below the ~30% average.`
+      : `${label} venue — the model's top pick wins ${b.win_pct}% here over the last ${b.window_days} days (${b.sample} races). Gold >40%, Silver >35%, Bronze >30%.`;
     return `<span class="vq-badge vq-${b.badge}" tabindex="0" data-tip="${tip.replace(/"/g,'&quot;')}" onclick="event.stopPropagation()">${medal} ${label}<span class="vq-i">ⓘ</span></span>`;
   }
   const S = {

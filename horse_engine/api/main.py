@@ -2536,7 +2536,9 @@ async def _scheduled_persist_race_conditions():
 _VENUE_BADGE_WINDOW_DAYS = 90
 _VENUE_BADGE_MIN_SAMPLE = 20
 _VENUE_BADGE_GOLD_PCT = 40.0
-_VENUE_BADGE_SILVER_PCT = 30.0
+_VENUE_BADGE_SILVER_PCT = 35.0
+_VENUE_BADGE_BRONZE_PCT = 30.0
+_VENUE_BADGE_AVOID_PCT = 20.0   # well below the ~30% baseline → flag to avoid
 
 
 async def _scheduled_compute_venue_badges():
@@ -2578,6 +2580,10 @@ async def _scheduled_compute_venue_badges():
                 badge = "gold"
             elif win_pct > _VENUE_BADGE_SILVER_PCT:
                 badge = "silver"
+            elif win_pct > _VENUE_BADGE_BRONZE_PCT:
+                badge = "bronze"
+            elif win_pct < _VENUE_BADGE_AVOID_PCT:
+                badge = "avoid"
         try:
             async with get_session() as session:
                 await session.merge(VenueBadgeRow(
@@ -12543,6 +12549,7 @@ async def venue_badges_endpoint():
                              "place_pct": r.place_pct, "sample": r.sample_size,
                              "window_days": r.window_days} for r in rows},
         "thresholds": {"gold": _VENUE_BADGE_GOLD_PCT, "silver": _VENUE_BADGE_SILVER_PCT,
+                       "bronze": _VENUE_BADGE_BRONZE_PCT, "avoid": _VENUE_BADGE_AVOID_PCT,
                        "window_days": _VENUE_BADGE_WINDOW_DAYS, "min_sample": _VENUE_BADGE_MIN_SAMPLE},
     }
 
