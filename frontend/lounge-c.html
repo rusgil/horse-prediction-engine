@@ -938,10 +938,15 @@
   <div class="lg-item"><span class="chip tier-high lg-chip">⚡ HIGH</span><span><b>High confidence</b> — 36–45% win confidence, wins ~4 in 10.</span></div>
   <div class="lg-item"><span class="chip tier-strong lg-chip">STRONG</span><span><b>Strong pick</b> — 30–35% win confidence. Still well above a random pick.</span></div>
   <div class="lg-item"><span class="chip sharp lg-chip">🎯 SHARP</span><span><b>Sharp race</b> — passed our strictest quality gate. The races we back hardest.</span></div>
-  <div class="lg-item"><span class="chip going-heavy lg-chip">SURFACE: HEAVY</span><span><b>Track surface</b> — Firm/Good = dry, fast track. Soft or Heavy = wet track; our confidence is lower on wet tracks.</span></div>
-  <div class="lg-item"><span class="val-chip lg-chip">VALUE</span><span><b>Value</b> — our model rates the horse's chance higher than its market price implies: positive expected value at the listed odds.</span></div>
-  <div class="lg-item"><span><b>% highlight</b> — win % lights up gold from 30% confidence; place % lights up blue from 50%.</span></div>
   <div class="lg-item"><span class="chip cf lg-chip">👑 CLEAR FAV</span><span><b>Clear favourite</b> — our top pick leads our 2nd pick by 5+ points of win probability.</span></div>
+  <div class="lg-item"><span class="chip tu lg-chip">⚖️ TOSS-UP</span><span><b>Toss-up</b> — our top two are within 2 points of each other: a genuine coin-flip.</span></div>
+  <div class="lg-item"><span class="val-chip lg-chip">💎 VALUE</span><span><b>Value</b> — our model rates the horse's chance higher than its market price implies: positive expected value at the listed odds.</span></div>
+  <div class="lg-item"><span class="lg-chip">🥈 QUINELLA</span><span><b>Clear quinella</b> — our top 2 stand clear of the 3rd pick (≥4-point gap).</span></div>
+  <div class="lg-item"><span class="lg-chip">🥉 TRIFECTA</span><span><b>Clear trifecta</b> — our top 3 stand clear of the 4th pick.</span></div>
+  <div class="lg-item"><span class="lg-chip">🎖️ FIRST-4</span><span><b>Clear first-4</b> — our top 4 stand clear of the 5th pick.</span></div>
+  <div class="lg-item"><span class="chip going-heavy lg-chip">SURFACE: HEAVY</span><span><b>Track surface</b> — Firm/Good = dry, fast track. Soft or Heavy = wet track; our confidence is lower on wet tracks.</span></div>
+  <div class="lg-item"><span class="lg-chip"><b style="color:var(--mint)">✓</b> <b style="color:var(--amber)">✓</b> <b style="color:var(--red)">✗</b></span><span><b>Result</b> — our top pick won (green ✓), placed (amber ✓) or missed (✗).</span></div>
+  <div class="lg-item"><span><b>% highlight</b> — win % lights up gold from 30% confidence; place % lights up blue from 50%.</span></div>
   <div class="lg-item"><span><b>J / T %</b> — the jockey's and trainer's win strike rates: the share of their recent rides / runners that win. Typical journeyman ~10–12%, top metro riders 18–25%. Strong connections are a genuine positive signal.</span></div>
 </div>
 </section>
@@ -1491,20 +1496,7 @@
       </tr>` : '';
     el.innerHTML = `<div class="grid-wrap"><table class="race-grid">
       <thead><tr><th>Meeting</th>${head}</tr>${totalsRow}</thead><tbody>${rows}</tbody></table></div>
-      <div class="heat-legend">
-        <span><span class="sw" style="background:var(--hot-dim);box-shadow:inset 0 0 0 1px var(--hot)"></span>Hot pick race</span>
-        <span><span class="sw" style="background:var(--blue-dim);box-shadow:inset 0 0 0 1px var(--blue)"></span>High confidence</span>
-        <span><span class="sw" style="background:var(--strong-dim);box-shadow:inset 0 0 0 1px var(--strong)"></span>Strong pick</span>
-        <span>🎯 Sharp race</span>
-        <span>👑 Clear fav <span style="color:var(--text-3)">(top pick 5%+ clear)</span></span>
-        <span>💎 <span style="color:var(--purple)">Value</span> <span style="color:var(--text-3)">(odds beat our %)</span></span>
-        <span>🥈 Clear quinella <span style="color:var(--text-3)">(top 2 clear of 3rd)</span></span>
-        <span>🥉 Clear trifecta <span style="color:var(--text-3)">(top 3 clear of 4th)</span></span>
-        <span>🎖️ Clear first-4 <span style="color:var(--text-3)">(top 4 clear of 5th)</span></span>
-        <span>⚖️ Toss-up</span>
-        <span><span class="res win">✓</span>/<span class="res place">✓</span>/<span class="res miss">✗</span> our pick's result (green won · amber placed)</span>
-      </div>
-      <div class="hint">Cell colour = how strongly our model rates its top pick in that race. Tap any race for the win &amp; place predictions.</div>`;
+      <div class="hint">Cell colour = how strongly our model rates its top pick in that race. Tap any race for the win &amp; place predictions. See the full key below.</div>`;
     const gw = el.querySelector('.grid-wrap');
     if (gw && prevScroll) gw.scrollLeft = prevScroll;
     bindOpen(el);
