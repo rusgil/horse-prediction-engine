@@ -982,7 +982,7 @@
   let VENUE_BADGES = {};
   function venueBadge(name) {
     const b = VENUE_BADGES[name];
-    if (!b || !b.badge) return '';
+    if (!b || !b.badge || b.badge === 'avoid') return '';
     const MED = { gold: '🥇', silver: '🥈', bronze: '🥉', avoid: '⚠️' };
     const LBL = { gold: 'Gold', silver: 'Silver', bronze: 'Bronze', avoid: 'Avoid' };
     const medal = MED[b.badge] || '', label = LBL[b.badge] || '';
@@ -990,6 +990,13 @@
       ? `Avoid — the model's top pick wins only ${b.win_pct}% here over the last ${b.window_days} days (${b.sample} races), well below the ~30% average.`
       : `${label} venue — the model's top pick wins ${b.win_pct}% here over the last ${b.window_days} days (${b.sample} races). Gold >40%, Silver >35%, Bronze >30%.`;
     return `<span class="vq-badge vq-${b.badge}" tabindex="0" data-tip="${tip.replace(/"/g,'&quot;')}" onclick="event.stopPropagation()">${medal} ${label}<span class="vq-i">ⓘ</span></span>`;
+  }
+  // Edge is a per-pick feed: show each venue's badge only on its first appearance.
+  let _edgeBadgeSeen = new Set();
+  function venueBadgeOnce(name) {
+    if (_edgeBadgeSeen.has(name)) return '';
+    _edgeBadgeSeen.add(name);
+    return venueBadge(name);
   }
 
   function wallTime(iso) {            // VIEWER-LOCAL post time (2026-07-30)
@@ -1365,7 +1372,7 @@
           : `<div class="cd big ${cd.urg || ''}">${cd.label || ''}</div><div class="wt num">${wallTime(p.scheduled_time)}</div>`}
       </div>
       <div class="mid">
-        <div class="pk-venue">${esc(p.venue)} <b>R${p.race_number}</b>${venueBadge(p.venue)}</div>
+        <div class="pk-venue">${esc(p.venue)} <b>R${p.race_number}</b>${venueBadgeOnce(p.venue)}</div>
         <div class="pk-horse">${esc(p.horse_name)}${streak}${!isPast ? placeChip(p) : ''}</div>
         <div class="pk-sub num">${[p.distance ? p.distance + 'm' : '', p.barrier ? 'B' + p.barrier : '', p.weight ? p.weight + 'kg' : ''].filter(Boolean).join(' · ')}${l10}</div>
         <div class="pk-sub">${p.jockey ? 'J: ' + esc(p.jockey) : ''}${p.trainer ? (p.jockey ? ' · ' : '') + 'T: ' + esc(p.trainer) : ''}</div>
@@ -1421,6 +1428,7 @@
   }
   function renderFeed() {
     const el = document.getElementById('feed');
+    _edgeBadgeSeen = new Set();
     if (E.parent === 'exotics') return renderExotics(el);
     if (E.view === 'res') return renderResults(el);
     if (!E.picks) { el.innerHTML = '<div class="loading"><div class="spin"></div>Loading picks…</div>'; return; }

@@ -943,7 +943,7 @@
   let VENUE_BADGES = {};
   function venueBadge(name) {
     const b = VENUE_BADGES[name];
-    if (!b || !b.badge) return '';
+    if (!b || !b.badge || b.badge === 'avoid') return '';
     const MED = { gold: '🥇', silver: '🥈', bronze: '🥉', avoid: '⚠️' };
     const LBL = { gold: 'Gold', silver: 'Silver', bronze: 'Bronze', avoid: 'Avoid' };
     const medal = MED[b.badge] || '', label = LBL[b.badge] || '';
