@@ -8728,8 +8728,9 @@ async def _resolve_play_outcome(play: dict, target_date: str) -> dict:
             "leg_count": len(leg_hits),
             "leg_hits": leg_hits,
             "profit_dollars": round(profit, 2),
+            "result_odds": round(boosted, 2) if (all_hit and boosted) else None,
             "summary": (
-                f"All 4 legs landed top-4 — multi paid ${BASE * boosted:.2f}"
+                f"All 4 legs landed top-4 — multi paid ${boosted:.2f} for $1"
                 if all_hit else
                 f"{sum(1 for h in leg_hits if h['hit'])}/{len(leg_hits)} legs hit"
                 if any_pos_known else "Results pending"
@@ -8761,8 +8762,9 @@ async def _resolve_play_outcome(play: dict, target_date: str) -> dict:
             "leg_count": len(leg_hits),
             "leg_hits": leg_hits,
             "profit_dollars": round(profit, 2),
+            "result_odds": round(dividend, 2) if (all_hit and dividend) else None,
             "summary": (
-                f"All 4 winners came from our picks — Quaddie cashed (~${(BASE/perms)*dividend:.0f})"
+                f"All 4 winners came from our picks — Quaddie cashed (~${dividend:.0f} for $1)"
                 if all_hit else
                 f"{sum(1 for h in leg_hits if h['hit'])}/{len(leg_hits)} legs hit"
                 if any_known else "Results pending"
@@ -8789,8 +8791,9 @@ async def _resolve_play_outcome(play: dict, target_date: str) -> dict:
             "leg_count": len(leg_hits),
             "leg_hits": leg_hits,
             "profit_dollars": round(profit, 2),
+            "result_odds": round(raw_multi, 2) if (all_hit and raw_multi) else None,
             "summary": (
-                f"Both legs placed — Place Double paid ~${BASE * raw_multi:.2f}"
+                f"Both legs placed — Place Double paid ~${raw_multi:.2f} for $1"
                 if all_hit else
                 f"{sum(1 for h in leg_hits if h['hit'])}/{len(leg_hits)} legs placed"
                 if any_pos_known else "Results pending"
@@ -8807,8 +8810,9 @@ async def _resolve_play_outcome(play: dict, target_date: str) -> dict:
             "actual_position": pos,
             "placed": placed,
             "profit_dollars": round(profit, 2),
+            "result_odds": round(odds, 2) if (placed and odds) else None,
             "summary": (
-                f"Placed {pos}{'st' if pos==1 else 'nd' if pos==2 else 'rd' if pos==3 else 'th'} — paid ${BASE * odds:.2f}"
+                f"Placed {pos}{'st' if pos==1 else 'nd' if pos==2 else 'rd' if pos==3 else 'th'} — paid ${odds:.2f} for $1"
                 if placed else
                 f"Finished {pos}{'th' if pos and pos > 3 else ''}"
                 if pos else "Results pending"
@@ -8830,6 +8834,7 @@ async def _resolve_play_outcome(play: dict, target_date: str) -> dict:
             "leg1_position": leg1,
             "leg2_position": leg2,
             "profit_dollars": round(profit, 2),
+            "result_odds": round(dividend, 2) if (quinella_hit and dividend) else None,
             "summary": (
                 f"Quinella hit — {play['horse_name']} {leg1_lbl}, {play['partner_horse_name']} {leg2_lbl}"
                 if quinella_hit else
@@ -8861,8 +8866,9 @@ async def _resolve_play_outcome(play: dict, target_date: str) -> dict:
             "overlap": overlap,
             "leg_count": 3,
             "profit_dollars": round(profit, 2),
+            "result_odds": round(dividend, 2) if (hit and dividend) else None,
             "summary": (
-                f"Trio cashed — all 3 placings in our box (~${(BASE/perms)*dividend:.0f})"
+                f"Trio cashed — all 3 placings in our box (~${dividend:.0f} for $1)"
                 if hit else
                 f"{overlap}/3 placings in our box"
                 if any_known else "Results pending"

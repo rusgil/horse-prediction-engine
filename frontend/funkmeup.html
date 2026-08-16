@@ -739,6 +739,13 @@
     if (n == null) return '—';
     return `$${n.toFixed(2)}`;
   }
+  // Odds ("$X.XX for $1"), derived from the play's own return ÷ stake — so the
+  // Playbook talks in prices, not an assumed dollar bet size.
+  function oddsFor(p) {
+    if (p && p.stake_dollars && p.potential_return_dollars) return p.potential_return_dollars / p.stake_dollars;
+    return null;
+  }
+  function fmtOdds(o) { return o != null ? `$${(+o).toFixed(2)}` : '—'; }
 
   function fmtPct(p) {
     if (p == null) return '—';
@@ -866,7 +873,7 @@
         verb: 'PLACE THIS WIN BET',
         product: `Win on ${p.horse_name}`,
         path: `Sportsbet → Racing → ${venueLabel(p.venue)} → R${p.race_number} → Win`,
-        returnIf: `Returns ${fmtMoneyPlain(p.potential_return_dollars)} if it wins`,
+        returnIf: `Returns ${fmtOdds(oddsFor(p))} for $1 if it wins`,
       };
     }
     if (p.kind === 'bonus') {
@@ -874,7 +881,7 @@
         verb: 'USE YOUR BONUS BET',
         product: `Bonus Bet on ${p.horse_name}`,
         path: `Sportsbet → Racing → ${venueLabel(p.venue)} → R${p.race_number} → Win → use Bonus Bet`,
-        returnIf: `Returns ${fmtMoneyPlain(p.potential_return_dollars)} profit if it wins (stake not returned)`,
+        returnIf: `Returns ${fmtOdds(oddsFor(p))} for $1 profit if it wins (stake not returned)`,
       };
     }
     if (p.kind === 'spine') {
@@ -882,7 +889,7 @@
         verb: 'BUILD THIS 4-LEG MULTI',
         product: `Racing Multi · 4 × Top 4`,
         path: `Sportsbet → Multi Builder → tap Top 4 for each horse below → confirm +20% boost shows in betslip`,
-        returnIf: `Returns ${fmtMoneyPlain(p.potential_return_dollars)} if all 4 land`,
+        returnIf: `Returns ${fmtOdds(oddsFor(p))} for $1 if all 4 land`,
       };
     }
     if (p.kind === 'wave') {
@@ -890,7 +897,7 @@
         verb: 'PLACE THIS QUADDIE BOX',
         product: `Quaddie · 2×2×2×2 box (${p.perms} combos)`,
         path: `Sportsbet → Racing → ${venueLabel(p.venue)} → Quaddie → box the 2 horses per leg below`,
-        returnIf: `Est. ${fmtMoneyPlain(p.potential_return_dollars)} share of the pool if all 4 winners come from your picks`,
+        returnIf: `Est. ${fmtOdds(oddsFor(p))} for $1 share of the pool if all 4 winners come from your picks`,
       };
     }
     if (p.kind === 'lab') {
@@ -899,7 +906,7 @@
         verb: 'PLACE THIS TRIFECTA BOX',
         product: `Flexi Trifecta Box (3 horses · ${p.perms} perms)`,
         path: `Sportsbet → Racing → ${venueLabel(p.venue)} → R${p.race_number} → Exotics → Trifecta → Box ${names}`,
-        returnIf: `Est. ${fmtMoneyPlain(p.potential_return_dollars)} if any order of these 3 fills the trifecta`,
+        returnIf: `Est. ${fmtOdds(oddsFor(p))} for $1 if any order of these 3 fills the trifecta`,
       };
     }
     if (p.kind === 'double') {
@@ -907,7 +914,7 @@
         verb: 'BUILD THIS PLACE MULTI',
         product: `2-leg Place Multi`,
         path: `Sportsbet → Multi Builder → tap Place for each horse below → confirm 2 legs in betslip`,
-        returnIf: `Returns ${fmtMoneyPlain(p.potential_return_dollars)} if both horses place (top 3)`,
+        returnIf: `Returns ${fmtOdds(oddsFor(p))} for $1 if both horses place (top 3)`,
       };
     }
     if (p.kind === 'combo_doubles') {
@@ -928,7 +935,7 @@
       const ret = p.boxed_available
         ? `Straight hit prob ${(p.model_hit_probability*100).toFixed(2)}% · boxed ${(p.boxed_hit_probability*100).toFixed(2)}%`
         : (p.raw_multi_odds
-            ? `Est. ${fmtMoneyPlain(p.potential_return_dollars)} fair return if all 4 land`
+            ? `Est. ${fmtOdds(oddsFor(p))} for $1 fair return if all 4 land`
             : `4-leg quaddie — odds finalise closer to jump`);
       return {
         verb: 'PLACE THIS EARLY QUADDIE',
@@ -942,12 +949,12 @@
         verb: 'PLACE THIS PLACE BET',
         product: `Place on ${p.horse_name}`,
         path: `Sportsbet → Racing → ${venueLabel(p.venue)} → R${p.race_number} → Place`,
-        returnIf: `Returns ~${fmtMoneyPlain(p.potential_return_dollars)} if it finishes top 3`,
+        returnIf: `Returns ~${fmtOdds(oddsFor(p))} for $1 if it finishes top 3`,
       };
     }
     if (p.kind === 'twofunk') {
       const ret = p.potential_return_dollars
-        ? `Est. ${fmtMoneyPlain(p.potential_return_dollars)} if the Quinella lands`
+        ? `Est. ${fmtOdds(oddsFor(p))} for $1 if the Quinella lands`
         : `Quinella pays if these two fill 1-2 in any order`;
       return {
         verb: 'PLACE THIS QUINELLA',
@@ -1104,11 +1111,11 @@
     const outcome = p.outcome || null;
     const outcomeHtml = outcome ? (() => {
       const status = outcome.status || 'no_result';
-      // Odds-based plays (quaddie / combo doubles) carry the multi's price and
-      // no fixed dollar stake; every other play shows its $ P/L.
-      const right = outcome.multi_odds
-        ? `$${(+outcome.multi_odds).toFixed(2)}`
-        : (outcome.profit_dollars != null ? fmtMoney(outcome.profit_dollars) : '');
+      // Odds only — no assumed dollar stake. A winning play shows the price it
+      // paid ("$X.XX for $1"); the result + SP for singles lives in the summary.
+      const right = outcome.result_odds
+        ? `$${(+outcome.result_odds).toFixed(2)} for $1`
+        : (outcome.multi_odds ? `$${(+outcome.multi_odds).toFixed(2)} for $1` : '');
       return `
         <div class="outcome-banner ${status}">
           <span>${escHtml(outcome.summary || '')}</span>
