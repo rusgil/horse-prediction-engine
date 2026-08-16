@@ -833,6 +833,20 @@
 
     .lounge-ver-seg { display: inline-flex; background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.14); border-radius: 999px; padding: 2px; }
     .lounge-ver-seg button { border: none; background: none; color: #9ca3af; font-weight: 700; font-size: 12px; padding: 4px 14px; border-radius: 999px; cursor: pointer; }
+  .vq-badge { display: inline-flex; align-items: center; gap: 3px; font-size: 0.6rem; font-weight: 800;
+    padding: 1px 6px; border-radius: 100px; margin-left: 6px; vertical-align: middle; letter-spacing: .02em;
+    border: 1px solid transparent; cursor: help; white-space: nowrap; position: relative; outline: none; }
+  .vq-gold { background: rgba(245,200,66,0.16); color: #f5c842; border-color: rgba(245,200,66,0.35); }
+  .vq-silver { background: rgba(184,192,204,0.16); color: #c7ccd6; border-color: rgba(184,192,204,0.30); }
+  .vq-bronze { background: rgba(205,127,50,0.16); color: #d9955a; border-color: rgba(205,127,50,0.35); }
+  .vq-avoid { background: rgba(239,68,68,0.14); color: #f87171; border-color: rgba(239,68,68,0.32); }
+  .vq-i { font-size: 0.58rem; opacity: 0.65; font-weight: 700; }
+  .vq-badge[data-tip]:hover::after, .vq-badge[data-tip]:focus::after {
+    content: attr(data-tip); position: absolute; left: 0; top: calc(100% + 6px); z-index: 60;
+    width: max-content; max-width: min(280px, 88vw); padding: 8px 10px; border-radius: 8px;
+    background: var(--surface-2); color: var(--text); border: 1px solid var(--line);
+    font-size: 0.68rem; font-weight: 500; line-height: 1.4; letter-spacing: 0; text-transform: none;
+    white-space: normal; box-shadow: 0 6px 18px rgba(0,0,0,0.28); }
     .lounge-ver-seg button.on { background: rgba(245,200,66,0.16); color: #f5c842; }
     :root[data-theme="light"] .lounge-ver-seg { background: rgba(23,33,47,0.05); border-color: rgba(23,33,47,0.15); }
     :root[data-theme="light"] .lounge-ver-seg button { color: #5d6b80; }
@@ -926,6 +940,18 @@
 <script>
 (() => {
   const API = '';
+  let VENUE_BADGES = {};
+  function venueBadge(name) {
+    const b = VENUE_BADGES[name];
+    if (!b || !b.badge) return '';
+    const MED = { gold: '🥇', silver: '🥈', bronze: '🥉', avoid: '⚠️' };
+    const LBL = { gold: 'Gold', silver: 'Silver', bronze: 'Bronze', avoid: 'Avoid' };
+    const medal = MED[b.badge] || '', label = LBL[b.badge] || '';
+    const tip = b.badge === 'avoid'
+      ? `Avoid — the model's top pick wins only ${b.win_pct}% here over the last ${b.window_days} days (${b.sample} races), well below the ~30% average.`
+      : `${label} venue — the model's top pick wins ${b.win_pct}% here over the last ${b.window_days} days (${b.sample} races). Gold >40%, Silver >35%, Bronze >30%.`;
+    return `<span class="vq-badge vq-${b.badge}" tabindex="0" data-tip="${tip.replace(/"/g,'&quot;')}" onclick="event.stopPropagation()">${medal} ${label}<span class="vq-i">ⓘ</span></span>`;
+  }
   const S = {
     date: null,
     meetings: [],
@@ -1166,6 +1192,7 @@
       // RA-era name; show the bookmaker/town name everywhere.
       const VENUE_DISPLAY = { 'Pioneer Park': 'Alice Springs' };
       S.meetings.forEach(m => { if (VENUE_DISPLAY[m.venue]) m.venue = VENUE_DISPLAY[m.venue]; });
+      try { const br = await fetch(`${API}/api/venue-badges`); if (br.ok) VENUE_BADGES = (await br.json()).badges || {}; } catch (e) {}
       if (!S.meetings.length) { renderEmptyAll(); return; }
       if (!S.selVenue) S.selVenue = vcOf(S.meetings[0]);
       renderAll();
@@ -1377,7 +1404,7 @@
       }).join('');
       return `<tr>
         <td class="mcell">
-          <div class="vname">${esc(m.venue)} <span class="st">${esc(m.state || '')}</span></div>
+          <div class="vname">${esc(m.venue)} <span class="st">${esc(m.state || '')}</span>${venueBadge(m.venue)}</div>
           <div class="vmeta">
             <span class="chip ${g.cls}">${esc(g.label)}</span>
             ${m.weather ? `<span class="wx">${m.weather.icon || ''} ${Math.round(m.weather.temp_max ?? 0)}°</span>` : ''}
@@ -1585,7 +1612,7 @@
           ${maxConf >= 25 && S.date >= aestToday(0) ? `<span class="rs-c ${maxConf >= 40 ? 'hi' : ''}">· ${maxConf}% best pick</span>` : ''}
         </div>` : '';
       return `<button class="rail-item ${vc === S.selVenue ? 'on' : ''}" data-sel="${esc(vc)}">
-        <div class="rv">${esc(m.venue)} <span class="st">${esc(m.state || '')}</span>
+        <div class="rv">${esc(m.venue)} <span class="st">${esc(m.state || '')}</span>${venueBadge(m.venue)}
           ${m.weather ? `<span class="wx">${m.weather.icon || ''} ${Math.round(m.weather.temp_max ?? 0)}°</span>` : ''}</div>
         <div class="rmeta">
           <span class="prog num">${done}/${races.length || '–'} raced${next ? ` · next ${wallTime(next.scheduled_time)}` : ''}</span>

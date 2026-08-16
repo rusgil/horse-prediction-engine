@@ -818,6 +818,20 @@
 
     .lounge-ver-seg { display: inline-flex; background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.14); border-radius: 999px; padding: 2px; }
     .lounge-ver-seg button { border: none; background: none; color: #9ca3af; font-weight: 700; font-size: 12px; padding: 4px 14px; border-radius: 999px; cursor: pointer; }
+  .vq-badge { display: inline-flex; align-items: center; gap: 3px; font-size: 0.6rem; font-weight: 800;
+    padding: 1px 6px; border-radius: 100px; margin-left: 6px; vertical-align: middle; letter-spacing: .02em;
+    border: 1px solid transparent; cursor: help; white-space: nowrap; position: relative; outline: none; }
+  .vq-gold { background: rgba(245,200,66,0.16); color: #f5c842; border-color: rgba(245,200,66,0.35); }
+  .vq-silver { background: rgba(184,192,204,0.16); color: #c7ccd6; border-color: rgba(184,192,204,0.30); }
+  .vq-bronze { background: rgba(205,127,50,0.16); color: #d9955a; border-color: rgba(205,127,50,0.35); }
+  .vq-avoid { background: rgba(239,68,68,0.14); color: #f87171; border-color: rgba(239,68,68,0.32); }
+  .vq-i { font-size: 0.58rem; opacity: 0.65; font-weight: 700; }
+  .vq-badge[data-tip]:hover::after, .vq-badge[data-tip]:focus::after {
+    content: attr(data-tip); position: absolute; left: 0; top: calc(100% + 6px); z-index: 60;
+    width: max-content; max-width: min(280px, 88vw); padding: 8px 10px; border-radius: 8px;
+    background: var(--surface-2); color: var(--text); border: 1px solid var(--line);
+    font-size: 0.68rem; font-weight: 500; line-height: 1.4; letter-spacing: 0; text-transform: none;
+    white-space: normal; box-shadow: 0 6px 18px rgba(0,0,0,0.28); }
     .lounge-ver-seg button.on { background: rgba(245,200,66,0.16); color: #f5c842; }
     :root[data-theme="light"] .lounge-ver-seg { background: rgba(23,33,47,0.05); border-color: rgba(23,33,47,0.15); }
     :root[data-theme="light"] .lounge-ver-seg button { color: #5d6b80; }
@@ -965,6 +979,18 @@
   const esc = s => (s == null ? '' : String(s)).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
   const pc = v => v == null ? null : Math.round(v * 1000) / 10;
   const vcOf = m => m.venue_code || (m.venue || '').toLowerCase().replace(/\s+/g, '-');
+  let VENUE_BADGES = {};
+  function venueBadge(name) {
+    const b = VENUE_BADGES[name];
+    if (!b || !b.badge) return '';
+    const MED = { gold: '🥇', silver: '🥈', bronze: '🥉', avoid: '⚠️' };
+    const LBL = { gold: 'Gold', silver: 'Silver', bronze: 'Bronze', avoid: 'Avoid' };
+    const medal = MED[b.badge] || '', label = LBL[b.badge] || '';
+    const tip = b.badge === 'avoid'
+      ? `Avoid — the model's top pick wins only ${b.win_pct}% here over the last ${b.window_days} days (${b.sample} races), well below the ~30% average.`
+      : `${label} venue — the model's top pick wins ${b.win_pct}% here over the last ${b.window_days} days (${b.sample} races). Gold >40%, Silver >35%, Bronze >30%.`;
+    return `<span class="vq-badge vq-${b.badge}" tabindex="0" data-tip="${tip.replace(/"/g,'&quot;')}" onclick="event.stopPropagation()">${medal} ${label}<span class="vq-i">ⓘ</span></span>`;
+  }
 
   function wallTime(iso) {            // VIEWER-LOCAL post time (2026-07-30)
     // The ISO carries the track's UTC offset (WA +08:00, AEST +10:00), so
@@ -1154,6 +1180,7 @@
     E.picks = d.picks || [];
     E.generatedAt = d.generated_at;
     E.threshold = d.threshold_pct || 25;
+    try { const br = await fetch(`${API}/api/venue-badges`); if (br.ok) VENUE_BADGES = (await br.json()).badges || {}; } catch (e) {}
   }
   async function loadTodayResults() {
     try {
@@ -1338,7 +1365,7 @@
           : `<div class="cd big ${cd.urg || ''}">${cd.label || ''}</div><div class="wt num">${wallTime(p.scheduled_time)}</div>`}
       </div>
       <div class="mid">
-        <div class="pk-venue">${esc(p.venue)} <b>R${p.race_number}</b></div>
+        <div class="pk-venue">${esc(p.venue)} <b>R${p.race_number}</b>${venueBadge(p.venue)}</div>
         <div class="pk-horse">${esc(p.horse_name)}${streak}${!isPast ? placeChip(p) : ''}</div>
         <div class="pk-sub num">${[p.distance ? p.distance + 'm' : '', p.barrier ? 'B' + p.barrier : '', p.weight ? p.weight + 'kg' : ''].filter(Boolean).join(' · ')}${l10}</div>
         <div class="pk-sub">${p.jockey ? 'J: ' + esc(p.jockey) : ''}${p.trainer ? (p.jockey ? ' · ' : '') + 'T: ' + esc(p.trainer) : ''}</div>
