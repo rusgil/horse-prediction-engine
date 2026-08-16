@@ -240,10 +240,16 @@
   .chip.abandoned-chip { background: var(--surface-2); color: var(--text-3); border: 1px solid var(--line); font-weight: 800; letter-spacing: 0.03em; }
   .vq-badge { display: inline-flex; align-items: center; gap: 3px; font-size: 0.6rem; font-weight: 800;
     padding: 1px 6px; border-radius: 100px; margin-left: 6px; vertical-align: middle; letter-spacing: .02em;
-    border: 1px solid transparent; cursor: help; white-space: nowrap; }
+    border: 1px solid transparent; cursor: help; white-space: nowrap; position: relative; outline: none; }
   .vq-gold { background: rgba(245,200,66,0.16); color: #f5c842; border-color: rgba(245,200,66,0.35); }
   .vq-silver { background: rgba(184,192,204,0.16); color: #c7ccd6; border-color: rgba(184,192,204,0.30); }
   .vq-i { font-size: 0.58rem; opacity: 0.65; font-weight: 700; }
+  .vq-badge[data-tip]:hover::after, .vq-badge[data-tip]:focus::after {
+    content: attr(data-tip); position: absolute; left: 0; top: calc(100% + 6px); z-index: 60;
+    width: max-content; max-width: min(280px, 88vw); padding: 8px 10px; border-radius: 8px;
+    background: var(--surface-2); color: var(--text); border: 1px solid var(--line);
+    font-size: 0.68rem; font-weight: 500; line-height: 1.4; letter-spacing: 0; text-transform: none;
+    white-space: normal; box-shadow: 0 6px 18px rgba(0,0,0,0.28); }
   .metro-badge {
     font-size: 0.54rem; font-weight: 800; letter-spacing: 0.1em;
     color: var(--gold); border: 1px solid color-mix(in srgb, var(--gold) 55%, transparent);
@@ -952,7 +958,7 @@
     const medal = b.badge === 'gold' ? '🥇' : '🥈';
     const label = b.badge === 'gold' ? 'Gold' : 'Silver';
     const tip = `${label} venue — the model's top pick wins ${b.win_pct}% here over the last ${b.window_days} days (${b.sample} races). Gold = >40% win, Silver = >30%.`;
-    return `<span class="vq-badge vq-${b.badge}" title="${tip.replace(/"/g,'&quot;')}">${medal} ${label}<span class="vq-i">ⓘ</span></span>`;
+    return `<span class="vq-badge vq-${b.badge}" tabindex="0" data-tip="${tip.replace(/"/g,'&quot;')}" onclick="event.stopPropagation()">${medal} ${label}<span class="vq-i">ⓘ</span></span>`;
   }
   const S = {
     date: null,
