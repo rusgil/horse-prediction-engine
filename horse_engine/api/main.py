@@ -2533,6 +2533,66 @@ async def _scheduled_persist_race_conditions():
         log.info("[race-conditions] persisted %d race(s)", n)
 
 
+_VENUE_BADGE_WINDOW_DAYS = 90
+_VENUE_BADGE_MIN_SAMPLE = 20
+_VENUE_BADGE_GOLD_PCT = 40.0
+_VENUE_BADGE_SILVER_PCT = 30.0
+
+
+async def _scheduled_compute_venue_badges():
+    """Weekly: recompute per-venue quality badges from the last N days of rank-1
+    results. gold = win% > 40, silver = win% > 30 (>= min sample). Upserts every
+    venue (badge NULL when it doesn't qualify) so stale badges clear."""
+    from horse_engine.models.database import VenueBadgeRow
+    from sqlalchemy import text as _sa_text
+    try:
+        async with get_session() as session:
+            rows = (await session.execute(_sa_text(f"""
+                with picks as (
+                  select h.race_id, h.venue, h.state,
+                         lower(regexp_replace(h.horse_name, '\\s*\\([A-Za-z]+\\)\\s*$', '')) hn
+                  from runner_prediction_history h
+                  where h.model_rank = 1 and (h.source = 'live' or h.source is null)
+                    and (h.cancelled is false or h.cancelled is null)
+                    and h.race_id >= to_char(now() - interval '{_VENUE_BADGE_WINDOW_DAYS} days', 'YYYY-MM-DD')
+                    and h.venue is not null
+                ),
+                res as (
+                  select race_id, lower(regexp_replace(horse_name, '\\s*\\([A-Za-z]+\\)\\s*$', '')) hn, position
+                  from historical_results where position is not null
+                )
+                select p.venue, max(p.state) as state, count(*) as n,
+                       avg(case when r.position = 1 then 1.0 else 0 end) * 100 as win_pct,
+                       avg(case when r.position in (1,2,3) then 1.0 else 0 end) * 100 as place_pct
+                from picks p join res r on r.race_id = p.race_id and r.hn = p.hn
+                group by p.venue
+            """))).fetchall()
+    except Exception as e:
+        log.warning("[venue-badges] compute failed: %s", e)
+        return
+    badged = 0
+    for v, st, n, win_pct, place_pct in rows:
+        badge = None
+        if n >= _VENUE_BADGE_MIN_SAMPLE:
+            if win_pct > _VENUE_BADGE_GOLD_PCT:
+                badge = "gold"
+            elif win_pct > _VENUE_BADGE_SILVER_PCT:
+                badge = "silver"
+        try:
+            async with get_session() as session:
+                await session.merge(VenueBadgeRow(
+                    venue=v, state=st, badge=badge,
+                    win_pct=round(float(win_pct), 1), place_pct=round(float(place_pct), 1),
+                    sample_size=int(n), window_days=_VENUE_BADGE_WINDOW_DAYS,
+                ))
+                await session.commit()
+                if badge:
+                    badged += 1
+        except Exception as e:
+            log.debug("[venue-badges] upsert %s failed: %s", v, e)
+    log.info("[venue-badges] recomputed %d venues (%d badged)", len(rows), badged)
+
+
 async def _set_model_unstable_banner_internal(active: bool, reason: str) -> None:
     """Flip the site-wide 'Predictions temporarily unavailable' splash from
     inside a scheduled job (no HTTP round-trip). Callable from any async
@@ -3247,6 +3307,9 @@ async def lifespan(app: FastAPI):
     # Persist per-race going (numeric track_rating) + weather for analysis.
     scheduler.add_job(_scheduled_persist_race_conditions,
                       CronTrigger(hour="12-23", minute=25, timezone="Australia/Sydney"))
+    # Weekly per-venue quality badges (gold >40% / silver >30% win, rolling window).
+    scheduler.add_job(_scheduled_compute_venue_badges,
+                      CronTrigger(day_of_week="mon", hour=4, minute=15, timezone="Australia/Sydney"))
     # Follow-up resolver — daily at 05:30 AEST (was Sunday-only, but
     # once we started seeding daily follow-ups from candidate reviews
     # and same-day measurements like shortest_fav_rank1_confidence,
@@ -12465,6 +12528,31 @@ async def admin_webshare_headroom(x_cron_secret: Optional[str] = Header(None)):
     """Read-only: current Webshare bandwidth headroom (limit, used, projection)."""
     _check_admin(x_cron_secret)
     return await _webshare_headroom()
+
+
+@app.get("/api/venue-badges")
+async def venue_badges_endpoint():
+    """Public: dynamic per-venue quality badges (gold/silver) + thresholds."""
+    from horse_engine.models.database import VenueBadgeRow
+    async with get_session() as session:
+        rows = (await session.execute(
+            select(VenueBadgeRow).where(VenueBadgeRow.badge.isnot(None))
+        )).scalars().all()
+    return {
+        "badges": {r.venue: {"badge": r.badge, "win_pct": r.win_pct,
+                             "place_pct": r.place_pct, "sample": r.sample_size,
+                             "window_days": r.window_days} for r in rows},
+        "thresholds": {"gold": _VENUE_BADGE_GOLD_PCT, "silver": _VENUE_BADGE_SILVER_PCT,
+                       "window_days": _VENUE_BADGE_WINDOW_DAYS, "min_sample": _VENUE_BADGE_MIN_SAMPLE},
+    }
+
+
+@app.post("/api/admin/recompute-venue-badges")
+async def admin_recompute_venue_badges(x_cron_secret: Optional[str] = Header(None)):
+    """Manual trigger for the weekly venue-badge recompute."""
+    _check_admin(x_cron_secret)
+    await _scheduled_compute_venue_badges()
+    return {"ok": True}
 
 
 @app.post("/api/admin/backfill-is-sharp")

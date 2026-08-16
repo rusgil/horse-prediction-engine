@@ -547,6 +547,21 @@ class RaceConditionsRow(Base):
     recorded_at = Column(DateTime, default=datetime.utcnow)
 
 
+class VenueBadgeRow(Base):
+    """Dynamic per-venue quality badge (gold/silver), recomputed weekly from a
+    rolling window of rank-1 results. gold = win% > 40, silver = win% > 30."""
+    __tablename__ = "venue_badges"
+
+    venue = Column(String, primary_key=True)
+    state = Column(String, nullable=True)
+    badge = Column(String, nullable=True)          # 'gold' | 'silver' | None
+    win_pct = Column(Float, nullable=True)
+    place_pct = Column(Float, nullable=True)
+    sample_size = Column(Integer, nullable=True)
+    window_days = Column(Integer, nullable=True)
+    computed_at = Column(DateTime, default=datetime.utcnow)
+
+
 class WeeklyReviewFollowUpRow(Base):
     """Deferred follow-up on a weekly-review suggestion — records what was
     applied, what to measure, when to re-check, and (once measured) the
@@ -933,6 +948,20 @@ async def init_db() -> None:
         """,
         "CREATE INDEX IF NOT EXISTS ix_race_conditions_track_rating ON race_conditions(track_rating)",
         "CREATE INDEX IF NOT EXISTS ix_race_conditions_race_date ON race_conditions(race_date)",
+        # Dynamic per-venue quality badge, recomputed weekly from a rolling window
+        # of rank-1 results. gold = win% > 40, silver = win% > 30 (min sample).
+        """
+        CREATE TABLE IF NOT EXISTS venue_badges (
+            venue TEXT PRIMARY KEY,
+            state TEXT,
+            badge TEXT,
+            win_pct REAL,
+            place_pct REAL,
+            sample_size INTEGER,
+            window_days INTEGER,
+            computed_at TIMESTAMPTZ DEFAULT now()
+        )
+        """,
         """
         CREATE OR REPLACE FUNCTION fiq_history_write_guard() RETURNS trigger AS $fn$
         DECLARE jumped boolean := false;
