@@ -163,6 +163,19 @@ _AUTO_PROMOTE_ROLLBACK_MARGIN_PP = float(os.getenv("AUTO_PROMOTE_ROLLBACK_MARGIN
 _SHARP_MIN_GAP = 0.06
 _SHARP_MIN_GAP_PCT = 6.0
 
+# ── Sharp gate EFFECTIVE DATES (the gate is versioned by race date) ──────────
+# A past date's Sharp classification is a FACT — what the filter actually
+# flagged that day under the rules in force THEN — and must never change when we
+# tighten the gate later, otherwise the advertised Sharp track record becomes a
+# retroactive backtest instead of real performance. So each dated rule is only
+# applied to races on/after the date it went live (dates from git history):
+#   late-non-metro exclusion  — 533920f, live 2026-08-02
+#   clear-favourite gap (6pp) — 66c4858, live 2026-08-14
+# `race_date=None` means "newest gate" (live / upcoming races with no date ctx).
+# Adding a future gate change = add its go-live date here; the past never moves.
+_SHARP_GATE_LATE_NONMETRO_FROM = "2026-08-02"
+_SHARP_GATE_CLEAR_FAV_FROM = "2026-08-14"
+
 
 def _is_sharp_gate(
     rank1_prob,
@@ -172,16 +185,21 @@ def _is_sharp_gate(
     is_metro=True,
     race_number=None,
     meeting_max_race=0,
+    race_date=None,
 ):
     """Single source of truth for the Sharp gate. ALL probabilities on the 0-1
     scale (callers working in 0-100 percent must divide by 100 first).
 
     A race's rank-1 pick is Sharp iff ALL hold:
-      1. high confidence  — rank1 >= 0.30 OR top-3 sum >= 0.60
-      2. clear favourite  — (rank1 - rank2) >= _SHARP_MIN_GAP
-      3. not a long layoff — NOT (days_since_last_run > 180)
-      4. not a late race at a non-metro meeting (weak late country field:
-         our rank-1 win pick is near-random in the last two races there)
+      1. high confidence  — rank1 >= 0.30 OR top-3 sum >= 0.60           (always)
+      2. clear favourite  — (rank1 - rank2) >= _SHARP_MIN_GAP    (from Aug 14)
+      3. not a long layoff — NOT (days_since_last_run > 180)             (always)
+      4. not a late race at a non-metro meeting                  (from Aug 2)
+
+    Gates 2 and 4 are DATE-VERSIONED: they apply only to races on/after the date
+    that rule went live, so a historical date is judged exactly as it was flagged
+    then (see the effective-date constants above). Pass `race_date` ('YYYY-MM-DD')
+    for settled races; leave it None for live/upcoming to get the newest gate.
 
     Every surface that classifies Sharp (snapshot writer, /api/edge,
     /api/edge/yesterday, get_meeting, /api/performance) MUST call this so the
@@ -193,13 +211,15 @@ def _is_sharp_gate(
     r1 = rank1_prob or 0.0
     if not (r1 >= 0.30 or (top3_sum or 0.0) >= 0.60):
         return False
-    if (r1 - (rank2_prob or 0.0)) < _SHARP_MIN_GAP:
-        return False
+    if race_date is None or race_date >= _SHARP_GATE_CLEAR_FAV_FROM:
+        if (r1 - (rank2_prob or 0.0)) < _SHARP_MIN_GAP:
+            return False
     if isinstance(days_since_last_run, (int, float)) and days_since_last_run > 180:
         return False
-    if (not is_metro) and race_number is not None and (meeting_max_race or 0) >= 5 \
-            and race_number >= (meeting_max_race or 0) - 1:
-        return False
+    if race_date is None or race_date >= _SHARP_GATE_LATE_NONMETRO_FROM:
+        if (not is_metro) and race_number is not None and (meeting_max_race or 0) >= 5 \
+                and race_number >= (meeting_max_race or 0) - 1:
+            return False
     return True
 
 
@@ -2962,7 +2982,7 @@ async def _snapshot_prerace_predictions() -> int:
                     rank1_prob=rank1.win_probability, rank2_prob=_rank2_wp,
                     top3_sum=top3_sum, days_since_last_run=_days_off,
                     is_metro=is_metro_venue(_svenue), race_number=_srn,
-                    meeting_max_race=_smx,
+                    meeting_max_race=_smx, race_date=_parse_race_id(race_id)[0],
                 )
             for r in runners:
                 try:
@@ -5672,6 +5692,7 @@ async def get_edge_picks():
                 is_metro=is_metro_venue(venue_code),
                 race_number=race_num,
                 meeting_max_race=_mx,
+                race_date=target_date,
             )
 
             picks.append({
@@ -6541,6 +6562,7 @@ async def get_edge_yesterday(for_date: Optional[str] = Query(None, alias="date")
             rank1_prob=_p1, rank2_prob=_p2, top3_sum=sum(_wps[:3]),
             days_since_last_run=_do, is_metro=_is_metro(venue_code),
             race_number=race_num, meeting_max_race=_mx,
+            race_date=p.race_id[:10],
         )
 
         output.append({
@@ -20704,7 +20726,7 @@ async def get_meeting(race_date: str, venue_code: str):
                 # clear-favourite gate the completed branch previously lacked.
                 is_sharp_map[rid] = bool(_is_sharp_gate(
                     rank1_prob=_r1, rank2_prob=_r2, top3_sum=_t3,
-                    days_since_last_run=ctx["days_off"],
+                    days_since_last_run=ctx["days_off"], race_date=race_date,
                 ) and ctx["finished"])
 
         upcoming_ids = [rid for rid in race_ids if rid not in completed_ids]
@@ -20762,7 +20784,7 @@ async def get_meeting(race_date: str, venue_code: str):
                     rank1_prob=r1_prob or 0,
                     rank2_prob=(ranks.get(2, (0, None))[0] or 0),
                     top3_sum=sum((ranks.get(k, (0, None))[0] or 0) for k in (1, 2, 3)),
-                    days_since_last_run=_days_off,
+                    days_since_last_run=_days_off, race_date=race_date,
                 )
                 # If this race is on a PAST date, treat "no seeded
                 # results" as "didn't run" and strip Sharp status.
@@ -26728,6 +26750,7 @@ async def performance_summary(
                     days_since_last_run=_do,
                     is_metro=is_metro_venue(_v), race_number=_rn,
                     meeting_max_race=_mtg_max.get((_d, _v), 0),
+                    race_date=_d,
                 )
 
             top_picks = {rid: p for rid, p in top_picks.items() if _recompute_sharp(p)}
