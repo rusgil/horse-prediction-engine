@@ -802,6 +802,11 @@ def _parse_results_page(html: str) -> dict[int, dict]:
 # rare; a mid-day new meeting shows up within one refresh window at the
 # next 6h tick or on the first user cache-miss for that state.
 _PERSIST_TTL_SECONDS = 21600
+# Form pages change only when a horse next races, so they cache far longer than
+# the calendar. 18h covers a full racing day and expires overnight (a back-to-
+# back next-day runner re-fetches fresh) — roughly halves form-fetch bandwidth
+# through the residential proxy (2026-08-16, webshare headroom defence).
+_FORM_PERSIST_TTL_SECONDS = 64800  # 18h
 
 
 async def _load_calendar_from_db(race_date: str, state: str):
@@ -889,7 +894,7 @@ async def _load_forms_from_db(needed: list[tuple[str, str]]) -> dict:
         for r in rows:
             if (r.kind, r.code) not in needed_set:
                 continue
-            if (now - r.cached_at).total_seconds() > _PERSIST_TTL_SECONDS:
+            if (now - r.cached_at).total_seconds() > _FORM_PERSIST_TTL_SECONDS:
                 continue
             try:
                 out[(r.kind, r.code)] = (r.cached_at, _json.loads(r.payload_json or "{}"))
@@ -1144,7 +1149,7 @@ class RacingAustraliaClient:
         if not horsecode:
             return {}
         cached = self._horse_form_cache.get(horsecode)
-        if cached and (datetime.utcnow() - cached[0]).total_seconds() < 21600:
+        if cached and (datetime.utcnow() - cached[0]).total_seconds() < _FORM_PERSIST_TTL_SECONDS:
             return cached[1]
         url = f"{_IF_BASE}/HorseFullForm.aspx?horsecode={horsecode}&src=horseform&raceentry={raceentry}"
         try:
@@ -1161,7 +1166,7 @@ class RacingAustraliaClient:
             return {}
         cache = self._jockey_form_cache if kind == "jockey" else self._trainer_form_cache
         cached = cache.get(code)
-        if cached and (datetime.utcnow() - cached[0]).total_seconds() < 21600:
+        if cached and (datetime.utcnow() - cached[0]).total_seconds() < _FORM_PERSIST_TTL_SECONDS:
             return cached[1]
         if kind == "jockey":
             url = f"{_IF_BASE}/JockeyLastRuns.aspx?jockeycode={code}"
