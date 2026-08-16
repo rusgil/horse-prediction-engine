@@ -130,6 +130,18 @@ def _today_aest() -> date:
     return datetime.now(_AEST).date()
 
 
+# ── "Today" publish gate ────────────────────────────────────────────────────
+# Today's predictions are held behind a splash until the morning is settled:
+# the 8:30am enrichment must have FINISHED and it must be >= 9:30am AEST. This
+# marker is set when _scheduled_enrich completes; the /api/today-status endpoint
+# also has a data fallback (today's freshest enriched_at) so a restart after the
+# enrich doesn't wrongly re-hide the board. Only the "today" view is gated —
+# past dates always show.
+_MORNING_ENRICH_DONE_DATE: Optional[str] = None
+_TODAY_PUBLISH_HOUR = 9
+_TODAY_PUBLISH_MIN = 30
+
+
 def _validate_date(race_date: str) -> str:
     if not _DATE_RE.match(race_date):
         raise HTTPException(400, "Invalid date format — expected YYYY-MM-DD")
@@ -720,6 +732,8 @@ async def _scheduled_enrich():
                 log.info("[scheduler] Exotic-dividend capture (enrich): %d new", n_div)
         except Exception as e:
             log.warning("[scheduler] exotic-dividend capture failed: %s", e)
+        global _MORNING_ENRICH_DONE_DATE
+        _MORNING_ENRICH_DONE_DATE = _today_aest().isoformat()
         log.info("[scheduler] Enrichment complete")
     except Exception as e:
         log.exception("[scheduler] Enrichment failed: %s", e)
@@ -19909,6 +19923,58 @@ async def check():
 @app.get("/api/health")
 async def health():
     return {"status": "ok", "time": datetime.utcnow().isoformat()}
+
+
+_today_status_cache: tuple = (0.0, None)
+
+
+@app.get("/api/today-status")
+async def today_status():
+    """Publish gate for the "today" view. Today's predictions are held behind a
+    splash until BOTH: the 8:30am enrichment has finished, AND it is >= 9:30am
+    AEST. Only the current day is gated — the frontend consults this solely when
+    showing "today"; past dates always render normally. Fails closed (not ready)
+    so nothing is published early."""
+    import time as _time
+    global _today_status_cache
+    _cached_at, _cached_val = _today_status_cache
+    if _cached_val is not None and (_time.monotonic() - _cached_at) < 15:
+        return _cached_val
+
+    now = datetime.now(_AEST)
+    today = now.date().isoformat()
+    after_publish = (now.hour, now.minute) >= (_TODAY_PUBLISH_HOUR, _TODAY_PUBLISH_MIN)
+
+    enrichment_done = (_MORNING_ENRICH_DONE_DATE == today)
+    if not enrichment_done:
+        # Restart-safe fallback: has any of today's races been (re)enriched since
+        # 8:30am AEST? The morning enrich force-refreshes today, so a fresh
+        # enriched_at proves the morning run landed even if the in-memory marker
+        # was lost to a redeploy.
+        try:
+            cutoff = now.replace(hour=_TODAY_PUBLISH_HOUR - 1, minute=_TODAY_PUBLISH_MIN,
+                                 second=0, microsecond=0) \
+                        .astimezone(timezone.utc).replace(tzinfo=None)
+            async with get_session() as session:
+                res = await session.execute(
+                    select(func.max(RunnerPredictionRow.enriched_at))
+                    .where(RunnerPredictionRow.race_id.like(f"{today}%"))
+                )
+                max_enr = res.scalar()
+            enrichment_done = bool(max_enr is not None and max_enr >= cutoff)
+        except Exception:
+            enrichment_done = False
+
+    result = {
+        "date": today,
+        "ready": bool(after_publish and enrichment_done),
+        "now_aest": now.strftime("%H:%M"),
+        "publish_time": f"{_TODAY_PUBLISH_HOUR:02d}:{_TODAY_PUBLISH_MIN:02d}",
+        "after_publish_time": after_publish,
+        "enrichment_done": enrichment_done,
+    }
+    _today_status_cache = (_time.monotonic(), result)
+    return result
 
 
 # ── Meetings ──────────────────────────────────────────────────────────────────
