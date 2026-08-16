@@ -1225,14 +1225,14 @@
   }
 
   /* ── header pieces ── */
-  function renderStats() {
-    const el = document.getElementById('statStrip');
-    if (E.parent !== 'wins') { el.innerHTML = ''; return; }
-    // Stats reflect the SAME picks shown on screen (respecting the Sharp mode)
-    // so the strip always matches the visible cards.
+  // Single source of truth for the on-screen settled summary: counts the exact
+  // picks the cards render (same applyMode + resultsMap + Sharp mode), so the
+  // date-selector label and the stat strip are computed once and can never
+  // disagree. Returns null when there is nothing settled to show.
+  function edgeVisibleStats() {
     let settled, w, pl;
     if (E.view === 'res') {
-      if (!E.resData || E.resData._date !== E.resDate) { el.innerHTML = ''; return; }
+      if (!E.resData || E.resData._date !== E.resDate) return null;
       const picks = applyMode(E.resData.picks || []).picks;
       settled = picks.filter(p => !p.scratched && !p.no_result);
       w = settled.filter(p => p.winner).length;
@@ -1243,15 +1243,22 @@
       w = settled.filter(p => E.resultsMap[p.race_id].winner).length;
       pl = settled.filter(p => { const r = E.resultsMap[p.race_id]; return r.placed && !r.winner; }).length;
     }
-    if (!settled.length) { el.innerHTML = ''; return; }
-    const wPct = Math.round(w / settled.length * 100);
-    const plcPct = Math.round((w + pl) / settled.length * 100);
+    if (!settled.length) return null;
+    return { settled: settled.length, w, pl };
+  }
+  function renderStats() {
+    const el = document.getElementById('statStrip');
+    if (E.parent !== 'wins') { el.innerHTML = ''; return; }
+    const s = edgeVisibleStats();
+    if (!s) { el.innerHTML = ''; return; }
+    const wPct = Math.round(s.w / s.settled * 100);
+    const plcPct = Math.round((s.w + s.pl) / s.settled * 100);
     el.innerHTML = `
-      <div class="ds-stat"><b class="num">${settled.length}</b> settled</div>
+      <div class="ds-stat"><b class="num">${s.settled}</b> settled</div>
       <div class="ds-divider"></div>
-      <div class="ds-stat"><b class="num" style="color:var(--mint)">${w}</b> picks won <span class="num">(${wPct}%)</span></div>
+      <div class="ds-stat"><b class="num" style="color:var(--mint)">${s.w}</b> picks won <span class="num">(${wPct}%)</span></div>
       <div class="ds-divider"></div>
-      <div class="ds-stat"><b class="num" style="color:var(--amber)">${pl}</b> more placed <span class="num">(${plcPct}% placed incl. wins)</span></div>`;
+      <div class="ds-stat"><b class="num" style="color:var(--amber)">${s.pl}</b> more placed <span class="num">(${plcPct}% placed incl. wins)</span></div>`;
   }
   function renderControls() {
     const el = document.getElementById('ctlRows');
@@ -1279,6 +1286,13 @@
   // Unified date bar: Latest = yesterday's results (newest settled day);
   // ‹ › steps through earlier dates, capped forward at yesterday.
   const edgeAccFor = d => {
+    // When d is the date the page is currently showing, mirror the on-screen
+    // strip exactly (same picks + counting) so the two never diverge. Fall back
+    // to the /api/performance aggregate only for dates not currently loaded.
+    if (E.view === 'res' && d === E.resDate) {
+      const s = edgeVisibleStats();
+      if (s) return ` <span class="dp-acc num">Win ${Math.round(s.w / s.settled * 100)}% · Plc ${Math.round((s.w + s.pl) / s.settled * 100)}%</span>`;
+    }
     const st = E.perfByDate[d];
     if (!st) return '';
     return ` <span class="dp-acc num">Win ${st.pct}% · Plc ${st.placePct}%</span>`;
@@ -1486,7 +1500,7 @@
     const cards = picks.map(p => card(p, p)).join('')
       || `<div class="empty"><div class="big">🐎</div>No ${E.mode === 'sharp' ? 'Sharp ' : ''}picks recorded for this date.</div>`;
     el.innerHTML = nav + (m.fallback ? '<div class="banner-sharp"><b>🎯 No Sharp picks this day</b> — showing all picks.</div>' : '') + cards;
-    renderStats();   // header shows the settled summary for this date
+    renderControls();   // rebuild the date-bar + strip from the now-loaded data so both match
     bindResNav(el);
     bindCards(el);
   }

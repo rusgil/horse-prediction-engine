@@ -1020,6 +1020,14 @@
     const navDate = S.date < yest ? S.date : yest;   // ‹ date › never shows today — that's the Today button's job
     const shiftIso = (iso, days) => { const d = new Date(iso + 'T00:00:00Z'); d.setUTCDate(d.getUTCDate() + days); return d.toISOString().slice(0, 10); };
     const accFor = d => {
+      // For the date currently shown, mirror the on-screen day strip exactly
+      // (same races + Sharp filter + counting) so the two never diverge. Fall
+      // back to the /api/performance aggregate for other dates (e.g. the
+      // yesterday recap shown while viewing today).
+      if (d === S.date) {
+        const s = hsVisibleStats();
+        if (s) return ` <span class="dp-acc num">Win ${Math.round(s.wins / s.settled * 100)}% · Plc ${Math.round((s.wins + s.placed) / s.settled * 100)}%</span>`;
+      }
       const st = S.perfByDate[d];
       if (!st) return '';
       return ` <span class="dp-acc num">Win ${st.pct}% · Plc ${st.placePct}%</span>`;
@@ -1262,23 +1270,32 @@
   };
 
   /* ── shared: day strip ── */
-  function renderDayStrip() {
-    // Stats reflect the SAME races shown on screen (S.date, respecting the
-    // Sharp filter) so the strip always matches the visible cards.
+  // Single source of truth for the settled summary: counts the exact races the
+  // cards render (same Sharp filter + settled test), so the date-selector label
+  // and the day strip are computed once and can never disagree. Null = nothing
+  // settled to show.
+  function hsVisibleStats() {
     let races = allRaces();
     if (S.sharpOnly) races = races.filter(r => r.is_sharp === true);
     const settled = races.filter(isSettled);
-    const el = document.getElementById('dayStrip');
+    if (!settled.length) return null;
     const wins = settled.filter(r => r.model_correct === true).length;
     const placed = settled.filter(r => r.model_correct === false && r.model_placed === true).length;
-    const pct = settled.length ? Math.round(wins / settled.length * 100) : 0;
-    const placePct = settled.length ? Math.round((wins + placed) / settled.length * 100) : 0;
-    const statsHtml = settled.length ? `<div class="ds-row">
-      <div class="ds-stat"><b class="num">${settled.length}</b> settled</div>
+    return { settled: settled.length, wins, placed };
+  }
+  function renderDayStrip() {
+    // Stats reflect the SAME races shown on screen (S.date, respecting the
+    // Sharp filter) so the strip always matches the visible cards.
+    const s = hsVisibleStats();
+    const el = document.getElementById('dayStrip');
+    const pct = s ? Math.round(s.wins / s.settled * 100) : 0;
+    const placePct = s ? Math.round((s.wins + s.placed) / s.settled * 100) : 0;
+    const statsHtml = s ? `<div class="ds-row">
+      <div class="ds-stat"><b class="num">${s.settled}</b> settled</div>
       <div class="ds-divider"></div>
-      <div class="ds-stat"><b class="g num">${wins}</b> picks won <span class="num">(${pct}%)</span></div>
+      <div class="ds-stat"><b class="g num">${s.wins}</b> picks won <span class="num">(${pct}%)</span></div>
       <div class="ds-divider"></div>
-      <div class="ds-stat"><b class="a num">${placed}</b> more placed <span class="num">(${placePct}% placed incl. wins)</span></div>
+      <div class="ds-stat"><b class="a num">${s.placed}</b> more placed <span class="num">(${placePct}% placed incl. wins)</span></div>
     </div>` : '';
     const activeFilters = [S.winFilter, S.placeFilter, S.gapFilter, S.valFilter].filter(v => v !== 'all').length;
     const sharpHtml = `<div class="ds-row">
@@ -1349,7 +1366,7 @@
       + `<span class="tri-legs">${triNums}</span>${triPct}${vd}`
       + `<span class="tri-names">${triNames}</span>${ffPart}</div>`;
   }
-  function renderAll() { renderDayStrip(); renderA(); renderB(); renderC(); }
+  function renderAll() { renderDayStrip(); renderA(); renderB(); renderC(); buildDateRow(); }
   function renderEmptyAll() {
     ['A','B','C'].forEach(v => document.getElementById('view' + v).innerHTML =
       `<div class="empty"><div class="big">🐎</div>No meetings loaded for ${esc(S.date)} yet.<br>Try another date — or check back after the morning update.</div>`);
