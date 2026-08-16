@@ -2469,6 +2469,70 @@ async def _scheduled_webshare_headroom_check():
     await _send_ops_alert("webshare_headroom", "⚠️ FunkyIQ — Webshare bandwidth low", detail)
 
 
+def _track_rating(tc) -> Optional[int]:
+    """Numeric going from a track_condition string: 'Good 4' -> 4. Falls back to
+    the word's mid-band when no number is present (Firm 2, Good 4, Soft 6, Heavy 9)."""
+    if not tc:
+        return None
+    m = re.search(r"(\d{1,2})", str(tc))
+    if m:
+        v = int(m.group(1))
+        return v if 1 <= v <= 12 else None
+    parts = str(tc).strip().split()
+    return {"firm": 2, "good": 4, "soft": 6, "heavy": 9, "synthetic": 4}.get(parts[0].lower() if parts else "")
+
+
+async def _scheduled_persist_race_conditions():
+    """Persist per-race going (numeric track_rating) + weather for analysis.
+    Reads recently-snapshotted races missing a race_conditions row, fetches the
+    day's weather per meeting (cached), and upserts. Best-effort, idempotent."""
+    from sqlalchemy import text as _sa_text
+    from horse_engine.clients.weather import get_weather_for_venue
+    from horse_engine.models.database import RaceConditionsRow
+    try:
+        async with get_session() as session:
+            rows = (await session.execute(_sa_text("""
+                select distinct on (h.race_id) h.race_id, h.venue, h.state, h.track_condition
+                from runner_prediction_history h
+                left join race_conditions rc on rc.race_id = h.race_id
+                where h.race_id >= to_char(now() - interval '2 days', 'YYYY-MM-DD')
+                  and h.venue is not null and h.track_condition is not null
+                  and rc.race_id is null
+                order by h.race_id
+            """))).fetchall()
+    except Exception as e:
+        log.warning("[race-conditions] load failed: %s", e)
+        return
+    if not rows:
+        return
+    wcache: dict = {}
+    n = 0
+    for rid, venue, state, tc in rows:
+        rd = rid[:10]
+        wk = (venue, state, rd)
+        if wk not in wcache:
+            try:
+                wcache[wk] = await get_weather_for_venue(venue or "", state or "", rd)
+            except Exception:
+                wcache[wk] = None
+        w = wcache[wk] or {}
+        try:
+            async with get_session() as session:
+                await session.merge(RaceConditionsRow(
+                    race_id=rid, venue=venue, state=state, race_date=rd,
+                    track_condition=tc, track_rating=_track_rating(tc),
+                    rain_mm=w.get("rain_mm"), temp_max=w.get("temp_max"),
+                    temp_min=w.get("temp_min"), wind_kmh=w.get("wind_kmh"),
+                    weather_condition=w.get("condition"), weather_icon=w.get("icon"),
+                ))
+                await session.commit()
+                n += 1
+        except Exception as e:
+            log.debug("[race-conditions] upsert %s failed: %s", rid, e)
+    if n:
+        log.info("[race-conditions] persisted %d race(s)", n)
+
+
 async def _set_model_unstable_banner_internal(active: bool, reason: str) -> None:
     """Flip the site-wide 'Predictions temporarily unavailable' splash from
     inside a scheduled job (no HTTP round-trip). Callable from any async
@@ -3180,6 +3244,9 @@ async def lifespan(app: FastAPI):
     # Webshare bandwidth headroom — proactive top-up alert before RA fetches 402.
     scheduler.add_job(_scheduled_webshare_headroom_check,
                       CronTrigger(hour="*/3", minute=17, timezone="Australia/Sydney"))
+    # Persist per-race going (numeric track_rating) + weather for analysis.
+    scheduler.add_job(_scheduled_persist_race_conditions,
+                      CronTrigger(hour="12-23", minute=25, timezone="Australia/Sydney"))
     # Follow-up resolver — daily at 05:30 AEST (was Sunday-only, but
     # once we started seeding daily follow-ups from candidate reviews
     # and same-day measurements like shortest_fav_rank1_confidence,

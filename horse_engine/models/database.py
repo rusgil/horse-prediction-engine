@@ -525,6 +525,28 @@ class RaCalendarCacheRow(Base):
     fetched_at = Column(DateTime, default=datetime.utcnow, index=True)
 
 
+class RaceConditionsRow(Base):
+    """Per-race going + weather, for analysis. `track_rating` is the numeric
+    going (1-2 Firm, 3-4 Good, 5-7 Soft, 8-10 Heavy) — filter/join on the number
+    instead of the string (e.g. Good = track_rating IN (3,4)). Weather is the
+    day's forecast for the venue, captured at enrich time."""
+    __tablename__ = "race_conditions"
+
+    race_id = Column(String, primary_key=True)
+    venue = Column(String, nullable=True)
+    state = Column(String, nullable=True)
+    race_date = Column(String, index=True, nullable=True)   # YYYY-MM-DD
+    track_condition = Column(String, nullable=True)         # e.g. "Good 4"
+    track_rating = Column(Integer, index=True, nullable=True)  # 1-10
+    rain_mm = Column(Float, nullable=True)
+    temp_max = Column(Float, nullable=True)
+    temp_min = Column(Float, nullable=True)
+    wind_kmh = Column(Float, nullable=True)
+    weather_condition = Column(String, nullable=True)
+    weather_icon = Column(String, nullable=True)
+    recorded_at = Column(DateTime, default=datetime.utcnow)
+
+
 class WeeklyReviewFollowUpRow(Base):
     """Deferred follow-up on a weekly-review suggestion — records what was
     applied, what to measure, when to re-check, and (once measured) the
@@ -889,6 +911,28 @@ async def init_db() -> None:
             created_at TIMESTAMPTZ DEFAULT now()
         )
         """,
+        # Per-race going + weather for analysis. track_rating = numeric going
+        # (1-2 Firm, 3-4 Good, 5-7 Soft, 8-10 Heavy) so you filter/join on the
+        # number, not the string (e.g. Good = track_rating IN (3,4)).
+        """
+        CREATE TABLE IF NOT EXISTS race_conditions (
+            race_id TEXT PRIMARY KEY,
+            venue TEXT,
+            state TEXT,
+            race_date TEXT,
+            track_condition TEXT,
+            track_rating INTEGER,
+            rain_mm REAL,
+            temp_max REAL,
+            temp_min REAL,
+            wind_kmh REAL,
+            weather_condition TEXT,
+            weather_icon TEXT,
+            recorded_at TIMESTAMPTZ DEFAULT now()
+        )
+        """,
+        "CREATE INDEX IF NOT EXISTS ix_race_conditions_track_rating ON race_conditions(track_rating)",
+        "CREATE INDEX IF NOT EXISTS ix_race_conditions_race_date ON race_conditions(race_date)",
         """
         CREATE OR REPLACE FUNCTION fiq_history_write_guard() RETURNS trigger AS $fn$
         DECLARE jumped boolean := false;
