@@ -1113,9 +1113,14 @@
       const status = outcome.status || 'no_result';
       // Odds only — no assumed dollar stake. A winning play shows the price it
       // paid ("$X.XX for $1"); the result + SP for singles lives in the summary.
-      const right = outcome.result_odds
-        ? `$${(+outcome.result_odds).toFixed(2)} for $1`
-        : (outcome.multi_odds ? `$${(+outcome.multi_odds).toFixed(2)} for $1` : '');
+      // Only a WON play shows the price in the banner. On a loss the backend
+      // still carries multi_odds (the "would've paid" price) for the summary
+      // text, but showing it here reads like a payout — so gate on status.
+      const right = (status === 'won')
+        ? (outcome.result_odds
+            ? `$${(+outcome.result_odds).toFixed(2)} for $1`
+            : (outcome.multi_odds ? `$${(+outcome.multi_odds).toFixed(2)} for $1` : ''))
+        : '';
       return `
         <div class="outcome-banner ${status}">
           <span>${escHtml(outcome.summary || '')}</span>
