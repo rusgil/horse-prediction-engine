@@ -26712,6 +26712,7 @@ _PERF_CACHE_MAX_ENTRIES = 16
 async def performance_summary(
     days: int = Query(5, ge=1, le=365),
     sharp: bool = Query(False),
+    segment: Optional[str] = Query(None, description="metro | country — filter to that venue segment"),
 ):
     """
     Per-day performance strip for the last N days.
@@ -26726,7 +26727,7 @@ async def performance_summary(
     pure past-date windows. The Lounge fires this on every page load so
     caching takes the cold response from ~5s to ~5ms.
     """
-    cache_key = (int(days), bool(sharp))
+    cache_key = (int(days), bool(sharp), (segment or "").lower())
     # Today is always in the window since we look back N days from today,
     # so the TTL is the "today" tier. (If you ever add an explicit
     # `end_date` param, branch the TTL on whether end_date >= today.)
@@ -26826,6 +26827,16 @@ async def performance_summary(
                 )
 
             top_picks = {rid: p for rid, p in top_picks.items() if _recompute_sharp(p)}
+
+        # Segment filter (metro/country) — additive; None keeps every race. Lets
+        # the reporting separate metro from country so a country-only day (which
+        # the model correctly rates lower — verified well-calibrated) doesn't read
+        # as a regression.
+        if segment and segment.lower() in ("metro", "country"):
+            from horse_engine.bets import is_metro_venue
+            _want_metro = segment.lower() == "metro"
+            top_picks = {rid: p for rid, p in top_picks.items()
+                         if is_metro_venue(_parse_race_id(rid)[1]) == _want_metro}
 
     # Winner per race (position==1) — used for accurate act_won comparison
     winners: dict[str, str] = {}
