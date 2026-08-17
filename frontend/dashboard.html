@@ -1940,8 +1940,9 @@ export CRON_SECRET='&lt;your CRON_SECRET&gt;'
           // Sharp-filter series (recompute) mapped onto the same dates.
           const sharpMap = {};
           (_sharpSeries?.summary || []).forEach(r => { sharpMap[r.date] = r; });
-          // Sharp lines only from when the integrity report began tracking is_sharp.
-          const SHARP_START = '2026-08-07';
+          // Sharp lines start the day AFTER is_sharp tracking began (7 Aug was the
+          // setup/first day — excluded so a partial first day doesn't skew the line).
+          const SHARP_START = '2026-08-08';
           const sharpWin   = p2days.map(d => { const r = sharpMap[d.date]; return (r && d.date >= SHARP_START) ? +((r.win_rate || 0) * 100).toFixed(1) : null; });
           const sharpPlace = p2days.map(d => { const r = sharpMap[d.date]; return (r && d.date >= SHARP_START) ? +((r.place_rate || 0) * 100).toFixed(1) : null; });
           const sharpStartIdx = p2days.findIndex(d => d.date >= SHARP_START);
