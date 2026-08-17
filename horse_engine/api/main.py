@@ -954,8 +954,12 @@ async def _rerank_race_after_scratch(session, race_id: str) -> bool:
         .limit(1)
     )).scalar()
     _jump = sched_to_utc_naive(_sched_row) if _sched_row else None
-    if _jump is not None and datetime.utcnow() > _jump:
-        log.info("[rerank] %s already jumped — history snapshot left untouched", race_id)
+    # Fail SAFE: skip when the race has jumped OR its jump time is unknown. A
+    # missing/unparseable scheduled_time (tz-naive incident) must NOT bypass the
+    # guard — rewriting frozen history win-probs post-jump trips the write-once
+    # trigger and logs a history_write_guard incident on every sweep.
+    if _jump is None or datetime.utcnow() > _jump:
+        log.info("[rerank] %s jumped or jump-time unknown — history snapshot left untouched", race_id)
         return True
     latest_at = (await session.execute(
         select(func.max(RunnerPredictionHistoryRow.enriched_at))
