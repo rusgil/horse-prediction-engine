@@ -13009,6 +13009,7 @@ async def market_disagreement_backtest(
                 RunnerPredictionHistoryRow.horse_name,
                 RunnerPredictionHistoryRow.model_rank,
                 RunnerPredictionHistoryRow.market_rank,
+                RunnerPredictionHistoryRow.win_probability,
                 RunnerPredictionHistoryRow.enriched_at,
             )
             .where(RunnerPredictionHistoryRow.race_id >= f"{cutoff}_")
@@ -13032,6 +13033,8 @@ async def market_disagreement_backtest(
     seen: set = set()
     model_fav: dict[str, str] = {}
     market_fav: dict[str, str] = {}
+    model_prob: dict[str, float] = {}
+    market_prob: dict[str, float] = {}
     for r in rows:
         key = (r.race_id, _normalize_horse(r.horse_name))
         if key in seen:
@@ -13039,10 +13042,13 @@ async def market_disagreement_backtest(
         seen.add(key)
         if r.model_rank == 1 and r.race_id not in model_fav:
             model_fav[r.race_id] = _normalize_horse(r.horse_name)
+            model_prob[r.race_id] = r.win_probability or 0.0
         if r.market_rank == 1 and r.race_id not in market_fav:
             market_fav[r.race_id] = _normalize_horse(r.horse_name)
+            market_prob[r.race_id] = r.win_probability or 0.0
 
-    agree = dis = model_win_agree = model_win_dis = market_win_dis = other_win_dis = 0
+    agree = model_win_agree = 0
+    recs = []  # per disagreement race: (date, edge_pp, our_won, market_won)
     for rid, (wn, fs) in winner.items():
         if min_field and (fs or 0) < min_field:
             continue
@@ -13054,32 +13060,63 @@ async def market_disagreement_backtest(
             agree += 1
             if wn == mf:
                 model_win_agree += 1
-        else:
-            dis += 1
-            if wn == mf:
-                model_win_dis += 1
-            elif wn == kf:
-                market_win_dis += 1
-            else:
-                other_win_dis += 1
+            continue
+        # how much MORE the model rates our pick vs the market favourite (pp)
+        edge_pp = round((model_prob.get(rid, 0.0) - market_prob.get(rid, 0.0)) * 100, 1)
+        recs.append((rid[:10], edge_pp, wn == mf, wn == kf))
 
-    def pct(a, b):
-        return round(100.0 * a / b, 1) if b else None
+    def summ(sub):
+        n = len(sub)
+        return {
+            "n": n,
+            "our_pick_win_pct": round(100.0 * sum(1 for r in sub if r[2]) / n, 1) if n else None,
+            "market_fav_win_pct": round(100.0 * sum(1 for r in sub if r[3]) / n, 1) if n else None,
+        }
+    # Edge-magnitude bands — is the market fav only better on MARGINAL calls,
+    # or even when we back our pick strongly? Localises the fixable band.
+    bands = {"marginal_<3pp": [], "mid_3to6pp": [], "strong_6pp+": []}
+    for r in recs:
+        e = r[1]
+        (bands["marginal_<3pp"] if e < 3 else bands["mid_3to6pp"] if e < 6 else bands["strong_6pp+"]).append(r)
+    # Walk-forward split by median date — does the effect hold out-of-sample?
+    dts = sorted({r[0] for r in recs})
+    split = dts[len(dts) // 2] if dts else None
+    train = [r for r in recs if r[0] < split] if split else []
+    test = [r for r in recs if r[0] >= split] if split else []
     return {
         "days": int(days), "min_field": int(min_field),
-        "graded_races": agree + dis,
-        "agree": {  # model rank-1 == market rank-1
-            "n": agree, "pick_win_rate_pct": pct(model_win_agree, agree),
-        },
-        "disagree": {  # model rank-1 != market rank-1 — the interesting cut
-            "n": dis,
-            "our_pick_win_rate_pct": pct(model_win_dis, dis),
-            "market_fav_win_rate_pct": pct(market_win_dis, dis),
-            "neither_won_pct": pct(other_win_dis, dis),
-        },
-        "verdict": ("market_fav_better" if market_win_dis > model_win_dis
-                    else "our_pick_better" if model_win_dis > market_win_dis else "even"),
+        "graded_races": agree + len(recs),
+        "agree": {"n": agree,
+                  "pick_win_rate_pct": round(100.0 * model_win_agree / agree, 1) if agree else None},
+        "disagree_overall": summ(recs),
+        "disagree_by_edge_band": {k: summ(v) for k, v in bands.items()},
+        "disagree_train_early": {"through": split, **summ(train)},
+        "disagree_test_late": {"from": split, **summ(test)},
     }
+
+
+@app.post("/api/admin/backfill-field-size")
+async def backfill_field_size(
+    days: int = Query(90, ge=1, le=365),
+    x_cron_secret: Optional[str] = Header(None),
+):
+    """One-off backfill: set HistoricalResultRow.field_size (null since the
+    2026-07-23 seeder change) from the count of result rows per race. Safe —
+    field_size is not covered by the write-once trigger (that guards the
+    prediction history table, not results)."""
+    _check_admin(x_cron_secret)
+    from sqlalchemy import text as _sql_text
+    cutoff = (_today_aest() - timedelta(days=int(days))).isoformat()
+    async with get_session() as session:
+        res = await session.execute(_sql_text(
+            "UPDATE historical_results h SET field_size = c.n "
+            "FROM (SELECT race_id, COUNT(*) AS n FROM historical_results "
+            "      WHERE position IS NOT NULL AND position > 0 GROUP BY race_id) c "
+            "WHERE h.race_id = c.race_id AND h.field_size IS NULL AND h.race_id >= :cut"
+        ), {"cut": f"{cutoff}_"})
+        await session.commit()
+        n = res.rowcount
+    return {"backfilled_rows": int(n or 0), "since": cutoff}
 
 
 @app.get("/api/admin/model-anomalies")
