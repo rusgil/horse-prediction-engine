@@ -13119,6 +13119,77 @@ async def backfill_field_size(
     return {"backfilled_rows": int(n or 0), "since": cutoff}
 
 
+@app.get("/api/admin/guardrail-backtest")
+async def guardrail_backtest(
+    days: int = Query(60, ge=7, le=365),
+    threshold_pp: float = Query(3.0, ge=0.0, le=20.0),
+    x_cron_secret: Optional[str] = Header(None),
+):
+    """Simulate the guardrail 'defer to the market favourite when the model's
+    edge over it is < threshold_pp'. Baseline top-1 win rate (model rank-1) vs
+    guardrailed, with an early/late walk-forward split — confirms whether the
+    marginal-disagreement fix actually lifts win rate BEFORE any model change."""
+    _check_admin(x_cron_secret)
+    cutoff = (_today_aest() - timedelta(days=int(days))).isoformat()
+    async with get_session() as session:
+        rows = (await session.execute(
+            select(RunnerPredictionHistoryRow.race_id, RunnerPredictionHistoryRow.horse_name,
+                   RunnerPredictionHistoryRow.model_rank, RunnerPredictionHistoryRow.market_rank,
+                   RunnerPredictionHistoryRow.win_probability, RunnerPredictionHistoryRow.enriched_at)
+            .where(RunnerPredictionHistoryRow.race_id >= f"{cutoff}_")
+            .where((RunnerPredictionHistoryRow.model_rank == 1)
+                   | (RunnerPredictionHistoryRow.market_rank == 1))
+            .where(RunnerPredictionHistoryRow.cancelled.is_(False)
+                   | RunnerPredictionHistoryRow.cancelled.is_(None))
+            .where((RunnerPredictionHistoryRow.source == "live")
+                   | RunnerPredictionHistoryRow.source.is_(None))
+            .order_by(RunnerPredictionHistoryRow.enriched_at.desc())
+        )).fetchall()
+        wres = (await session.execute(
+            select(HistoricalResultRow.race_id, HistoricalResultRow.horse_name)
+            .where(HistoricalResultRow.race_id >= f"{cutoff}_")
+            .where(HistoricalResultRow.position == 1)
+        )).fetchall()
+    winner = {rid: _normalize_horse(hn) for rid, hn in wres}
+    seen: set = set()
+    mf: dict = {}; kf: dict = {}; mp: dict = {}; kp: dict = {}
+    for r in rows:
+        key = (r.race_id, _normalize_horse(r.horse_name))
+        if key in seen:
+            continue
+        seen.add(key)
+        if r.model_rank == 1 and r.race_id not in mf:
+            mf[r.race_id] = _normalize_horse(r.horse_name); mp[r.race_id] = r.win_probability or 0.0
+        if r.market_rank == 1 and r.race_id not in kf:
+            kf[r.race_id] = _normalize_horse(r.horse_name); kp[r.race_id] = r.win_probability or 0.0
+    recs = []  # (date, baseline_win, guardrail_win, swapped)
+    for rid, wn in winner.items():
+        m = mf.get(rid); k = kf.get(rid)
+        if not m or not k:
+            continue
+        edge = (mp.get(rid, 0.0) - kp.get(rid, 0.0)) * 100.0
+        gpick = k if (m != k and edge < threshold_pp) else m
+        recs.append((rid[:10], wn == m, wn == gpick, gpick != m))
+
+    def summ(sub):
+        n = len(sub)
+        if not n:
+            return {"n": 0}
+        b = sum(1 for r in sub if r[1]); g = sum(1 for r in sub if r[2])
+        return {"n": n, "baseline_win_pct": round(100.0 * b / n, 1),
+                "guardrail_win_pct": round(100.0 * g / n, 1),
+                "delta_pp": round(100.0 * (g - b) / n, 1),
+                "picks_swapped": sum(1 for r in sub if r[3])}
+    dts = sorted({r[0] for r in recs})
+    split = dts[len(dts) // 2] if dts else None
+    train = [r for r in recs if r[0] < split] if split else []
+    test = [r for r in recs if r[0] >= split] if split else []
+    return {"days": int(days), "threshold_pp": threshold_pp,
+            "overall": summ(recs),
+            "train_early": {"through": split, **summ(train)},
+            "test_late": {"from": split, **summ(test)}}
+
+
 @app.get("/api/admin/model-anomalies")
 async def model_anomalies(
     days: int = 90,
