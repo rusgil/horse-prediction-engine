@@ -1512,8 +1512,7 @@
       ${colS.some(Boolean) ? `<tfoot><tr>
         <td class="mcell tally-lab">Wins / places</td>
         ${Array.from({ length: maxR }, (_, i) => `<td class="cell-tally num">${colS[i] ? `<span class="rs-w">${colW[i]}/${colS[i]} wins</span>${colP[i] > colW[i] ? `<span class="rs-p">${colP[i]} placed</span>` : ''}` : '<span class="tn">–</span>'}</td>`).join('')}
-      </tr></tfoot>` : ''}</table></div>
-      <div class="hint">Cell colour = how strongly our model rates its top pick in that race. Tap any race for the win &amp; place predictions. See the full key below.</div>`;
+      </tr></tfoot>` : ''}</table></div>`;
     const gw = el.querySelector('.grid-wrap');
     if (gw && prevScroll) gw.scrollLeft = prevScroll;
     bindOpen(el);
