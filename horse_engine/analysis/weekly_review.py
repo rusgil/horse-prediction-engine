@@ -574,6 +574,193 @@ def _detect_weekly_win_drivers(end_date, picks, results, applied_set, top3_by_ra
     )
 
 
+# ---------- generic segment-calibration scanner (Alchemist) + Crucible ----------
+#
+# Track-softening and late-card fade are not special cases — they are two
+# instances of ONE failure class: a CONTEXT segment in which the model's win
+# probabilities are systematically wrong. This scanner hunts the whole class at
+# once (going, race number, field size, distance, track type, layoff) by
+# bucketing rank-1 picks and comparing PREDICTED win% (mean model prob) to
+# ACTUAL win%. A well-calibrated segment has ratio actual/predicted ~= 1.0; a
+# ratio well below 1 means the model over-rates its pick there (its numbers get
+# thrown off). The Crucible step then walk-forward-splits the window and keeps
+# only segments whose miscalibration replicates out-of-sample (not variance).
+
+def _seg_pairs(feat: dict) -> list[tuple[str, str]]:
+    """The (dimension, bucket) memberships a single pick belongs to."""
+    pairs: list[tuple[str, str]] = []
+    g = feat.get("going")
+    if g in ("good", "firm", "synthetic"):
+        pairs.append(("going", "dry"))
+    elif g == "soft":
+        pairs.append(("going", "soft"))
+    elif g == "heavy":
+        pairs.append(("going", "heavy"))
+    rn = feat.get("race_num")
+    if isinstance(rn, int):
+        pairs.append(("race_no", "R1-3" if rn <= 3 else "R4-6" if rn <= 6 else "R7-8" if rn <= 8 else "R9+"))
+    fs = feat.get("field_size")
+    if isinstance(fs, int) and fs > 0:
+        pairs.append(("field", "small<=7" if fs <= 7 else "mid8-11" if fs <= 11 else "big>=12"))
+    dm = feat.get("distance_m")
+    if isinstance(dm, (int, float)) and dm > 0:
+        pairs.append(("dist", "sprint<=1200" if dm <= 1200 else "mid1201-1900" if dm <= 1900 else "staying>=2000"))
+    im = feat.get("is_metro")
+    if im is not None:
+        pairs.append(("track", "metro" if im else "country"))
+    do = feat.get("days_off")
+    if isinstance(do, (int, float)) and do >= 0:
+        pairs.append(("layoff", "0-30" if do <= 30 else "31-90" if do <= 90 else "91-180" if do <= 180 else ">180"))
+    return pairs
+
+
+def _scan_segment_calibration(rows: list, min_n: int = 25, ratio_lo: float = 0.75,
+                              ratio_hi: float = 1.35, min_gap_pp: float = 5.0) -> list:
+    """In-sample scan. rows: [{model_pct, won, going, race_num, field_size,
+    distance_m, is_metro, days_off}]. Returns flagged segments sorted by
+    severity (|gap| weighted by sqrt(support))."""
+    buckets: dict = defaultdict(lambda: {"n": 0, "sum_model": 0.0, "wins": 0})
+    for r in rows:
+        if r.get("model_pct") is None or r.get("won") is None:
+            continue
+        for dim, lab in _seg_pairs(r):
+            b = buckets[(dim, lab)]
+            b["n"] += 1
+            b["sum_model"] += r["model_pct"]
+            b["wins"] += 1 if r["won"] else 0
+    flagged = []
+    for (dim, lab), b in buckets.items():
+        if b["n"] < min_n:
+            continue
+        pred = b["sum_model"] / b["n"]
+        if pred <= 0:
+            continue
+        actual = b["wins"] / b["n"] * 100
+        ratio = actual / pred
+        gap = actual - pred
+        if (ratio <= ratio_lo or ratio >= ratio_hi) and abs(gap) >= min_gap_pp:
+            flagged.append({
+                "dimension": dim, "bucket": lab, "n": b["n"],
+                "predicted_win_pct": round(pred, 1), "actual_win_pct": round(actual, 1),
+                "ratio": round(ratio, 2), "gap_pp": round(gap, 1),
+            })
+    flagged.sort(key=lambda x: -abs(x["gap_pp"]) * (x["n"] ** 0.5))
+    return flagged
+
+
+def _crucible_walkforward_segments(rows: list, flagged: list, min_half_n: int = 10) -> list:
+    """The Crucible: split rows chronologically and keep only segments whose
+    miscalibration shows in BOTH halves (same direction) — i.e. it replicates
+    out-of-sample rather than being a one-window fluke."""
+    dated = sorted((r["date"] for r in rows if r.get("date")))
+    if not dated:
+        for f in flagged:
+            f["oos_confirmed"] = False
+        return flagged
+    mid = dated[len(dated) // 2]
+    early = [r for r in rows if r.get("date", "") < mid]
+    late = [r for r in rows if r.get("date", "") >= mid]
+
+    def ratio_for(rowset, dim, lab):
+        n = 0; sm = 0.0; w = 0
+        for r in rowset:
+            if r.get("model_pct") is None or r.get("won") is None:
+                continue
+            if (dim, lab) in _seg_pairs(r):
+                n += 1; sm += r["model_pct"]; w += 1 if r["won"] else 0
+        if n < min_half_n or sm <= 0:
+            return None, n
+        return (w / n * 100) / (sm / n), n
+
+    for f in flagged:
+        er, en = ratio_for(early, f["dimension"], f["bucket"])
+        lr, ln = ratio_for(late, f["dimension"], f["bucket"])
+        f["train_ratio"] = round(er, 2) if er is not None else None
+        f["train_n"] = en
+        f["test_ratio"] = round(lr, 2) if lr is not None else None
+        f["test_n"] = ln
+        f["oos_confirmed"] = bool(
+            er is not None and lr is not None and (
+                (f["ratio"] < 1 and er < 0.9 and lr < 0.9) or
+                (f["ratio"] > 1 and er > 1.1 and lr > 1.1)
+            )
+        )
+    return flagged
+
+
+def _rows_from_picks(rank1_picks: list, results: dict) -> list:
+    """Build scanner rows from weekly-loaded picks + results dict."""
+    rows = []
+    for p in rank1_picks:
+        r = results.get((p.race_id, _normalize_horse(p.horse_name)))
+        if not r or r.get("position") is None or r["position"] <= 0:
+            continue
+        e = _parse_enriched(p)
+        try:
+            rnum = int(p.race_id.split("_")[2].lstrip("Rr"))
+        except Exception:
+            rnum = None
+        rows.append({
+            "date": p.race_id[:10],
+            "model_pct": (p.win_probability or 0) * 100,
+            "won": bool(r.get("winner")),
+            "going": e.get("track_condition_category"),
+            "race_num": rnum,
+            "field_size": r.get("field_size") or e.get("field_size"),
+            "distance_m": e.get("distance_m") or e.get("distance"),
+            "is_metro": e.get("is_metro"),
+            "days_off": e.get("days_since_last_run"),
+        })
+    return rows
+
+
+def _detect_weekly_segment_miscalibration(
+    end_date: date, picks: list, results: dict, applied: set, top3_by_race: dict
+) -> Optional[Suggestion]:
+    """Alchemist: scan every context dimension for a segment where the model's
+    probabilities are systematically wrong, then hand the OOS-replicated ones to
+    the Crucible. Generalises _detect_weekly_going_pattern to the whole class."""
+    rows = _rows_from_picks([p for p in picks if p.model_rank == 1], results)
+    if len(rows) < 60:
+        return None
+    flagged = _crucible_walkforward_segments(rows, _scan_segment_calibration(rows))
+    confirmed = [f for f in flagged if f.get("oos_confirmed")]
+    if not confirmed:
+        return None
+    top = confirmed[:5]
+    worst = top[0]
+    lines = [f"- **{f['dimension']}={f['bucket']}** (n={f['n']}): predicted {f['predicted_win_pct']}% "
+             f"vs actual {f['actual_win_pct']}% (ratio {f['ratio']}, gap {f['gap_pp']:+}pp; "
+             f"OOS train {f['train_ratio']}/test {f['test_ratio']})" for f in top]
+    return Suggestion(
+        id=_suggestion_id(end_date, "weekly_segment_miscalibration"),
+        pattern_id="weekly_segment_miscalibration",
+        title=f"{len(confirmed)} context segment(s) miscalibrated — worst: {worst['dimension']}={worst['bucket']} ({worst['gap_pp']:+}pp)",
+        severity="high" if abs(worst["gap_pp"]) >= 12 else "medium",
+        rationale=(
+            "The model's win probabilities are well-calibrated overall but break down in "
+            f"specific CONTEXT segments. {len(confirmed)} segment(s) show a predicted-vs-actual "
+            "gap that replicates out-of-sample (both walk-forward halves same direction), so "
+            "it's structural, not variance:\n" + "\n".join(lines) + "\n\nThis is the generic "
+            "'what throws our predictions' scan — track going and race number are just two of "
+            "the dimensions swept."
+        ),
+        evidence=top,
+        paste_prompt=(
+            "Alchemist segment-calibration scan flagged OOS-confirmed miscalibrated segments "
+            f"(worst: {worst['dimension']}={worst['bucket']}, predicted {worst['predicted_win_pct']}% "
+            f"vs actual {worst['actual_win_pct']}%). Run the full Crucible: "
+            "GET /api/admin/segment-calibration-scan?days=180 and confirm on the deeper window. "
+            "For any segment that holds, propose EITHER a confidence-shading rule (shrink win_prob "
+            "toward market in that segment) OR a segment-aware Sharp gate (require higher rank-1% "
+            "there) — analogous to the late-non-metro gate. Do NOT ship on thin/rare-segment "
+            "samples (soft/heavy going n is small and going labels are flaky)."
+        ),
+        code_pointer="horse_engine/prediction/engine.py (predict_race — post-calibration shading) or main.py _is_sharp_gate",
+        metric_delta={"segments": top},
+    )
+
+
 WEEKLY_DETECTORS = [
     _detect_weekly_top1_drift,
     _detect_weekly_sharp_drift,
@@ -583,6 +770,7 @@ WEEKLY_DETECTORS = [
     _detect_weekly_marginal_market_disagreement,
     _detect_weekly_zero_hit_top4,
     _detect_weekly_win_drivers,
+    _detect_weekly_segment_miscalibration,
 ]
 
 

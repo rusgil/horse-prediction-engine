@@ -13653,6 +13653,95 @@ async def layoff_phantom_audit(days: int = 28, lookback_days: int = 730,
     }
 
 
+@app.get("/api/admin/segment-calibration-scan")
+async def segment_calibration_scan(
+    days: int = 180,
+    include_backfill: bool = True,
+    x_cron_secret: Optional[str] = Header(None),
+):
+    """Alchemist + Crucible: sweep EVERY context dimension (going, race number,
+    field size, distance, track type, layoff) for segments where the model's
+    win probabilities are systematically wrong (predicted != actual), then
+    walk-forward-validate each flagged segment out-of-sample. This is the
+    generic 'what throws our predictions' scan — track-softening and late-card
+    fade are just two dimensions it sweeps. Feeds the weekly Alchemist detector
+    weekly_segment_miscalibration."""
+    _check_admin(x_cron_secret)
+    days = max(30, min(int(days), 365))
+    cutoff = (_today_aest() - timedelta(days=days)).isoformat()
+    async with get_session() as session:
+        pred_rows = (await session.execute(
+            select(
+                RunnerPredictionHistoryRow.race_id, RunnerPredictionHistoryRow.horse_name,
+                RunnerPredictionHistoryRow.win_probability, RunnerPredictionHistoryRow.enriched_json,
+                RunnerPredictionHistoryRow.enriched_at,
+            )
+            .where(RunnerPredictionHistoryRow.race_id >= f"{cutoff}_")
+            .where(RunnerPredictionHistoryRow.model_rank == 1)
+            .where(RunnerPredictionHistoryRow.cancelled.is_(False)
+                   | RunnerPredictionHistoryRow.cancelled.is_(None))
+            .where(RunnerPredictionHistoryRow.source.in_(("live", "backfill"))
+                   if include_backfill else RunnerPredictionHistoryRow.source == "live")
+            .order_by(RunnerPredictionHistoryRow.enriched_at.desc())
+        )).fetchall()
+        result_rows = (await session.execute(
+            select(HistoricalResultRow.race_id, HistoricalResultRow.horse_name,
+                   HistoricalResultRow.position, HistoricalResultRow.field_size)
+            .where(HistoricalResultRow.race_id >= f"{cutoff}_")
+            .where(HistoricalResultRow.position == 1)
+        )).fetchall()
+
+    winners = {r.race_id: _normalize_horse(r.horse_name or "") for r in result_rows}
+    fs_by_race = {r.race_id: r.field_size for r in result_rows}
+    seen: set = set()
+    rows: list[dict] = []
+    for r in pred_rows:
+        key = (r.race_id, _normalize_horse(r.horse_name))
+        if key in seen:
+            continue
+        seen.add(key)
+        wn = winners.get(r.race_id)
+        if wn is None:
+            continue
+        try:
+            enr = json.loads(r.enriched_json) if r.enriched_json else {}
+        except Exception:
+            enr = {}
+        try:
+            rnum = int(r.race_id.split("_")[2].lstrip("Rr"))
+        except Exception:
+            rnum = None
+        fs = fs_by_race.get(r.race_id) or enr.get("field_size")
+        rows.append({
+            "date": r.race_id[:10],
+            "model_pct": float(r.win_probability or 0) * 100,
+            "won": _normalize_horse(r.horse_name) == wn,
+            "going": enr.get("track_condition_category"),
+            "race_num": rnum,
+            "field_size": int(fs) if isinstance(fs, (int, float)) and fs else None,
+            "distance_m": enr.get("distance_m") or enr.get("distance"),
+            "is_metro": enr.get("is_metro"),
+            "days_off": enr.get("days_since_last_run"),
+        })
+
+    from horse_engine.analysis.weekly_review import (
+        _scan_segment_calibration, _crucible_walkforward_segments)
+    flagged = _crucible_walkforward_segments(rows, _scan_segment_calibration(rows))
+    confirmed = [f for f in flagged if f.get("oos_confirmed")]
+    return {
+        "days": days,
+        "scorable_rank1": len(rows),
+        "flagged_in_sample": len(flagged),
+        "oos_confirmed_count": len(confirmed),
+        "oos_confirmed": confirmed,
+        "flagged_all": flagged,
+        "note": ("oos_confirmed = miscalibration replicates in BOTH walk-forward halves "
+                 "(structural, not variance). Going buckets are only as trustworthy as the "
+                 "going labels, which are currently flaky (see track_conditions_stale) — "
+                 "verify the surface before acting on a going segment."),
+    }
+
+
 @app.get("/api/admin/bets/going-calibration")
 async def going_calibration(
     days: int = 90,
