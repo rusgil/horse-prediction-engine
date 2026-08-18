@@ -16834,9 +16834,9 @@ async def _run_quality_check(target: str) -> dict:
     _FRONTEND_HOST = "https://horse-racing-predictions.funkyiq.com"
     internal_urls = [
         f"{_FRONTEND_HOST}/",
-        f"{_FRONTEND_HOST}/edge.html",
+        f"{_FRONTEND_HOST}/edge-new.html",
         f"{_FRONTEND_HOST}/index.html",
-        f"{_FRONTEND_HOST}/hotseat.html",
+        f"{_FRONTEND_HOST}/hotseat-new.html",
         f"{_FRONTEND_HOST}/funkmeup.html",
         f"{_FRONTEND_HOST}/bets.html",
         f"{_FRONTEND_HOST}/dashboard.html",
