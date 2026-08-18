@@ -1798,6 +1798,11 @@ async def _seed_results_from_oddspro(
                 # get_results now returns {"finishers": [...], "ran": [...]}.
                 finishers = race_data.get("finishers", []) if isinstance(race_data, dict) else race_data
                 ran = race_data.get("ran", []) if isinstance(race_data, dict) else []
+                # Field size = starters (scratched are absent from `ran`). Set on
+                # every result row so field-size-aware paid-place + segmented
+                # backtests aren't blind on OddsPro/Sportsbet-seeded races (this
+                # was null on every race seeded after 2026-07-23).
+                _field_size = len(ran) if ran else (len(finishers) or None)
                 pred_by_name = races_by_num.get(int(race_num), {})
                 async with get_session() as session:
                     # _normalize_horse (not plain .lower()) so apostrophe/country
@@ -1823,6 +1828,7 @@ async def _seed_results_from_oddspro(
                             race_id=race_id,
                             horse_name=display_name,
                             position=pos,
+                            field_size=_field_size,
                             beaten_margin=0.0,   # OddsPro gives order, not margins
                             winner=pos == 1,
                             placed=pos <= 3,
@@ -1851,6 +1857,7 @@ async def _seed_results_from_oddspro(
                             race_id=race_id,
                             horse_name=display_name,
                             position=99,          # sentinel: ran, finished outside the top placings
+                            field_size=_field_size,
                             beaten_margin=0.0,
                             winner=False,
                             placed=False,
@@ -1928,6 +1935,10 @@ async def _seed_results_from_sportsbet(race_date: str, pred_rows_for_date: list,
                 order = track_res.get(rn)  # [tab1, tab2, tab3]
                 if not order:
                     continue
+                # Field size = distinct runners (finishing order ∪ our non-cancelled
+                # runners). Populated so recent races aren't null on field_size.
+                _field_size = len(set(order) | {t for t, pr in tab_by.items()
+                                                if not getattr(pr, "cancelled", False)}) or None
                 async with get_session() as session:
                     # _normalize_horse (not plain .lower()) so apostrophe/country
                     # variants of an already-stored horse can't double-insert.
@@ -1958,6 +1969,7 @@ async def _seed_results_from_sportsbet(race_date: str, pred_rows_for_date: list,
                             race_id=race_id,
                             horse_name=display_name,
                             position=pos_idx,
+                            field_size=_field_size,
                             beaten_margin=0.0,
                             winner=pos_idx == 1,
                             placed=pos_idx <= 3,
@@ -1979,6 +1991,7 @@ async def _seed_results_from_sportsbet(race_date: str, pred_rows_for_date: list,
                             race_id=race_id,
                             horse_name=display_name,
                             position=99,
+                            field_size=_field_size,
                             beaten_margin=0.0,
                             winner=False,
                             placed=False,
