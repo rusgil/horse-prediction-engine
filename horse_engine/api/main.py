@@ -12978,6 +12978,97 @@ async def admin_horse_history(
     }
 
 
+@app.get("/api/admin/market-disagreement-backtest")
+async def market_disagreement_backtest(
+    days: int = Query(21, ge=7, le=180),
+    min_field: int = Query(0, ge=0, le=24),
+    x_cron_secret: Optional[str] = Header(None),
+):
+    """When the model's rank-1 DISAGREES with the market's rank-1 favourite,
+    who wins more often — our pick or the market favourite? Tests whether the
+    Benter blend over-fades the market top pick. Frozen live history only."""
+    _check_admin(x_cron_secret)
+    cutoff = (_today_aest() - timedelta(days=int(days))).isoformat()
+    async with get_session() as session:
+        rows = (await session.execute(
+            select(
+                RunnerPredictionHistoryRow.race_id,
+                RunnerPredictionHistoryRow.horse_name,
+                RunnerPredictionHistoryRow.model_rank,
+                RunnerPredictionHistoryRow.market_rank,
+                RunnerPredictionHistoryRow.enriched_at,
+            )
+            .where(RunnerPredictionHistoryRow.race_id >= f"{cutoff}_")
+            .where((RunnerPredictionHistoryRow.model_rank == 1)
+                   | (RunnerPredictionHistoryRow.market_rank == 1))
+            .where(RunnerPredictionHistoryRow.cancelled.is_(False)
+                   | RunnerPredictionHistoryRow.cancelled.is_(None))
+            .where((RunnerPredictionHistoryRow.source == "live")
+                   | RunnerPredictionHistoryRow.source.is_(None))
+            .order_by(RunnerPredictionHistoryRow.enriched_at.desc())
+        )).fetchall()
+        wres = (await session.execute(
+            select(HistoricalResultRow.race_id, HistoricalResultRow.horse_name,
+                   HistoricalResultRow.field_size)
+            .where(HistoricalResultRow.race_id >= f"{cutoff}_")
+            .where(HistoricalResultRow.position == 1)
+        )).fetchall()
+
+    winner = {rid: (_normalize_horse(hn), fs) for rid, hn, fs in wres}
+    # Latest snapshot per (race, horse); pick the model-fav + market-fav per race.
+    seen: set = set()
+    model_fav: dict[str, str] = {}
+    market_fav: dict[str, str] = {}
+    for r in rows:
+        key = (r.race_id, _normalize_horse(r.horse_name))
+        if key in seen:
+            continue
+        seen.add(key)
+        if r.model_rank == 1 and r.race_id not in model_fav:
+            model_fav[r.race_id] = _normalize_horse(r.horse_name)
+        if r.market_rank == 1 and r.race_id not in market_fav:
+            market_fav[r.race_id] = _normalize_horse(r.horse_name)
+
+    agree = dis = model_win_agree = model_win_dis = market_win_dis = other_win_dis = 0
+    for rid, (wn, fs) in winner.items():
+        if min_field and (fs or 0) < min_field:
+            continue
+        mf = model_fav.get(rid)
+        kf = market_fav.get(rid)
+        if not mf or not kf:
+            continue
+        if mf == kf:
+            agree += 1
+            if wn == mf:
+                model_win_agree += 1
+        else:
+            dis += 1
+            if wn == mf:
+                model_win_dis += 1
+            elif wn == kf:
+                market_win_dis += 1
+            else:
+                other_win_dis += 1
+
+    def pct(a, b):
+        return round(100.0 * a / b, 1) if b else None
+    return {
+        "days": int(days), "min_field": int(min_field),
+        "graded_races": agree + dis,
+        "agree": {  # model rank-1 == market rank-1
+            "n": agree, "pick_win_rate_pct": pct(model_win_agree, agree),
+        },
+        "disagree": {  # model rank-1 != market rank-1 — the interesting cut
+            "n": dis,
+            "our_pick_win_rate_pct": pct(model_win_dis, dis),
+            "market_fav_win_rate_pct": pct(market_win_dis, dis),
+            "neither_won_pct": pct(other_win_dis, dis),
+        },
+        "verdict": ("market_fav_better" if market_win_dis > model_win_dis
+                    else "our_pick_better" if model_win_dis > market_win_dis else "even"),
+    }
+
+
 @app.get("/api/admin/model-anomalies")
 async def model_anomalies(
     days: int = 90,
