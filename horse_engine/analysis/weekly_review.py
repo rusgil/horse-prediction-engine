@@ -16,6 +16,7 @@ day rarely does).
 from __future__ import annotations
 
 import json
+from collections import defaultdict
 from dataclasses import asdict
 from datetime import date, timedelta
 from typing import Optional
@@ -433,12 +434,155 @@ def _detect_thin_record_validation_2026_07_10(
     )
 
 
+# ---------- Alchemist deep-dive detectors (2026-08-18) ----------
+
+def _detect_weekly_marginal_market_disagreement(end_date, picks, results, applied_set, top3_by_race):
+    """When our rank-1 beats the market favourite by only a thin margin, the
+    market favourite wins more — we over-fade it. Strong disagreements (6pp+)
+    are left alone; the model is right there. Band-limited fix candidate."""
+    this_week, _ = _split_picks_by_week(picks, end_date)
+    by_race: dict = defaultdict(list)
+    for p in this_week:
+        by_race[p.race_id].append(p)
+    marg = [0, 0, 0]    # n, our_wins, market_wins
+    strong = [0, 0, 0]
+    for rid, runners in by_race.items():
+        mfav = next((r for r in runners if r.model_rank == 1), None)
+        kfav = next((r for r in runners if r.market_rank == 1), None)
+        if not mfav or not kfav:
+            continue
+        if _normalize_horse(mfav.horse_name) == _normalize_horse(kfav.horse_name):
+            continue
+        our_res = results.get((rid, _normalize_horse(mfav.horse_name)))
+        if not our_res or our_res["position"] is None or our_res["position"] <= 0:
+            continue
+        mkt_res = results.get((rid, _normalize_horse(kfav.horse_name)))
+        edge = (float(mfav.win_probability or 0) - float(kfav.win_probability or 0)) * 100
+        b = marg if edge < 3 else strong
+        b[0] += 1
+        b[1] += 1 if our_res["winner"] else 0
+        b[2] += 1 if (mkt_res and mkt_res["winner"]) else 0
+    if marg[0] < 8:
+        return None
+    our_pct = marg[1] / marg[0] * 100
+    mkt_pct = marg[2] / marg[0] * 100
+    if mkt_pct - our_pct < 5:
+        return None
+    strong_our = round(strong[1] / strong[0] * 100, 1) if strong[0] else None
+    return Suggestion(
+        id=_suggestion_id(end_date, "weekly_marginal_market_disagreement"),
+        pattern_id="weekly_marginal_market_disagreement",
+        title=f"Over-fading the market fav on thin calls — our {our_pct:.0f}% vs market {mkt_pct:.0f}%",
+        severity="high" if (mkt_pct - our_pct) >= 8 else "medium",
+        rationale=(f"In {marg[0]} races where our rank-1 beat the market favourite by <3pp, OUR pick won "
+                   f"{our_pct:.0f}% vs the MARKET fav's {mkt_pct:.0f}%. On strong disagreements (6pp+) we're "
+                   f"right (our win {strong_our}%) — so the fix is band-limited to thin calls, not a blanket re-weight."),
+        evidence=[{"marginal_n": marg[0], "our_win_pct": round(our_pct, 1),
+                   "market_fav_win_pct": round(mkt_pct, 1), "strong_disagree_our_win_pct": strong_our}],
+        paste_prompt=("THE CRUCIBLE — validate before any model change: run "
+                      "/api/admin/guardrail-backtest?days=60&threshold_pp=3 (sweep 2/3/4/5). If deferring to the "
+                      "market rank-1 when model edge < Xpp lifts top-1 win rate on test_late WITHOUT hurting the "
+                      "6pp+ band, prototype that guardrail and OOS-backtest it through the auto-promotion gate."),
+        code_pointer="horse_engine/prediction/engine.py",
+        metric_delta={"marginal_our_win_pct": round(our_pct, 1), "marginal_market_win_pct": round(mkt_pct, 1)},
+    )
+
+
+def _detect_weekly_zero_hit_top4(end_date, picks, results, applied_set, top3_by_race):
+    """Races where NONE of our top-4 finished in the actual top-4 — a complete
+    read failure the aggregate win rate hides. The Alchemist's deepest dives."""
+    this_week, _ = _split_picks_by_week(picks, end_date)
+    by_race: dict = defaultdict(list)
+    for p in this_week:
+        by_race[p.race_id].append(p)
+    zero_hit = []
+    settled = 0
+    for rid, runners in by_race.items():
+        our_top4 = {_normalize_horse(r.horse_name) for r in runners if r.model_rank and r.model_rank <= 4}
+        if len(our_top4) < 4:
+            continue
+        actual_top4 = set()
+        any_result = False
+        for r in runners:
+            res = results.get((rid, _normalize_horse(r.horse_name)))
+            if res and res["position"] is not None and res["position"] > 0:
+                any_result = True
+                if res["position"] <= 4:
+                    actual_top4.add(_normalize_horse(r.horse_name))
+        if not any_result or len(actual_top4) < 4:
+            continue
+        settled += 1
+        if not (our_top4 & actual_top4):
+            zero_hit.append(rid)
+    if settled < 10 or not zero_hit:
+        return None
+    rate = len(zero_hit) / settled * 100
+    if rate < 3:
+        return None
+    return Suggestion(
+        id=_suggestion_id(end_date, "weekly_zero_hit_top4"),
+        pattern_id="weekly_zero_hit_top4",
+        title=f"{len(zero_hit)} race(s) — none of our top-4 hit the actual top-4",
+        severity="high" if rate >= 6 else "medium",
+        rationale=(f"{len(zero_hit)} of {settled} fully-settled races this week ({rate:.0f}%) had ZERO of our "
+                   f"top-4 in the actual top-4 — a total read failure the win rate averages away."),
+        evidence=[{"race_id": r} for r in zero_hit[:12]],
+        paste_prompt=("THE ALCHEMIST — deep dive: for each race_id below, GET /api/races/<race_id> and compare the "
+                      "ACTUAL top-4's feature vectors to our top-4 — which shared signal (barrier, going, market_rank, "
+                      "wet-pedigree, speed-map, class-change, layoff, first-up) did our whole field miss? Cluster "
+                      "across the races; if one recurs, hand it to THE CRUCIBLE as a hypothesis."),
+        code_pointer="horse_engine/prediction/features.py",
+    )
+
+
+def _detect_weekly_win_drivers(end_date, picks, results, applied_set, top3_by_race):
+    """The reverse lens — WHY are we winning? Where our rank-1 edge concentrates
+    this week (agreeing with the market vs going against it)."""
+    this_week, _ = _split_picks_by_week(picks, end_date)
+    by_race: dict = defaultdict(list)
+    for p in this_week:
+        by_race[p.race_id].append(p)
+    agree = [0, 0]      # n, wins
+    disagree = [0, 0]
+    for rid, runners in by_race.items():
+        mfav = next((r for r in runners if r.model_rank == 1), None)
+        kfav = next((r for r in runners if r.market_rank == 1), None)
+        if not mfav:
+            continue
+        res = results.get((rid, _normalize_horse(mfav.horse_name)))
+        if not res or res["position"] is None or res["position"] <= 0:
+            continue
+        is_agree = kfav is not None and _normalize_horse(mfav.horse_name) == _normalize_horse(kfav.horse_name)
+        b = agree if is_agree else disagree
+        b[0] += 1
+        b[1] += 1 if res["winner"] else 0
+    if agree[0] < 10 or disagree[0] < 5:
+        return None
+    a_pct = agree[1] / agree[0] * 100
+    d_pct = disagree[1] / disagree[0] * 100
+    return Suggestion(
+        id=_suggestion_id(end_date, "weekly_win_drivers"),
+        pattern_id="weekly_win_drivers",
+        title=f"Edge concentrates on market-agreement — {a_pct:.0f}% win agreeing vs {d_pct:.0f}% against",
+        severity="low",
+        rationale=(f"Our rank-1 won {a_pct:.0f}% ({agree[1]}/{agree[0]}) when it WAS the market favourite, vs "
+                   f"{d_pct:.0f}% ({disagree[1]}/{disagree[0]}) when we went against the market. The edge is "
+                   f"strongest in agreement — an argument for weighting the market blend up, not down."),
+        evidence=[{"agree_n": agree[0], "agree_win_pct": round(a_pct, 1),
+                   "disagree_n": disagree[0], "disagree_win_pct": round(d_pct, 1)}],
+        code_pointer="",
+    )
+
+
 WEEKLY_DETECTORS = [
     _detect_weekly_top1_drift,
     _detect_weekly_sharp_drift,
     _detect_weekly_dominant_failure,
     _detect_weekly_going_pattern,
     _detect_thin_record_validation_2026_07_10,
+    _detect_weekly_marginal_market_disagreement,
+    _detect_weekly_zero_hit_top4,
+    _detect_weekly_win_drivers,
 ]
 
 
@@ -533,7 +677,10 @@ async def generate_weekly_review(
     suggestions.sort(key=lambda s: rank.get(s.severity, 3))
 
     lines = [
-        f"# Weekly review — {week_start} → {end_date.isoformat()}",
+        f"# 🧪 The Alchemist — Weekly Review · {week_start} → {end_date.isoformat()}",
+        "",
+        "_Mines the week's races for why we win & lose. Hypotheses below feed "
+        "**The Crucible** — backtest → promote / reject._",
         "",
         f"**Rank-1 this week:** {wins}/{with_result} wins "
         f"({headline['rank1_win_pct'] or 0:.1f}%), "
@@ -543,9 +690,9 @@ async def generate_weekly_review(
         "",
     ]
     if not suggestions:
-        lines.append("_No suggestions this week — all weekly detectors clean._")
+        lines.append("_The Alchemist found nothing new this week — all detectors clean._")
     else:
-        lines.append(f"**{len(suggestions)} suggestion(s):**")
+        lines.append(f"**{len(suggestions)} hypothesis(es) → The Crucible:**")
         lines.append("")
         for s in suggestions:
             lines.append(f"- **[{s.severity.upper()}] {s.title}** (`{s.pattern_id}`)")
