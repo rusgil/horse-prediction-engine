@@ -675,6 +675,32 @@ def predict_race(race: Race, model: HorseModel, venue_calibration: dict[str, flo
         p.model_rank = rank
         p.value_rating = _value_rating(p.win_prob, p.enriched.best_available_odds, p.overlay)
 
+    # Market-defer guardrail — on a thin win-rank disagreement, defer our rank-1
+    # to the market favourite. See settings.market_defer_edge_pp for the why and
+    # the Crucible evidence. Off unless the edge threshold is set (>0). Swaps the
+    # two horses' win_prob so a re-sort re-ranks cleanly (rank↔prob stays
+    # consistent for the sharp/edge gates downstream), rather than leaving a
+    # rank-1 whose prob is below rank-2's.
+    from horse_engine.config import settings as _defer_settings
+    _defer_edge = float(getattr(_defer_settings, "market_defer_edge_pp", 0.0) or 0.0) / 100.0
+    if _defer_edge > 0.0 and len(predictions) >= 2:
+        _our_top = predictions[0]  # model_rank 1 after the sort above
+        _mkt_fav = next((p for p in predictions if getattr(p, "market_rank", 0) == 1), None)
+        if (
+            _mkt_fav is not None
+            and _mkt_fav is not _our_top
+            and (_our_top.win_prob - _mkt_fav.win_prob) < _defer_edge
+        ):
+            _our_top.win_prob, _mkt_fav.win_prob = _mkt_fav.win_prob, _our_top.win_prob
+            predictions.sort(key=lambda p: p.win_prob, reverse=True)
+            for rank, p in enumerate(predictions, 1):
+                p.model_rank = rank
+                p.value_rating = _value_rating(p.win_prob, p.enriched.best_available_odds, p.overlay)
+            if trace is not None and _mkt_fav.runner.horse_name in trace:
+                trace[_mkt_fav.runner.horse_name]["market_defer"] = (
+                    f"promoted_to_rank1(edge<{_defer_edge*100:.0f}pp)"
+                )
+
     # Rank by place probability (using the trained place model when provided,
     # else the heuristic carried on each prediction). Sorting predictions by
     # their own place_prob guarantees the ranking matches the horse.

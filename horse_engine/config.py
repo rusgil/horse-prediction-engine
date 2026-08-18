@@ -59,6 +59,19 @@ class Settings(BaseSettings):
     benter_alpha: float = 0.0
     benter_beta: float = 0.0
 
+    # Market-defer guardrail (2026-08-19): on a marginal win-rank disagreement,
+    # defer our rank-1 to the MARKET favourite. Fires only when the market
+    # favourite is NOT our rank-1 AND our rank-1's win_prob leads the market
+    # favourite's by LESS than this many percentage points — i.e. a thin call
+    # the current model tends to get wrong by over-fading the market fav.
+    # Crucible walk-forward (guardrail-backtest, days=60): at 3pp the OOS
+    # test-split top-1 win rate lifted +1.3pp (28.9%→30.3%) with train intact
+    # (+0.3pp); 5pp began hurting train (−0.4pp), so the band stays tight.
+    #   0.0 = off (DEFAULT — enable as a deliberate release per
+    #         [[feedback_model_release_process]] by setting MARKET_DEFER_EDGE_PP
+    #         on Railway; 3.0 is the validated value). Instant rollback = set 0.
+    market_defer_edge_pp: float = 0.0
+
     # Harville place probability (2026-07-24): derive P(top-3) for each runner
     # from the field's WIN probs via bets.harville_horse_top_n, instead of the
     # standalone place model (which was outputting near-uniform values, making
