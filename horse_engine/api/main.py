@@ -13772,6 +13772,10 @@ async def backfill_race_going(
     days = max(1, min(int(days), 60))
     max_meetings = max(1, min(int(max_meetings), 100))
     cutoff = (_today_aest() - timedelta(days=days)).isoformat()
+    # RA only publishes the going on the RESULTS page once a meeting is run, so
+    # today's (and later) meetings return an empty track_condition — only
+    # backfill dates strictly before today.
+    today_iso = _today_aest().isoformat()
     from horse_engine.clients.racing_australia import _ra_date
     from collections import defaultdict
 
@@ -13804,9 +13808,10 @@ async def backfill_race_going(
             continue
         meetings[(date_str, vs[0].strip(), vs[1].strip().upper())].append((r.race_id, rn))
 
-    todo = [(mk, rids) for mk, rids in meetings.items()
-            if any(_looks_default(cond_by_rid.get(rid)) for rid, _ in rids)]
-    todo.sort(reverse=True)  # newest meetings first
+    todo = [(mk, sorted(set(rids))) for mk, rids in meetings.items()
+            if mk[0] < today_iso  # resulted meetings only
+            and any(_looks_default(cond_by_rid.get(rid)) for rid, _ in rids)]
+    todo.sort(reverse=True)  # newest resulted meetings first
     todo = todo[:max_meetings]
 
     ra = get_tab_client()._ra
