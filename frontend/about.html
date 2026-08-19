@@ -874,6 +874,16 @@
     </div>
   </div>
 
+  <!-- Venue track record — dynamic from /api/venue-badges -->
+  <div class="section" id="venue-track-record" style="display:none">
+    <div class="section-title">Where We're Sharpest · Venue Track Record</div>
+    <p class="note" style="margin-top:-4px">
+      Every track we run at is graded by our live top-pick win rate over recent months —
+      🥉 Bronze, 🥈 Silver, up to 🥇 Gold. These are the meetings where the model has earned its stripes.
+    </p>
+    <div id="venue-tiers"></div>
+  </div>
+
   <!-- Footer note -->
   <div style="padding: 24px 24px; font-size: 0.75rem; color: var(--text-dim); line-height: 1.7;">
     FunkyIQ™ is an AI-based prediction tool provided for informational purposes only.
@@ -948,6 +958,43 @@
         const qw = q('pl-window'); if (qw) qw.textContent = fmt(p.earliest_race_date) + ' – ' + fmt(p.latest_race_date);
       }
     } catch (e) { /* silent — HTML defaults stand */ }
+  })();
+
+  // Venue track-record tiers — populated from /api/venue-badges (avoid tier is
+  // retired server-side). Ordered bronze → silver → gold. Section stays hidden
+  // if the endpoint returns nothing, so the About page never shows an empty block.
+  (async function renderVenueTiers() {
+    try {
+      const res = await fetch(API + '/api/venue-badges');
+      if (!res.ok) return;
+      const badges = (await res.json()).badges || {};
+      const TIERS = [
+        { key: 'bronze', medal: '🥉', label: 'Bronze', color: '#d9955a' },
+        { key: 'silver', medal: '🥈', label: 'Silver', color: '#c7ccd6' },
+        { key: 'gold',   medal: '🥇', label: 'Gold',   color: '#f5c842' },
+      ];
+      const byTier = { gold: [], silver: [], bronze: [] };
+      for (const [venue, b] of Object.entries(badges)) {
+        if (b && byTier[b.badge]) byTier[b.badge].push({ venue, win: b.win_pct });
+      }
+      let any = false, html = '';
+      for (const t of TIERS) {
+        const list = byTier[t.key].sort((a, c) => c.win - a.win);
+        if (!list.length) continue;
+        any = true;
+        const chips = list.map(v =>
+          `<span style="display:inline-flex;align-items:center;gap:5px;padding:4px 11px;margin:3px;border-radius:999px;` +
+          `background:${t.color}22;color:${t.color};border:1px solid ${t.color}55;font-size:0.8rem;font-weight:700;white-space:nowrap">` +
+          `${v.venue}<span style="opacity:0.85;font-weight:600">${v.win.toFixed(1)}%</span></span>`).join('');
+        html += `<div style="margin:16px 0 6px;font-weight:800;font-size:0.85rem;color:${t.color}">` +
+                `${t.medal} ${t.label} <span style="color:var(--text-dim);font-weight:600">· ${list.length} ${list.length === 1 ? 'track' : 'tracks'}</span></div>` +
+                `<div style="display:flex;flex-wrap:wrap;margin:0 -3px">${chips}</div>`;
+      }
+      if (any) {
+        document.getElementById('venue-tiers').innerHTML = html;
+        document.getElementById('venue-track-record').style.display = '';
+      }
+    } catch (e) { /* silent — section stays hidden */ }
   })();
 </script>
 </body>
