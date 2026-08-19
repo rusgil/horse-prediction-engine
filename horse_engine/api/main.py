@@ -13812,6 +13812,7 @@ async def backfill_race_going(
     ra = get_tab_client()._ra
     updated = 0; meetings_fetched = 0; errors = 0; consec_err = 0
     changes = []
+    debug = []
     for (date_str, venue, state), rids in todo:
         if consec_err >= 3:
             break  # RA WAF backoff — stop
@@ -13824,6 +13825,14 @@ async def backfill_race_going(
             log.warning("[going-backfill] RA get_results failed (%s, %s): %s", date_str, venue, e)
             continue
         meetings_fetched += 1
+        if len(debug) < 8:
+            debug.append({
+                "ra_key": ra_key,
+                "races_in_ra_result": len(res or {}),
+                "ra_track_conditions": {str(k): (v or {}).get("track_condition")
+                                        for k, v in list((res or {}).items())[:6]},
+                "our_race_nums": [rn for _, rn in rids][:6],
+            })
         per_race = []
         for rid, rn in rids:
             tc = ((res.get(rn) or {}).get("track_condition") or "").strip()
@@ -13851,6 +13860,7 @@ async def backfill_race_going(
             [1 for mk, rids in meetings.items() if any(_looks_default(cond_by_rid.get(rid)) for rid, _ in rids)]),
         "meetings_fetched": meetings_fetched, "races_updated": updated,
         "ra_errors": errors, "aborted_on_ra_errors": consec_err >= 3,
+        "debug_meetings": debug,
         "sample_changes": changes[:25],
         "note": ("get_results is 6h-cached + RA-gentle (1.5s/meeting, abort after 3 consecutive "
                  "errors). Run repeatedly (newest-first, skips already-rated meetings) to walk "
