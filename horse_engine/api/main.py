@@ -6306,7 +6306,7 @@ async def refresh_edge_results(request: Request):
 _yesterday_response_cache: dict[str, tuple[datetime, dict]] = {}
 _YESTERDAY_CACHE_TTL = 1800  # 30 min — past dates are stable
 _YESTERDAY_CACHE_TTL_TODAY = 60  # 1 min — today's results land throughout the day
-_YESTERDAY_CACHE_VERSION = 6  # v6: is_sharp per pick + stale no-result races (>24h, no feed) dropped
+_YESTERDAY_CACHE_VERSION = 7  # v7: include top-3-Sharp races with rank-1 < 29.5% (were being filtered out pre-Sharp-check)
 
 
 def _yesterday_cache_ttl(target_date: str) -> int:
@@ -6344,7 +6344,15 @@ async def get_edge_yesterday(for_date: Optional[str] = Query(None, alias="date")
                 return body
     except Exception as e:
         log.debug("[edge-yesterday] DB cache read skipped: %s", e)
-    threshold = 0.295
+    threshold = 0.295  # 'qualifying' edge-pick floor (rank-1 win prob)
+    # Fetch BELOW the qualifying floor so top-3-Sharp races whose rank-1 is under
+    # 29.5% still get pulled in and Sharp-checked (e.g. 2026-08-19 Hobart R3:
+    # rank-1 29.3% but top-3 65.9% → Sharp, and it LOST — it must not vanish from
+    # the Sharp view or the record looks flattered). Non-qualifying non-Sharp
+    # picks are filtered back out at output so the 'All' view is unchanged.
+    # 0.22 is safely below the theoretical min rank-1 for a top-3≥60 clear-fav
+    # race (~0.24), so no Sharp race is missed.
+    fetch_floor = 0.22
     prefix = f"{target_date}_"
     stake = 10
 
@@ -6373,7 +6381,7 @@ async def get_edge_yesterday(for_date: Optional[str] = Query(None, alias="date")
         result = await session.execute(
             select(RunnerPredictionHistoryRow)
             .where(RunnerPredictionHistoryRow.model_rank == 1)
-            .where(RunnerPredictionHistoryRow.win_probability >= threshold)
+            .where(RunnerPredictionHistoryRow.win_probability >= fetch_floor)
             .where(RunnerPredictionHistoryRow.race_id.like(f"{prefix}%"))
             .where(RunnerPredictionHistoryRow.cancelled.is_(False) | RunnerPredictionHistoryRow.cancelled.is_(None))
             .where(RunnerPredictionHistoryRow.source == "live")
@@ -6628,6 +6636,11 @@ async def get_edge_yesterday(for_date: Optional[str] = Query(None, alias="date")
             "trifecta": yst_trifecta,
         })
 
+    # Keep only qualifying (rank-1 >= 29.5%) OR Sharp picks — drops the sub-floor
+    # non-Sharp rows the lowered fetch pulled in, so the 'All' view and summary
+    # are unchanged EXCEPT that top-3-Sharp races below 29.5% (e.g. Hobart R3)
+    # now correctly appear instead of silently vanishing.
+    output = [o for o in output if o.get("is_sharp") or (o.get("model_pct") or 0) >= 29.5]
     active = [o for o in output if not o["scratched"] and not o["no_result"]]
     wins = [o for o in active if o["winner"]]
     placed_picks = [o for o in active if o["placed"] and not o["winner"]]
