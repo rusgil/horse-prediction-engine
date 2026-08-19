@@ -2672,8 +2672,8 @@ async def _scheduled_compute_venue_badges():
                 badge = "silver"
             elif win_pct > _VENUE_BADGE_BRONZE_PCT:
                 badge = "bronze"
-            elif win_pct < _VENUE_BADGE_AVOID_PCT:
-                badge = "avoid"
+            # 'avoid' badge removed 2026-08-19 — user does not want it. Venues
+            # below the bronze threshold simply get no badge (badge stays None).
         try:
             async with get_session() as session:
                 await session.merge(VenueBadgeRow(
@@ -12640,14 +12640,16 @@ async def venue_badges_endpoint():
     from horse_engine.models.database import VenueBadgeRow
     async with get_session() as session:
         rows = (await session.execute(
-            select(VenueBadgeRow).where(VenueBadgeRow.badge.isnot(None))
+            select(VenueBadgeRow)
+            .where(VenueBadgeRow.badge.isnot(None))
+            .where(VenueBadgeRow.badge != "avoid")  # 'avoid' retired — never serve it, even if a stale row lingers pre-recompute
         )).scalars().all()
     return {
         "badges": {r.venue: {"badge": r.badge, "win_pct": r.win_pct,
                              "place_pct": r.place_pct, "sample": r.sample_size,
                              "window_days": r.window_days} for r in rows},
         "thresholds": {"gold": _VENUE_BADGE_GOLD_PCT, "silver": _VENUE_BADGE_SILVER_PCT,
-                       "bronze": _VENUE_BADGE_BRONZE_PCT, "avoid": _VENUE_BADGE_AVOID_PCT,
+                       "bronze": _VENUE_BADGE_BRONZE_PCT,
                        "window_days": _VENUE_BADGE_WINDOW_DAYS, "min_sample": _VENUE_BADGE_MIN_SAMPLE},
     }
 
