@@ -13686,13 +13686,19 @@ async def segment_calibration_scan(
         )).fetchall()
         result_rows = (await session.execute(
             select(HistoricalResultRow.race_id, HistoricalResultRow.horse_name,
-                   HistoricalResultRow.position, HistoricalResultRow.field_size)
+                   HistoricalResultRow.position, HistoricalResultRow.field_size,
+                   HistoricalResultRow.track_condition)
             .where(HistoricalResultRow.race_id >= f"{cutoff}_")
             .where(HistoricalResultRow.position == 1)
         )).fetchall()
 
     winners = {r.race_id: _normalize_horse(r.horse_name or "") for r in result_rows}
     fs_by_race = {r.race_id: r.field_size for r in result_rows}
+    # Prefer the PER-RACE going from the settled result (RA Results.aspx, backfilled
+    # by /api/admin/backfill-race-going) over the meeting-level enriched going. Stage 2
+    # of the going overhaul — the enriched going is meeting-level / hardcoded Good-4.
+    from horse_engine.clients.racing_australia import _going_category as _going_cat
+    result_going_by_race = {r.race_id: r.track_condition for r in result_rows}
     seen: set = set()
     rows: list[dict] = []
     for r in pred_rows:
@@ -13712,11 +13718,14 @@ async def segment_calibration_scan(
         except Exception:
             rnum = None
         fs = fs_by_race.get(r.race_id) or enr.get("field_size")
+        _res_going = result_going_by_race.get(r.race_id)
+        going = (_going_cat(_res_going) if _res_going and _res_going.strip()
+                 else enr.get("track_condition_category"))
         rows.append({
             "date": r.race_id[:10],
             "model_pct": float(r.win_probability or 0) * 100,
             "won": _normalize_horse(r.horse_name) == wn,
-            "going": enr.get("track_condition_category"),
+            "going": going,
             "race_num": rnum,
             "field_size": int(fs) if isinstance(fs, (int, float)) and fs else None,
             "distance_m": enr.get("distance_m") or enr.get("distance"),
@@ -13739,6 +13748,111 @@ async def segment_calibration_scan(
                  "(structural, not variance). Going buckets are only as trustworthy as the "
                  "going labels, which are currently flaky (see track_conditions_stale) — "
                  "verify the surface before acting on a going segment."),
+    }
+
+
+@app.post("/api/admin/backfill-race-going")
+async def backfill_race_going(
+    days: int = 7,
+    max_meetings: int = 20,
+    dry_run: bool = True,
+    x_cron_secret: Optional[str] = Header(None),
+):
+    """Stage 2 (going overhaul): write the official PER-RACE going onto settled
+    results from RA's Results.aspx (get_results carries 'Track Condition' per
+    race), so analyses run on real per-race going instead of the meeting-level /
+    hardcoded-Good-4 value. RA-gentle per [[feedback_no_api_hammer]]: get_results
+    is 6h-cached, we process <= max_meetings/call (newest first), sleep 1.5s
+    between meetings, skip meetings already carrying a real rating, and ABORT
+    after 3 consecutive RA errors (WAF backoff). dry_run=true (default) previews
+    without writing. Run repeatedly to walk back history."""
+    _check_admin(x_cron_secret)
+    days = max(1, min(int(days), 60))
+    max_meetings = max(1, min(int(max_meetings), 100))
+    cutoff = (_today_aest() - timedelta(days=days)).isoformat()
+    from horse_engine.clients.racing_australia import _ra_date
+    from collections import defaultdict
+
+    async with get_session() as session:
+        res_rows = (await session.execute(
+            select(HistoricalResultRow.race_id, HistoricalResultRow.track_condition)
+            .where(HistoricalResultRow.race_id >= f"{cutoff}_")
+        )).fetchall()
+        vs_rows = (await session.execute(
+            select(RunnerPredictionHistoryRow.race_id, RunnerPredictionHistoryRow.venue,
+                   RunnerPredictionHistoryRow.state)
+            .where(RunnerPredictionHistoryRow.race_id >= f"{cutoff}_")
+        )).fetchall()
+
+    vs_by_rid = {r.race_id: (r.venue, r.state) for r in vs_rows if r.venue and r.state}
+    cond_by_rid = {r.race_id: r.track_condition for r in res_rows}
+
+    def _looks_default(tc):
+        return (not tc) or tc.strip() in ("", "Good", "Good 4")
+
+    meetings: dict = defaultdict(list)
+    for r in res_rows:
+        vs = vs_by_rid.get(r.race_id)
+        if not vs:
+            continue
+        try:
+            date_str, _vc, _rn = _parse_race_id(r.race_id)
+            rn = int(_rn)
+        except Exception:
+            continue
+        meetings[(date_str, vs[0].strip(), vs[1].strip().upper())].append((r.race_id, rn))
+
+    todo = [(mk, rids) for mk, rids in meetings.items()
+            if any(_looks_default(cond_by_rid.get(rid)) for rid, _ in rids)]
+    todo.sort(reverse=True)  # newest meetings first
+    todo = todo[:max_meetings]
+
+    ra = get_tab_client()._ra
+    updated = 0; meetings_fetched = 0; errors = 0; consec_err = 0
+    changes = []
+    for (date_str, venue, state), rids in todo:
+        if consec_err >= 3:
+            break  # RA WAF backoff — stop
+        try:
+            ra_key = f"{_ra_date(date_str)},{state},{venue}"
+            res = await ra.get_results(ra_key)
+            consec_err = 0
+        except Exception as e:
+            errors += 1; consec_err += 1
+            log.warning("[going-backfill] RA get_results failed (%s, %s): %s", date_str, venue, e)
+            continue
+        meetings_fetched += 1
+        per_race = []
+        for rid, rn in rids:
+            tc = ((res.get(rn) or {}).get("track_condition") or "").strip()
+            if not tc:
+                continue
+            old = (cond_by_rid.get(rid) or "").strip()
+            if old == tc:
+                continue
+            per_race.append((rid, old, tc))
+        if per_race and not dry_run:
+            from sqlalchemy import update as _upd
+            async with get_session() as session:
+                for rid, _old, tc in per_race:
+                    await session.execute(_upd(HistoricalResultRow)
+                                          .where(HistoricalResultRow.race_id == rid)
+                                          .values(track_condition=tc))
+                await session.commit()
+        updated += len(per_race)
+        changes.extend({"race_id": rid, "old": old or None, "new": tc} for rid, old, tc in per_race[:4])
+        await asyncio.sleep(1.5)  # RA-gentle
+
+    return {
+        "days": days, "dry_run": dry_run,
+        "meetings_candidate": len(meetings), "meetings_needing_going": len(
+            [1 for mk, rids in meetings.items() if any(_looks_default(cond_by_rid.get(rid)) for rid, _ in rids)]),
+        "meetings_fetched": meetings_fetched, "races_updated": updated,
+        "ra_errors": errors, "aborted_on_ra_errors": consec_err >= 3,
+        "sample_changes": changes[:25],
+        "note": ("get_results is 6h-cached + RA-gentle (1.5s/meeting, abort after 3 consecutive "
+                 "errors). Run repeatedly (newest-first, skips already-rated meetings) to walk "
+                 "back history. dry_run=true previews without writing."),
     }
 
 
