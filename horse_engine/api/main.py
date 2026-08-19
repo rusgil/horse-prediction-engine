@@ -17799,6 +17799,40 @@ async def admin_resettle_real_dividends(
             "races_upgraded": upgraded_races, "bets_upgraded": upgraded_bets}
 
 
+@app.post("/api/admin/prediction-integrity/recheck")
+async def admin_prediction_integrity_recheck(
+    date: Optional[str] = None,
+    x_cron_secret: Optional[str] = Header(None),
+):
+    """Run the EOD integrity recheck on demand (the 23:00 AEST job), so we don't
+    have to wait for the cron to confirm whether any top-3 / Sharp flag changed
+    POST-JUMP for a date. Idempotent — re-reads frozen history and re-diffs vs
+    the jump baseline. Returns the resulting summary."""
+    _check_admin(x_cron_secret)
+    target = date or _today_aest().isoformat()
+    await _integrity_eod_check(target)
+    async with get_session() as session:
+        rows = (await session.execute(
+            select(PredictionIntegrityRow)
+            .where(PredictionIntegrityRow.race_date == target)
+        )).scalars().all()
+    return {
+        "date": target,
+        "rechecked_races": sum(1 for r in rows if r.eod_captured_at is not None),
+        "mismatches": sum(1 for r in rows if r.mismatch),
+        "sharp_mismatches": sum(1 for r in rows if r.sharp_mismatch),
+        "sharp_breaches": [
+            {"race_id": r.race_id, "jump_is_sharp": r.jump_is_sharp,
+             "eod_is_sharp": r.eod_is_sharp, "detail": r.detail}
+            for r in rows if r.sharp_mismatch
+        ],
+        "post_race_change_details": [
+            {"race_id": r.race_id, "detail": r.detail}
+            for r in rows if r.mismatch and not r.sharp_mismatch
+        ][:25],
+    }
+
+
 @app.get("/api/admin/prediction-integrity")
 async def admin_prediction_integrity(
     date: Optional[str] = None,
