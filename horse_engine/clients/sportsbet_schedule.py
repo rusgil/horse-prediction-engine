@@ -255,21 +255,42 @@ async def get_sportsbet_track_conditions(date: str) -> dict[str, str] | None:
     if data is None:
         return None
     out: dict[str, str] = {}
+    missing: list[str] = []
     try:
         for m in _iter_au_horse_meetings(data):
             events = m.get("events") or []
             if not events:
                 continue
-            # prefer a not-yet-resulted race so the status is current
-            ev = next((e for e in events if not e.get("result")), events[-1])
-            card = await _fetch_racecard(ev.get("id"))
-            cond = _clean_track_status((card or {}).get("trackStatus") or "") if card else None
+            name = _norm(m.get("name") or "")
+            # Prefer not-yet-resulted races (live status), but if none carry a
+            # trackStatus, fall through resulted races too — a FINISHED meeting's
+            # status still lives on its resulted cards, and the old "one card,
+            # first-unresulted-else-last" logic silently dropped whole meetings
+            # (Warwick Farm / Balaklava 2026-08-19) so their going never updated.
+            # Bounded to <= 4 card fetches per meeting, and we stop at the first
+            # hit — so healthy meetings still cost one fetch (see HARD RULE).
+            ordered = ([e for e in events if not e.get("result")]
+                       + [e for e in events if e.get("result")])
+            cond = None
+            for e in ordered[:4]:
+                card = await _fetch_racecard(e.get("id"))
+                cond = _clean_track_status((card or {}).get("trackStatus") or "") if card else None
+                if cond:
+                    break
             if cond:
-                out[_norm(m.get("name") or "")] = cond
+                out[name] = cond
+            elif name:
+                missing.append(name)
     except Exception as e:
         log.warning("[sportsbet-conditions] sweep failed for %s: %s", date, e)
         return None
-    log.info("[sportsbet-conditions] %s: %d meetings -> %s", date, len(out), out)
+    if missing:
+        # Surface the gap loudly — a silently-missing going is worse than an
+        # error, because downstream assumes the stored (default Good 4) is real.
+        log.warning("[sportsbet-conditions] %s: NO going captured for %d meeting(s): %s",
+                    date, len(missing), missing)
+    log.info("[sportsbet-conditions] %s: %d meetings -> %s (missing: %d)",
+             date, len(out), out, len(missing))
     if not out:
         return None
     _cond_cache[date] = (datetime.utcnow(), out)
