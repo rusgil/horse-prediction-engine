@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
   <script src="/theme.js"></script>
+  <script src="/pick-card.js"></script>
 <meta name="robots" content="noindex">
 <title>FunkyIQ — Hot Seat</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -1644,7 +1645,51 @@
       </div>`;
     })() : '';
 
+    // Renders via the shared window.PickCard component (same card as Edge).
+    // Adapter: map the /api/meetings race shape → the normalized card shape.
     const card = (r, settledCard) => {
+      const tp = topPickOf(r.race_id);
+      const done = isSettled(r);
+      const pct = v => v != null ? v * 100 : null;
+      const _tj = r.top_pick_jockey  || (tp && tp.jockey);
+      const _tt = r.top_pick_trainer || (tp && tp.trainer);
+      const _tw = r.top_pick_weight  || (tp && tp.weight);
+      const _tb = r.top_pick_barrier || (tp && tp.barrier);
+      const _tf = r.top_pick_form    || (tp && tp.form_figures);
+      const nm = r.top_pick || (tp && tp.horse_name) || null;
+      const result = done ? {
+        winner: r.model_correct === true,
+        placed: r.model_placed === true,
+        position: r.top_pick_position != null ? r.top_pick_position : null,
+        sp: (r.model_correct === true && r.top_pick_odds > 1) ? +r.top_pick_odds : null,
+        place_odds: r.top_pick_place_odds || null,
+        scratched: false, no_result: false, winner_name: r.winner_name || null,
+      } : null;
+      const pick = {
+        race_id: r.race_id, venue: r._venue, race_number: r.race_number,
+        horse_name: nm || (r.top_win_probability != null ? 'Tap for our pick' : 'No prediction yet'),
+        scheduled_time: r.scheduled_time,
+        win_pct: pct(r.top_win_probability), place_pct: pct(r.top_place_probability),
+        rank2_pct: pct(r.rank2_win_probability), rank3_pct: pct(r.rank3_win_probability),
+        rank4_pct: pct(r.rank4_win_probability), rank5_pct: pct(r.rank5_win_probability),
+        distance: r.distance, barrier: _tb, weight: _tw, jockey: _tj, trainer: _tt,
+        jockey_pct: r.top_pick_jockey_rate != null ? r.top_pick_jockey_rate : null,
+        trainer_pct: r.top_pick_trainer_rate != null ? r.top_pick_trainer_rate : null,
+        form_figures: _tf, days_off: r.top_pick_days_off != null ? r.top_pick_days_off : null,
+        odds: (r.top_pick_odds > 1 ? +r.top_pick_odds : null) || (tp && tp.best_available_odds > 1 ? +tp.best_available_odds : null),
+        confidence_tier: null, going_offtrack: isOffGoing(r.track_condition),
+        is_sharp: r.is_sharp, is_premium: false,
+        place_play: r.place_play || null,
+        sportsbet_available: r.sportsbet_available, cancelled: r.cancelled, streak: null,
+        result,
+      };
+      return window.PickCard.render(pick, {
+        venueBadge: venueBadge,
+        triStrip: () => triStrip(r) + fieldHtml(r),
+        showSpark: false,
+      });
+    };
+    const _cardOLD = (r, settledCard) => {
       const cd = countdown(r.scheduled_time);
       const off = isOffGoing(r.track_condition);
       const g = goingInfo(r.track_condition);
