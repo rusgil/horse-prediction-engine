@@ -34,7 +34,7 @@
 .pcard.res-place { border-color: color-mix(in srgb, var(--amber) 55%, var(--line)); }
 .pcard.res-miss  { border-color: color-mix(in srgb, var(--red)   45%, var(--line)); }
 
-.pk-venue { font-family: 'Barlow Condensed'; font-weight: 700; font-size: 0.94rem; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-2); }
+.pk-venue { font-family: 'Barlow Condensed'; font-weight: 700; font-size: 0.94rem; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-2); text-align: center; }
 .pk-venue b { font-weight: 800; color: var(--text); }
 .pk-horse { font-family: 'Barlow Condensed'; font-weight: 800; font-size: 1.28rem; line-height: 1.1; }
 .pk-sub { font-size: 0.72rem; color: var(--text-3); margin-top: 2px; }

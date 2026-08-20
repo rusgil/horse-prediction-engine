@@ -34,6 +34,16 @@
     return { label: h + 'h' + (m ? ' ' + m + 'm' : ''), urg: h < 2 ? 'hour' : 'far' };
   };
 
+  // Model accuracy at a given confidence level — historical actual win rate for
+  // rank-1 picks in that model% band (mirrors the server _CALIBRATED_WIN_RATES).
+  // Lets Hot Seat show the 3rd stat too without a per-race calibrated field.
+  const _CAL = [[50, 88], [45, 82], [40, 76], [35, 71], [30, 66]];
+  function calibratedRate(win_pct) {
+    if (win_pct == null) return null;
+    for (const [t, r] of _CAL) if (win_pct >= t) return r;
+    return 66;
+  }
+
   // 3-stat prediction bar (old-edge style): win prediction / place prediction /
   // model accuracy at this level. accuracy is optional (omit → 2 stats).
   function dualStat(win_pct, place_pct, accuracy) {
@@ -135,7 +145,7 @@
         ${settledRes && res.winner && res.place_odds ? `<div class="odds-pill"><b class="num" style="font-size:1rem;color:var(--blue)">$${(+res.place_odds).toFixed(2)}</b>place</div>` : ''}
         ${!isPast && ctx.showSpark ? `<div class="spark-slot" id="spark-${pick.race_id.replace(/[^a-z0-9]/gi, '-')}"></div>` : ''}
       </div>
-      ${dualStat(pick.win_pct, pick.place_pct, pick.accuracy)}
+      ${dualStat(pick.win_pct, pick.place_pct, pick.accuracy != null ? pick.accuracy : calibratedRate(pick.win_pct))}
       ${!isPast && ctx.footer ? (ctx.footer(pick) || '') : ''}${verdict}${tri}
     </div>`;
   }
