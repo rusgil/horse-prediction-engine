@@ -1,0 +1,3837 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <script async src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-3484503919714282"
+     crossorigin="anonymous"></script>
+  <meta charset="UTF-8" />
+<!-- AUTH GATE TEMPORARILY REMOVED 2026-07-23 for Google AdSense review. To re-lock: restore the /api/check gate (redirect to /login) and the noindex meta. Admin + Account stay locked. -->
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <script src="/theme.js"></script>
+  <script>
+    /* Edge v2 (2026-07-28): the new layout is the default.
+       "Trad" on the toggle stores an opt-out; only then does /edge render this page. */
+    (function () {
+      try {
+        if (localStorage.getItem('fiqEdgeView') !== 'trad') location.replace('/edge-new.html');
+      } catch (e) {}
+    })();
+    document.addEventListener('DOMContentLoaded', function () {
+      document.querySelectorAll('.lounge-ver-seg button').forEach(function (b) {
+        b.onclick = function () {
+          if (b.dataset.lv === 'new') {
+            try { localStorage.setItem('fiqEdgeView', 'new'); } catch (e) {}
+            location.href = '/edge-new.html';
+          }
+        };
+      });
+    });
+  </script>
+  <title>The Edge — High Confidence Picks | FunkyIQ</title>
+  <meta name="description" content="The Edge shows FunkyIQ's highest-confidence Australian horse racing picks — model win probability versus market odds, with value overlays highlighted, updated live throughout the race day." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@400;600;700;800;900&family=Outfit:wght@300;400;500;600&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --bg-base:       #07090f;
+      --bg-card:       #0e1220;
+      --bg-hover:      #131828;
+      --bg-elevated:   #1a2035;
+      --border:        #1e2840;
+
+      --gold:          #e8a020;
+      --gold-light:    #f5b83a;
+      --gold-dim:      rgba(232,160,32,0.12);
+      --gold-mid:      rgba(232,160,32,0.28);
+
+      --green:         #22c55e;
+      --green-bright:  #4ade80;
+      --green-dim:     rgba(34,197,94,0.12);
+      --green-mid:     rgba(34,197,94,0.25);
+
+      --blue:          #3b82f6;
+      --blue-dim:      rgba(59,130,246,0.14);
+
+      --red:           #ef4444;
+      --red-dim:       rgba(239,68,68,0.12);
+
+      --purple:        #a855f7;
+      --purple-dim:    rgba(168,85,247,0.12);
+      --purple-mid:    rgba(168,85,247,0.28);
+      --purple-bright: #c084fc;
+
+      --text-primary:  #f0f4ff;
+      --text-secondary:#8a9bc4;
+      --text-dim:      #4a5a7a;
+
+      --radius:        12px;
+      --radius-sm:     8px;
+      --radius-lg:     18px;
+      --shadow:        0 4px 24px rgba(0,0,0,0.5);
+    }
+
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html { scroll-behavior: smooth; }
+    body {
+      font-family: 'Outfit', sans-serif;
+      background: var(--bg-base);
+      color: var(--text-primary);
+      min-height: 100vh;
+      -webkit-font-smoothing: antialiased;
+      background-image:
+        radial-gradient(ellipse 80% 50% at 50% -20%, rgba(34,197,94,0.05), transparent),
+        radial-gradient(ellipse 60% 40% at 90% 90%, rgba(232,160,32,0.04), transparent);
+    }
+    ::-webkit-scrollbar { width: 5px; }
+    ::-webkit-scrollbar-track { background: var(--bg-base); }
+    ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+    /* ── Nav ─────────────────────────────────────────────── */
+    .nav {
+      background: rgba(7,9,15,0.85);
+      backdrop-filter: blur(14px);
+      border-bottom: 1px solid var(--border);
+      position: sticky; top: 0; z-index: 100;
+      padding: 0 14px;
+    }
+    .nav-inner {
+      max-width: 1100px; margin: 0 auto;
+      display: flex; align-items: center; height: 52px; gap: 12px;
+    }
+    .nav-brand {
+      font-family: 'Barlow Condensed', sans-serif;
+      font-size: 1.1rem; font-weight: 900;
+      letter-spacing: 0.08em; text-transform: uppercase;
+      color: var(--text-primary); text-decoration: none;
+      display: flex; align-items: center; gap: 8px;
+      flex-shrink: 0;
+    }
+    .nav-dot {
+      width: 8px; height: 8px; border-radius: 50%;
+      background: var(--green); box-shadow: 0 0 8px var(--green);
+    }
+    .nav-back {
+      font-size: 0.75rem; color: var(--text-dim);
+      text-decoration: none;
+      background: var(--bg-elevated);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      padding: 5px 10px;
+      font-family: 'Barlow Condensed', sans-serif;
+      font-weight: 600; letter-spacing: 0.05em;
+      transition: all 0.15s;
+      margin-left: auto;
+    }
+    .nav-back:hover { border-color: var(--green); color: var(--green); }
+
+    @media (min-width: 768px) {
+      .nav { padding: 0 24px; }
+      .nav-inner { height: 64px; }
+      .nav-brand { font-size: 1.35rem; }
+      .nav-dot { width: 10px; height: 10px; }
+    }
+
+    /* ── Page ────────────────────────────────────────────── */
+    .page { max-width: 1100px; margin: 0 auto; padding: 20px 12px 80px; }
+    @media (min-width: 768px) { .page { padding: 32px 24px 64px; } }
+
+    /* ── Hero ────────────────────────────────────────────── */
+    .hero { margin-bottom: 28px; }
+    .hero-eyebrow {
+      font-size: 0.68rem; font-weight: 700;
+      letter-spacing: 0.16em; text-transform: uppercase;
+      color: var(--green); margin-bottom: 6px;
+    }
+    .hero-title {
+      font-family: 'Barlow Condensed', sans-serif;
+      font-size: 2rem; font-weight: 900;
+      letter-spacing: 0.04em; text-transform: uppercase;
+      line-height: 1;
+    }
+    .hero-title span { color: var(--green); }
+    .hero-sub {
+      font-size: 0.82rem; color: var(--text-secondary);
+      margin-top: 8px; max-width: 520px; line-height: 1.5;
+    }
+    .hero-meta {
+      display: flex; align-items: center; gap: 16px;
+      margin-top: 14px; flex-wrap: wrap;
+    }
+    .hero-stat {
+      display: flex; align-items: baseline; gap: 6px;
+    }
+    .hero-stat-num {
+      font-family: 'Barlow Condensed', sans-serif;
+      font-size: 1.6rem; font-weight: 800;
+      color: var(--green);
+    }
+    .hero-stat-label {
+      font-size: 0.72rem; color: var(--text-dim);
+      text-transform: uppercase; letter-spacing: 0.08em;
+    }
+    .hero-divider {
+      width: 1px; height: 28px;
+      background: var(--border);
+    }
+    .updated-at {
+      font-size: 0.72rem; color: var(--text-dim);
+      margin-left: auto;
+    }
+
+    .edge-mode-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin-top: 12px;
+      padding: 8px 12px;
+      background: rgba(168,85,247,0.06);
+      border: 1px solid rgba(168,85,247,0.25);
+      border-radius: 8px;
+    }
+    .edge-mode-label {
+      font-family: 'Barlow Condensed', sans-serif;
+      font-weight: 800;
+      font-size: 0.72rem;
+      letter-spacing: 0.6px;
+      color: var(--purple-bright, #c084fc);
+      text-transform: uppercase;
+    }
+    .edge-mode-pill {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      color: var(--text-dim);
+      padding: 5px 10px;
+      border-radius: 999px;
+      font-size: 0.75rem;
+      font-weight: 600;
+      cursor: pointer;
+      font-family: inherit;
+    }
+    .edge-mode-pill.active {
+      background: var(--purple, #a855f7);
+      color: #fff;
+      border-color: var(--purple, #a855f7);
+    }
+    .edge-mode-hint {
+      font-size: 0.7rem;
+      color: var(--text-dim);
+      margin-left: 6px;
+    }
+
+    @media (min-width: 768px) {
+      .hero-title { font-size: 3rem; }
+    }
+
+    /* ── Stake control ───────────────────────────────────── */
+    .stake-bar {
+      display: flex; align-items: center; gap: 12px;
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 12px 18px;
+      margin-bottom: 28px;
+      flex-wrap: wrap;
+    }
+    .stake-label {
+      font-size: 0.78rem; color: var(--text-secondary);
+      font-weight: 500;
+    }
+    .stake-input-wrap {
+      display: flex; align-items: center; gap: 6px;
+    }
+    .stake-currency {
+      font-family: 'Barlow Condensed', sans-serif;
+      font-size: 1.1rem; font-weight: 700;
+      color: var(--gold);
+    }
+    .stake-input {
+      background: var(--bg-elevated);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      color: var(--text-primary);
+      font-family: 'Barlow Condensed', sans-serif;
+      font-size: 1.2rem; font-weight: 800;
+      width: 80px; padding: 6px 10px;
+      text-align: center;
+      outline: none;
+      transition: border-color 0.15s;
+    }
+    .stake-input:focus { border-color: var(--green); }
+    .stake-note {
+      font-size: 0.72rem; color: var(--text-dim);
+      margin-left: auto;
+    }
+    .stake-note strong { color: var(--green-bright); }
+
+    /* ── Stake slider (mobile only) ─────────────────────── */
+    .stake-slider-wrap { display: none; width: 100%; margin-top: 4px; }
+    .stake-slider {
+      -webkit-appearance: none; appearance: none;
+      width: 100%; height: 6px;
+      border-radius: 999px;
+      background: var(--bg-elevated);
+      outline: none; cursor: pointer;
+    }
+    .stake-slider::-webkit-slider-thumb {
+      -webkit-appearance: none; appearance: none;
+      width: 22px; height: 22px;
+      border-radius: 50%;
+      background: var(--gold);
+      box-shadow: 0 0 6px rgba(232,160,32,0.5);
+      cursor: pointer;
+    }
+    .stake-slider::-moz-range-thumb {
+      width: 22px; height: 22px;
+      border-radius: 50%; border: none;
+      background: var(--gold);
+      box-shadow: 0 0 6px rgba(232,160,32,0.5);
+      cursor: pointer;
+    }
+    .stake-slider-labels {
+      display: flex; justify-content: space-between;
+      font-size: 0.62rem; color: var(--text-dim);
+      margin-top: 4px;
+      font-family: 'Barlow Condensed', sans-serif; font-weight: 600;
+    }
+    @media (max-width: 640px) {
+      .stake-bar { flex-wrap: wrap; align-items: center; gap: 6px 10px; padding: 12px 14px; }
+      .stake-bar > .stake-note { margin-left: 0; font-size: 0.68rem; }
+      .stake-slider-wrap { display: block; width: 100%; margin-top: 2px; flex-shrink: 0; }
+      .stake-input { width: 70px; }
+    }
+
+    /* ── Day group ───────────────────────────────────────── */
+    .day-group { margin-bottom: 36px; }
+    .day-header {
+      display: flex; align-items: center; gap: 12px;
+      margin-bottom: 14px;
+    }
+    .day-label {
+      font-family: 'Barlow Condensed', sans-serif;
+      font-size: 1rem; font-weight: 800;
+      letter-spacing: 0.1em; text-transform: uppercase;
+      color: var(--text-primary);
+    }
+    .day-date {
+      font-size: 0.72rem; color: var(--text-dim);
+      font-weight: 500;
+    }
+    .day-count {
+      font-size: 0.68rem; font-weight: 700;
+      letter-spacing: 0.08em; text-transform: uppercase;
+      background: var(--green-dim);
+      color: var(--green);
+      border: 1px solid rgba(34,197,94,0.2);
+      border-radius: 999px;
+      padding: 2px 8px;
+    }
+    .day-empty {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 18px 20px;
+      font-size: 0.8rem; color: var(--text-dim);
+    }
+
+    /* ── Pick card ───────────────────────────────────────── */
+    .pick-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      margin-bottom: 12px;
+      overflow: hidden;
+      transition: border-color 0.15s, box-shadow 0.15s;
+      position: relative;
+    }
+    .pick-card:hover { border-color: rgba(34,197,94,0.3); }
+    .pick-card.hot { border-color: rgba(232,160,32,0.3); }
+    .pick-card.hot:hover { border-color: var(--gold); }
+    .pick-card.premium { border-color: rgba(168,85,247,0.4); }
+    .pick-card.premium:hover { border-color: var(--purple); }
+    /* Yesterday result cards — highlight the border on hover by outcome:
+       green = won, amber = placed, red = loss. Defined after the .hot/.premium
+       hover rules so a won card (which also carries .hot) resolves to green. */
+    .pick-card.yr-won:hover    { border-color: var(--green); box-shadow: 0 0 0 1px var(--green), 0 4px 16px rgba(34,197,94,0.18); }
+    .pick-card.yr-placed:hover { border-color: #f59e0b;      box-shadow: 0 0 0 1px #f59e0b, 0 4px 16px rgba(245,158,11,0.18); }
+    .pick-card.yr-loss:hover   { border-color: #f87171;      box-shadow: 0 0 0 1px #f87171, 0 4px 16px rgba(239,68,68,0.16); }
+    .pick-card.premium .pick-horse-name { color: var(--purple-bright); }
+    .pick-card.premium .payout-box { background: var(--purple-dim); border-color: var(--purple-mid); }
+    .pick-card.premium .payout-profit { color: var(--purple-bright); }
+    .pick-card.premium .dual-stat-num { color: var(--purple-bright); }
+
+    .pick-card-top-bar {
+      display: flex; align-items: center; gap: 8px;
+      padding: 10px 16px 0;
+      flex-wrap: wrap;
+    }
+    .pick-badge-hot {
+      font-family: 'Barlow Condensed', sans-serif;
+      font-size: 0.7rem; font-weight: 800;
+      letter-spacing: 0.12em; text-transform: uppercase;
+      background: var(--gold-dim);
+      color: var(--gold-light);
+      border: 1px solid var(--gold-mid);
+      border-radius: 999px;
+      padding: 2px 10px;
+    }
+    .pick-badge-standard {
+      font-family: 'Barlow Condensed', sans-serif;
+      font-size: 0.7rem; font-weight: 800;
+      letter-spacing: 0.12em; text-transform: uppercase;
+      background: var(--green-dim);
+      color: var(--green);
+      border: 1px solid rgba(34,197,94,0.25);
+      border-radius: 999px;
+      padding: 2px 10px;
+    }
+    .pick-badge-premium {
+      font-family: 'Barlow Condensed', sans-serif;
+      font-size: 0.7rem; font-weight: 800;
+      letter-spacing: 0.12em; text-transform: uppercase;
+      background: var(--purple-dim);
+      color: var(--purple-bright);
+      border: 1px solid var(--purple-mid);
+      border-radius: 999px;
+      padding: 2px 10px;
+    }
+    .pick-race-ref {
+      font-size: 0.72rem; color: var(--text-dim);
+      display: flex; align-items: center; gap: 6px;
+      margin-left: auto;
+    }
+    .pick-race-ref .venue-name {
+      font-weight: 600; color: var(--text-secondary);
+      text-transform: uppercase;
+      font-family: 'Barlow Condensed', sans-serif;
+      font-size: 0.85rem; letter-spacing: 0.06em;
+    }
+    .pick-race-ref .sep { color: var(--text-dim); }
+    .abandoned-tag {
+      font-family: 'Barlow Condensed', sans-serif;
+      font-size: 0.72rem; font-weight: 700; letter-spacing: 0.07em;
+      text-transform: uppercase;
+      background: rgba(251,146,60,0.15);
+      color: #fb923c;
+      border: 1px solid rgba(251,146,60,0.35);
+      border-radius: 5px;
+      padding: 1px 7px;
+    }
+    .pick-time-wrap { margin-left: auto; display: flex; align-items: center; gap: 6px; }
+    .pick-time {
+      font-size: 0.72rem; color: var(--text-dim);
+      background: var(--bg-elevated);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 2px 8px;
+      font-family: 'Barlow Condensed', sans-serif;
+      font-weight: 600;
+    }
+    .pick-countdown {
+      font-family: 'Barlow Condensed', sans-serif;
+      font-size: 0.72rem; font-weight: 700;
+      letter-spacing: 0.05em;
+      border-radius: 6px;
+      padding: 2px 8px;
+      background: var(--green-dim);
+      color: var(--green);
+      border: 1px solid rgba(34,197,94,0.25);
+    }
+    .pick-countdown.urgent {
+      background: rgba(239,68,68,0.12);
+      color: #f87171;
+      border-color: rgba(239,68,68,0.3);
+      animation: pulse 1s ease-in-out infinite;
+    }
+    .pick-countdown.done {
+      background: var(--bg-elevated);
+      color: var(--text-dim);
+      border-color: var(--border);
+    }
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.5; }
+    }
+
+    .pick-body {
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 16px;
+      padding: 12px 16px 14px;
+      align-items: start;
+    }
+
+    .pick-left {}
+    .pick-horse-name {
+      font-family: 'Barlow Condensed', sans-serif;
+      font-size: 1.6rem; font-weight: 900;
+      letter-spacing: 0.04em; text-transform: uppercase;
+      line-height: 1; margin-bottom: 4px;
+      color: var(--text-primary);
+    }
+    .pick-card.hot .pick-horse-name { color: var(--gold-light); }
+
+    .pick-details {
+      font-size: 0.72rem; color: var(--text-dim);
+      display: flex; align-items: center; gap: 8px;
+      flex-wrap: wrap; margin-bottom: 14px;
+    }
+    .pick-details .chip {
+      background: var(--bg-elevated);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 2px 7px;
+      color: var(--text-secondary);
+      font-size: 0.7rem;
+    }
+
+    /* Confidence bar */
+    .conf-row {
+      display: flex; align-items: center; gap: 10px;
+      margin-bottom: 10px;
+    }
+    .conf-bar-track {
+      flex: 1; height: 7px;
+      background: var(--bg-elevated);
+      border-radius: 999px;
+      overflow: hidden;
+    }
+    .conf-bar-fill {
+      height: 100%; border-radius: 999px;
+      background: linear-gradient(to right, var(--green), var(--green-bright));
+      transition: width 0.4s ease;
+    }
+    .pick-card.hot .conf-bar-fill {
+      background: linear-gradient(to right, var(--gold), var(--gold-light));
+    }
+    .conf-pct {
+      font-family: 'Barlow Condensed', sans-serif;
+      font-size: 1.1rem; font-weight: 800;
+      color: var(--green); min-width: 42px; text-align: right;
+    }
+    .pick-card.hot .conf-pct { color: var(--gold-light); }
+    .conf-label {
+      font-size: 0.68rem; color: var(--text-dim);
+      text-transform: uppercase; letter-spacing: 0.08em;
+    }
+
+    .win-rate-row {
+      display: flex; align-items: center; gap: 8px;
+      margin-bottom: 8px;
+    }
+    .win-rate-pill {
+      font-size: 0.7rem; font-weight: 600;
+      background: var(--green-dim);
+      color: var(--green);
+      border: 1px solid rgba(34,197,94,0.2);
+      border-radius: 999px;
+      padding: 2px 8px;
+    }
+    .pick-card.hot .win-rate-pill {
+      background: var(--gold-dim);
+      color: var(--gold-light);
+      border-color: var(--gold-mid);
+    }
+    .win-rate-label { font-size: 0.68rem; color: var(--text-dim); }
+
+    /* ── Dual stat row ───────────────────────────────────── */
+    .dual-stat-row {
+      display: flex; align-items: center; gap: 12px;
+      margin-bottom: 8px;
+      background: var(--bg-elevated);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      padding: 8px 12px;
+    }
+    .dual-stat {
+      display: flex; flex-direction: column; gap: 2px;
+      flex: 1;
+    }
+    .dual-stat-num {
+      font-family: 'Barlow Condensed', sans-serif;
+      font-size: 1.3rem; font-weight: 900;
+      color: var(--green); line-height: 1;
+    }
+    .dual-stat-num.hot { color: var(--gold-light); }
+    .dual-stat-label {
+      font-size: 0.62rem; color: var(--text-dim);
+      line-height: 1.3;
+    }
+    .dual-stat-sep {
+      width: 1px; height: 32px;
+      background: var(--border); flex-shrink: 0;
+    }
+
+    .edge-row {
+      display: flex; align-items: center; gap: 8px;
+      flex-wrap: wrap;
+    }
+    .edge-positive {
+      font-size: 0.78rem; font-weight: 700;
+      color: var(--green); background: var(--green-dim);
+      border: 1px solid rgba(34,197,94,0.3);
+      border-radius: 6px; padding: 3px 10px;
+    }
+    .edge-negative {
+      font-size: 0.78rem; font-weight: 700;
+      color: #f87171; background: rgba(239,68,68,0.08);
+      border: 1px solid rgba(239,68,68,0.2);
+      border-radius: 6px; padding: 3px 10px;
+    }
+    .edge-label { font-size: 0.7rem; color: var(--text-secondary); }
+
+    /* Payout panel */
+    .pick-right {
+      display: flex; flex-direction: column; align-items: flex-end;
+      gap: 8px; min-width: 140px;
+    }
+    .odds-badge {
+      font-family: 'Barlow Condensed', sans-serif;
+      font-size: 1.4rem; font-weight: 900;
+      letter-spacing: 0.04em;
+      color: var(--text-primary);
+      background: var(--bg-elevated);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      padding: 4px 12px;
+      text-align: center;
+      min-width: 80px;
+    }
+    /* Odds thresholds — visual only. Odds already carry the payoff math;
+       colour codes the "worth-a-look" band without any dollar-amount
+       clutter. green ≥ $2.50, purple ≥ $3.00, purple always wins the
+       cascade because it's the higher threshold. */
+    .odds-badge.odds-good {
+      color: var(--green);
+      border-color: rgba(16, 185, 129, 0.5);
+      background: rgba(16, 185, 129, 0.08);
+    }
+    .odds-badge.odds-great {
+      color: var(--purple);
+      border-color: rgba(168, 85, 247, 0.5);
+      background: rgba(168, 85, 247, 0.08);
+    }
+    .odds-badge .odds-label {
+      display: block;
+      font-size: 0.6rem; font-weight: 700;
+      letter-spacing: 0.12em; color: var(--text-dim);
+      text-transform: uppercase; margin-bottom: 1px;
+    }
+    .odds-sparkline {
+      display: flex; flex-direction: column; align-items: center; gap: 2px;
+      margin-top: 4px;
+    }
+    .odds-sparkline svg { display: block; }
+    .sparkline-label {
+      font-size: 0.6rem; font-weight: 700; letter-spacing: 0.08em;
+      text-transform: uppercase; white-space: nowrap;
+    }
+    .payout-box {
+      background: var(--green-dim);
+      border: 1px solid rgba(34,197,94,0.25);
+      border-radius: var(--radius-sm);
+      padding: 10px 14px;
+      text-align: center;
+      min-width: 130px;
+    }
+    .pick-card.hot .payout-box {
+      background: var(--gold-dim);
+      border-color: var(--gold-mid);
+    }
+    .payout-profit {
+      font-family: 'Barlow Condensed', sans-serif;
+      font-size: 1.5rem; font-weight: 900;
+      color: var(--green-bright);
+      line-height: 1;
+    }
+    .pick-card.hot .payout-profit { color: var(--gold-light); }
+    .payout-profit-label {
+      font-size: 0.62rem; color: var(--text-secondary);
+      text-transform: uppercase; letter-spacing: 0.08em;
+      margin-bottom: 4px;
+    }
+    .payout-return {
+      font-size: 0.7rem; color: var(--text-secondary);
+      margin-top: 3px;
+    }
+    .payout-return .return-amt {
+      font-weight: 600; color: var(--text-primary);
+    }
+    .payout-stake {
+      font-size: 0.62rem; color: var(--text-dim);
+      margin-top: 2px;
+    }
+    .no-odds {
+      font-size: 0.72rem; color: var(--text-dim);
+      text-align: center; padding: 12px;
+      background: var(--bg-elevated);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      min-width: 130px;
+    }
+
+    /* Bottom strip */
+    .pick-footer {
+      display: flex; align-items: center; gap: 8px;
+      padding: 8px 16px;
+      background: var(--bg-elevated);
+      border-top: 1px solid var(--border);
+      flex-wrap: wrap;
+    }
+    .pick-footer-chip {
+      font-size: 0.68rem; color: var(--text-dim);
+      display: flex; align-items: center; gap: 4px;
+    }
+    .pick-footer-chip strong { color: var(--text-secondary); font-weight: 600; }
+    .pick-footer-sep { color: var(--border); font-size: 0.7rem; }
+
+    /* Full-field dropdown (same shape as Hot Seat). Lives inside .pick-card
+       below the body so it expands the card's footprint. */
+    .edge-field-toggle {
+      margin: 0 16px;
+      text-align: center;
+      font-size: 11px;
+      color: var(--text-dim);
+      cursor: pointer;
+      user-select: none;
+      padding: 6px 0;
+      border-top: 1px dashed var(--border);
+    }
+    .edge-field-toggle:active { color: var(--text-secondary); }
+    .edge-field-table {
+      margin: 4px 16px 12px;
+      font-size: 11px;
+      width: calc(100% - 32px);
+      border-collapse: collapse;
+      font-variant-numeric: tabular-nums;
+    }
+    .edge-field-table th {
+      text-align: right;
+      font-weight: 600;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.4px;
+      font-size: 9px;
+      padding: 4px 4px;
+      border-bottom: 1px solid var(--border);
+    }
+    .edge-field-table th.l { text-align: left; }
+    .edge-field-table td {
+      padding: 3px 4px;
+      border-bottom: 1px solid rgba(255,255,255,0.04);
+      color: var(--text-dim);
+    }
+    .edge-field-table td.name { text-align: left; color: var(--text-secondary); font-weight: 500; }
+    .edge-field-table td.r { text-align: right; }
+    .edge-field-table tr.scratched td { text-decoration: line-through; color: var(--text-muted); opacity: 0.6; }
+    .edge-field-table tr.rank1 td { color: var(--green-bright); font-weight: 600; }
+    .edge-field-table tr.rank1 td.name { color: var(--green-bright); }
+
+    /* Tier badges — preview of paid tier structure (no gating yet). */
+    .tier-badge {
+      display: inline-flex; align-items: center;
+      font-size: 0.62rem;
+      font-weight: 800;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      padding: 4px 9px;
+      border-radius: 999px;
+      vertical-align: middle;
+      margin-left: 10px;
+    }
+    .tier-badge.tier-edge {
+      background: rgba(34, 197, 94, 0.14);
+      color: var(--green-bright);
+      border: 1px solid rgba(34, 197, 94, 0.4);
+    }
+    .tier-badge.tier-pro {
+      background: rgba(59, 130, 246, 0.14);
+      color: #60a5fa;
+      border: 1px solid rgba(59, 130, 246, 0.4);
+    }
+    .tier-badge.tier-labs {
+      background: rgba(16, 185, 129, 0.14);
+      color: #34d399;
+      border: 1px solid rgba(16, 185, 129, 0.45);
+    }
+    /* Tiny tier marker embedded inside another badge (e.g. 2 Funk → LABS). */
+    .tier-marker {
+      display: inline-block;
+      font-size: 0.55rem;
+      font-weight: 800;
+      letter-spacing: 0.12em;
+      padding: 1px 5px;
+      border-radius: 999px;
+      margin-left: 6px;
+      vertical-align: middle;
+    }
+    .tier-marker.tier-labs {
+      background: rgba(16, 185, 129, 0.22);
+      color: #34d399;
+      border: 1px solid rgba(16, 185, 129, 0.45);
+    }
+    .tier-marker.tier-pro {
+      background: rgba(59, 130, 246, 0.22);
+      color: #60a5fa;
+      border: 1px solid rgba(59, 130, 246, 0.45);
+    }
+
+    /* Cross-page nav strip — same on every page. */
+    .page-nav {
+      display: flex; justify-content: center; align-items: center;
+      gap: 6px; padding: 10px 12px; flex-wrap: wrap;
+      background: rgba(10,10,15,0.85);
+      border-bottom: 1px solid rgba(255,255,255,0.08);
+    }
+    .page-nav-btn {
+      display: inline-flex; align-items: center; gap: 4px;
+      padding: 6px 12px; border-radius: 6px;
+      font-size: 12px; font-weight: 700; letter-spacing: 0.03em;
+      text-decoration: none; color: #9ca3af; white-space: nowrap;
+      background: rgba(255,255,255,0.03);
+      border: 1px solid rgba(255,255,255,0.10);
+      transition: all 0.15s ease;
+    }
+    .page-nav-btn:hover { background: rgba(255,255,255,0.07); color: #fff; }
+    .page-nav-btn.edge.active { background: rgba(34,197,94,0.15);  color: #4ade80; border-color: rgba(34,197,94,0.45); }
+    .page-nav-btn.hot.active  { background: rgba(249,115,22,0.15); color: #fb923c; border-color: rgba(249,115,22,0.45); }
+    .page-nav-btn.funk.active { background: rgba(192,132,252,0.15);color: #c084fc; border-color: rgba(192,132,252,0.45); }
+    .page-nav-btn.labs.active   { background: rgba(16,185,129,0.15); color: #34d399; border-color: rgba(16,185,129,0.45); }
+    .page-nav-btn.lounge.active { background: rgba(245,200,66,0.16); color: #f5c842; border-color: rgba(245,200,66,0.45); }
+    .page-nav-btn.about { font-size: 11px; padding: 6px 9px; color: #6b7280; }
+    .page-nav-btn.about:hover { color: #d1d5db; }
+    .page-nav-btn.admin { font-size: 11px; padding: 6px 9px; color: #6b7280; }
+    .page-nav-btn.admin:hover { color: #d1d5db; }
+    /* Spacer is a no-op now — nav buttons centre as one group on every breakpoint. */
+    .nav-spacer { display: none; }
+
+    /* Unified brand strip — same on every page, sits above the .page-nav button row. */
+    .brand-bar {
+      display: flex; align-items: center; justify-content: center;
+      gap: 14px; padding: 14px 16px 8px; flex-wrap: wrap;
+    }
+    .brand-bar-logo {
+      display: inline-flex; align-items: center; gap: 8px;
+      color: #f5c842; text-decoration: none;
+      font-weight: 800; font-size: 17px; letter-spacing: 0.02em;
+    }
+    .brand-bar-dot {
+      width: 10px; height: 10px; border-radius: 50%;
+      background: #f5c842;
+    }
+    .brand-bar-subtitle {
+      color: #9ca3af; font-size: 12px; font-weight: 600;
+      letter-spacing: 0.08em; text-transform: uppercase;
+    }
+    /* Mobile: bottom-fixed nav, NRL-style */
+    @media (max-width: 760px) {
+      .page-nav {
+        position: fixed;
+        left: 0; right: 0; bottom: 0;
+        top: auto;
+        background: rgba(10,10,15,0.96);
+        -webkit-backdrop-filter: blur(10px);
+        backdrop-filter: blur(10px);
+        border-top: 1px solid rgba(255,255,255,0.12);
+        border-bottom: none;
+        padding: 6px 4px calc(6px + env(safe-area-inset-bottom, 0px));
+        gap: 2px;
+        z-index: 100;
+        box-shadow: 0 -4px 16px rgba(0,0,0,0.5);
+        justify-content: space-around;
+      }
+      .nav-spacer { display: none; }
+      .page-nav-btn {
+        flex: 1; min-width: 0;
+        padding: 8px 3px 6px;
+        flex-direction: column;
+        gap: 3px;
+        letter-spacing: 0.02em;
+        text-align: center;
+        background: transparent;
+        border: none;
+        border-radius: 6px;
+        color: #6b7280;
+        justify-content: center;
+        white-space: nowrap;
+        overflow: hidden;
+      }
+      .page-nav-btn .nav-ico { font-size: 22px; line-height: 1; }
+      .page-nav-btn .nav-lab { font-size: 10px; font-weight: 700; line-height: 1; letter-spacing: 0.04em; }
+      .page-nav-btn.about, .page-nav-btn.admin {
+        padding: 8px 3px 6px;
+        flex: 0 0 auto;
+        min-width: 52px;
+      }
+      .page-nav-btn.about .nav-ico,
+      .page-nav-btn.admin .nav-ico { font-size: 18px; }
+      .page-nav-btn.about .nav-lab,
+      .page-nav-btn.admin .nav-lab { font-size: 9.5px; }
+      body { padding-bottom: 86px; }
+    }
+
+    /* Unified page header — same on every page. */
+    .page-header {
+      position: static;
+      top: auto;
+      z-index: auto;
+      background: transparent;
+      -webkit-backdrop-filter: none;
+      backdrop-filter: none;
+      text-align: center;
+      padding: 26px 16px 18px;
+      border-bottom: 1px solid rgba(255,255,255,0.06);
+      margin-bottom: 16px;
+    }
+    .page-header::after {
+      content: '';
+      display: block;
+      width: 80px; height: 3px;
+      background: var(--page-accent, #9ca3af);
+      border-radius: 2px;
+      margin: 14px auto -19px;
+    }
+    .lounge-ver-seg { display: inline-flex; background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.14); border-radius: 999px; padding: 2px; }
+    .lounge-ver-seg button { border: none; background: none; color: #9ca3af; font-weight: 700; font-size: 12px; padding: 4px 14px; border-radius: 999px; cursor: pointer; }
+    .lounge-ver-seg button.on { background: rgba(34,197,94,0.14); color: #4ade80; }
+    :root[data-theme="light"] .lounge-ver-seg { background: rgba(23,33,47,0.05); border-color: rgba(23,33,47,0.15); }
+    :root[data-theme="light"] .lounge-ver-seg button { color: #5d6b80; }
+    :root[data-theme="light"] .lounge-ver-seg button.on { background: rgba(13,148,80,0.12); color: #0a7a41; }
+    .page-header.lounge { --page-accent: #f5c842; }
+    .page-header.edge   { --page-accent: #4ade80; }
+    .page-header.hot    { --page-accent: #fb923c; }
+    .page-header.funk   { --page-accent: #c084fc; }
+    .page-header.labs   { --page-accent: #10b981; }
+    .page-title {
+      font-family: 'Barlow Condensed', sans-serif;
+      font-size: 36px;
+      font-weight: 800;
+      line-height: 1;
+      letter-spacing: 0.5px;
+      margin: 0 0 8px;
+      display: inline-flex;
+      align-items: center;
+      gap: 10px;
+      flex-wrap: wrap;
+      justify-content: center;
+    }
+    .page-subtitle {
+      font-size: 13px;
+      color: #9ca3af;
+      margin: 0 auto;
+      max-width: 600px;
+      line-height: 1.4;
+    }
+    @media (max-width: 600px) {
+      .page-title { font-size: 28px; }
+    }
+
+    /* Trifecta card legs table */
+    .tri-card-legs {
+      display: flex; flex-direction: column; gap: 6px;
+      margin: 10px 0;
+    }
+    .tri-card-leg {
+      display: flex; align-items: center; gap: 10px;
+      padding: 8px 12px;
+      background: var(--bg-deep);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+    }
+    .tri-card-leg.leg-1 { border-color: rgba(45,212,191,0.3); }
+    .tri-card-leg-tab {
+      min-width: 28px; height: 28px;
+      display: flex; align-items: center; justify-content: center;
+      background: var(--bg-elevated); border-radius: 6px;
+      font-size: 0.8rem; font-weight: 700; color: var(--text-secondary);
+      border: 1px solid var(--border);
+    }
+    .tri-card-leg-name {
+      flex: 1; font-size: 0.88rem; font-weight: 700; color: var(--text-primary);
+      min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
+    .tri-card-leg-detail {
+      font-size: 0.7rem; color: var(--text-dim); margin-top: 1px;
+    }
+    .tri-card-leg-pct {
+      font-size: 0.82rem; font-weight: 700; color: #2dd4bf; white-space: nowrap;
+    }
+    .tri-card-leg-odds {
+      font-size: 0.78rem; color: var(--text-secondary); white-space: nowrap; text-align: right; min-width: 44px;
+    }
+    .tri-combined-row {
+      display: flex; align-items: center; gap: 12px;
+      margin-top: 4px;
+    }
+    .tri-combined-stat {
+      display: flex; flex-direction: column; align-items: center;
+    }
+    .tri-combined-num {
+      font-size: 1.5rem; font-weight: 800; color: #2dd4bf; line-height: 1;
+    }
+    .tri-combined-label {
+      font-size: 0.65rem; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.05em;
+    }
+    /* Trifecta strip */
+    .trifecta-strip {
+      display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap;
+      padding: 7px 16px;
+      background: rgba(45,212,191,0.05);
+      border-top: 1px solid rgba(45,212,191,0.15);
+      font-size: 0.72rem;
+    }
+    .tri-label {
+      font-weight: 700; color: #2dd4bf; letter-spacing: 0.04em; white-space: nowrap;
+    }
+    .tri-legs {
+      color: var(--text-secondary); font-weight: 600; white-space: nowrap;
+    }
+    .tri-names {
+      color: var(--text-dim); font-style: italic; min-width: 0;
+    }
+    .tri-ff-row {
+      display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; margin-top: 6px;
+    }
+    .tri-ff-label {
+      font-weight: 700; color: #5eead4; letter-spacing: 0.04em; white-space: nowrap;
+    }
+    .tri-ff-legs {
+      color: var(--text-secondary); font-weight: 600; white-space: nowrap;
+    }
+    .tri-ff-names {
+      color: var(--text-dim); font-style: italic; min-width: 0;
+    }
+    .tri-combined {
+      font-weight: 700; color: #2dd4bf; font-size: 0.72rem; white-space: nowrap;
+    }
+
+    /* ── Insurance hedge strip ──────────────────────────────── */
+    .hedge-strip {
+      padding: 0 16px 10px;
+      background: rgba(20,184,166,0.04);
+      border-top: 1px solid rgba(20,184,166,0.18);
+    }
+    .hedge-toggle {
+      display: flex; align-items: center; gap: 6px;
+      cursor: pointer; padding: 7px 0 4px;
+      font-size: 0.72rem; font-weight: 700; color: #5eead4;
+      letter-spacing: 0.04em; user-select: none;
+      background: none; border: none; width: 100%;
+    }
+    .hedge-toggle .hedge-chevron { transition: transform 0.2s; font-size: 0.65rem; }
+    .hedge-toggle.open .hedge-chevron { transform: rotate(90deg); }
+    .hedge-body { display: none; }
+    .hedge-body.open { display: block; }
+    .hedge-tabs {
+      display: flex; gap: 6px; margin-bottom: 8px;
+    }
+    .hedge-tab-btn {
+      font-size: 0.68rem; font-weight: 700; padding: 3px 10px; border-radius: 999px;
+      cursor: pointer; border: 1px solid rgba(20,184,166,0.3);
+      background: transparent; color: var(--text-secondary);
+      transition: all 0.15s;
+    }
+    .hedge-tab-btn.active { background: rgba(20,184,166,0.15); color: #5eead4; border-color: rgba(20,184,166,0.5); }
+    .hedge-panel { display: none; }
+    .hedge-panel.active { display: block; }
+    .hedge-bets {
+      display: flex; flex-direction: column; gap: 5px; margin-bottom: 8px;
+    }
+    .hedge-bet-row {
+      display: flex; align-items: center; justify-content: space-between;
+      background: rgba(20,184,166,0.07); border-radius: 6px; padding: 5px 10px;
+      font-size: 0.72rem;
+    }
+    .hedge-bet-name { font-weight: 700; color: var(--text-secondary); }
+    .hedge-bet-meta { color: var(--text-dim); font-size: 0.67rem; }
+    .hedge-bet-stake { font-weight: 800; color: #5eead4; font-size: 0.78rem; }
+    .hedge-scenarios {
+      display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 5px;
+      font-size: 0.67rem;
+    }
+    .hedge-scenario {
+      background: rgba(255,255,255,0.03); border-radius: 5px;
+      padding: 5px 7px; text-align: center;
+    }
+    .hedge-scenario .hs-label { color: var(--text-dim); margin-bottom: 2px; }
+    .hedge-scenario .hs-value { font-weight: 700; font-size: 0.74rem; }
+    .hedge-scenario.win .hs-value { color: var(--green-bright); }
+    .hedge-scenario.recover .hs-value { color: #5eead4; }
+    .hedge-scenario.loss .hs-value { color: #f87171; }
+    .hedge-note {
+      font-size: 0.63rem; color: var(--text-dim); margin-top: 5px;
+      font-style: italic;
+    }
+    .hedge-stake-scale {
+      display: flex; align-items: center; gap: 8px; margin-bottom: 8px; font-size: 0.68rem; color: var(--text-dim);
+    }
+    .hedge-stake-scale input[type=range] { flex: 1; accent-color: #5eead4; }
+    .hedge-stake-val { font-weight: 700; color: #5eead4; min-width: 36px; }
+
+    .pick-verdict {
+      font-size: 0.72rem; font-weight: 700; letter-spacing: 0.06em;
+      padding: 2px 10px; border-radius: 999px; text-transform: uppercase;
+    }
+    .pick-verdict.correct { background: rgba(34,197,94,0.15); color: var(--green-bright); border: 1px solid rgba(34,197,94,0.3); }
+    .pick-verdict.wrong   { background: rgba(239,68,68,0.1);  color: #f87171;             border: 1px solid rgba(239,68,68,0.25); }
+
+    /* ── Venue Weather Grid ──────────────────────────────── */
+    .meetings-weather-section {
+      margin: 0 0 20px;
+    }
+    .meetings-weather-label {
+      font-size: 0.6rem; font-weight: 700; letter-spacing: 0.12em; text-transform: uppercase;
+      color: var(--text-dim); margin-bottom: 8px;
+    }
+    .meetings-weather-grid {
+      display: flex; flex-wrap: wrap; gap: 8px;
+    }
+    .venue-wx-card {
+      background: var(--bg-elevated); border: 1px solid var(--border);
+      border-radius: var(--radius-sm); padding: 8px 12px;
+      display: flex; flex-direction: column; gap: 2px; min-width: 120px;
+    }
+    .venue-wx-name {
+      font-size: 0.78rem; font-weight: 700; color: var(--text-primary);
+    }
+    .venue-wx-state {
+      font-size: 0.62rem; color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.08em;
+    }
+    .venue-wx-weather {
+      font-size: 0.72rem; color: var(--text-secondary); margin-top: 4px;
+      display: flex; align-items: center; gap: 4px;
+    }
+    .venue-wx-rain { color: #60a5fa; }
+
+    /* ── Loading / Empty ─────────────────────────────────── */
+    .loading {
+      text-align: center; padding: 60px 20px;
+      color: var(--text-dim);
+    }
+    .loading-spinner {
+      width: 32px; height: 32px;
+      border: 3px solid var(--border);
+      border-top-color: var(--green);
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+      margin: 0 auto 14px;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    .empty-state {
+      text-align: center; padding: 48px 20px;
+      color: var(--text-dim);
+    }
+    .empty-icon { font-size: 2rem; margin-bottom: 10px; }
+    .empty-title {
+      font-family: 'Barlow Condensed', sans-serif;
+      font-size: 1.1rem; font-weight: 700;
+      text-transform: uppercase; letter-spacing: 0.06em;
+      color: var(--text-secondary); margin-bottom: 6px;
+    }
+    .empty-sub { font-size: 0.78rem; line-height: 1.5; }
+
+    /* ── Disclaimer ──────────────────────────────────────── */
+    .disclaimer {
+      margin-top: 40px;
+      padding: 14px 18px;
+      background: var(--bg-elevated);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      font-size: 0.7rem; color: var(--text-dim);
+      line-height: 1.6;
+    }
+
+    @media (max-width: 540px) {
+      .pick-body { grid-template-columns: 1fr; }
+      .pick-right { align-items: flex-start; flex-direction: row; flex-wrap: wrap; }
+      .hero-meta { gap: 10px; }
+    }
+
+    /* ── Track Record ───────────────────────────────────── */
+    .tr-section { margin-bottom: 32px; }
+    .tr-section-title {
+      font-family: 'Barlow Condensed', sans-serif;
+      font-size: 1rem; font-weight: 800;
+      letter-spacing: 0.08em; text-transform: uppercase;
+      color: var(--text-secondary);
+      margin-bottom: 14px;
+    }
+
+    .tr-explainer { margin-bottom: 0; }
+    .tr-explainer-row {
+      display: grid;
+      grid-template-columns: 1fr auto 1fr;
+      gap: 12px; align-items: center;
+      margin-bottom: 14px;
+    }
+    .tr-explainer-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 18px 20px;
+    }
+    .tr-explainer-num {
+      font-family: 'Barlow Condensed', sans-serif;
+      font-size: 2.4rem; font-weight: 900;
+      line-height: 1; margin-bottom: 4px;
+    }
+    .tr-explainer-title {
+      font-family: 'Barlow Condensed', sans-serif;
+      font-size: 0.85rem; font-weight: 800;
+      letter-spacing: 0.08em; text-transform: uppercase;
+      color: var(--text-secondary); margin-bottom: 8px;
+    }
+    .tr-explainer-desc {
+      font-size: 0.78rem; color: var(--text-dim); line-height: 1.6;
+    }
+    .tr-explainer-desc em { color: var(--text-secondary); font-style: normal; }
+    .tr-explainer-vs {
+      font-family: 'Barlow Condensed', sans-serif;
+      font-size: 1rem; font-weight: 800;
+      color: var(--text-dim); text-transform: uppercase;
+      letter-spacing: 0.1em;
+    }
+    .tr-explainer-note {
+      background: var(--bg-elevated);
+      border: 1px solid var(--border);
+      border-left: 3px solid var(--green);
+      border-radius: var(--radius-sm);
+      padding: 12px 16px;
+      font-size: 0.78rem; color: var(--text-secondary); line-height: 1.6;
+    }
+
+    .tr-tier-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+      gap: 14px;
+    }
+    .tr-tier-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 16px 18px;
+    }
+    .tr-tier-card.hot  { border-color: rgba(232,160,32,0.25); }
+    .tr-tier-card.high { border-color: rgba(59,130,246,0.2); }
+    .tr-tier-card.standard { border-color: rgba(34,197,94,0.2); }
+    .tr-tier-header {
+      display: flex; align-items: center; gap: 10px;
+      margin-bottom: 14px; flex-wrap: wrap;
+    }
+    .tr-tier-threshold {
+      font-size: 0.68rem; color: var(--text-dim);
+    }
+    .tr-tier-stats {
+      display: grid; grid-template-columns: repeat(3, 1fr);
+      gap: 8px; margin-bottom: 12px;
+    }
+    .tr-tier-stat { text-align: center; }
+    .tr-tier-stat-num {
+      font-family: 'Barlow Condensed', sans-serif;
+      font-size: 1.3rem; font-weight: 900;
+      color: var(--text-primary); line-height: 1;
+    }
+    .tr-tier-stat-label {
+      font-size: 0.6rem; color: var(--text-dim);
+      text-transform: uppercase; letter-spacing: 0.06em;
+      margin-top: 2px; line-height: 1.3;
+    }
+    .tr-tier-note {
+      font-size: 0.72rem; color: var(--text-dim);
+      line-height: 1.5;
+      border-top: 1px solid var(--border);
+      padding-top: 10px; margin-top: 4px;
+    }
+
+    .tr-features-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 10px; margin-bottom: 14px;
+    }
+    .tr-feature-group {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      padding: 12px 14px;
+    }
+    .tr-feature-group-title {
+      font-family: 'Barlow Condensed', sans-serif;
+      font-size: 0.78rem; font-weight: 800;
+      letter-spacing: 0.06em; text-transform: uppercase;
+      color: var(--text-secondary); margin-bottom: 6px;
+    }
+    .tr-feature-list {
+      font-size: 0.7rem; color: var(--text-dim); line-height: 1.6;
+    }
+    .tr-model-note {
+      font-size: 0.72rem; color: var(--text-dim);
+      background: var(--bg-elevated);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      padding: 10px 14px;
+    }
+    .tr-model-note strong { color: var(--text-secondary); }
+
+    /* ── Premium Picks explainer ─────────────────────────── */
+    .tr-premium-card {
+      background: var(--bg-card);
+      border: 1px solid rgba(168,85,247,0.3);
+      border-radius: var(--radius);
+      padding: 18px 20px;
+    }
+    .tr-premium-criteria {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 12px; margin: 14px 0;
+    }
+    .tr-premium-criterion {
+      text-align: center;
+      background: var(--bg-elevated);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      padding: 12px 8px;
+    }
+    .tr-premium-criterion-num {
+      font-family: 'Barlow Condensed', sans-serif;
+      font-size: 1.5rem; font-weight: 900;
+      color: var(--purple-bright); line-height: 1;
+      margin-bottom: 4px;
+    }
+    .tr-premium-criterion-label {
+      font-size: 0.62rem; color: var(--text-dim);
+      text-transform: uppercase; letter-spacing: 0.08em;
+      line-height: 1.3;
+    }
+    .tr-premium-desc {
+      font-size: 0.78rem; color: var(--text-secondary);
+      line-height: 1.6;
+      border-top: 1px solid var(--border);
+      padding-top: 12px;
+    }
+    @media (max-width: 480px) {
+      .tr-premium-criteria { grid-template-columns: 1fr; }
+    }
+
+    /* ── Info icon tooltip ───────────────────────────────── */
+    .info-icon {
+      display: inline-flex; align-items: center; justify-content: center;
+      width: 13px; height: 13px;
+      border-radius: 50%;
+      background: var(--bg-elevated);
+      border: 1px solid var(--border);
+      color: var(--text-dim);
+      font-size: 0.55rem; font-style: normal;
+      cursor: default;
+      position: relative;
+      vertical-align: middle; margin-left: 3px;
+      font-family: 'Outfit', sans-serif;
+    }
+    .info-icon::after {
+      content: attr(data-tooltip);
+      position: absolute;
+      bottom: calc(100% + 6px);
+      left: 50%; transform: translateX(-50%);
+      background: var(--bg-elevated);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      padding: 6px 10px;
+      font-size: 0.68rem; color: var(--text-secondary);
+      white-space: nowrap;
+      pointer-events: none;
+      opacity: 0; transition: opacity 0.15s;
+      z-index: 10;
+      box-shadow: var(--shadow);
+    }
+    .info-icon:hover::after { opacity: 1; }
+
+    @media (max-width: 600px) {
+      .tr-explainer-row { grid-template-columns: 1fr; }
+      .tr-explainer-vs { text-align: center; }
+    }
+
+    /* ── Sort selector ───────────────────────────────────── */
+    .sort-bar {
+      display: flex; align-items: center; gap: 8px;
+      margin-bottom: 14px;
+      font-size: 0.75rem; color: var(--text-dim);
+    }
+    .sort-btn {
+      background: var(--bg-elevated);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      color: var(--text-secondary);
+      padding: 4px 12px;
+      font-size: 0.75rem;
+      cursor: pointer;
+      transition: background 0.15s, border-color 0.15s, color 0.15s;
+    }
+    .sort-btn.active {
+      background: rgba(59,130,246,0.12);
+      border-color: rgba(59,130,246,0.35);
+      color: #60a5fa;
+    }
+
+    /* ── Badge legend ────────────────────────────────────── */
+    .legend-bar {
+      display: flex; flex-direction: column; gap: 8px;
+      padding: 10px 14px;
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      margin-bottom: 20px;
+      font-size: 0.72rem;
+    }
+    .legend-row {
+      display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+    }
+    .legend-row-title {
+      font-family: 'Barlow Condensed', sans-serif;
+      font-size: 0.7rem; font-weight: 800;
+      letter-spacing: 0.1em; text-transform: uppercase;
+      color: var(--text-dim);
+      white-space: nowrap;
+      min-width: 80px;
+    }
+    .legend-item {
+      display: flex; align-items: center; gap: 6px;
+    }
+    .legend-badge {
+      font-family: 'Barlow Condensed', sans-serif;
+      font-size: 0.7rem; font-weight: 800;
+      letter-spacing: 0.1em; text-transform: uppercase;
+      border-radius: 999px; padding: 2px 9px;
+      white-space: nowrap;
+    }
+    .legend-badge.hot {
+      background: var(--gold-dim); color: var(--gold-light);
+      border: 1px solid var(--gold-mid);
+    }
+    .legend-badge.high {
+      background: rgba(59,130,246,0.12); color: #60a5fa;
+      border: 1px solid rgba(59,130,246,0.28);
+    }
+    .legend-badge.standard {
+      background: var(--green-dim); color: var(--green);
+      border: 1px solid rgba(34,197,94,0.25);
+    }
+    .legend-badge.premium {
+      background: var(--purple-dim); color: var(--purple-bright);
+      border: 1px solid var(--purple-mid);
+    }
+    .legend-title {
+      font-family: 'Barlow Condensed', sans-serif;
+      font-size: 0.78rem; font-weight: 800;
+      letter-spacing: 0.06em; text-transform: uppercase;
+      color: var(--text-secondary);
+      white-space: nowrap;
+    }
+    .legend-desc { color: var(--text-dim); }
+    .legend-odds { color: var(--text-secondary); font-weight: 600; }
+    .legend-sep { color: var(--border); font-size: 0.8rem; }
+
+    @media (max-width: 600px) {
+      .legend-sep { display: none; }
+      .legend-bar { gap: 8px; }
+    }
+
+    /* ── Tabs ────────────────────────────────────────────── */
+    /* ── Two-level nav ───────────────────────────────────── */
+    .nav-tabs-wrap {
+      margin-bottom: 24px;
+    }
+    .parent-tabs {
+      display: flex; gap: 6px;
+      margin-bottom: 6px;
+    }
+    .parent-tab {
+      font-family: 'Barlow Condensed', sans-serif;
+      font-size: 1rem; font-weight: 800;
+      letter-spacing: 0.08em; text-transform: uppercase;
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      cursor: pointer;
+      color: var(--text-dim);
+      border-radius: var(--radius);
+      padding: 8px 22px;
+      transition: all 0.15s;
+    }
+    .parent-tab:hover { color: var(--text-primary); border-color: rgba(255,255,255,0.18); }
+    .parent-tab.active {
+      background: var(--bg-elevated);
+      color: var(--text-primary);
+      border-color: var(--gold);
+    }
+    .beta-badge {
+      font-size: 0.6rem; font-weight: 700;
+      letter-spacing: 0.08em; text-transform: uppercase;
+      color: var(--gold); border: 1px solid rgba(245,200,66,0.4);
+      background: rgba(245,200,66,0.08);
+      border-radius: 100px; padding: 1px 6px;
+      vertical-align: middle; margin-left: 4px;
+    }
+    .sub-tabs {
+      display: flex; gap: 4px;
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 4px;
+      width: fit-content;
+    }
+    .tab-btn {
+      font-family: 'Barlow Condensed', sans-serif;
+      font-size: 0.85rem; font-weight: 700;
+      letter-spacing: 0.08em; text-transform: uppercase;
+      background: none; border: none; cursor: pointer;
+      color: var(--text-dim);
+      border-radius: 8px;
+      padding: 7px 18px;
+      transition: all 0.15s;
+    }
+    .tab-btn:hover { color: var(--text-primary); }
+    .tab-btn.active {
+      background: var(--bg-elevated);
+      color: var(--text-primary);
+      border: 1px solid var(--border);
+    }
+
+    /* ── P&L summary bar ─────────────────────────────────── */
+    .pnl-bar {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(100px, 1fr));
+      gap: 12px;
+      margin-bottom: 24px;
+    }
+    .pnl-cell {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 14px 16px;
+      text-align: center;
+    }
+    .pnl-cell-num {
+      font-family: 'Barlow Condensed', sans-serif;
+      font-size: 1.6rem; font-weight: 900;
+      line-height: 1;
+    }
+    .pnl-cell-label {
+      font-size: 0.65rem; color: var(--text-dim);
+      text-transform: uppercase; letter-spacing: 0.1em;
+      margin-top: 4px;
+    }
+    .pnl-positive { color: var(--green-bright); }
+    .pnl-negative { color: #f87171; }
+
+    /* ── Result card ─────────────────────────────────────── */
+    .result-card {
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-lg);
+      margin-bottom: 10px;
+      overflow: hidden;
+      display: grid;
+      grid-template-columns: 1fr auto;
+      gap: 0;
+    }
+    .result-card.win { border-color: rgba(34,197,94,0.4); }
+    .result-card.loss { border-color: rgba(239,68,68,0.2); }
+    .result-card.scratched { opacity: 0.5; }
+
+    .result-left { padding: 14px 16px; }
+    .result-top {
+      display: flex; align-items: center; gap: 8px;
+      margin-bottom: 8px; flex-wrap: wrap;
+    }
+    .result-badge-win {
+      font-family: 'Barlow Condensed', sans-serif;
+      font-size: 0.7rem; font-weight: 800;
+      letter-spacing: 0.1em; text-transform: uppercase;
+      background: var(--green-dim); color: var(--green);
+      border: 1px solid rgba(34,197,94,0.3);
+      border-radius: 999px; padding: 2px 10px;
+    }
+    .result-badge-loss {
+      font-family: 'Barlow Condensed', sans-serif;
+      font-size: 0.7rem; font-weight: 800;
+      letter-spacing: 0.1em; text-transform: uppercase;
+      background: rgba(239,68,68,0.1); color: #f87171;
+      border: 1px solid rgba(239,68,68,0.25);
+      border-radius: 999px; padding: 2px 10px;
+    }
+    .result-badge-scratched {
+      font-family: 'Barlow Condensed', sans-serif;
+      font-size: 0.7rem; font-weight: 800;
+      letter-spacing: 0.1em; text-transform: uppercase;
+      background: var(--bg-elevated); color: var(--text-dim);
+      border: 1px solid var(--border);
+      border-radius: 999px; padding: 2px 10px;
+    }
+    .result-race-ref {
+      font-size: 0.72rem; color: var(--text-dim);
+      display: flex; align-items: center; gap: 6px;
+    }
+    .result-race-ref .venue-name {
+      font-weight: 600; color: var(--text-secondary);
+      text-transform: uppercase;
+      font-family: 'Barlow Condensed', sans-serif;
+      font-size: 0.85rem; letter-spacing: 0.06em;
+    }
+    .result-horse {
+      font-family: 'Barlow Condensed', sans-serif;
+      font-size: 1.5rem; font-weight: 900;
+      text-transform: uppercase; line-height: 1;
+      margin-bottom: 4px;
+    }
+    .result-card.win .result-horse { color: var(--green-bright); }
+    .result-card.loss .result-horse { color: var(--text-secondary); }
+    .result-details {
+      font-size: 0.7rem; color: var(--text-dim);
+      display: flex; gap: 6px; flex-wrap: wrap; align-items: center;
+      margin-bottom: 8px;
+    }
+    .result-details .chip {
+      background: var(--bg-elevated); border: 1px solid var(--border);
+      border-radius: 6px; padding: 1px 6px; color: var(--text-secondary);
+    }
+    .result-conf {
+      font-size: 0.7rem; color: var(--text-dim);
+      display: flex; align-items: center; gap: 8px;
+    }
+    .result-conf-bar {
+      flex: 1; max-width: 120px; height: 5px;
+      background: var(--bg-elevated); border-radius: 999px; overflow: hidden;
+    }
+    .result-conf-fill {
+      height: 100%; border-radius: 999px;
+      background: var(--green);
+    }
+    .result-card.loss .result-conf-fill { background: var(--text-dim); }
+
+    .result-right {
+      display: flex; flex-direction: column;
+      align-items: center; justify-content: center;
+      padding: 16px 20px;
+      background: var(--bg-elevated);
+      border-left: 1px solid var(--border);
+      min-width: 120px; text-align: center; gap: 4px;
+    }
+    .result-sp {
+      font-family: 'Barlow Condensed', sans-serif;
+      font-size: 1.4rem; font-weight: 900;
+      color: var(--text-primary);
+    }
+    .result-sp-label {
+      font-size: 0.6rem; color: var(--text-dim);
+      text-transform: uppercase; letter-spacing: 0.1em;
+    }
+    .result-payout-win {
+      font-family: 'Barlow Condensed', sans-serif;
+      font-size: 1.1rem; font-weight: 800;
+      color: var(--green-bright); margin-top: 6px;
+    }
+    .result-payout-loss {
+      font-family: 'Barlow Condensed', sans-serif;
+      font-size: 1.1rem; font-weight: 800;
+      color: #f87171; margin-top: 6px;
+    }
+    .result-stake-label {
+      font-size: 0.62rem; color: var(--text-dim);
+    }
+    .result-position {
+      font-size: 0.7rem; color: var(--text-dim);
+      margin-top: 2px;
+    }
+
+    /* ── Exotic race card ────────────────────────────────── */
+    .exotic-card {
+      background: var(--bg-card);
+      border: 1px solid rgba(20,184,166,0.2);
+      border-radius: var(--radius);
+      overflow: hidden;
+      display: flex; flex-direction: column;
+      margin-bottom: 14px;
+    }
+    .exotic-card.hot  { border-color: rgba(249,115,22,0.35); box-shadow: 0 0 0 1px rgba(249,115,22,0.1); }
+    .exotic-card.high { border-color: rgba(59,130,246,0.3); }
+
+    .exotic-card-header {
+      display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+      padding: 10px 14px 8px;
+      background: rgba(20,184,166,0.05);
+      border-bottom: 1px solid rgba(20,184,166,0.12);
+    }
+    .exotic-card-header.hot  { background: rgba(249,115,22,0.07); border-color: rgba(249,115,22,0.18); }
+    .exotic-card-header.high { background: rgba(59,130,246,0.06); border-color: rgba(59,130,246,0.15); }
+
+    .exotic-tier-badge {
+      font-family: 'Barlow Condensed', sans-serif;
+      font-size: 0.72rem; font-weight: 800;
+      letter-spacing: 0.08em; text-transform: uppercase;
+      padding: 2px 8px; border-radius: 999px;
+      white-space: nowrap;
+    }
+    .exotic-tier-badge.hot  { background: rgba(249,115,22,0.15); color: #fb923c; border: 1px solid rgba(249,115,22,0.3); }
+    .exotic-tier-badge.high { background: rgba(59,130,246,0.12); color: #60a5fa; border: 1px solid rgba(59,130,246,0.28); }
+    .exotic-tier-badge.strong { background: rgba(20,184,166,0.1); color: #2dd4bf; border: 1px solid rgba(20,184,166,0.25); }
+
+    .exotic-race-ref {
+      flex: 1; display: flex; align-items: center; gap: 6px; min-width: 0;
+      font-size: 0.85rem; font-weight: 700; color: var(--text-primary);
+    }
+    .exotic-race-ref .venue { color: var(--text-primary); }
+    .exotic-race-ref .rname { color: var(--text-dim); font-size: 0.75rem; font-weight: 400; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .exotic-race-ref .sep { color: var(--border); }
+
+    .exotic-countdown {
+      font-family: 'Barlow Condensed', sans-serif;
+      font-size: 1rem; font-weight: 800;
+      letter-spacing: 0.04em;
+      padding: 3px 10px;
+      border-radius: 6px;
+      background: var(--bg-elevated);
+      border: 1px solid var(--border);
+      white-space: nowrap;
+      min-width: 64px; text-align: center;
+      transition: color 0.3s, border-color 0.3s;
+    }
+    .exotic-countdown.soon   { color: #fb923c; border-color: rgba(249,115,22,0.35); background: rgba(249,115,22,0.08); }
+    .exotic-countdown.urgent { color: #f87171; border-color: rgba(239,68,68,0.4); background: rgba(239,68,68,0.1); animation: pulse-border 1s ease-in-out infinite; }
+    .exotic-countdown.jumped { color: var(--text-dim); font-style: italic; }
+    @keyframes pulse-border { 0%,100% { opacity: 1; } 50% { opacity: 0.6; } }
+
+    .exotic-runners {
+      display: flex; flex-direction: column;
+    }
+    .exotic-runner-row {
+      display: flex; align-items: center; gap: 10px;
+      padding: 9px 14px;
+      border-bottom: 1px solid rgba(30,40,64,0.5);
+      transition: background 0.1s;
+    }
+    .exotic-runner-row:last-child { border-bottom: none; }
+    .exotic-runner-row:hover { background: rgba(255,255,255,0.02); }
+    .exotic-runner-row.rank-1 { background: rgba(20,184,166,0.04); }
+    .exotic-runner-row.rank-2 { }
+    .exotic-runner-row.rank-3 { }
+    .exotic-runner-row.rank-4 { background: rgba(139,92,246,0.03); }
+
+    .exotic-rank {
+      font-family: 'Barlow Condensed', sans-serif;
+      font-size: 1.1rem; font-weight: 900;
+      min-width: 28px; text-align: center;
+      line-height: 1;
+    }
+    .exotic-rank.r1 { color: #2dd4bf; }
+    .exotic-rank.r2 { color: #94a3b8; }
+    .exotic-rank.r3 { color: #a78bfa; }
+    .exotic-rank.r4 { color: #60a5fa; }
+
+    .exotic-tab-badge {
+      min-width: 26px; height: 26px;
+      display: flex; align-items: center; justify-content: center;
+      background: var(--bg-elevated); border: 1px solid var(--border);
+      border-radius: 5px;
+      font-size: 0.75rem; font-weight: 700; color: var(--text-dim);
+    }
+
+    .exotic-runner-info { flex: 1; min-width: 0; }
+    .exotic-runner-name {
+      font-size: 0.88rem; font-weight: 700; color: var(--text-primary);
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .exotic-runner-detail {
+      font-size: 0.68rem; color: var(--text-dim); margin-top: 1px;
+    }
+
+    .exotic-runner-stats { text-align: right; white-space: nowrap; }
+    .exotic-runner-pct {
+      font-size: 0.82rem; font-weight: 700; color: #2dd4bf;
+    }
+    .exotic-runner-odds {
+      font-size: 0.75rem; color: var(--text-secondary);
+    }
+
+    .exotic-card-footer {
+      display: flex; align-items: center; gap: 6px; flex-wrap: wrap;
+      padding: 8px 14px;
+      background: var(--bg-elevated);
+      border-top: 1px solid var(--border);
+      font-size: 0.7rem;
+    }
+    .exotic-conf {
+      font-weight: 700; color: #2dd4bf;
+      background: rgba(45,212,191,0.08);
+      border: 1px solid rgba(45,212,191,0.2);
+      border-radius: 4px; padding: 1px 6px;
+      white-space: nowrap;
+    }
+    .exotic-conf.ff { color: #60a5fa; background: rgba(59,130,246,0.08); border-color: rgba(59,130,246,0.2); }
+    .exotic-sep { color: var(--border); }
+    .exotic-align-badge {
+      font-weight: 700; border-radius: 4px; padding: 1px 6px; white-space: nowrap;
+    }
+    .exotic-align-badge.confirmed { color: var(--green-bright); background: var(--green-dim); border: 1px solid rgba(34,197,94,0.25); }
+    .exotic-align-badge.partial   { color: var(--gold); background: var(--gold-dim); border: 1px solid var(--gold-mid); }
+    .exotic-align-badge.diverge   { color: #f87171; background: rgba(239,68,68,0.1); border: 1px solid rgba(239,68,68,0.25); }
+    .exotic-align-badge.no-edge   { color: var(--text-dim); background: var(--bg-elevated); border: 1px solid var(--border); }
+  </style>
+  <script src="/sharp.js" defer></script>
+  <script src="/site-warnings.js" defer></script>
+</head>
+<body>
+
+<div class="brand-bar">
+  <a href="https://funkyiq.com" class="brand-bar-logo">
+    <span class="brand-bar-dot"></span>
+    FunkyIQ
+  </a>
+  <span class="brand-bar-subtitle">Horse Racing</span>
+</div>
+
+<nav class="page-nav">
+  <a href="/"           class="page-nav-btn lounge"><span class="nav-ico">🛋️</span><span class="nav-lab">Lounge</span></a>
+  <a href="/edge"       class="page-nav-btn edge active"><span class="nav-ico">🎯</span><span class="nav-lab">Edge</span></a>
+  <a href="/hotseat"    class="page-nav-btn hot"><span class="nav-ico">🔥</span><span class="nav-lab">Hot Seat</span></a>
+  <a href="/playbook" class="page-nav-btn funk"><span class="nav-ico">📖</span><span class="nav-lab">Playbook</span></a>
+  <a href="/lab"        class="page-nav-btn labs"><span class="nav-ico">🧪</span><span class="nav-lab">Labs</span></a>
+  <span class="nav-spacer"></span>
+  <a href="/account"    class="page-nav-btn about"><span class="nav-ico">👤</span><span class="nav-lab">Account</span></a>
+  <a href="/about"      class="page-nav-btn about"><span class="nav-ico">ℹ️</span><span class="nav-lab">About</span></a>
+</nav>
+
+<div class="page">
+
+  <header class="page-header edge">
+    <h1 class="page-title">🎯 The Edge <span class="tier-badge tier-edge">Edge</span></h1>
+    <p class="page-subtitle">High-confidence picks compared against market odds — where the value sits</p>
+    <div style="margin-top:10px"><span class="lounge-ver-seg" role="radiogroup" aria-label="Edge version">
+      <button data-lv="trad" class="on">Trad</button>
+      <button data-lv="new">New</button>
+    </span></div>
+  </header>
+  <div class="hero" style="text-align:center;padding-top:0">
+    <div class="hero-sub" style="display:none">spacer</div>
+    <div class="hero-meta" id="heroMeta">
+      <div class="hero-stat">
+        <span class="hero-stat-num" id="statTotal">—</span>
+        <span class="hero-stat-label">Picks</span>
+      </div>
+      <div class="hero-divider"></div>
+      <div class="hero-stat">
+        <span class="hero-stat-num" id="statPremium" style="color:var(--purple-bright)">—</span>
+        <span class="hero-stat-label">Premium</span>
+      </div>
+      <div class="hero-divider"></div>
+      <div class="hero-stat">
+        <span class="hero-stat-num" id="statHot">—</span>
+        <span class="hero-stat-label">Hot</span>
+      </div>
+      <div class="hero-divider"></div>
+      <div class="hero-stat">
+        <span class="hero-stat-num" id="statAvgConf">—</span>
+        <span class="hero-stat-label">Avg Confidence</span>
+      </div>
+      <span class="updated-at" id="updatedAt"></span>
+    </div>
+  </div>
+
+  <div class="nav-tabs-wrap">
+    <div class="parent-tabs">
+      <button class="parent-tab active" id="parentWins" onclick="switchParent('wins')">Wins / Place</button>
+      <button class="parent-tab" id="parentExotics" onclick="switchParent('exotics')">Exotics <span class="beta-badge">beta</span></button>
+    </div>
+    <div class="sub-tabs" id="edgeDateBar" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+      <button class="tab-btn active" id="edgeToday" onclick="edgeGoToday()">Today</button>
+      <span style="display:inline-flex;align-items:center;gap:2px">
+        <button class="tab-btn" id="edgeBack" onclick="edgeShiftDate(-1)" title="Earlier day" style="padding:5px 11px;font-size:1rem;line-height:1">‹</button>
+        <span id="edgeDateLabel" style="font-size:0.82rem;color:var(--text-secondary);min-width:92px;text-align:center;font-weight:600"></span>
+        <button class="tab-btn" id="edgeFwd" onclick="edgeShiftDate(1)" title="Later day" style="padding:5px 11px;font-size:1rem;line-height:1">›</button>
+      </span>
+      <button class="tab-btn" id="subInsights" onclick="switchSub('insights')">Track Record</button>
+    </div>
+  </div>
+
+  <div class="legend-bar" id="legendWin">
+    <div class="legend-row">
+      <span class="legend-row-title">Win / Place</span>
+      <span class="legend-item">
+        <span class="legend-badge premium">💎 Premium</span>
+        <span class="legend-desc">≥30% confidence · <span class="legend-odds">$3.00+ odds</span> · model beats market by 5%+</span>
+      </span>
+      <span class="legend-sep">·</span>
+      <span class="legend-item">
+        <span class="legend-badge hot">🔥 Hot Pick</span>
+        <span class="legend-desc"><span class="legend-odds" id="leg-hot-pct">—</span> · <span id="leg-hot-races">—</span> races</span>
+      </span>
+      <span class="legend-sep">·</span>
+      <span class="legend-item">
+        <span class="legend-badge high">⚡ High Confidence</span>
+        <span class="legend-desc"><span class="legend-odds" id="leg-high-pct">—</span> · <span id="leg-high-races">—</span> races</span>
+      </span>
+      <span class="legend-sep">·</span>
+      <span class="legend-item">
+        <span class="legend-badge standard">Strong Pick</span>
+        <span class="legend-desc"><span class="legend-odds" id="leg-std-pct">—</span> · <span id="leg-std-races">—</span> races</span>
+      </span>
+      <span class="legend-sep">·</span>
+      <span class="legend-item">
+        <span style="color:#e8a020">●</span><span class="legend-title" style="color:#e8a020">Soft track</span>
+        <span style="color:#ef4444">●</span><span class="legend-title" style="color:#ef4444">Heavy track</span>
+        <span class="legend-desc">rain-affected meeting — model confidence reduced (no chip = Good/Firm)</span>
+      </span>
+    </div>
+  </div>
+
+  <div class="legend-bar" id="legendExotics" style="display:none">
+    <div class="legend-row">
+      <span class="legend-row-title">Win / Place</span>
+      <span class="legend-item">
+        <span class="legend-badge hot">🔥 Hot Exotic</span>
+        <span class="legend-desc">Top 25% by combined place probability</span>
+      </span>
+      <span class="legend-sep">·</span>
+      <span class="legend-item">
+        <span class="legend-badge high">⚡ High Confidence</span>
+        <span class="legend-desc">Next 35% — strong box coverage</span>
+      </span>
+      <span class="legend-sep">·</span>
+      <span class="legend-item">
+        <span class="legend-badge standard">📈 Strong Exotic</span>
+        <span class="legend-desc">Remaining picks — value trifectas &amp; first fours</span>
+      </span>
+    </div>
+  </div>
+
+  <!-- Sharp/All selector — sits below the legend to match the Lounge
+       layout (2026-07-21 UX request). Was above the tabs; new position
+       puts the filter close to the picks it filters, above the sort
+       controls. -->
+  <div class="edge-mode-row" id="edgeModeRow">
+    <span class="edge-mode-label">Mode</span>
+    <button class="edge-mode-pill active" id="edgeModeSharp" onclick="setEdgeMode('sharp')">🎯 Sharp only</button>
+    <button class="edge-mode-pill" id="edgeModeAll" onclick="setEdgeMode('all')">All picks</button>
+    <span class="edge-mode-hint">Sharp = high-confidence niche (~32% win rate vs 17% baseline)</span>
+  </div>
+
+  <div id="panelUpcoming">
+    <!-- Stake-per-bet input removed 2026-07-20 — odds already tell you the
+         payoff (decimal odds × stake = return); the input added visual
+         noise without adding information. Odds are now colour-coded:
+         green ≥ $2.50, purple ≥ $3.00. See .odds-badge in the head. -->
+    <div class="sort-bar">
+      <span>Sort:</span>
+      <button class="sort-btn active" id="sortBestPick" onclick="setSortMode('best')">Best Pick</button>
+      <button class="sort-btn" id="sortNextRace" onclick="setSortMode('next')">Next Race</button>
+    </div>
+    <div id="content">
+      <div class="loading">
+        <div class="loading-spinner"></div>
+        Loading picks…
+      </div>
+    </div>
+  </div>
+
+  <div id="panelTrifectas" style="display:none">
+    <div class="sort-bar">
+      <span>Sort:</span>
+      <button class="sort-btn" id="exoticSortBestPick" onclick="setExoticSortMode('best')">Best Pick</button>
+      <button class="sort-btn active" id="exoticSortNextRace" onclick="setExoticSortMode('next')">Next Race</button>
+    </div>
+    <div id="trifectasContent">
+      <div class="loading">
+        <div class="loading-spinner"></div>
+        Loading trifecta picks…
+      </div>
+    </div>
+  </div>
+
+  <div id="panelYesterday" style="display:none">
+    <!-- Stake-per-bet input removed 2026-07-20 (see panelUpcoming above). -->
+
+    <div class="sort-bar">
+      <span>Sort:</span>
+      <button class="sort-btn active" id="ystSortBest" onclick="setYesterdaySort('best')">Best Pick ↓</button>
+      <button class="sort-btn" id="ystSortTime" onclick="setYesterdaySort('time')">Time</button>
+      <button class="sort-btn" id="ystSortRace" onclick="setYesterdaySort('race')">Race #</button>
+      <button class="sort-btn" id="ystSortMeeting" onclick="setYesterdaySort('meeting')">Meeting</button>
+    </div>
+    <div id="yesterdayContent">
+      <div class="loading">
+        <div class="loading-spinner"></div>
+        Loading yesterday's results…
+      </div>
+    </div>
+  </div>
+
+  <div id="panelInsights" style="display:none">
+    <div class="tr-section">
+      <div class="tr-section-title">Premium Picks</div>
+      <div class="tr-premium-card">
+        <div class="tr-tier-header">
+          <span class="legend-badge premium">💎 Premium Pick</span>
+          <span style="font-size:0.78rem;color:var(--text-dim)">The value sweet spot</span>
+        </div>
+        <div class="tr-premium-criteria">
+          <div class="tr-premium-criterion">
+            <div class="tr-premium-criterion-num">≥ 30%</div>
+            <div class="tr-premium-criterion-label">Model confidence</div>
+          </div>
+          <div class="tr-premium-criterion">
+            <div class="tr-premium-criterion-num">$3.00+</div>
+            <div class="tr-premium-criterion-label">Minimum odds</div>
+          </div>
+          <div class="tr-premium-criterion">
+            <div class="tr-premium-criterion-num">+5%</div>
+            <div class="tr-premium-criterion-label">Model beats market</div>
+          </div>
+        </div>
+        <div class="tr-premium-desc">
+          A Premium Pick is a race where the model gives the horse a meaningful chance of winning, and the market hasn't fully priced that in — leaving odds generous enough to generate real returns when correct. At $3.00 minimum, a $10 bet returns $30. At $5.00 it returns $50. Every Premium Pick passed all three tests: the model gave it ≥30% chance, the market offered $3.00 or better, and the model's win probability was at least 5% higher than what the odds implied.
+        </div>
+        <div style="margin-top:10px; padding:10px 12px; background:rgba(168,85,247,0.06); border:1px solid rgba(168,85,247,0.22); border-radius:6px; font-size:0.78rem; line-height:1.55; color:var(--text-secondary)">
+          <strong style="color:var(--purple-bright)">Why the win rate looks lower than Strong Pick:</strong>
+          the Strong Pick tier includes every horse in the 30–35% band — and that band is dominated by short-priced favourites at $1.50–$2.90 which win often but pay little. Premium excludes those by requiring odds ≥$3.00, so what's left is mid-priced overlays that win less frequently but pay materially more per hit. Same confidence floor, deliberately different economics.
+        </div>
+        <div id="premium-perf-loading" style="padding:10px 0 4px;font-size:0.8rem;color:var(--text-dim)">Loading performance…</div>
+        <div id="premium-perf-stats" style="display:none">
+          <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-top:12px">
+            <div style="text-align:center">
+              <div id="pps-winpct" style="font-family:'Barlow Condensed',sans-serif;font-size:1.8rem;font-weight:900;color:var(--purple-bright)">—</div>
+              <div style="font-size:0.68rem;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.1em;margin-top:2px">Win rate</div>
+            </div>
+            <div style="text-align:center">
+              <div id="pps-bets" style="font-family:'Barlow Condensed',sans-serif;font-size:1.8rem;font-weight:900;color:var(--text-primary)">—</div>
+              <div style="font-size:0.68rem;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.1em;margin-top:2px">Bets (30 days)</div>
+            </div>
+            <div style="text-align:center">
+              <div id="pps-avgsp" style="font-family:'Barlow Condensed',sans-serif;font-size:1.8rem;font-weight:900;color:var(--gold-light)">—</div>
+              <div style="font-size:0.68rem;color:var(--text-dim);text-transform:uppercase;letter-spacing:0.1em;margin-top:2px">Avg SP</div>
+            </div>
+          </div>
+        </div>
+        <div id="pps-tagline" style="display:none;margin-top:14px;font-size:0.88rem;color:var(--text-secondary);line-height:1.65;background:var(--bg-elevated);border:1px solid rgba(168,85,247,0.2);border-radius:var(--radius-sm);padding:12px 14px;"></div>
+      </div>
+    </div>
+    <div class="tr-section">
+      <div class="tr-section-title">Performance by Tier</div>
+      <div style="margin:0 0 14px; padding:10px 12px; background:rgba(96,165,250,0.06); border:1px solid rgba(96,165,250,0.22); border-radius:6px; font-size:0.78rem; line-height:1.55; color:var(--text-secondary)">
+        <strong style="color:#93c5fd">Reading these numbers:</strong>
+        the top two tiers are currently tied — expect them to separate as more races come in. And Premium picks (which sit at $3+ odds) win less often than lower-odds picks at the same confidence, because longer prices are harder to land. We're refining how the model rates those longer-odds picks; expect the gap to close over the next few weeks.
+      </div>
+      <div id="trTierGrid" class="tr-tier-grid">
+        <div class="loading"><div class="loading-spinner"></div>Loading track record…</div>
+      </div>
+    </div>
+  </div>
+
+  <div id="panelExoticsYesterday" style="display:none">
+    <div style="padding:48px 24px;text-align:center;color:var(--text-dim)">
+      <div style="font-size:2rem;margin-bottom:12px">🚧</div>
+      <div style="font-family:'Barlow Condensed',sans-serif;font-size:1.4rem;font-weight:800;color:var(--text-primary);margin-bottom:8px">Exotics Yesterday — Coming Soon</div>
+      <div style="font-size:0.9rem">Yesterday's exotic results will be shown here.</div>
+    </div>
+  </div>
+
+  <div id="panelExoticsInsights" style="display:none">
+    <div style="padding:48px 24px;text-align:center;color:var(--text-dim)">
+      <div style="font-size:2rem;margin-bottom:12px">🚧</div>
+      <div style="font-family:'Barlow Condensed',sans-serif;font-size:1.4rem;font-weight:800;color:var(--text-primary);margin-bottom:8px">Exotics Track Record — Coming Soon</div>
+      <div style="font-size:0.9rem">Historical performance stats for trifecta and first four picks.</div>
+    </div>
+  </div>
+
+  <div class="disclaimer">
+    <strong>Disclaimer:</strong> FunkyIQ is an AI-based prediction tool for informational purposes only. These picks do not constitute betting advice. Past performance is not indicative of future results. Please gamble responsibly. If gambling is causing issues, contact the National Gambling Helpline on 1800 858 858.
+  </div>
+
+</div>
+
+<script>
+  const DAY_LABELS = ['TODAY', 'TOMORROW'];
+
+  function escHtml(s) {
+    if (s == null) return '';
+    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+  }
+
+  function toggleHedge(btn) {
+    btn.classList.toggle('open');
+    const body = btn.nextElementSibling;
+    body.classList.toggle('open');
+  }
+
+  function switchHedgeTab(cardId, mode, btn) {
+    const strip = btn.closest('.hedge-strip');
+    strip.querySelectorAll('.hedge-tab-btn').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    strip.querySelectorAll('.hedge-panel').forEach(p => p.classList.remove('active'));
+    const panel = strip.querySelector(`#hpanel-${cardId}-${mode}`);
+    if (panel) panel.classList.add('active');
+  }
+
+  function updateHedgeScale(cardId, mode, winStake, baseStake) {
+    winStake = parseFloat(winStake);
+    const ratio = winStake / baseStake;
+    const strip = document.getElementById(`hpanel-${cardId}-${mode}`).closest('.hedge-strip');
+    // Update stake label
+    const lbl = strip.querySelector(`#hsval-${cardId}-${mode}`);
+    if (lbl) lbl.textContent = '$' + winStake.toFixed(0);
+    // Scale each hedge bet row
+    const betsEl = strip.querySelector(`#hbets-${cardId}-${mode}`);
+    if (betsEl) {
+      betsEl.querySelectorAll('.hedge-bet-row').forEach(row => {
+        const baseS = parseFloat(row.dataset.stake);
+        row.querySelector('[data-field=stake]').textContent = '$' + (baseS * ratio).toFixed(2);
+      });
+    }
+    // Scale scenarios
+    const scenEl = strip.querySelector(`#hscen-${cardId}-${mode}`);
+    if (scenEl) {
+      scenEl.querySelectorAll('[data-field]').forEach(el => {
+        const v = parseFloat(el.dataset.val) * ratio;
+        const f = el.dataset.field;
+        if (f === 'win_net')      el.textContent = (v >= 0 ? '+' : '') + '$' + v.toFixed(2);
+        else if (f === 'recovery') el.textContent = '$' + v.toFixed(2) + ' back';
+        else if (f === 'total_outlay') el.textContent = '−$' + v.toFixed(2);
+      });
+    }
+  }
+
+  function fmtDate(iso) {
+    const d = new Date(iso + 'T00:00:00');
+    return d.toLocaleDateString('en-AU', { weekday:'long', day:'numeric', month:'long' });
+  }
+
+  function fmtTime(t) {
+    if (!t) return '';
+    // Strings ending in T00:00:00 (any tz) are placeholder midnight values
+    // written when the upstream feed gave us a race name but no actual time.
+    // Don't render them — "12:00 AM" would be misleading.
+    if (typeof t === 'string' && /T00:00:00/.test(t)) return '';
+    try {
+      const d = new Date(t);
+      if (!isNaN(d)) return d.toLocaleTimeString('en-AU', { hour:'2-digit', minute:'2-digit', hour12: true }); // viewer-local
+    } catch(e) {}
+    return t;
+  }
+
+  function calcPayout(odds, stake) {
+    if (!odds || odds <= 0) return null;
+    const gross = +(odds * stake).toFixed(2);
+    const profit = +(gross - stake).toFixed(2);
+    return { gross, profit };
+  }
+
+  function starsFromValue(v) {
+    if (v == null) return '';
+    const n = Math.min(5, Math.max(0, Math.round(v * 5)));
+    return '★'.repeat(n) + '☆'.repeat(5 - n);
+  }
+
+  // ── Odds sparkline ────────────────────────────────────────────────────────
+  const sparklineCache = {};  // race_id+horse → snapshot array
+
+  function buildSparklineSvg(snapshots) {
+    if (!snapshots || snapshots.length < 2) return '';
+    const odds = snapshots.map(s => s.win_odds).filter(Boolean);
+    if (odds.length < 2) return '';
+
+    const W = 90, H = 28, PAD = 3;
+    const minO = Math.min(...odds);
+    const maxO = Math.max(...odds);
+    const range = maxO - minO || 0.01;
+
+    const xs = odds.map((_, i) => PAD + (i / (odds.length - 1)) * (W - 2 * PAD));
+    const ys = odds.map(o => PAD + ((maxO - o) / range) * (H - 2 * PAD));
+    const points = xs.map((x, i) => `${x.toFixed(1)},${ys[i].toFixed(1)}`).join(' ');
+
+    const first = odds[0], last = odds[odds.length - 1];
+    const diff = last - first;
+    const color = diff < -0.1 ? '#22c55e' : diff > 0.1 ? '#ef4444' : '#8a9bc4';
+    const label = diff < -0.1 ? '▼ steaming' : diff > 0.1 ? '▲ drifting' : '— stable';
+
+    return `<div class="odds-sparkline" title="Odds trend: opened $${first.toFixed(1)} → now $${last.toFixed(1)}">
+      <svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}">
+        <polyline points="${points}" fill="none" stroke="${color}" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+        <circle cx="${xs[xs.length-1].toFixed(1)}" cy="${ys[ys.length-1].toFixed(1)}" r="2.5" fill="${color}"/>
+      </svg>
+      <span class="sparkline-label" style="color:${color}">${label}</span>
+    </div>`;
+  }
+
+  async function fetchSparklines(picks) {
+    const upcoming = picks.filter(p => {
+      const jump = p.scheduled_time ? new Date(p.scheduled_time).getTime() : null;
+      return !jump || jump > Date.now();
+    });
+    await Promise.all(upcoming.map(async p => {
+      const key = `${p.race_id}||${p.horse_name}`;
+      try {
+        const r = await fetch(`${API}/api/races/${encodeURIComponent(p.race_id)}/odds-trend?horse=${encodeURIComponent(p.horse_name)}`);
+        if (!r.ok) return;
+        const d = await r.json();
+        sparklineCache[key] = d.snapshots || [];
+      } catch (_) {}
+    }));
+    // Inject sparklines into already-rendered cards
+    upcoming.forEach(p => {
+      const key = `${p.race_id}||${p.horse_name}`;
+      const snaps = sparklineCache[key];
+      if (!snaps || snaps.length < 2) return;
+      const cardId = `card-${p.race_id.replace(/[^a-z0-9]/gi,'-')}-${p.horse_name.replace(/[^a-z0-9]/gi,'-')}`;
+      const slot = document.getElementById(`spark-${cardId}`);
+      if (slot) slot.innerHTML = buildSparklineSvg(snaps);
+    });
+  }
+
+  function isPremiumPick(pick) {
+    return pick.model_pct >= 29.5
+      && pick.best_available_odds != null && pick.best_available_odds >= 3.0
+      && pick.edge_pct != null && pick.edge_pct > 5;
+  }
+
+  function renderCard(pick, stake, result) {
+    const now = Date.now();
+    const jumpMs = pick.scheduled_time ? new Date(pick.scheduled_time).getTime() : null;
+    const isPast = jumpMs && jumpMs < now;
+
+    const isHot = pick.hot_pick;
+    const isPremium = isPremiumPick(pick);
+    const conf = pick.model_pct;
+    const barW = Math.min(100, (conf / 70) * 100);
+
+    // Tier badge — always shown. Bands: Strong 30-35, High 36-45, Hot 46+.
+    // Off-going cap: on Soft/Heavy the server sends confidence_tier='strong'
+    // (never hot/high) because the model is badly over-confident there. Prefer
+    // the server's confidence_tier when present so the cap holds everywhere.
+    let tierBadge;
+    const ctier = pick.confidence_tier;
+    if (ctier === 'hot' || (ctier == null && conf >= 46 && !pick.going_offtrack)) {
+      tierBadge = `<span class="pick-badge-hot">🔥 Hot Pick</span>`;
+    } else if (ctier === 'high' || (ctier == null && conf >= 36 && !pick.going_offtrack)) {
+      tierBadge = `<span class="pick-badge-hot" style="background:rgba(59,130,246,0.12);color:#60a5fa;border-color:rgba(59,130,246,0.28);">⚡ High Confidence</span>`;
+    } else {
+      tierBadge = `<span class="pick-badge-standard">Strong Pick</span>`;
+    }
+    if (pick.going_offtrack) {
+      tierBadge += `<span class="pick-badge-standard" title="Soft/Heavy track — the model is far less reliable on off-going, so confidence is capped at Strong." style="background:rgba(232,160,32,0.12);color:#e8a020;border-color:rgba(232,160,32,0.3);">⚠ Off-going</span>`;
+    }
+
+    const premiumBadge = isPremium ? `<span class="pick-badge-premium">💎 Premium</span>` : '';
+    const twoFunkBadge = (pick.two_funk?.recommend && !isPast)
+      ? `<span class="pick-badge-standard" style="background:rgba(236,72,153,0.14);color:#f9a8d4;border-color:rgba(219,39,119,0.45);" title="Top-2 dominate: ${pick.two_funk.top2_win_sum_pct}% combined · ${pick.two_funk.rank2_rank3_gap_pct}pt cliff to rank-3. Quinella with ${escHtml(pick.two_funk.partner_horse_name)}: est. $${pick.two_funk.quinella_est_dividend} dividend, EV +$${pick.two_funk.estimated_ev_dollars}.">🪩 2 Funk · Quinella w/ ${escHtml(pick.two_funk.partner_horse_name)}<span class="tier-marker tier-labs">Labs</span></span>`
+      : '';
+
+    // Result badge — shown for past races alongside tier badge
+    let resultBadge = '';
+    if (pick.cancelled) {
+      resultBadge = `<span class="pick-badge-standard" style="background:rgba(251,146,60,0.12);color:#fb923c;border-color:rgba(251,146,60,0.35);">⚠️ Abandoned</span>`;
+    } else if (isPast && result) {
+      // no_result === true means the race ran but RA hasn't returned a
+      // settled position yet. Without this guard the fall-through below
+      // shows '✗ Wrong' on horses that actually won — they just haven't
+      // been seeded into HistoricalResultRow yet (Balaklava R6 / THE
+      // COSMIC ONE 2026-06-26 was the trigger case).
+      if (result.no_result === true) {
+        resultBadge = `<span class="pick-badge-standard" style="background:var(--bg-elevated);color:var(--text-dim);border-color:var(--border);">Result pending</span>`;
+      } else if (result.scratched) {
+        resultBadge = `<span class="pick-badge-standard" style="background:var(--bg-elevated);color:var(--text-dim);border-color:var(--border);">Scratched</span>`;
+      } else if (result.winner) {
+        resultBadge = `<span class="pick-badge-standard" style="background:var(--green-dim);color:var(--green);border-color:rgba(34,197,94,0.25);">✓ Correct</span>`;
+      } else if (result.placed) {
+        // Backend `placed` is field-size-aware (8+ → top-3, 5-7 → top-2, ≤4 → win-only).
+        const posLbl = result.position ? ordinal(result.position) : '';
+        resultBadge = `<span class="pick-badge-standard" style="background:rgba(245,158,11,0.12);color:#f59e0b;border-color:rgba(245,158,11,0.35);">Placed ${posLbl}</span>`;
+      } else if (result.position) {
+        // Genuine miss — we have an actual position and it's not a paid place.
+        resultBadge = `<span class="pick-badge-standard" style="background:rgba(239,68,68,0.10);color:#f87171;border-color:rgba(239,68,68,0.25);">✗ Wrong</span>`;
+      } else {
+        // Defensive: no clear signal either way — keep pending rather
+        // than declaring the model wrong on missing data.
+        resultBadge = `<span class="pick-badge-standard" style="background:var(--bg-elevated);color:var(--text-dim);border-color:var(--border);">Result pending</span>`;
+      }
+    } else if (isPast) {
+      resultBadge = `<span class="pick-badge-standard" style="background:var(--bg-elevated);color:var(--text-dim);border-color:var(--border);">Completed</span>`;
+    }
+
+    const sportsbetChip = pick.sportsbet_available === false
+      ? `<span class="pick-badge-standard" style="background:rgba(74,90,122,0.20);color:var(--text-secondary);border-color:var(--border)" title="Sportsbet doesn't cover this meeting — try TAB fixed odds or a smaller book">🚫 Not on Sportsbet</span>`
+      : '';
+    const badgeHtml = tierBadge + premiumBadge + twoFunkBadge + resultBadge + sportsbetChip;
+
+    const timeStr = fmtTime(pick.scheduled_time);
+    const countdownId = `cd-${escHtml(pick.race_id).replace(/[^a-z0-9]/gi, '-')}`;
+    const cardId = `card-${pick.race_id.replace(/[^a-z0-9]/gi,'-')}-${pick.horse_name.replace(/[^a-z0-9]/gi,'-')}`;
+
+    // Use SP for completed races, tote odds for upcoming
+    const displayOdds = (result && result.sp) ? result.sp : pick.best_available_odds;
+    const oddsLabel   = (result && result.sp) ? 'Starting Price' : 'Best Odds';
+
+    // Odds threshold colouring: green ≥ $2.50, purple ≥ $3.00. Cascade so
+    // purple wins on the higher band. Applies to both live BAO and SP.
+    let oddsClass = '';
+    if (displayOdds && displayOdds >= 3.0) oddsClass = ' odds-great';
+    else if (displayOdds && displayOdds >= 2.5) oddsClass = ' odds-good';
+    const oddsHtml = displayOdds
+      ? `<div class="odds-badge${oddsClass}"><span class="odds-label">${oddsLabel}</span>$${displayOdds.toFixed(2)}</div>`
+      : `<div class="odds-badge" style="color:var(--text-dim)"><span class="odds-label">Odds</span>TBA</div>`;
+
+    // The right column no longer renders a result/payout chip — the outcome
+    // is carried by the top-bar badge and the footer verdict (which names the
+    // finishing place when the pick was wrong). Removed the redundant panel
+    // 2026-07-23.
+
+    const edgeHtml = (!isPast && pick.edge_pct != null && displayOdds)
+      ? `<span class="${pick.edge_pct >= 0 ? 'edge-positive' : 'edge-negative'}">${pick.edge_pct >= 0 ? `Model beats market by ${pick.edge_pct}` : `Market prefers by ${Math.abs(pick.edge_pct)}`}</span>
+         <span class="edge-label">model ${conf}% vs market ${pick.market_implied_pct}%</span>`
+      : '';
+
+    const jockeyChip  = pick.jockey  ? `<span class="chip">J: ${escHtml(pick.jockey)}</span>` : '';
+    const trainerChip = pick.trainer ? `<span class="chip">T: ${escHtml(pick.trainer)}</span>` : '';
+    const barrierChip = pick.barrier ? `<span class="chip">B${pick.barrier}</span>` : '';
+    const weightChip  = pick.weight  ? `<span class="chip">${pick.weight}kg</span>` : '';
+    // Last-10 form: wins / placings (on the board). Falls back to actual starts
+    // count when the horse has fewer than 10 lifetime starts.
+    const last10Label = (pick.starts_last_10 != null && pick.starts_last_10 < 10)
+      ? `Last ${pick.starts_last_10}` : 'Last 10';
+    // places_last_10 is TOTAL top-3 finishes (includes wins), per
+    // enriched.py. "1W / 2 on" was reading as "1 win plus 2 places =
+    // 3 top-3", but 2 was actually the total. Use "1W · 2 top-3" so
+    // the semantics are unambiguous.
+    const last10Chip = pick.form_figures
+      ? `<span class="chip" title="Recent form — most recent start first. 1–9 = finishing position, 0 = finished outside the top 9.">Form ${pick.form_figures}</span>`
+      : ((pick.wins_last_10 != null && pick.places_last_10 != null)
+      ? `<span class="chip" title="${pick.wins_last_10} win(s) and ${pick.places_last_10} total top-3 finish(es) across the last ${pick.starts_last_10 || 10} start(s)">${last10Label}: ${pick.wins_last_10}W · ${pick.places_last_10} top-3</span>`
+      : '');
+
+    const trackChip = pick.track_condition ? `<span class="pick-footer-chip"><strong>${escHtml(pick.track_condition)}</strong></span><span class="pick-footer-sep">·</span>` : '';
+    const distChip  = pick.distance ? `<span class="pick-footer-chip"><strong>${pick.distance}m</strong></span><span class="pick-footer-sep">·</span>` : '';
+    const stateChip = pick.state ? `<span class="pick-footer-chip">${escHtml(pick.state)}</span>` : '';
+    const _wx = weatherByCode[pick.venue];
+    const weatherChip = _wx ? (() => {
+      const parts = [_wx.icon];
+      if (_wx.temp_max !== null) parts.push(_wx.temp_max + '°C');
+      if (_wx.wind_kmh) parts.push('💨 ' + _wx.wind_kmh + 'km/h');
+      if (_wx.rain_mm > 0) parts.push('💧 ' + _wx.rain_mm + 'mm');
+      return `<span class="pick-footer-sep">·</span><span class="pick-footer-chip">${parts.join(' ')}</span>`;
+    })() : '';
+    const valueChip = '';
+
+    // Grey out the whole card when the race was abandoned (pick.cancelled)
+    // OR the rank-1 pick itself was scratched — both mean "no real bet
+    // outcome", so visually they should fade out the same way. A losing
+    // settled race uses a lighter dim so misses are still readable.
+    const isScratched = !!(result && result.scratched);
+    const cardStyle = (pick.cancelled || isScratched)
+      ? 'opacity:0.55;filter:grayscale(0.4);'
+      : (isPast && result && !result.winner ? 'opacity:0.75;' : '');
+    const pastAttr  = isPast && result ? 'data-past-result="true"' : '';
+
+    return `
+      <div class="pick-card ${isHot && !isPast ? 'hot' : ''} ${isPremium && !isPast ? 'premium' : ''}" style="${cardStyle}" ${pastAttr}>
+        <div class="pick-card-top-bar">
+          ${badgeHtml}
+          <div class="pick-race-ref">
+            <span class="venue-name">${escHtml(pick.venue)}</span>${window.FIQConditions ? FIQConditions.chip(pick.venue) : ''}
+            <span class="sep">·</span>
+            <span>R${pick.race_number}</span>
+            ${pick.race_name ? `<span class="sep">·</span><span style="color:var(--text-secondary)">${escHtml(pick.race_name)}</span>` : ''}
+            ${pick.cancelled ? `<span class="abandoned-tag">Abandoned</span>` : ''}
+          </div>
+          <div class="pick-time-wrap">
+            ${timeStr ? `<span class="pick-time">${escHtml(timeStr)}</span>` : ''}
+            ${pick.scheduled_time ? `<span class="pick-countdown" id="${countdownId}" data-jump="${escHtml(pick.scheduled_time)}"></span>` : ''}
+          </div>
+        </div>
+        <div class="pick-body">
+          <div class="pick-left">
+            <div class="pick-horse-name">${escHtml(pick.horse_name)}${(() => {
+              // Hot-streak badge — horse's last race delivered when
+              // the model backed them. Backtested +18pp (hot) / +11pp
+              // (warm) win-rate lift. See /api/admin/backtest-last-
+              // start-alignment.
+              const s = pick.streak;
+              if (!s) return '';
+              const posLbl = s.last_race_position === 1 ? '1st'
+                : s.last_race_position === 2 ? '2nd'
+                : s.last_race_position === 3 ? '3rd'
+                : `${s.last_race_position}th`;
+              const dateStr = s.last_race_date || '';
+              if (s.badge === 'hot') {
+                return `<span title="Won their most recent race (${dateStr}, ${s.last_race_pct}% model pick) — +18pp win-rate lift" style="margin-left:8px;font-size:0.75rem;padding:2px 8px;border-radius:999px;background:rgba(239,68,68,0.15);color:#fca5a5;border:1px solid rgba(239,68,68,0.35);font-weight:600">🔥 Won last</span>`;
+              }
+              if (s.badge === 'warm') {
+                return `<span title="Placed ${posLbl} in their most recent race (${dateStr}, ${s.last_race_pct}% model pick) — top-3 finish, +11pp win-rate lift" style="margin-left:8px;font-size:0.75rem;padding:2px 8px;border-radius:999px;background:rgba(245,158,11,0.12);color:#fbbf24;border:1px solid rgba(245,158,11,0.30);font-weight:600">🌤️ Placed previously</span>`;
+              }
+              return '';
+            })()}</div>
+            <div class="pick-details">${barrierChip}${jockeyChip}${trainerChip}${weightChip}${last10Chip}</div>
+            <div class="dual-stat-row">
+              <div class="dual-stat">
+                <span class="dual-stat-num">${conf}%</span>
+                <span class="dual-stat-label">win prediction</span>
+              </div>
+              ${pick.place_probability != null ? `
+              <div class="dual-stat-sep"></div>
+              <div class="dual-stat">
+                <span class="dual-stat-num" style="color:#60a5fa">${pick.place_probability}%</span>
+                <span class="dual-stat-label">place prediction</span>
+              </div>` : ''}
+              <div class="dual-stat-sep"></div>
+              <div class="dual-stat">
+                <span class="dual-stat-num ${pick.hot_pick ? 'hot' : ''}">${pick.calibrated_win_rate}%</span>
+                <span class="dual-stat-label">model accuracy at this level</span>
+              </div>
+            </div>
+            <div class="edge-row" style="margin-top:8px">${edgeHtml}</div>
+          </div>
+          <div class="pick-right">
+            ${oddsHtml}
+            <div id="spark-${cardId}">${buildSparklineSvg(sparklineCache[`${pick.race_id}||${pick.horse_name}`])}</div>
+          </div>
+        </div>
+        <div class="pick-footer">
+          ${trackChip}${distChip}${stateChip}${weatherChip}${valueChip}
+          ${isPast && result && !result.scratched && !result.no_result ? (() => {
+            const pos = result.position;
+            // pos ≥ 90 is the "unplaced" sentinel — show "✗ Did not place"
+            // with no parenthetical, but keep the real place for genuine
+            // out-of-placing finishes (e.g. "✗ Did not place (7th)").
+            const posLbl = pos === 2 ? '2nd' : pos === 3 ? '3rd' : (pos && pos < 90) ? `${pos}th` : '';
+            const placed = result.placed && !result.winner;
+            const winnerChip = (!result.winner && result.winner_name)
+              ? `<span class="pick-footer-chip" style="color:var(--text-dim)">Winner: <strong style="color:var(--text-secondary)">${escHtml(result.winner_name)}</strong></span>`
+              : '';
+            if (result.winner) return `<span class="pick-verdict correct">✓ Won</span>`;
+            if (placed) return `<span class="pick-verdict" style="background:rgba(245,158,11,0.10);color:#f59e0b;border-color:rgba(245,158,11,0.25);">~ Placed${posLbl ? ' ' + posLbl : ''}</span>${winnerChip}`;
+            if (pos) {
+              return `<span class="pick-verdict wrong">✗ Did not place${posLbl ? ' (' + posLbl + ')' : ''}</span>${winnerChip}`;
+            }
+            // No position — pending, not a miss. Prevents "Did not
+            // place" appearing on horses that were scratched at the
+            // wire and never actually ran (FALANGHINA, Morphettville
+            // R3 2026-07-11).
+            return '';
+          })() : ''}
+          ${!isPast ? (() => {
+            let level, color;
+            if (conf >= 46)      { level = '🔥 Hot Pick — high win confidence'; color = '#f97316'; }
+            else if (conf >= 36) { level = '⚡ High Confidence'; color = '#60a5fa'; }
+            else                 { level = '📈 Value Pick'; color = 'var(--text-secondary)'; }
+            if (isPremium) level += ' · 💎 Premium value';
+            return `<span class="pick-footer-chip" style="color:${color}">${level}</span>`;
+          })() : ''}
+        </div>
+        ${pick.trifecta ? (() => {
+          const tri = pick.trifecta;
+          const posLabel = pos => pos === 1 ? '1st' : pos === 2 ? '2nd' : pos === 3 ? '3rd' : pos === 4 ? '4th' : pos ? pos+'th' : '—';
+          const legHtml = l => {
+            const pos = l.position;
+            const inTop3 = pos && pos <= 3 && !l.scratched;
+            const col = l.scratched ? 'var(--text-dim)' : pos != null ? (inTop3 ? 'var(--green-bright)' : '#f87171') : 'var(--text-secondary)';
+            return `<span style="color:${col};font-weight:700">${l.tab_number || '?'}</span>`
+              + (l.place_pct != null ? `<span style="color:var(--text-dim);font-size:0.65rem"> (${l.place_pct}%)</span>` : '')
+              + (pos != null ? `<span style="color:${col};font-size:0.7rem"> ${posLabel(pos)}</span>` : '');
+          };
+          const triNums = tri.legs.map(legHtml).join(' <span style="color:var(--border)">·</span> ');
+          const triNames = tri.legs.map(l => escHtml(l.horse_name)).join(' · ');
+          const triPct = tri.combined_pct != null ? `<span class="tri-combined">~${tri.combined_pct}%</span>` : '';
+          const verdict = tri.hit != null
+            ? (tri.hit ? `<span style="font-weight:800;color:var(--green-bright);font-size:0.78rem">✓ HIT</span>`
+                       : `<span style="font-weight:700;color:#f87171;font-size:0.72rem">✗ Missed</span>`)
+            : '';
+          const ffPart = tri.first_four ? (() => {
+            const ffNums = tri.first_four.map(legHtml).join(' <span style="color:var(--border)">·</span> ');
+            const ffNames = tri.first_four.map(l => escHtml(l.horse_name)).join(' · ');
+            const ffPct = tri.first_four_combined_pct != null ? `<span class="tri-combined">~${tri.first_four_combined_pct}%</span>` : '';
+            const ffVerdict = tri.first_four_hit != null
+              ? (tri.first_four_hit ? `<span style="font-weight:800;color:var(--green-bright);font-size:0.78rem">✓ HIT</span>`
+                                    : `<span style="font-weight:700;color:#f87171;font-size:0.72rem">✗ Missed</span>`)
+              : '';
+            return `<div class="tri-ff-row"><span class="tri-ff-label">First 4</span><span class="tri-ff-legs">${ffNums}</span>${ffPct}${ffVerdict}<span class="tri-ff-names">${ffNames}</span></div>`;
+          })() : '';
+          return `<div class="trifecta-strip">
+            <span class="tri-label">🎯 Trifecta<span class="tier-marker tier-pro">Pro</span></span>
+            <span class="tri-legs">${triNums}</span>
+            ${triPct}${verdict}
+            <span class="tri-names">${triNames}</span>
+            ${ffPart}
+          </div>`;
+        })() : ''}
+        ${pick.hedge && !isPast ? (() => {
+          const h = pick.hedge;
+          const cardId2 = `hedge-${pick.race_id.replace(/[^a-z0-9]/gi,'_')}`;
+          const opts = h.options;
+          const modes = Object.keys(opts);
+          if (!modes.length) return '';
+
+          const buildPanel = (mode) => {
+            const opt = opts[mode];
+            const base = h.win_stake;
+            const scaleId = `hscale-${cardId2}-${mode}`;
+            const betsId = `hbets-${cardId2}-${mode}`;
+            const scenId = `hscen-${cardId2}-${mode}`;
+
+            const betsHtml = opt.horses.map(hh =>
+              `<div class="hedge-bet-row" data-stake="${hh.stake}" data-return="${hh.return_if_places}" data-base="${base}">
+                <div><div class="hedge-bet-name">T${hh.tab_number} ${escHtml(hh.horse_name)}</div>
+                <div class="hedge-bet-meta">PLACE · win ${hh.win_odds} · est place ${hh.place_est}</div></div>
+                <div class="hedge-bet-stake" data-field="stake">$${hh.stake.toFixed(2)}</div>
+              </div>`
+            ).join('');
+
+            return `<div class="hedge-panel" id="hpanel-${cardId2}-${mode}">
+              <div class="hedge-stake-scale">
+                <span>Win stake</span>
+                <input type="range" min="5" max="200" step="5" value="${base}"
+                  id="${scaleId}"
+                  oninput="updateHedgeScale('${cardId2}','${mode}',this.value,${base})">
+                <span class="hedge-stake-val" id="hsval-${cardId2}-${mode}">$${base}</span>
+              </div>
+              <div class="hedge-bets" id="${betsId}">${betsHtml}</div>
+              <div class="hedge-scenarios" id="${scenId}">
+                <div class="hedge-scenario win">
+                  <div class="hs-label">${escHtml(pick.horse_name)} wins</div>
+                  <div class="hs-value" data-field="win_net" data-val="${opt.win_net}" data-base="${base}">
+                    ${opt.win_net >= 0 ? '+' : ''}$${opt.win_net.toFixed(2)}
+                  </div>
+                </div>
+                <div class="hedge-scenario recover">
+                  <div class="hs-label">Hedge fires</div>
+                  <div class="hs-value" data-field="recovery" data-val="${opt.recovery_if_fires}" data-base="${base}">
+                    $${opt.recovery_if_fires.toFixed(2)} back (${opt.recovery_pct}%)
+                  </div>
+                </div>
+                <div class="hedge-scenario loss">
+                  <div class="hs-label">Both miss</div>
+                  <div class="hs-value" data-field="total_outlay" data-val="${opt.total_outlay}" data-base="${base}">
+                    −$${opt.total_outlay.toFixed(2)}
+                  </div>
+                </div>
+              </div>
+              <div class="hedge-note">Place odds estimated · verify on TAB before placing</div>
+            </div>`;
+          };
+
+          const hedgeTabLabel = (m, opt) => {
+            const n = opt.horses.length;
+            const labels = { single: '1-horse', double: '2-horse', triple: '3-horse', quad: '4-horse' };
+            return `${labels[m] || m} · ${opt.recovery_pct}% back`;
+          };
+          const tabBtns = modes.map((m, i) =>
+            `<button class="hedge-tab-btn${i === 0 ? ' active' : ''}"
+              onclick="switchHedgeTab('${cardId2}','${m}',this)"
+            >${hedgeTabLabel(m, opts[m])}</button>`
+          ).join('');
+
+          const panels = modes.map((m, i) => {
+            const p = buildPanel(m);
+            return p.replace(`class="hedge-panel"`, `class="hedge-panel${i === 0 ? ' active' : ''}"`);
+          }).join('');
+
+          return `<div class="hedge-strip">
+            <button class="hedge-toggle" onclick="toggleHedge(this)">
+              <span>🛡️ HEDGE</span>
+              <span class="hedge-chevron">▶</span>
+              <span style="color:var(--text-dim);font-weight:400;font-size:0.67rem;margin-left:4px">
+                – available at $${h.pick_odds} odds
+              </span>
+            </button>
+            <div class="hedge-body">
+              <div class="hedge-tabs">${tabBtns}</div>
+              ${panels}
+            </div>
+          </div>`;
+        })() : ''}
+        ${renderFieldExpansion(pick)}
+      </div>`;
+  }
+
+  // Full-field dropdown — same data shape as Hot Seat. `pick.field` is
+  // populated by /api/edge and contains every runner with model rank,
+  // win/place % and current odds. State toggle is delegated below.
+  function renderFieldExpansion(pick) {
+    const field = Array.isArray(pick.field) ? pick.field : [];
+    if (!field.length) return '';
+    const isOpen = _expandedFields.has(pick.race_id);
+    if (!isOpen) {
+      return `<div class="edge-field-toggle" data-race="${escHtml(pick.race_id)}">Full field (${field.length}) ▾</div>`;
+    }
+    const rows = field.map(f => {
+      const oddsTxt = f.odds && f.odds > 1.0 ? '$' + f.odds.toFixed(2) : '—';
+      const placeTxt = f.place_pct != null ? f.place_pct.toFixed(0) + '%' : '—';
+      const winTxt = (f.win_pct ?? 0).toFixed(1) + '%';
+      const rankCls = f.rank === 1 ? 'rank1' : '';
+      const scrCls = f.scratched ? 'scratched' : '';
+      return `
+        <tr class="${rankCls} ${scrCls}">
+          <td class="r">${f.rank ?? '—'}</td>
+          <td class="name">${escHtml(f.horse_name)}</td>
+          <td class="r">${winTxt}</td>
+          <td class="r">${placeTxt}</td>
+          <td class="r">${oddsTxt}</td>
+        </tr>`;
+    }).join('');
+    return `
+      <div class="edge-field-toggle" data-race="${escHtml(pick.race_id)}">Hide full field ▴</div>
+      <table class="edge-field-table">
+        <thead>
+          <tr>
+            <th class="r">#</th>
+            <th class="l">Horse</th>
+            <th class="r">Win</th>
+            <th class="r">Place</th>
+            <th class="r">Odds</th>
+          </tr>
+        </thead>
+        <tbody>${rows}</tbody>
+      </table>`;
+  }
+
+  function renderMeetingsWeather(meetings) {
+    const grid = document.getElementById('meetingsWeatherGrid');
+    const section = document.getElementById('meetingsWeatherSection');
+    if (!grid || !section || !meetings.length) return;
+    grid.innerHTML = meetings.map(m => {
+      const w = m.weather;
+      const name = escHtml(m.venue || m.venue_code || '');
+      const state = escHtml(m.state || '');
+      if (!w) return `<div class="venue-wx-card"><div class="venue-wx-name">${name}</div><div class="venue-wx-state">${state}</div></div>`;
+      const rainHtml = w.rain_mm > 0 ? `<span class="venue-wx-rain">· 💧${w.rain_mm}mm</span>` : '';
+      const windHtml = w.wind_kmh ? `· 💨 ${w.wind_kmh}km/h` : '';
+      return `<div class="venue-wx-card">
+        <div class="venue-wx-name">${name}</div>
+        <div class="venue-wx-state">${state}</div>
+        <div class="venue-wx-weather">${w.icon} ${w.temp_max !== null ? w.temp_max + '°C' : ''} ${windHtml} ${rainHtml}</div>
+      </div>`;
+    }).join('');
+    section.style.display = '';
+  }
+
+  // Sharp niche — historical 30-35% win rate vs 16-20% baseline.
+  // Server now ships `p.is_sharp` as the single source of truth (combines
+  // high-confidence + days_off ≤180 gate). Local fallback retained for
+  // backward compat during deploy crossover.
+  //   Gates: (model_pct ≥30 OR top-3 sum ≥60) AND days_since_last_run ≤180.
+  //   Layoff exclusion: pattern_id `edge_sharp_exclude_long_layoff_180d`
+  //   (weekly review 2026-06-28: long-layoff Sharp picks lost 83%).
+  // isSharpEdgePick is defined globally by /sharp.js — single source
+  // of truth shared with Hot Seat and the Lounge. Do not redefine here.
+
+  // Page-level sharp/all toggle. Default = sharp.
+  if (typeof window.__edgeMode === 'undefined') window.__edgeMode = 'sharp';
+
+  function renderContent(data, stake, results) {
+    let picks = data.picks;
+    // Sharp fallback: when Sharp mode is on but produces zero picks (typical
+    // early-morning/pre-enrichment window OR a genuinely quiet card), fall
+    // back to showing the full pick set with a banner explaining what
+    // happened. Prior behaviour was a generic empty state that made the
+    // page look broken.
+    let sharpFallbackActive = false;
+    if (window.__edgeMode === 'sharp') {
+      const sharpPicks = picks.filter(isSharpEdgePick);
+      if (sharpPicks.length === 0 && picks.length > 0) {
+        sharpFallbackActive = true;
+        // leave picks as-is (unfiltered)
+      } else {
+        picks = sharpPicks;
+      }
+    }
+    results = results || {};
+
+    const picksByDate = {};
+    for (const p of picks) {
+      if (!picksByDate[p.date]) picksByDate[p.date] = [];
+      picksByDate[p.date].push(p);
+    }
+
+    // Stats
+    const total = picks.length;
+    const hot = picks.filter(p => p.hot_pick).length;
+    const premium = picks.filter(p => isPremiumPick(p)).length;
+    const avgConf = total ? (picks.reduce((s, p) => s + p.model_pct, 0) / total).toFixed(0) + '%' : '—';
+    document.getElementById('statTotal').textContent = total;
+    document.getElementById('statHot').textContent = hot;
+    document.getElementById('statPremium').textContent = premium;
+    document.getElementById('statAvgConf').textContent = avgConf;
+
+    const genAt = new Date(data.generated_at + 'Z');
+    document.getElementById('updatedAt').textContent = 'Updated ' + genAt.toLocaleTimeString('en-AU', { hour:'2-digit', minute:'2-digit', hour12: true });
+
+    if (total === 0) {
+      document.getElementById('content').innerHTML = `
+        <div class="empty-state">
+          <div class="empty-icon">🔍</div>
+          <div class="empty-title">No high-confidence picks right now</div>
+          <div class="empty-sub">The model hasn't found any races with ≥${data.threshold_pct}% confidence in the next 4 days.<br>Check back once today's races have been enriched, or try again closer to race time.</div>
+        </div>`;
+      return;
+    }
+
+    let html = '';
+    if (sharpFallbackActive) {
+      html += `
+        <div style="background:rgba(139,92,246,0.08);border:1px solid rgba(139,92,246,0.3);border-radius:10px;padding:12px 16px;margin-bottom:16px;color:#c4b5fd;font-size:14px;line-height:1.4">
+          <div style="font-weight:600;margin-bottom:2px">🎯 No Sharp Picks Available</div>
+          <div style="color:rgba(196,181,253,0.85);font-size:13px">Sharp thresholds weren't met for any race in the current window — showing all picks below.</div>
+        </div>`;
+    }
+    const todayStr = new Date().toLocaleDateString('en-CA', { timeZone: 'Australia/Sydney' });
+    const tomorrowDate = new Date(); tomorrowDate.setDate(tomorrowDate.getDate() + 1);
+    const tomorrowStr = tomorrowDate.toLocaleDateString('en-CA', { timeZone: 'Australia/Sydney' });
+
+
+    const dates = Object.keys(picksByDate).sort();
+    dates.forEach((d, i) => {
+      const picks = [...picksByDate[d]].sort((a, b) => {
+        if (sortMode === 'next') {
+          // "Next race" = literally the next race to jump. Upcoming
+          // races (jump time in the future) come first, sorted soonest
+          // first. Past races drop below, sorted most-recent first —
+          // NOT ascending time, which was putting a 12pm race above a
+          // 3:30pm race when the current time is already 3pm.
+          const now = Date.now();
+          const at = a.scheduled_time ? new Date(a.scheduled_time).getTime() : null;
+          const bt = b.scheduled_time ? new Date(b.scheduled_time).getTime() : null;
+          if (at == null && bt == null) return 0;
+          if (at == null) return 1;
+          if (bt == null) return -1;
+          const aUpcoming = at > now;
+          const bUpcoming = bt > now;
+          if (aUpcoming !== bUpcoming) return aUpcoming ? -1 : 1;
+          if (aUpcoming) return at - bt;      // future: sooner first
+          return bt - at;                     // past: most recent first
+        }
+        // best: premium first, then model confidence descending
+        const ap = isPremiumPick(a) ? 1 : 0;
+        const bp = isPremiumPick(b) ? 1 : 0;
+        if (bp !== ap) return bp - ap;
+        return b.model_pct - a.model_pct;
+      });
+      const label = d === todayStr ? 'Today' : d === tomorrowStr ? 'Tomorrow' : fmtDate(d).split(',')[0];
+      const dateStr = fmtDate(d);
+      const count = picks.length;
+
+      // Build P&L summary for settled picks in this day group
+      const settledPicks = picks.filter(p => {
+        const r = results[p.race_id];
+        return r && !r.scratched && !r.no_result && (r.winner !== undefined);
+      });
+      let dayPnlBar = '';
+      if (settledPicks.length > 0) {
+        const sWins   = settledPicks.filter(p => results[p.race_id].winner).length;
+        const sPlaced = settledPicks.filter(p => { const r = results[p.race_id]; return r.placed && !r.winner; }).length;
+        const sLoss   = settledPicks.filter(p => { const r = results[p.race_id]; return !r.winner && !r.placed; }).length;
+        const sPnl    = +settledPicks.reduce((s, p) => { const r = results[p.race_id]; return s + (r.winner && r.sp ? r.sp * stake - stake : -stake); }, 0).toFixed(2);
+        const pnlCls  = sPnl >= 0 ? 'pnl-positive' : 'pnl-negative';
+        const pnlSign = sPnl >= 0 ? '+' : '';
+        dayPnlBar = `
+          <div class="pnl-bar" style="margin-bottom:16px;margin-top:4px">
+            <div class="pnl-cell">
+              <div class="pnl-cell-num">${settledPicks.length}</div>
+              <div class="pnl-cell-label">Settled</div>
+            </div>
+            <div class="pnl-cell">
+              <div class="pnl-cell-num pnl-positive">${sWins}</div>
+              <div class="pnl-cell-label">Wins</div>
+            </div>
+            <div class="pnl-cell">
+              <div class="pnl-cell-num" style="color:#f59e0b">${sPlaced}</div>
+              <div class="pnl-cell-label">Placed</div>
+            </div>
+            <div class="pnl-cell">
+              <div class="pnl-cell-num" style="color:var(--text-dim)">${sLoss}</div>
+              <div class="pnl-cell-label">Unplaced</div>
+            </div>
+          </div>`;
+      }
+
+      html += `
+        <div class="day-group">
+          <div class="day-header">
+            <span class="day-label">${escHtml(label)}</span>
+            <span class="day-date">${escHtml(dateStr)}</span>
+            <span class="day-count">${count} pick${count !== 1 ? 's' : ''}</span>
+          </div>
+          ${dayPnlBar}
+          ${picks.map(p => renderCard(p, stake, results[p.race_id])).join('')}
+        </div>`;
+    });
+
+    // Show empty day groups for dates with no picks
+    const allDates = [];
+    for (let i = 0; i < 4; i++) {
+      const d = new Date(); d.setDate(d.getDate() + i);
+      allDates.push(d.toLocaleDateString('en-CA', { timeZone: 'Australia/Sydney' }));
+    }
+    allDates.forEach((d, i) => {
+      if (!picksByDate[d]) {
+        // Only today's empty state renders (it explains a blank page).
+        // Future days with no picks yet are pure noise — skip them.
+        if (d !== todayStr) return;
+        const label = d === todayStr ? 'Today' : d === tomorrowStr ? 'Tomorrow' : fmtDate(d).split(',')[0];
+        html += `
+          <div class="day-group">
+            <div class="day-header">
+              <span class="day-label">${label}</span>
+              <span class="day-date">${fmtDate(d)}</span>
+            </div>
+            <div class="day-empty">No picks above ${data.threshold_pct}% confidence — races may not be enriched yet.</div>
+          </div>`;
+      }
+    });
+
+    document.getElementById('content').innerHTML = html;
+  }
+
+  function updatePayouts(stake) {
+    document.querySelectorAll('.pick-card').forEach(card => {
+      if (card.dataset.pastResult) return; // actual result — never overwrite
+      const oddsEl = card.querySelector('.odds-badge');
+      if (!oddsEl) return;
+      const oddsText = oddsEl.textContent.trim().replace(/[^0-9.]/g, '');
+      const odds = parseFloat(oddsText);
+      if (!odds) return;
+      const pay = calcPayout(odds, stake);
+      if (!pay) return;
+      const profitEl = card.querySelector('.payout-profit');
+      const returnEl = card.querySelector('.payout-return .return-amt');
+      const labelEl = card.querySelector('.payout-profit-label');
+      if (profitEl) profitEl.textContent = `+$${pay.profit.toFixed(2)}`;
+      if (returnEl) returnEl.textContent = `$${pay.gross.toFixed(2)}`;
+      if (labelEl) labelEl.textContent = `$${stake} stake`;
+    });
+  }
+
+  const API = '';
+  let picksData = null;
+  let sortMode = 'best';
+  let exoticSortMode = 'next';
+  let trifectasData = null;
+  // Race IDs whose full field is currently expanded on edge cards.
+  // Persists across re-renders; click handler is delegated below.
+  const _expandedFields = new Set();
+
+  function setExoticSortMode(mode) {
+    exoticSortMode = mode;
+    document.getElementById('exoticSortBestPick').classList.toggle('active', mode === 'best');
+    document.getElementById('exoticSortNextRace').classList.toggle('active', mode === 'next');
+    if (trifectasData) renderTrifectasContent(trifectasData);
+  }
+
+  function setSortMode(mode) {
+    sortMode = mode;
+    document.getElementById('sortBestPick').classList.toggle('active', mode === 'best');
+    document.getElementById('sortNextRace').classList.toggle('active', mode === 'next');
+    if (picksData) {
+      const stake = 10;  // input removed 2026-07-20
+      renderContent(picksData, stake, resultsMap);
+    }
+  }
+
+  // Sharp/All toggle handler. Re-renders whichever picks list is
+  // currently visible (upcoming OR yesterday) using the new mode.
+  // No server round-trip — filter is client-side.
+  function setEdgeMode(mode) {
+    window.__edgeMode = mode;
+    const sharpBtn = document.getElementById('edgeModeSharp');
+    const allBtn = document.getElementById('edgeModeAll');
+    if (sharpBtn) sharpBtn.classList.toggle('active', mode === 'sharp');
+    if (allBtn) allBtn.classList.toggle('active', mode === 'all');
+    const stake = 10;  // input removed 2026-07-20
+    if (currentSub === 'yesterday' && yesterdayData) {
+      renderYesterdayContent(yesterdayData, stake);
+    } else if (picksData) {
+      renderContent(picksData, stake, resultsMap);
+    }
+  }
+  // Expose on the global scope so the inline onclick handlers can reach it.
+  window.setEdgeMode = setEdgeMode;
+  let resultsMap = {};
+  let yesterdayLoaded = false;
+  let yesterdayData = null;
+  let yesterdaySortMode = 'best';     // 'best' | 'time' | 'race'
+  let yesterdaySortDir = 1;           // 1 = default order; a 2nd click on the
+                                      // active button flips to -1 (inverted).
+  const _YST_SORT_LABELS = { best: 'Best Pick', time: 'Time', race: 'Race #', meeting: 'Meeting' };
+  function setYesterdaySort(mode) {
+    // Re-clicking the active sort inverts the list; switching sort resets to
+    // that sort's default direction.
+    if (mode === yesterdaySortMode) yesterdaySortDir = -yesterdaySortDir;
+    else { yesterdaySortMode = mode; yesterdaySortDir = 1; }
+    [['best', 'ystSortBest'], ['time', 'ystSortTime'], ['race', 'ystSortRace'], ['meeting', 'ystSortMeeting']].forEach(([m, id]) => {
+      const btn = document.getElementById(id);
+      if (!btn) return;
+      const active = m === yesterdaySortMode;
+      btn.classList.toggle('active', active);
+      // Arrow reflects value direction: 'best' defaults high→low (↓); time &
+      // race default low→high (↑). Flips with yesterdaySortDir.
+      let arrow = '';
+      if (active) {
+        const descDefault = (m === 'best');
+        const asc = descDefault ? (yesterdaySortDir === -1) : (yesterdaySortDir === 1);
+        arrow = asc ? ' ↑' : ' ↓';
+      }
+      btn.textContent = _YST_SORT_LABELS[m] + arrow;
+    });
+    if (yesterdayData) renderYesterdayContent(yesterdayData, 10);
+  }
+  // Sort yesterday's picks for display (stats are order-independent):
+  //   best → premium first, then model confidence desc (matches Upcoming's
+  //          "Best Pick");  time → chronological by jump;  race → by race
+  //          number only (all R1s, then R2s… ignoring meeting).
+  // scheduled_time is a tz-aware ISO string (offsets vary: AEST/ACST/AWST), so
+  // compare by parsed epoch, NOT string, to order by the true instant. Picks
+  // with no stored time (rare — e.g. an RA-recovery day) fall back to race #.
+  // yesterdaySortDir multiplies the comparator so a 2nd click inverts the list.
+  function _sortYesterdayPicks(picks) {
+    const arr = picks.slice();
+    const ep   = p => { const t = p.scheduled_time ? Date.parse(p.scheduled_time) : NaN; return Number.isNaN(t) ? null : t; };
+    const rnum = p => (p.race_number || 0);
+    // Yesterday premium = same rule as the summary strip / Upcoming, but using
+    // SP (yesterday picks carry sp, not best_available_odds/edge_pct).
+    const prem = p => (p.model_pct >= 29.5 && p.sp && p.sp >= 3.0
+                       && (p.model_pct - (100 / p.sp)) > 5) ? 1 : 0;
+    let cmp;
+    if (yesterdaySortMode === 'time') {
+      cmp = (a, b) => {
+        const ea = ep(a), eb = ep(b);
+        if (ea != null && eb != null) return ea - eb;
+        if (ea != null) return -1;                 // known times first
+        if (eb != null) return 1;
+        return rnum(a) - rnum(b);                   // both unknown → race-number proxy
+      };
+    } else if (yesterdaySortMode === 'race') {
+      cmp = (a, b) => (rnum(a) - rnum(b)) || ((ep(a) ?? 0) - (ep(b) ?? 0));
+    } else if (yesterdaySortMode === 'meeting') {
+      cmp = (a, b) => (a.venue || '').localeCompare(b.venue || '') || (rnum(a) - rnum(b));
+    } else {
+      cmp = (a, b) => (prem(b) - prem(a)) || ((b.model_pct || 0) - (a.model_pct || 0));
+    }
+    arr.sort((a, b) => yesterdaySortDir * cmp(a, b));
+    return arr;
+  }
+  // Format a tz-aware ISO race time to the TRACK-local post time (e.g. 12:10pm),
+  // using the wall-clock part of the string (not the viewer's timezone).
+  function _fmtRaceTime(iso) {  // viewer-local (was track-local from raw digits)
+    if (!iso) return '';
+    if (/T00:00(:00)?/.test(iso)) return '';
+    const fmt = (h, mi) => `${h % 12 || 12}:${mi}${h >= 12 ? 'pm' : 'am'}`;
+    if (/[Tt]\d{2}:\d{2}(:\d{2})?(\.\d+)?([Zz]|[+-]\d{2}:?\d{2})/.test(iso)) {
+      const d = new Date(iso);
+      if (!isNaN(d.getTime())) return fmt(d.getHours(), String(d.getMinutes()).padStart(2, '0'));
+    }
+    const m = /T(\d{2}):(\d{2})/.exec(iso);
+    return m ? fmt(+m[1], m[2]) : '';
+  }
+  let weatherByCode = {};
+
+  let trackRecordLoaded = false;
+
+  let trifectasLoaded = false;
+
+  let currentParent = 'wins';
+  let currentSub = 'upcoming';
+
+  function switchParent(parent) {
+    currentParent = parent;
+    document.getElementById('parentWins').classList.toggle('active', parent === 'wins');
+    document.getElementById('parentExotics').classList.toggle('active', parent === 'exotics');
+    switchSub(currentSub);
+  }
+
+  function switchSub(sub) {
+    currentSub = sub;
+    document.getElementById('subInsights').classList.toggle('active', sub === 'insights');
+    updateEdgeDateBar();
+
+    const isWins = currentParent === 'wins';
+    document.getElementById('panelUpcoming').style.display            = (isWins && sub === 'upcoming')  ? '' : 'none';
+    document.getElementById('panelYesterday').style.display           = (isWins && sub === 'yesterday') ? '' : 'none';
+    document.getElementById('panelInsights').style.display            = (isWins && sub === 'insights')  ? '' : 'none';
+    document.getElementById('panelTrifectas').style.display           = (!isWins && sub === 'upcoming')  ? '' : 'none';
+    document.getElementById('panelExoticsYesterday').style.display    = (!isWins && sub === 'yesterday') ? '' : 'none';
+    document.getElementById('panelExoticsInsights').style.display     = (!isWins && sub === 'insights')  ? '' : 'none';
+
+    document.getElementById('legendWin').style.display     = isWins ? '' : 'none';
+    document.getElementById('legendExotics').style.display = isWins ? 'none' : '';
+
+    if (isWins && sub === 'yesterday' && !yesterdayLoaded) loadYesterday();
+    if (isWins && sub === 'insights' && !trackRecordLoaded) loadTrackRecord();
+    if (!isWins && sub === 'upcoming' && !trifectasLoaded) loadTrifectas();
+  }
+
+  // ── Unified date bar: Today = live upcoming picks; ‹ › steps through past
+  // dates' results. Maps onto the existing upcoming/yesterday sub-panels.
+  function currentEdgeDate() {
+    return (currentSub === 'yesterday' && yesterdayViewDate) ? yesterdayViewDate : _aestToday();
+  }
+  function updateEdgeDateBar() {
+    const lbl = document.getElementById('edgeDateLabel');
+    if (lbl) lbl.textContent = fmtDate(currentEdgeDate());
+    const todayBtn = document.getElementById('edgeToday');
+    if (todayBtn) todayBtn.classList.toggle('active', currentSub === 'upcoming');
+    const fwd = document.getElementById('edgeFwd');
+    if (fwd) fwd.disabled = currentSub !== 'yesterday';   // can't go past today
+  }
+  function edgeGoToday() {
+    switchSub('upcoming');
+  }
+  function edgeShiftDate(delta) {
+    const dd = new Date(currentEdgeDate() + 'T00:00:00');
+    dd.setDate(dd.getDate() + delta);
+    const shifted = dd.toLocaleDateString('en-CA', { timeZone: 'Australia/Sydney' });
+    if (shifted >= _aestToday()) { edgeGoToday(); return; }   // clamp to Today
+    loadYesterday(shifted);      // sets yesterdayViewDate + fetches
+    switchSub('yesterday');
+    updateEdgeDateBar();
+  }
+
+  function switchTab(tab) {
+    if (tab === 'trifectas') { switchParent('exotics'); switchSub('upcoming'); }
+    else { switchParent('wins'); switchSub(tab); }
+  }
+
+  const TIER_META = {
+    hot:      { badge: '🔥 Hot Pick',        color: 'var(--gold-light)', threshold: '≥ 46%', note: 'Highest conviction picks — the model and market strongly agree.' },
+    high:     { badge: '⚡ High Confidence', color: '#60a5fa',           threshold: '36–45%', note: 'Strong picks with good value potential — often where the model diverges slightly from market odds.' },
+    standard: { badge: 'Strong Pick',         color: 'var(--green)',      threshold: '30–35%', note: 'Largest sample — the most statistically reliable win rate of the three tiers.' },
+  };
+
+  async function loadPremiumPerf() {
+    try {
+      const res = await fetch(`${API}/api/performance/premium/public`);
+      if (!res.ok) throw new Error();
+      const d = await res.json();
+      document.getElementById('premium-perf-loading').style.display = 'none';
+      const pnl = d.pnl_at_10;
+      // Show stats whenever we have real data — regardless of sign.
+      // Previously gated on pnl > 0 which hid the panel while quietly
+      // showing 'Premium stats still accumulating…' when the tier was
+      // running at a loss; that's marketing dressed as UI (and Anna /
+      // any prospective member notices — the number is what it is).
+      const hasData = d.bets > 0 && pnl != null;
+      if (!hasData) {
+        const accum = document.createElement('div');
+        accum.style.cssText = 'padding:18px 0 6px;font-size:0.88rem;color:var(--text-dim);text-align:center;font-style:italic';
+        accum.textContent = 'Premium stats still accumulating…';
+        document.getElementById('premium-perf-loading').insertAdjacentElement('afterend', accum);
+        return;
+      }
+      document.getElementById('premium-perf-stats').style.display = '';
+      document.getElementById('pps-winpct').textContent = d.win_pct != null ? d.win_pct + '%' : '—';
+      document.getElementById('pps-bets').textContent = d.bets ?? '—';
+      document.getElementById('pps-avgsp').textContent = d.avg_sp != null ? '$' + d.avg_sp.toFixed(2) : '—';
+      function updateTagline(stake) {
+        if (!d.bets || d.pnl_at_10 == null) return;
+        const tagEl = document.getElementById('pps-tagline');
+        const multiplier = stake / 10;
+        const spent = d.bets * stake;
+        const pnl = d.pnl_at_10 * multiplier;
+        const returned = spent + pnl;
+        // Only run the celebratory 'Now that's Funky!' framing when the
+        // tier was actually profitable. When P&L is negative, hide the
+        // tagline entirely — stats block still tells the story honestly.
+        if (pnl <= 0) {
+          tagEl.style.display = 'none';
+          tagEl.innerHTML = '';
+          return;
+        }
+        tagEl.style.display = '';
+        tagEl.innerHTML = `For the last 30 days, FunkyIQ would have returned <strong style="color:var(--green-bright)">$${Math.round(returned).toLocaleString()}</strong>, if someone bet <strong style="color:var(--text-primary)">$${spent.toLocaleString()}</strong> on the VALUE races ($${stake.toLocaleString()} per VALUE race for the ${d.bets} races over the last 30 days). <span style="color:var(--purple-bright);font-weight:700">Now that's Funky!</span>`;
+      }
+      updateTagline(10);
+    } catch (_) {
+      document.getElementById('premium-perf-loading').textContent = 'Stats unavailable';
+    }
+  }
+
+  async function loadTrackRecord() {
+    trackRecordLoaded = true;
+    loadPremiumPerf();
+    try {
+      const res = await fetch(`${API}/api/track-record`);
+      if (!res.ok) throw new Error(res.statusText);
+      const data = await res.json();
+      // Update legend bar with live stats
+      data.tiers.forEach(tier => {
+        const pctEl   = document.getElementById(`leg-${tier.badge === 'standard' ? 'std' : tier.badge}-pct`);
+        const racesEl = document.getElementById(`leg-${tier.badge === 'standard' ? 'std' : tier.badge}-races`);
+        if (pctEl)   pctEl.textContent   = `${Math.round(tier.win_pct)}% win rate`;
+        if (racesEl) racesEl.textContent = tier.races.toLocaleString();
+      });
+
+      const grid = document.getElementById('trTierGrid');
+      grid.innerHTML = data.tiers.map(tier => {
+        const m = TIER_META[tier.badge] || {};
+        const confLabel = tier.conf_max ? `${tier.conf_min}–${tier.conf_max}%` : `≥${tier.conf_min}%`;
+        const badgeHtml = tier.badge === 'hot'
+          ? `<span class="legend-badge hot">🔥 Hot Pick</span>`
+          : tier.badge === 'high'
+          ? `<span class="legend-badge high">⚡ High Confidence</span>`
+          : `<span class="legend-badge standard">Strong Pick</span>`;
+        return `
+          <div class="tr-tier-card ${tier.badge}">
+            <div class="tr-tier-header">
+              ${badgeHtml}
+              <span class="tr-tier-threshold">${confLabel} confidence rating</span>
+            </div>
+            <div class="tr-tier-stats">
+              <div class="tr-tier-stat">
+                <div class="tr-tier-stat-num" style="color:${m.color}">${Math.round(tier.win_pct)}%</div>
+                <div class="tr-tier-stat-label">Historical win rate</div>
+              </div>
+              <div class="tr-tier-stat">
+                <div class="tr-tier-stat-num">${tier.races.toLocaleString()}</div>
+                <div class="tr-tier-stat-label">Races analysed <span class="info-icon" data-tooltip="Number of past races where this confidence level was found and tested against">ℹ</span></div>
+              </div>
+              <div class="tr-tier-stat">
+                <div class="tr-tier-stat-num" style="color:${m.color}">${confLabel}</div>
+                <div class="tr-tier-stat-label">Confidence rating</div>
+              </div>
+            </div>
+            <div class="tr-tier-note">${m.note}</div>
+          </div>`;
+      }).join('');
+    } catch (e) {
+      document.getElementById('trTierGrid').innerHTML =
+        `<div class="empty-state"><div class="empty-icon">⚠️</div><div class="empty-title">Could not load track record</div><div class="empty-sub">${escHtml(e.message)}</div></div>`;
+    }
+  }
+
+  function ordinal(n) {
+    if (!n) return '—';
+    // 99 (and anything ≥90) is the "ran but finished out of the placings"
+    // sentinel written by the seeder — never a real finishing position, so
+    // render it as "unplaced" rather than a nonsense "99th".
+    if (n >= 90) return 'unplaced';
+    const s = ['th','st','nd','rd'], v = n % 100;
+    return n + (s[(v-20)%10] || s[v] || s[0]);
+  }
+
+  function renderYesterdayCard(p, stake) {
+    const isWin = p.winner;
+    const isPlaced = p.placed && !isWin;
+    const isLoss = !isWin && !isPlaced && !p.scratched && !p.no_result;
+    const barW = Math.min(100, (p.model_pct / 70) * 100);
+    const barColor = isWin ? 'var(--green)' : isPlaced ? '#f59e0b' : 'var(--text-dim)';
+    const pctColor = isWin ? 'var(--green)' : isPlaced ? '#f59e0b' : 'var(--text-dim)';
+
+    // Badge — same slot as upcoming confidence badge
+    let badge;
+    const posLabel = p.position === 2 ? '2nd' : p.position === 3 ? '3rd' : p.position ? `${p.position}th` : '';
+    if (p.scratched) {
+      badge = `<span class="pick-badge-standard" style="background:var(--bg-elevated);color:var(--text-dim);border-color:var(--border);">Scratched</span>`;
+    } else if (p.no_result) {
+      badge = `<span class="pick-badge-standard" style="background:var(--bg-elevated);color:var(--text-dim);border-color:var(--border);">No result</span>`;
+    } else if (isWin) {
+      badge = `<span class="pick-badge-standard" style="background:var(--green-dim);color:var(--green);border-color:rgba(34,197,94,0.25);">✓ Won</span>`;
+    } else if (isPlaced) {
+      badge = `<span class="pick-badge-standard" style="background:rgba(245,158,11,0.10);color:#f59e0b;border-color:rgba(245,158,11,0.25);">~ Placed ${posLabel}</span>`;
+    } else {
+      badge = `<span class="pick-badge-standard" style="background:rgba(239,68,68,0.10);color:#f87171;border-color:rgba(239,68,68,0.25);">✗ Unplaced${posLabel ? ` (${posLabel})` : ''}</span>`;
+    }
+
+    // Chips
+    const barrierChip = p.barrier ? `<span class="chip">B${p.barrier}</span>` : '';
+    const jockeyChip  = p.jockey  ? `<span class="chip">J: ${escHtml(p.jockey)}</span>` : '';
+    const trainerChip = p.trainer ? `<span class="chip">T: ${escHtml(p.trainer)}</span>` : '';
+    const weightChip  = p.weight  ? `<span class="chip">${p.weight}kg</span>` : '';
+    // Last-10 form — same logic as live picks block.
+    const yLast10Label = (p.starts_last_10 != null && p.starts_last_10 < 10)
+      ? `Last ${p.starts_last_10}` : 'Last 10';
+    const last10Chip = p.form_figures
+      ? `<span class="chip" title="Recent form — most recent start first. 1–9 = finishing position, 0 = finished outside the top 9.">Form ${p.form_figures}</span>`
+      : (p.wins_last_10 != null && p.places_last_10 != null)
+      ? `<span class="chip" title="${p.wins_last_10} win(s) and ${p.places_last_10} total top-3 finish(es) across the last ${p.starts_last_10 || 10} start(s)">${yLast10Label}: ${p.wins_last_10}W · ${p.places_last_10} top-3</span>`
+      : '';
+
+    // Odds panel (SP in place of Best Odds)
+    const oddsHtml = p.sp
+      ? (() => {
+          let cls = '';
+          if (p.sp >= 3.0) cls = ' odds-great';
+          else if (p.sp >= 2.5) cls = ' odds-good';
+          return `<div class="odds-badge${cls}"><span class="odds-label">Starting Price</span>$${p.sp.toFixed(2)}</div>`;
+        })()
+      : `<div class="odds-badge" style="color:var(--text-dim)"><span class="odds-label">Starting Price</span>N/A</div>`;
+
+    // Payout panel — computed from SP and user stake
+    const gross = p.sp ? +(p.sp * stake).toFixed(2) : 0;
+    const profit = p.sp ? +(gross - stake).toFixed(2) : 0;
+    let payoutHtml;
+    if (p.scratched) {
+      payoutHtml = `<div class="no-odds">Scratched — no bet</div>`;
+    } else if (p.no_result) {
+      // Race not seeded yet — don't treat it as a $10 loss.
+      // Card matches the summary strip's exclusion (activePicks filter).
+      payoutHtml = `<div class="no-odds">No result yet — awaiting seed</div>`;
+    } else if (isWin && p.sp) {
+      payoutHtml = `
+        <div class="payout-box">
+          <div class="payout-profit-label">$${stake} stake</div>
+          <div class="payout-profit">+$${profit.toFixed(2)}</div>
+          <div class="payout-return">Return: <span class="return-amt">$${gross.toFixed(2)}</span></div>
+        </div>`;
+    } else if (isPlaced) {
+      payoutHtml = `
+        <div class="payout-box" style="background:rgba(245,158,11,0.08);border-color:rgba(245,158,11,0.2);">
+          <div class="payout-profit-label" style="color:var(--text-dim)">$${stake} loss (placed)</div>
+          <div class="payout-profit" style="color:#f59e0b;">-$${(+stake).toFixed(2)}</div>
+          ${p.position ? `<div class="payout-return" style="color:#f59e0b">Finished ${ordinal(p.position)}</div>` : ''}
+        </div>`;
+    } else {
+      payoutHtml = `
+        <div class="payout-box" style="background:rgba(239,68,68,0.08);border-color:rgba(239,68,68,0.2);">
+          <div class="payout-profit-label" style="color:var(--text-dim)">$${stake} loss</div>
+          <div class="payout-profit" style="color:#f87171;">-$${(+stake).toFixed(2)}</div>
+          ${p.position ? `<div class="payout-return" style="color:var(--text-dim)">${p.position >= 90 ? 'Unplaced' : 'Finished ' + ordinal(p.position)}</div>` : ''}
+        </div>`;
+    }
+
+    const marketImplied = p.sp ? +(100 / p.sp).toFixed(1) : null;
+    const edgePct = marketImplied ? +(p.model_pct - marketImplied).toFixed(1) : null;
+
+    // Win rate pill — same as upcoming but shows actual result inline.
+    // Bands: Strong 30-35, High 36-45, Hot 46+.
+    let tierBadgeHtml;
+    const yCtier = p.confidence_tier;
+    if (yCtier === 'hot' || (yCtier == null && p.model_pct >= 46 && !p.going_offtrack)) {
+      tierBadgeHtml = `<span class="pick-badge-hot">🔥 Hot Pick</span>`;
+    } else if (yCtier === 'high' || (yCtier == null && p.model_pct >= 36 && !p.going_offtrack)) {
+      tierBadgeHtml = `<span class="pick-badge-hot" style="background:rgba(59,130,246,0.12);color:#60a5fa;border-color:rgba(59,130,246,0.28);">⚡ High Confidence</span>`;
+    } else {
+      tierBadgeHtml = `<span class="pick-badge-standard">Strong Pick</span>`;
+    }
+    const yesterdayIsPremium = p.model_pct >= 29.5 && p.sp && p.sp >= 3.0 && edgePct != null && edgePct > 5;
+    const yesterdayPremiumBadge = yesterdayIsPremium ? `<span class="pick-badge-premium">💎 Premium</span>` : '';
+    const winRateHtml = `
+      <div class="win-rate-row">
+        ${tierBadgeHtml}${yesterdayPremiumBadge}
+        <span class="win-rate-label">${p.calibrated_win_rate}% historical win rate</span>
+      </div>`;
+    const edgeHtml = edgePct != null
+      ? `<div class="edge-row" style="margin-top:8px">
+           <span class="${edgePct >= 0 ? 'edge-positive' : 'edge-negative'}">${edgePct >= 0 ? `Model beats market by ${edgePct}` : `Market prefers by ${Math.abs(edgePct)}`}</span>
+           <span class="edge-label">model ${p.model_pct}% vs market ${marketImplied}%</span>
+         </div>`
+      : '';
+
+    return `
+      <div class="pick-card ${isWin ? 'hot' : ''} ${isWin ? 'yr-won' : isPlaced ? 'yr-placed' : isLoss ? 'yr-loss' : ''}" style="${isPlaced ? 'border-color:rgba(245,158,11,0.25);' : isLoss ? 'border-color:rgba(239,68,68,0.2);' : ''}${(p.scratched || p.no_result) ? 'opacity:0.55;' : ''}">
+        <div class="pick-card-top-bar">
+          ${badge}
+          <div class="pick-race-ref">
+            <span class="venue-name">${escHtml(p.venue)}</span>
+            <span class="sep">·</span>
+            <span>R${p.race_number}</span>
+            ${p.scheduled_time ? `<span class="sep">·</span><span>${_fmtRaceTime(p.scheduled_time)}</span>` : ''}
+          </div>
+        </div>
+        <div class="pick-body">
+          <div class="pick-left">
+            <div class="pick-horse-name" ${!isWin && !p.scratched ? 'style="color:var(--text-secondary)"' : ''}>${escHtml(p.horse_name)}</div>
+            <div class="pick-details">${barrierChip}${jockeyChip}${trainerChip}${weightChip}${last10Chip}</div>
+            <div class="dual-stat-row" style="margin-bottom:8px">
+              <div class="dual-stat">
+                <span class="dual-stat-num" style="color:${pctColor}">${p.model_pct}%</span>
+                <span class="dual-stat-label">win prediction</span>
+              </div>
+              ${p.place_probability != null ? `
+              <div class="dual-stat-sep"></div>
+              <div class="dual-stat">
+                <span class="dual-stat-num" style="color:#60a5fa">${p.place_probability}%</span>
+                <span class="dual-stat-label">place prediction</span>
+              </div>` : ''}
+            </div>
+            ${winRateHtml}
+            ${edgeHtml}
+          </div>
+          <div class="pick-right">
+            ${oddsHtml}
+          </div>
+        </div>
+        ${p.trifecta ? (() => {
+          const tri = p.trifecta;
+          const posLabel = pos => pos === 1 ? '1st' : pos === 2 ? '2nd' : pos === 3 ? '3rd' : pos === 4 ? '4th' : pos ? pos+'th' : '—';
+          const legHtml = l => {
+            const pos = l.position;
+            const inTop3 = pos && pos <= 3 && !l.scratched;
+            const col = l.scratched ? 'var(--text-dim)' : inTop3 ? 'var(--green-bright)' : (pos ? '#f87171' : 'var(--text-secondary)');
+            return `<span style="color:${col};font-weight:700">${l.tab_number || '?'}</span>`
+              + (l.place_pct != null ? `<span style="color:var(--text-dim);font-size:0.65rem"> (${l.place_pct}%)</span>` : '')
+              + (pos != null ? `<span style="color:${col};font-size:0.7rem"> ${posLabel(pos)}</span>` : '');
+          };
+          const triNums = tri.legs.map(legHtml).join(' <span style="color:var(--border)">·</span> ');
+          const triNames = tri.legs.map(l => escHtml(l.horse_name)).join(' · ');
+          const triPct = tri.combined_pct != null ? `<span class="tri-combined">~${tri.combined_pct}%</span>` : '';
+          const verdict = tri.hit != null
+            ? (tri.hit
+                ? `<span style="font-weight:800;color:var(--green-bright);font-size:0.78rem">✓ HIT</span>`
+                : `<span style="font-weight:700;color:#f87171;font-size:0.72rem">✗ Missed</span>`)
+            : '';
+          const ffPart = tri.first_four ? (() => {
+            const ffNums = tri.first_four.map(legHtml).join(' <span style="color:var(--border)">·</span> ');
+            const ffNames = tri.first_four.map(l => escHtml(l.horse_name)).join(' · ');
+            const ffPct = tri.first_four_combined_pct != null ? `<span class="tri-combined">~${tri.first_four_combined_pct}%</span>` : '';
+            const ffVerdict = tri.first_four_hit != null
+              ? (tri.first_four_hit
+                  ? `<span style="font-weight:800;color:var(--green-bright);font-size:0.78rem">✓ HIT</span>`
+                  : `<span style="font-weight:700;color:#f87171;font-size:0.72rem">✗ Missed</span>`)
+              : '';
+            return `<div class="tri-ff-row"><span class="tri-ff-label">First 4</span><span class="tri-ff-legs">${ffNums}</span>${ffPct}${ffVerdict}<span class="tri-ff-names">${ffNames}</span></div>`;
+          })() : '';
+          return `<div class="trifecta-strip">
+            <span class="tri-label">🎯 Trifecta<span class="tier-marker tier-pro">Pro</span></span>
+            <span class="tri-legs">${triNums}</span>
+            ${triPct}${verdict}
+            <span class="tri-names">${triNames}</span>
+            ${ffPart}
+          </div>`;
+        })() : ''}
+      </div>`;
+  }
+
+  function renderExoticCard(pick) {
+    const isHot  = pick.tier === 'hot';
+    const isHigh = pick.tier === 'high';
+    const tierClass = isHot ? 'hot' : isHigh ? 'high' : 'strong';
+
+    const tierLabel = isHot  ? '🔥 Hot Exotic'
+                    : isHigh ? '⚡ High Confidence'
+                    :          '📈 Strong Exotic';
+
+    const countdownId = `ec-${pick.race_id.replace(/[^a-z0-9]/gi,'_')}`;
+
+    const now = Date.now();
+    const isPast = pick.scheduled_time && new Date(pick.scheduled_time).getTime() < now;
+    const isFinished = isPast; // switch to result mode as soon as race is past
+
+    // Build all runners — legs (tri top 3) merged with first_four 4th runner
+    const allRunners = [...(pick.legs || [])];
+    if (pick.first_four && pick.first_four.length === 4) {
+      const leg4 = pick.first_four[3];
+      if (!allRunners.find(r => r.horse_name === leg4.horse_name)) allRunners.push(leg4);
+    }
+
+    const rankSymbols = ['①','②','③','④'];
+    const rankClasses = ['r1','r2','r3','r4'];
+
+    const runnersHtml = allRunners.map((l, i) => {
+      const posLabel = l.scratched ? 'SCR' : l.position ? ordinal(l.position) : '';
+      const posStyle = l.scratched ? 'color:var(--text-dim);' :
+                       l.position && l.position <= (i < 3 ? 3 : 4) && isFinished
+                         ? 'color:var(--green-bright);font-weight:700;' : 'color:var(--text-secondary);';
+      return `
+      <div class="exotic-runner-row rank-${i+1}">
+        <span class="exotic-rank ${rankClasses[i] || ''}">${rankSymbols[i] || (i+1)}</span>
+        <div class="exotic-tab-badge">${l.tab_number || '?'}</div>
+        <div class="exotic-runner-info">
+          <div class="exotic-runner-name">${escHtml(l.horse_name)}</div>
+          <div class="exotic-runner-detail">${[
+            l.jockey ? 'J: ' + escHtml(l.jockey) : '',
+            l.barrier ? 'B' + l.barrier : '',
+            l.weight ? l.weight + 'kg' : ''
+          ].filter(Boolean).join(' · ')}</div>
+        </div>
+        <div class="exotic-runner-stats">
+          ${isFinished
+            ? `<div style="${posStyle}font-size:0.8rem;">${posLabel || '—'}</div>`
+            : `<div class="exotic-runner-pct">${l.place_pct != null ? l.place_pct + '%' : '—'}<span style="color:var(--text-dim);font-size:0.6rem;font-weight:500;margin-left:2px">place</span></div>`
+          }
+          <div class="exotic-runner-odds">${l.best_available_odds ? '$' + l.best_available_odds.toFixed(2) : '—'}</div>
+        </div>
+      </div>`;
+    }).join('');
+
+    const _wx = weatherByCode[pick.venue];
+    const wxStr = _wx ? [_wx.icon, _wx.temp_max != null ? _wx.temp_max+'°C' : '', _wx.rain_mm > 0 ? '💧'+_wx.rain_mm+'mm' : ''].filter(Boolean).join(' ') : '';
+
+    const alignBadge = (() => {
+      if (isFinished) return '';
+      const a = pick.exotic_alignment;
+      if (a === 'confirmed')    return `<span class="exotic-align-badge confirmed">✓ Win aligned</span>`;
+      if (a === 'partial')      return `<span class="exotic-align-badge partial">~ Partial</span>`;
+      if (a === 'diverge')      return `<span class="exotic-align-badge diverge">⚠ Diverge</span>`;
+      if (a === 'no_edge_pick') return `<span class="exotic-align-badge no-edge">– No win pick</span>`;
+      return '';
+    })();
+
+    let resultBadge = '';
+    if (isFinished) {
+      if (pick.hit === true) {
+        resultBadge = `<span class="pick-badge-standard" style="background:var(--green-dim);color:var(--green);border-color:rgba(34,197,94,0.25);">✓ Tri Hit</span>`;
+      } else if (pick.hit === false) {
+        resultBadge = `<span class="pick-badge-standard" style="background:rgba(239,68,68,0.10);color:#f87171;border-color:rgba(239,68,68,0.25);">✗ Missed</span>`;
+      } else {
+        resultBadge = `<span class="pick-badge-standard" style="background:var(--bg-elevated);color:var(--text-dim);border-color:var(--border);">Result pending</span>`;
+      }
+    }
+
+    const ffResultBadge = !isFinished ? '' : (pick.first_four_hit === true)
+      ? `<span class="exotic-sep">·</span><span style="color:var(--green-bright);font-size:0.75rem;">✓ FF Hit</span>`
+      : (pick.first_four_hit === false)
+        ? `<span class="exotic-sep">·</span><span style="color:#f87171;font-size:0.75rem;">✗ FF Missed</span>`
+        : '';
+
+    const timeStr = fmtTime(pick.scheduled_time);
+    return `
+      <div class="exotic-card ${tierClass}">
+        <div class="exotic-card-header ${tierClass}">
+          <span class="exotic-tier-badge ${tierClass}">${tierLabel}</span>
+          <div class="pick-race-ref" style="margin-left:0">
+            <span class="venue-name">${escHtml(pick.venue)}</span>${window.FIQConditions ? FIQConditions.chip(pick.venue) : ''}
+            <span class="sep">·</span>
+            <span>R${pick.race_number}</span>
+          </div>
+          <div class="pick-time-wrap">
+            ${timeStr ? `<span class="pick-time">${escHtml(timeStr)}</span>` : ''}
+            ${pick.scheduled_time ? `<span class="pick-countdown" id="${countdownId}" data-jump="${escHtml(pick.scheduled_time)}" data-race-id="${escHtml(pick.race_id)}"></span>` : ''}
+            ${resultBadge}
+          </div>
+        </div>
+        <div class="exotic-runners">${runnersHtml}</div>
+        <div class="exotic-card-footer">
+          <span class="exotic-conf">Tri ~${pick.combined_pct}%</span>
+          ${pick.first_four_combined_pct != null ? `<span class="exotic-conf ff">FF ~${pick.first_four_combined_pct}%</span>` : ''}
+          ${ffResultBadge}
+          <span class="exotic-sep">·</span>
+          ${pick.distance ? `<span style="color:var(--text-secondary)">${pick.distance}m</span><span class="exotic-sep">·</span>` : ''}
+          ${pick.track_condition ? `<span style="color:var(--text-secondary)">${escHtml(pick.track_condition)}</span><span class="exotic-sep">·</span>` : ''}
+          ${pick.state ? `<span style="color:var(--text-dim)">${escHtml(pick.state)}</span>` : ''}
+          ${wxStr ? `<span class="exotic-sep">·</span><span style="color:var(--text-dim)">${wxStr}</span>` : ''}
+          ${alignBadge ? `<span class="exotic-sep">·</span>${alignBadge}` : ''}
+          ${pick.field_size ? `<span class="exotic-sep">·</span><span style="color:var(--text-dim)">Field ${pick.field_size}</span>` : ''}
+        </div>
+      </div>`;
+  }
+
+  function startExoticCountdown(el) {
+    if (!el.dataset.jump) return;
+    const jump = new Date(el.dataset.jump);
+    function tick() {
+      const diff = Math.round((jump - new Date()) / 1000);
+      if (diff <= 0) {
+        el.textContent = 'Jumped';
+        el.className = 'exotic-countdown jumped';
+        return;
+      }
+      const h = Math.floor(diff / 3600);
+      const m = Math.floor((diff % 3600) / 60);
+      const s = diff % 60;
+      el.textContent = h > 0 ? `${h}h ${m}m` : m > 0 ? `${m}m ${s}s` : `${s}s`;
+      el.className = 'exotic-countdown' + (diff < 300 ? ' urgent' : diff < 1800 ? ' soon' : '');
+      setTimeout(tick, 1000);
+    }
+    tick();
+  }
+
+  async function loadTrifectas() {
+    trifectasLoaded = true;
+    if (window.FIQConditions) { try { await FIQConditions.ready; } catch(e){} }
+    try {
+      const res = await fetch(`${API}/api/edge/trifectas`);
+      if (!res.ok) throw new Error(res.statusText);
+      trifectasData = await res.json();
+      renderTrifectasContent(trifectasData);
+    } catch (e) {
+      document.getElementById('trifectasContent').innerHTML = `
+        <div class="empty-state"><div class="empty-icon">⚠️</div><div class="empty-title">Could not load exotic picks</div><div class="empty-sub">${escHtml(e.message)}</div></div>`;
+    }
+  }
+
+  function renderTrifectasContent(data) {
+    const el = document.getElementById('trifectasContent');
+    if (!data.picks || !data.picks.length) {
+      el.innerHTML = `<div class="empty-state"><div class="empty-icon">🎯</div><div class="empty-title">No exotic picks yet</div><div class="empty-sub">Races haven't been enriched yet today, or no races meet the confidence threshold.</div></div>`;
+      return;
+    }
+
+    const sorted = [...data.picks].sort((a, b) => {
+      if (exoticSortMode === 'best') return b.combined_pct - a.combined_pct;
+      // next race: soonest first, null last
+      if (!a.scheduled_time && !b.scheduled_time) return 0;
+      if (!a.scheduled_time) return 1;
+      if (!b.scheduled_time) return -1;
+      return new Date(a.scheduled_time) - new Date(b.scheduled_time);
+    });
+
+    // Group by date
+    const byDate = {};
+    for (const p of sorted) byDate[p.date] = (byDate[p.date] || []).concat(p);
+
+    const todayStr    = new Date().toLocaleDateString('en-CA', {timeZone:'Australia/Sydney'});
+    const tomorrowStr = new Date(Date.now() + 86400000).toLocaleDateString('en-CA', {timeZone:'Australia/Sydney'});
+
+    let html = '';
+    for (const [date, picks] of Object.entries(byDate).sort()) {
+      const label = date === todayStr ? 'Today' : date === tomorrowStr ? 'Tomorrow' : fmtDate(date).split(',')[0];
+      html += `<div class="date-group"><div class="date-label">${label} — ${picks.length} exotic pick${picks.length !== 1 ? 's' : ''}</div><div class="picks-grid">`;
+      for (const p of picks) html += renderExoticCard(p);
+      html += `</div></div>`;
+    }
+    el.innerHTML = html;
+
+    // Trigger initial tick so countdowns show immediately
+    tickCountdowns();
+  }
+
+  // Track the date currently shown in Yesterday tab (ISO string)
+  let yesterdayViewDate = null;
+
+  function _aestToday() {
+    return new Date().toLocaleDateString('en-CA', { timeZone: 'Australia/Sydney' });
+  }
+
+  function shiftYesterdayDate(delta) {
+    const base = yesterdayViewDate || (() => {
+      const d = new Date(_aestToday()); d.setDate(d.getDate() - 1); return d.toLocaleDateString('en-CA', { timeZone: 'Australia/Sydney' });
+    })();
+    const d = new Date(base + 'T00:00:00');
+    d.setDate(d.getDate() + delta);
+    const shifted = d.toLocaleDateString('en-CA', { timeZone: 'Australia/Sydney' });
+    // Don't go past today
+    if (shifted >= _aestToday()) return;
+    loadYesterday(shifted);
+  }
+
+  async function loadYesterday(dateStr) {
+    yesterdayLoaded = true;
+    if (!dateStr) {
+      const d = new Date(_aestToday()); d.setDate(d.getDate() - 1);
+      dateStr = d.toLocaleDateString('en-CA', { timeZone: 'Australia/Sydney' });
+    }
+    yesterdayViewDate = dateStr;
+
+    // Update nav label
+    const labelEl = document.getElementById('ystDateLabel');
+    const nextBtn  = document.getElementById('ystNext');
+    if (labelEl) labelEl.textContent = fmtDate(dateStr);
+    const tomorrow = new Date(_aestToday()); tomorrow.setDate(tomorrow.getDate() - 1);
+    if (nextBtn) nextBtn.disabled = dateStr >= tomorrow.toLocaleDateString('en-CA', { timeZone: 'Australia/Sydney' });
+
+    document.getElementById('yesterdayContent').innerHTML = `<div class="loading"><div class="loading-spinner"></div>Loading results…</div>`;
+    try {
+      const res = await fetch(`${API}/api/edge/yesterday?date=${dateStr}`);
+      if (!res.ok) throw new Error(res.statusText);
+      yesterdayData = await res.json();
+      const stake = 10;  // input removed 2026-07-20
+      renderYesterdayContent(yesterdayData, stake);
+    } catch (e) {
+      document.getElementById('yesterdayContent').innerHTML = `
+        <div class="empty-state"><div class="empty-icon">⚠️</div><div class="empty-title">Could not load results</div><div class="empty-sub">${escHtml(e.message)}</div></div>`;
+    }
+  }
+
+  function renderYesterdayContent(data, stake) {
+    const el = document.getElementById('yesterdayContent');
+    // Apply the Sharp/All filter that was previously ignored on this
+    // view — same rule as upcoming, using isSharpEdgePick from sharp.js.
+    const inSharp = window.__edgeMode === 'sharp';
+    const shownPicks = inSharp && typeof isSharpEdgePick === 'function'
+      ? data.picks.filter(isSharpEdgePick)
+      : data.picks;
+    if (!shownPicks.length) {
+      const emptyMsg = inSharp
+        ? `No Sharp picks qualified on ${data.date}. Switch to "All picks" above to see the full field.`
+        : `No races had ≥30% confidence on ${data.date}.`;
+      el.innerHTML = `<div class="empty-state"><div class="empty-icon">📭</div><div class="empty-title">No qualifying picks yesterday</div><div class="empty-sub">${emptyMsg}</div></div>`;
+      return;
+    }
+
+    // Exclude scratched + no_result rows from the stats — race wasn't
+    // bet-eligible in either case. Otherwise Unplaced inflates on days
+    // where RA scraping fell behind (Fri 2026-07-10 incident).
+    const activePicks = shownPicks.filter(p => !p.scratched && !p.no_result);
+    const winRate = activePicks.length ? +(activePicks.filter(p => p.winner).length / activePicks.length * 100).toFixed(1) : 0;
+
+    // Update date nav label with win %
+    const ystLbl = document.getElementById('ystDateLabel');
+    if (ystLbl && yesterdayViewDate) ystLbl.textContent = `${fmtDate(yesterdayViewDate)} — ${winRate}% win`;
+
+    const wins   = activePicks.filter(p => p.winner).length;
+    const placed = activePicks.filter(p => p.placed && !p.winner).length;
+    const losses = activePicks.filter(p => !p.winner && !p.placed).length;
+    const placeRate = activePicks.length ? +((wins + placed) / activePicks.length * 100).toFixed(1) : 0;
+    const premiumCount = shownPicks.filter(p => {
+      const mi = p.sp ? +(100 / p.sp).toFixed(1) : null;
+      const ep = mi ? +(p.model_pct - mi).toFixed(1) : null;
+      return p.model_pct >= 29.5 && p.sp && p.sp >= 3.0 && ep != null && ep > 5;
+    }).length;
+
+    // Summary strip: dropped the P&L + ROI cells (2026-07-21 UX pass) —
+    // odds/results tell the story on the cards below, aggregate P&L
+    // added visual noise without adding information.
+    el.innerHTML = `
+      <div class="pnl-bar">
+        <div class="pnl-cell">
+          <div class="pnl-cell-num">${activePicks.length}</div>
+          <div class="pnl-cell-label">Picks</div>
+        </div>
+        <div class="pnl-cell">
+          <div class="pnl-cell-num" style="color:var(--purple-bright)">${premiumCount}</div>
+          <div class="pnl-cell-label">💎 Premium</div>
+        </div>
+        <div class="pnl-cell">
+          <div class="pnl-cell-num pnl-positive">${wins}</div>
+          <div class="pnl-cell-label">Wins (${winRate}%)</div>
+        </div>
+        <div class="pnl-cell">
+          <div class="pnl-cell-num" style="color:#f59e0b">${placed}</div>
+          <div class="pnl-cell-label">Placed (${placeRate}% top-3)</div>
+        </div>
+        <div class="pnl-cell">
+          <div class="pnl-cell-num pnl-negative">${losses}</div>
+          <div class="pnl-cell-label">Unplaced</div>
+        </div>
+      </div>
+      ${_sortYesterdayPicks(shownPicks).map(p => renderYesterdayCard(p, stake)).join('')}`;
+  }
+
+  async function load() {
+    if (window.FIQConditions) { try { await FIQConditions.ready; } catch(e){} }
+    try {
+      // Populate the win/place legend strip at page load (was only firing
+      // when the Wins→Insights subtab was opened, so first-time visitors
+      // saw "— · — races" placeholders against Hot Pick / High Confidence).
+      if (!trackRecordLoaded) loadTrackRecord();
+
+      const todayStr = new Date().toLocaleDateString('en-CA', { timeZone: 'Australia/Sydney' });
+      const tomorrowDate = new Date(); tomorrowDate.setDate(tomorrowDate.getDate() + 1);
+      const tomorrowStr = tomorrowDate.toLocaleDateString('en-CA', { timeZone: 'Australia/Sydney' });
+
+      // Fetch picks and today's meetings (with weather) in parallel
+      const [res, meetingsRes] = await Promise.all([
+        fetch(`${API}/api/edge`),
+        fetch(`${API}/api/meetings/${todayStr}`),
+      ]);
+      if (!res.ok) throw new Error(res.statusText);
+      picksData = await res.json();
+
+      // Populate weather map from today's meetings
+      if (meetingsRes.ok) {
+        const md = await meetingsRes.json();
+        renderMeetingsWeather(md.meetings);
+        for (const m of md.meetings) {
+          if (m.weather) weatherByCode[m.venue_code] = m.weather;
+        }
+      }
+
+      // Also fetch tomorrow's meetings if there are picks for that date
+      if (picksData.picks.some(p => p.date === tomorrowStr)) {
+        try {
+          const tmRes = await fetch(`${API}/api/meetings/${tomorrowStr}`);
+          if (tmRes.ok) {
+            const tmData = await tmRes.json();
+            for (const m of tmData.meetings) {
+              if (m.weather && !weatherByCode[m.venue_code]) weatherByCode[m.venue_code] = m.weather;
+            }
+          }
+        } catch (e) { /* best-effort */ }
+      }
+
+      const stake = 10;  // input removed 2026-07-20
+
+      // If any picks have already jumped, fetch today's results to show outcomes
+      const now = Date.now();
+      const hasPast = picksData.picks.some(p => p.scheduled_time && new Date(p.scheduled_time).getTime() < now);
+      // Seed resultsMap from picks that already have result data (from /api/edge)
+      _seedResultsMapFromPicks(picksData.picks);
+      if (hasPast) {
+        try {
+          const rr = await fetch(`${API}/api/edge/yesterday?date=${todayStr}`);
+          if (rr.ok) {
+            const rd = await rr.json();
+            for (const r of rd.picks) {
+              // Don't let a not-yet-seeded yesterday row (no_result) clobber a
+              // concrete result we already got from /api/edge's own annotation.
+              const existing = resultsMap[r.race_id];
+              if (existing && r.no_result && !existing.no_result) continue;
+              resultsMap[r.race_id] = r;
+            }
+          }
+        } catch (e) { /* results are best-effort */ }
+      }
+
+      renderContent(picksData, stake, resultsMap);
+      updateEdgeDateBar();
+      refreshOdds();
+      if (hasPast) refreshResults();
+      fetchSparklines(picksData.picks);
+    } catch (e) {
+      document.getElementById('content').innerHTML = `
+        <div class="empty-state">
+          <div class="empty-icon">⚠️</div>
+          <div class="empty-title">Could not load picks</div>
+          <div class="empty-sub">${escHtml(e.message)}</div>
+        </div>`;
+    }
+  }
+
+  // Track which race_ids have had a result-fetch scheduled so we don't double-up
+  const _triResultScheduled = new Set();
+
+  function scheduleTriResultFetch(raceId, jumpMs) {
+    if (_triResultScheduled.has(raceId)) return;
+    _triResultScheduled.add(raceId);
+    // Wait 3 min after jump to give RA time to post results, then fetch once
+    const waitMs = Math.max(0, jumpMs + 3 * 60 * 1000 - Date.now());
+    setTimeout(async () => {
+      if (!trifectasData) return;
+      try {
+        const res = await fetch(`${API}/api/edge/trifectas`);
+        if (!res.ok) return;
+        trifectasData = await res.json();
+        renderTrifectasContent(trifectasData);
+        // If still pending (RA slow to post), retry once more after 5 min
+        const still = trifectasData.picks.find(p => p.race_id === raceId && p.hit === undefined);
+        if (still) {
+          _triResultScheduled.delete(raceId);
+          scheduleTriResultFetch(raceId, Date.now());
+        }
+      } catch (e) { /* silent */ }
+    }, waitMs);
+  }
+
+  function _seedResultsMapFromPicks(picks) {
+    for (const p of picks) {
+      // Only seed when we actually have a result — won/placed are
+      // strictly true/false, or position is a number. /api/edge returns
+      // null for all three when the race ran but hasn't been seeded yet.
+      // Old code seeded a result object regardless (winner=false on null)
+      // which made renderCard's catch-all render '✗ Wrong' on
+      // not-yet-seeded races (e.g. Toowoomba R5 ZOUSAIN'S CHOICE which
+      // won but Edge said Wrong because seed-cron hadn't fetched results).
+      const hasResult = p.won === true || p.won === false
+        || p.placed === true || p.placed === false
+        || (typeof p.actual_position === 'number');
+      if (!hasResult) continue;
+      resultsMap[p.race_id] = {
+        winner: p.won === true,
+        position: p.actual_position,
+        sp: p.sp,
+        placed: p.placed === true,
+        scratched: p.scratched || false,
+        no_result: false,
+      };
+    }
+  }
+
+  async function refreshOdds() {
+    try {
+      const res = await fetch(`${API}/api/edge/refresh-odds`, { method: 'POST' });
+      if (!res.ok) return;
+      const res2 = await fetch(`${API}/api/edge`);
+      if (!res2.ok) return;
+      picksData = await res2.json();
+      _seedResultsMapFromPicks(picksData.picks);
+      const stake = 10;  // input removed 2026-07-20
+      renderContent(picksData, stake, resultsMap);
+    } catch (e) { /* silent — odds refresh is best-effort */ }
+  }
+
+  // Refresh resultsMap from the API once after any race has jumped
+  let _resultsRefreshTimer = null;
+  async function _doResultsRefresh() {
+    _resultsRefreshTimer = null;
+    const todayStr = new Date().toLocaleDateString('en-CA', { timeZone: 'Australia/Sydney' });
+    try {
+      if (picksData) _seedResultsMapFromPicks(picksData.picks);
+      const rr = await fetch(`${API}/api/edge/yesterday?date=${todayStr}`);
+      if (rr.ok) {
+        const rd = await rr.json();
+        for (const r of rd.picks) {
+          const existing = resultsMap[r.race_id];
+          if (existing && r.no_result && !existing.no_result) continue;
+          resultsMap[r.race_id] = r;
+        }
+      }
+      if (picksData) {
+        const stake = 10;  // input removed 2026-07-20
+        renderContent(picksData, stake, resultsMap);
+      }
+    } catch (e) { /* silent */ }
+  }
+  function scheduleResultsRefresh() {
+    if (_resultsRefreshTimer) return; // already queued
+    _resultsRefreshTimer = setTimeout(_doResultsRefresh, 3 * 60 * 1000); // 3 min after jump
+  }
+
+  function tickCountdowns() {
+    const now = Date.now();
+    document.querySelectorAll('.pick-countdown[data-jump]').forEach(el => {
+      const jump = new Date(el.dataset.jump).getTime();
+      const diff = Math.floor((jump - now) / 1000);
+      if (isNaN(diff)) return;
+      el.classList.remove('urgent', 'done');
+      if (diff <= 0) {
+        el.textContent = 'RACING';
+        el.classList.add('done');
+        scheduleResultsRefresh();                          // win picks
+        const raceId = el.dataset.raceId;
+        if (raceId) scheduleTriResultFetch(raceId, jump); // exotic picks
+      } else if (diff < 3600) {
+        const m = Math.floor(diff / 60), s = diff % 60;
+        el.textContent = `${m}m ${String(s).padStart(2,'0')}s`;
+        if (diff < 600) el.classList.add('urgent');
+      } else {
+        const h = Math.floor(diff / 3600), m = Math.floor((diff % 3600) / 60);
+        el.textContent = `${h}h ${m}m`;
+      }
+    });
+  }
+
+  async function refreshResults() {
+    try {
+      const res = await fetch(`${API}/api/edge/refresh-results`, { method: 'POST' });
+      if (!res.ok) return;
+      const data = await res.json();
+      if (data.cached) return; // server rate-limited — no new data
+      // Re-fetch results map and re-render if anything was seeded
+      const todayStr = new Date().toLocaleDateString('en-CA', { timeZone: 'Australia/Sydney' });
+      if (picksData) _seedResultsMapFromPicks(picksData.picks);
+      const rr = await fetch(`${API}/api/edge/yesterday?date=${todayStr}`);
+      if (rr.ok) {
+        const rd = await rr.json();
+        for (const r of rd.picks) {
+          const existing = resultsMap[r.race_id];
+          if (existing && r.no_result && !existing.no_result) continue;
+          resultsMap[r.race_id] = r;
+        }
+      }
+      if (picksData) {
+        const stake = 10;  // input removed 2026-07-20
+        renderContent(picksData, stake, resultsMap);
+      }
+    } catch (e) { /* silent — results refresh is best-effort */ }
+  }
+
+  setInterval(tickCountdowns, 1000);
+  // Per-user randomized intervals on API-hitting refreshes so concurrent
+  // edge.html sessions don't synchronize their backend hits.
+  setInterval(refreshOdds, 20 * 60 * 1000 + Math.random() * 2 * 60 * 1000); // 20-22 min
+  setInterval(refreshResults, 90 * 1000 + Math.random() * 20 * 1000);       // 90-110s
+
+  // Stake input widgets removed 2026-07-20 — no user-facing payout
+  // amounts to update on stake change. Any remaining internal payout math
+  // now runs against the hardcoded default (10) via _DEFAULT_STAKE.
+
+  // Field-expansion toggle on pick cards — delegated so it survives re-renders.
+  document.body.addEventListener('click', (e) => {
+    const t = e.target.closest('.edge-field-toggle');
+    if (!t) return;
+    const raceId = t.dataset.race;
+    if (!raceId) return;
+    if (_expandedFields.has(raceId)) _expandedFields.delete(raceId);
+    else _expandedFields.add(raceId);
+    if (picksData) {
+      const stake = 10;  // input removed 2026-07-20
+      renderContent(picksData, stake, resultsMap);
+    }
+  });
+
+  load();
+</script>
+</body>
+</html>
