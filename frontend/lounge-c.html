@@ -969,6 +969,14 @@
 (() => {
   const API = '';
   let VENUE_BADGES = {};  // { venueName: {badge:'gold'|'silver', win_pct, place_pct, sample, window_days} }
+  // Mobile: the badge tooltip shows on :focus (tap). Tapping elsewhere doesn't
+  // reliably blur a focused <span> on iOS/Android, so the tip would stick.
+  // Blur any focused .vq-badge when the tap/click lands outside it.
+  ['touchstart', 'click'].forEach(evt =>
+    document.addEventListener(evt, (e) => {
+      const a = document.activeElement;
+      if (a && a.classList && a.classList.contains('vq-badge') && !a.contains(e.target)) a.blur();
+    }, true));
   function venueBadge(name) {
     const b = VENUE_BADGES[name];
     if (!b || !b.badge || b.badge === 'avoid') return '';
