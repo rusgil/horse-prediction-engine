@@ -949,6 +949,7 @@
 
   .ff { font-variant-numeric: tabular-nums; letter-spacing: 0.14em; font-weight: 800; }
 </style>
+  <link rel="stylesheet" href="/pick-card.css">
 </head>
 <body>
 
@@ -1427,6 +1428,7 @@
       form_figures: p.form_figures, wins_last_10: p.wins_last_10, places_last_10: p.places_last_10,
       starts_last_10: p.starts_last_10, days_off: null,
       odds: p.best_available_odds, confidence_tier: p.confidence_tier, going_offtrack: p.going_offtrack,
+      accuracy: p.calibrated_win_rate,
       is_sharp: sharpOf(p), is_premium: isPremium(p),
       place_play: p.place_play || null,
       sportsbet_available: p.sportsbet_available, cancelled: p.cancelled, streak: p.streak,

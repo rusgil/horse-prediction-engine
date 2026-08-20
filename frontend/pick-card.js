@@ -34,14 +34,15 @@
     return { label: h + 'h' + (m ? ' ' + m + 'm' : ''), urg: h < 2 ? 'hour' : 'far' };
   };
 
-  // Big centred WIN/PLACE stat — the card's focal number (old-edge style).
-  function dualStat(win_pct, place_pct) {
-    if (win_pct == null) return `<div style="font-size:0.68rem;color:var(--text-3)">No prediction yet</div>`;
-    const w = Math.round(win_pct), p = place_pct != null ? Math.round(place_pct) : null;
-    return `<div class="dual-stat-row">
-      <div class="ds"><span class="ds-num num ${w >= 30 ? 'v-win' : 'v-dim'}">${w}%</span><span class="ds-lbl">win</span></div>
-      ${p != null ? `<div class="ds"><span class="ds-num num ${p >= 50 ? 'v-plc' : 'v-dim'}">${p}%</span><span class="ds-lbl">place</span></div>` : ''}
-    </div>`;
+  // 3-stat prediction bar (old-edge style): win prediction / place prediction /
+  // model accuracy at this level. accuracy is optional (omit → 2 stats).
+  function dualStat(win_pct, place_pct, accuracy) {
+    if (win_pct == null) return '';
+    const f = v => (+Number(v).toFixed(1));
+    let out = `<div class="ds"><span class="ds-num num ${win_pct >= 30 ? 'v-win' : ''}">${f(win_pct)}%</span><span class="ds-lbl">win prediction</span></div>`;
+    if (place_pct != null) out += `<div class="ds-sep"></div><div class="ds"><span class="ds-num num ${place_pct >= 50 ? 'v-plc' : ''}">${f(place_pct)}%</span><span class="ds-lbl">place prediction</span></div>`;
+    if (accuracy != null) out += `<div class="ds-sep"></div><div class="ds"><span class="ds-num num">${f(accuracy)}%</span><span class="ds-lbl">model accuracy at this level</span></div>`;
+    return `<div class="dual-stat-row">${out}</div>`;
   }
 
   function tierChip(pick) {
@@ -130,11 +131,11 @@
         <div class="pk-chips">${tierChip(pick)}${!isPast && pick.is_premium ? '<span class="chip prem">💎 PREMIUM</span>' : ''}${pick.is_sharp ? '<span class="chip sharp">🎯 SHARP</span>' : ''}${!isPast ? favChip(pick) : ''}${!isPast ? exoticChips(pick) : ''}${pick.sportsbet_available === false ? '<span class="chip nosb">🚫 Not on Sportsbet</span>' : ''}</div>
       </div>
       <div class="right">
-        ${dualStat(pick.win_pct, pick.place_pct)}
         ${displayOdds ? `<div class="odds-pill ${oddsCls}"><b class="num">$${(+displayOdds).toFixed(2)}</b>${oddsLbl}</div>` : '<div class="odds-pill">TBA</div>'}
         ${settledRes && res.winner && res.place_odds ? `<div class="odds-pill"><b class="num" style="font-size:1rem;color:var(--blue)">$${(+res.place_odds).toFixed(2)}</b>place</div>` : ''}
         ${!isPast && ctx.showSpark ? `<div class="spark-slot" id="spark-${pick.race_id.replace(/[^a-z0-9]/gi, '-')}"></div>` : ''}
       </div>
+      ${dualStat(pick.win_pct, pick.place_pct, pick.accuracy)}
       ${!isPast && ctx.footer ? (ctx.footer(pick) || '') : ''}${verdict}${tri}
     </div>`;
   }
