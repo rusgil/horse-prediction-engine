@@ -314,15 +314,15 @@
   .res.miss { color: var(--text-3); }
 
   /* prediction bars — TRUE scale, the number carries precision */
-  .pbar-pair { display: flex; flex-direction: column; gap: 4px; min-width: 130px; }
+  .pbar-pair { display: flex; flex-direction: column; gap: 4px; min-width: auto; }
   .pbar { display: flex; align-items: center; gap: 7px; font-size: 0.7rem; }
   .pbar .lbl { width: 30px; color: var(--text-3); font-weight: 700; flex-shrink: 0; letter-spacing: 0.04em; }
-  .pbar .track { flex: 1; height: 5px; border-radius: 3px; background: var(--surface-2); overflow: hidden; display: block; }
+  .pbar .track { display: none; }
   .pbar .fill { display: block; height: 100%; border-radius: 3px; }
   /* Original-Lounge colour language: win = gold, place = blue */
   .pbar .fill.win { background: var(--gold); }
   .pbar .fill.place { background: var(--blue); }
-  .pbar .val { width: 40px; text-align: right; font-weight: 800; color: var(--text); }
+  .pbar .val { width: auto; text-align: left; margin-left: 2px; font-weight: 800; color: var(--text); }
   /* % highlight — win from 30%, place from 50%; otherwise dim */
   .pbar .val.v-win { color: var(--gold); }
   .pbar .val.v-plc { color: var(--blue); }
@@ -685,7 +685,7 @@
     .runner .odds .o { font-size: 1rem; }
     .runner .odds .ol { font-size: 0.64rem; }
     .pbar { font-size: 0.78rem; }
-    .pbar .val { width: 48px; }
+    .pbar .val { width: auto; }
     .dw-res-row { font-size: 0.92rem; }
     .dw-note { font-size: 0.82rem; }
     .pick-tag { font-size: 0.62rem; }
@@ -1256,8 +1256,8 @@
     const w = pc(winP), p = pc(placeP);
     if (w == null) return `<div style="font-size:0.68rem;color:var(--text-3)">No prediction yet</div>`;
     return `<div class="pbar-pair">
-      <div class="pbar"><span class="lbl">WIN</span><span class="track"><span class="fill win" style="width:${Math.min(100, w)}%"></span></span><span class="val num ${w >= 30 ? 'v-win' : 'v-dim'}">${w}%</span></div>
-      ${p != null ? `<div class="pbar"><span class="lbl">PLC</span><span class="track"><span class="fill place" style="width:${Math.min(100, p)}%"></span></span><span class="val num ${p >= 50 ? 'v-plc' : 'v-dim'}">${p}%</span></div>` : ''}
+      <div class="pbar"><span class="lbl">WIN</span><span class="val num ${w >= 30 ? 'v-win' : 'v-dim'}">${w}%</span></div>
+      ${p != null ? `<div class="pbar"><span class="lbl">PLC</span><span class="val num ${p >= 50 ? 'v-plc' : 'v-dim'}">${p}%</span></div>` : ''}
     </div>`;
   }
 
