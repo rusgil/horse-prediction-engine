@@ -9,6 +9,7 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700;800&family=Barlow:wght@400;500;600;700;800&family=Outfit:wght@300;400;500;600&display=swap" rel="stylesheet">
 <script src="/sharp.js"></script>
+<script src="/pick-card.js"></script>
 <style>
   /* ── Tokens ─────────────────────────────────────────────── */
   :root {
@@ -302,6 +303,14 @@
 
   /* prediction bars — TRUE scale, the number carries precision */
   .pbar-pair { display: flex; flex-direction: column; gap: 4px; min-width: auto; }
+  /* Big centred WIN/PLACE stat — the card's focal number (old-edge style). */
+  .dual-stat-row { display: flex; gap: 20px; align-items: baseline; justify-content: center; }
+  .dual-stat-row .ds { display: flex; flex-direction: column; gap: 1px; align-items: center; }
+  .dual-stat-row .ds-num { font-family: 'Barlow Condensed', sans-serif; font-size: 1.7rem; font-weight: 900; line-height: 1; color: var(--text); }
+  .dual-stat-row .ds-num.v-win { color: var(--gold); }
+  .dual-stat-row .ds-num.v-plc { color: var(--blue); }
+  .dual-stat-row .ds-num.v-dim { color: var(--text-3); }
+  .dual-stat-row .ds-lbl { font-size: 0.56rem; color: var(--text-3); text-transform: uppercase; letter-spacing: 0.06em; font-weight: 700; }
   .pbar { display: flex; align-items: center; gap: 7px; font-size: 0.7rem; }
   .pbar .lbl { width: 30px; color: var(--text-3); font-weight: 700; flex-shrink: 0; letter-spacing: 0.04em; }
   .pbar .track { display: none; }
@@ -1134,9 +1143,10 @@
   function barsHtml(winP, placeP) {
     const w = pc(winP), p = pc(placeP);
     if (w == null) return `<div style="font-size:0.68rem;color:var(--text-3)">No prediction yet</div>`;
-    return `<div class="pbar-pair">
-      <div class="pbar"><span class="lbl">WIN</span><span class="val num ${w >= 30 ? 'v-win' : 'v-dim'}">${w}%</span></div>
-      ${p != null ? `<div class="pbar"><span class="lbl">PLC</span><span class="val num ${p >= 50 ? 'v-plc' : 'v-dim'}">${p}%</span></div>` : ''}
+    // Big centred WIN/PLACE stat — the card's focal number, like the old edge card.
+    return `<div class="dual-stat-row">
+      <div class="ds"><span class="ds-num num ${w >= 30 ? 'v-win' : 'v-dim'}">${w}%</span><span class="ds-lbl">win</span></div>
+      ${p != null ? `<div class="ds"><span class="ds-num num ${p >= 50 ? 'v-plc' : 'v-dim'}">${p}%</span><span class="ds-lbl">place</span></div>` : ''}
     </div>`;
   }
 
@@ -1400,8 +1410,39 @@
     renderFeed();
   }
 
-  /* ── pick card ── */
+  /* ── pick card ── now renders via the shared window.PickCard component.
+     This adapter maps the /api/edge pick shape → the normalized card shape. */
   function card(p, res) {
+    const field = (p.field || []).filter(r => !r.scratched && r.win_pct != null);
+    const pick = {
+      race_id: p.race_id, venue: p.venue, race_number: p.race_number, horse_name: p.horse_name,
+      scheduled_time: p.scheduled_time,
+      win_pct: p.model_pct, place_pct: p.place_probability,
+      rank2_pct: field[1] ? field[1].win_pct : (p.rank2_pct != null ? p.rank2_pct : null),
+      rank3_pct: field[2] ? field[2].win_pct : null,
+      rank4_pct: field[3] ? field[3].win_pct : null,
+      rank5_pct: field[4] ? field[4].win_pct : null,
+      distance: p.distance, barrier: p.barrier, weight: p.weight,
+      jockey: p.jockey, trainer: p.trainer, jockey_pct: null, trainer_pct: null,
+      form_figures: p.form_figures, wins_last_10: p.wins_last_10, places_last_10: p.places_last_10,
+      starts_last_10: p.starts_last_10, days_off: null,
+      odds: p.best_available_odds, confidence_tier: p.confidence_tier, going_offtrack: p.going_offtrack,
+      is_sharp: sharpOf(p), is_premium: isPremium(p),
+      place_play: p.place_play || null,
+      sportsbet_available: p.sportsbet_available, cancelled: p.cancelled, streak: p.streak,
+      edge_pct: p.edge_pct, market_implied_pct: p.market_implied_pct,
+      result: res || null,
+    };
+    return window.PickCard.render(pick, {
+      venueBadge: venueBadgeOnce,
+      triStrip: () => triStrip(p),
+      showSpark: true,
+      footer: (pk) => (pk.edge_pct != null && pk.odds)
+        ? `<div class="edge-line"><span class="${pk.edge_pct >= 0 ? 'pos' : 'neg'}">${pk.edge_pct >= 0 ? 'Model beats market by ' + pk.edge_pct + 'pt' : 'Market prefers by ' + Math.abs(pk.edge_pct) + 'pt'}</span><span class="sub num">model ${pk.win_pct}% vs market ${pk.market_implied_pct}%</span></div>`
+        : '',
+    });
+  }
+  function _cardOLD(p, res) {
     const now = Date.now();
     const jump = p.scheduled_time ? new Date(p.scheduled_time).getTime() : null;
     const isPast = jump && jump < now;
