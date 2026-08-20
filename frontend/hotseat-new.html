@@ -501,7 +501,12 @@
     .jcard { grid-template-columns: 78px 1fr; }
     .jcard .when .cd.big { font-size: 21px; }
     .jcard .pick { grid-row: auto; grid-column: 2; text-align: left; margin-top: 4px; }
-    .jcard .pick .pname { margin-left: 0; justify-content: flex-start; }
+    /* Mobile: give the horse name its own full-width row so the place chip /
+       win + place odds wrap below it instead of truncating the name. */
+    .jcard .pick .pname { margin-left: 0; justify-content: flex-start;
+      flex-wrap: wrap; max-width: 100%; overflow: visible; }
+    .jcard .pick .pname .pn-t { flex-basis: 100%; overflow: visible;
+      text-overflow: clip; white-space: normal; }
     .jcard .when { grid-row: span 3; }
     /* smaller time numerals on mobile */
     .jcard .when .clock { font-size: 1.02rem; }
