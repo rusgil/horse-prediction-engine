@@ -553,6 +553,9 @@
   .brace .mid .pk .pk-odds { flex-shrink: 0; font-size: 0.78rem; font-weight: 800; color: var(--text-2); }
   .chip.cf { background: var(--gold-dim, rgba(245,200,66,0.14)); color: var(--gold, #f5c842); flex-shrink: 0; }
   .chip.tu { background: var(--surface-2); color: var(--text-2); flex-shrink: 0; }
+  .chip.quin { background: rgba(184,192,204,0.16); color: #c7ccd6; flex-shrink: 0; }
+  .chip.tri  { background: rgba(205,127,50,0.16); color: #d9955a; flex-shrink: 0; }
+  .chip.ff   { background: rgba(142,169,255,0.16); color: #8ea9ff; flex-shrink: 0; }
   .brace .mid .sub .wp { font-weight: 800; color: var(--gold, #f5c842); }
   .brace .mid .sub .pp { font-weight: 800; color: var(--blue); }
   .brace .mid .pk.ghost { color: var(--text-3); font-weight: 500; font-size: 0.76rem; }
@@ -1216,6 +1219,18 @@
     if (gap < 2 && p.model_pct >= 25) return '<span class="chip tu">⚖️ TOSS-UP</span>';
     return '';
   }
+  // Clear-exotic chips: each group stands clear of the next runner by ≥4pp —
+  // quinella (top-2 vs 3rd), trifecta (top-3 vs 4th), first-4 (top-4 vs 5th).
+  // From p.field (rank-sorted win% per runner), mirroring Lounge / Hot Seat.
+  function exoticClearChips(p) {
+    const f = (p.field || []).filter(r => !r.scratched && r.win_pct != null);
+    const GAP = 4;
+    let out = '';
+    if (f.length >= 3 && (f[1].win_pct - f[2].win_pct) >= GAP) out += '<span class="chip quin">🥈 CLEAR QUINELLA</span>';
+    if (f.length >= 4 && (f[2].win_pct - f[3].win_pct) >= GAP) out += '<span class="chip tri">🥉 CLEAR TRIFECTA</span>';
+    if (f.length >= 5 && (f[3].win_pct - f[4].win_pct) >= GAP) out += '<span class="chip ff">🎖️ CLEAR FIRST-4</span>';
+    return out;
+  }
   function tierChip(p) {
     const ct = p.confidence_tier;
     const conf = p.model_pct || 0;
@@ -1438,7 +1453,7 @@
         <div class="pk-horse">${esc(p.horse_name)}${streak}${!isPast ? placeChip(p) : ''}</div>
         <div class="pk-sub num">${[p.distance ? p.distance + 'm' : '', p.barrier ? 'B' + p.barrier : '', p.weight ? p.weight + 'kg' : ''].filter(Boolean).join(' · ')}${l10}</div>
         <div class="pk-sub">${p.jockey ? 'J: ' + esc(p.jockey) : ''}${p.trainer ? (p.jockey ? ' · ' : '') + 'T: ' + esc(p.trainer) : ''}</div>
-        <div class="pk-chips">${tierChip(p)}${isPremium(p) ? '<span class="chip prem">💎 PREMIUM</span>' : ''}${sharpOf(p) ? '<span class="chip sharp">🎯 SHARP</span>' : ''}${!isPast ? favChip(p) : ''}${p.sportsbet_available === false ? '<span class="chip nosb">🚫 Not on Sportsbet</span>' : ''}</div>
+        <div class="pk-chips">${tierChip(p)}${isPremium(p) ? '<span class="chip prem">💎 PREMIUM</span>' : ''}${sharpOf(p) ? '<span class="chip sharp">🎯 SHARP</span>' : ''}${!isPast ? favChip(p) : ''}${!isPast ? exoticClearChips(p) : ''}${p.sportsbet_available === false ? '<span class="chip nosb">🚫 Not on Sportsbet</span>' : ''}</div>
       </div>
       <div class="right">
         ${barsHtml((p.model_pct || 0) / 100, p.place_probability != null ? p.place_probability / 100 : null)}

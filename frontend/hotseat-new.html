@@ -573,6 +573,9 @@
   .brace .mid .pk .pk-odds { flex-shrink: 0; font-size: 0.78rem; font-weight: 800; color: var(--text-2); }
   .chip.cf { background: var(--gold-dim, rgba(245,200,66,0.14)); color: var(--gold, #f5c842); flex-shrink: 0; }
   .chip.tu { background: var(--surface-2); color: var(--text-2); flex-shrink: 0; }
+  .chip.quin { background: rgba(184,192,204,0.16); color: #c7ccd6; flex-shrink: 0; }
+  .chip.tri  { background: rgba(205,127,50,0.16); color: #d9955a; flex-shrink: 0; }
+  .chip.ff   { background: rgba(142,169,255,0.16); color: #8ea9ff; flex-shrink: 0; }
   .brace .mid .sub .wp { font-weight: 800; color: var(--gold, #f5c842); }
   .brace .mid .sub .pp { font-weight: 800; color: var(--blue); }
   .brace .mid .pk.ghost { color: var(--text-3); font-weight: 500; font-size: 0.76rem; }
@@ -1199,6 +1202,21 @@
     if (gap < 2 && r.top_win_probability >= 0.25) return ` <span class="chip tu" style="font-size:0.56rem;padding:1px 5px">⚖️ TOSS-UP</span>`;
     return '';
   }
+  // Clear-exotic chips for pick cards — mirror the heat-map marks: each group
+  // stands clear of the next runner by ≥4pp (quinella top-2 vs 3rd, trifecta
+  // top-3 vs 4th, first-4 top-4 vs 5th). rank2..5_win_probability on payload.
+  function exoticChip(r) {
+    const g = (a, b) => (a != null && b != null) ? (a - b) * 100 : null;
+    const st = 'font-size:0.56rem;padding:1px 5px';
+    const q = g(r.rank2_win_probability, r.rank3_win_probability);
+    const t = g(r.rank3_win_probability, r.rank4_win_probability);
+    const f = g(r.rank4_win_probability, r.rank5_win_probability);
+    let out = '';
+    if (q != null && q >= 4) out += ` <span class="chip quin" style="${st}">🥈 QUINELLA</span>`;
+    if (t != null && t >= 4) out += ` <span class="chip tri" style="${st}">🥉 TRIFECTA</span>`;
+    if (f != null && f >= 4) out += ` <span class="chip ff" style="${st}">🎖️ FIRST-4</span>`;
+    return out;
+  }
   // Place play — last-2 races at country meetings are excluded from Sharp
   // (our win pick is near-random there), but our top pick still PLACES ~43%.
   // Show a blue "PLACE ~43%" chip in place of the Sharp chip.
@@ -1616,7 +1634,7 @@
           <span class="chip ${g.cls}">${esc(g.label)}</span>
           ${hero.is_sharp ? `<span class="chip sharp">🎯 SHARP</span>` : ''}
           ${tier ? `<span class="chip ${tier.cls}">${tier.label}</span>` : ''}
-          ${favChip(hero)}
+          ${favChip(hero)}${exoticChip(hero)}
           ${watchBtn(hero._state)}
           <div class="clockbox"><div class="cd big ${cd.urg || ''}">${cd.label}</div><div class="wt num">${wallTime(hero.scheduled_time)}</div></div>
         </div>
@@ -1672,7 +1690,7 @@
         <div class="chips">
           ${r.is_sharp ? `<span class="chip sharp">🎯 SHARP</span>` : ''}
           ${tier ? `<span class="chip ${tier.cls}">${tier.label}</span>` : ''}
-          ${!done ? favChip(r) : ''}
+          ${!done ? favChip(r) + exoticChip(r) : ''}
         </div>
         ${triStrip(r)}
         ${fieldHtml(r)}
