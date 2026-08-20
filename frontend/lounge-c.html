@@ -256,12 +256,15 @@
   .vq-bronze { background: rgba(205,127,50,0.16); color: #d9955a; border-color: rgba(205,127,50,0.35); }
   .vq-avoid { background: rgba(239,68,68,0.14); color: #f87171; border-color: rgba(239,68,68,0.32); }
   .vq-i { font-size: 0.58rem; opacity: 0.65; font-weight: 700; }
-  .vq-badge[data-tip]:hover::after, .vq-badge[data-tip]:focus::after {
+  .vq-badge[data-tip]::after {
     content: attr(data-tip); position: absolute; left: 0; top: calc(100% + 6px); z-index: 60;
     width: max-content; max-width: min(280px, 88vw); padding: 8px 10px; border-radius: 8px;
     background: var(--surface-2); color: var(--text); border: 1px solid var(--line);
     font-size: 0.68rem; font-weight: 500; line-height: 1.4; letter-spacing: 0; text-transform: none;
-    white-space: normal; box-shadow: 0 6px 18px rgba(0,0,0,0.28); }
+    white-space: normal; box-shadow: 0 6px 18px rgba(0,0,0,0.28);
+    opacity: 0; visibility: hidden; pointer-events: none; }
+  .vq-badge[data-tip].tip-open::after { opacity: 1; visibility: visible; }
+  @media (hover: hover) { .vq-badge[data-tip]:hover::after { opacity: 1; visibility: visible; } }
   .metro-badge {
     font-size: 0.54rem; font-weight: 800; letter-spacing: 0.1em;
     color: var(--gold); border: 1px solid color-mix(in srgb, var(--gold) 55%, transparent);
@@ -974,8 +977,8 @@
   // Blur any focused .vq-badge when the tap/click lands outside it.
   ['touchstart', 'click'].forEach(evt =>
     document.addEventListener(evt, (e) => {
-      const a = document.activeElement;
-      if (a && a.classList && a.classList.contains('vq-badge') && !a.contains(e.target)) a.blur();
+      const tapped = e.target.closest && e.target.closest('.vq-badge');
+      document.querySelectorAll('.vq-badge.tip-open').forEach(el => { if (el !== tapped) el.classList.remove('tip-open'); });
     }, true));
   function venueBadge(name) {
     const b = VENUE_BADGES[name];
@@ -986,7 +989,7 @@
     const tip = b.badge === 'avoid'
       ? `Avoid — the model's top pick wins only ${b.win_pct}% here over the last ${b.window_days} days (${b.sample} races), well below the ~30% average.`
       : `${label} venue — the model's top pick wins ${b.win_pct}% here over the last ${b.window_days} days (${b.sample} races). Gold >40%, Silver >35%, Bronze >30%.`;
-    return `<span class="vq-badge vq-${b.badge}" tabindex="0" data-tip="${tip.replace(/"/g,'&quot;')}" onclick="event.stopPropagation()">${medal} ${label}<span class="vq-i">ⓘ</span></span>`;
+    return `<span class="vq-badge vq-${b.badge}" tabindex="0" data-tip="${tip.replace(/"/g,'&quot;')}" onclick="event.stopPropagation();this.classList.toggle('tip-open')">${medal} ${label}<span class="vq-i">ⓘ</span></span>`;
   }
   // ── "Today" publish gate ──────────────────────────────────────────────────
   // Today's predictions are held behind a splash until the backend says the
