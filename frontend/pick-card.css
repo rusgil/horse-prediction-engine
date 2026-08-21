@@ -56,6 +56,7 @@
 .dual-stat-row .ds-num { font-family: 'Barlow Condensed', sans-serif; font-size: 1.5rem; font-weight: 900; line-height: 1; color: var(--text); }
 .dual-stat-row .ds-num.v-win { color: var(--gold, #f5c842); }
 .dual-stat-row .ds-num.v-plc { color: var(--blue); }
+.dual-stat-row .ds-num.v-acc { color: var(--mint); }
 .dual-stat-row .ds-lbl { font-size: 0.6rem; color: var(--text-3); line-height: 1.3; text-align: center; }
 .dual-stat-row .ds-sep { width: 1px; align-self: stretch; background: var(--line); flex-shrink: 0; }
 

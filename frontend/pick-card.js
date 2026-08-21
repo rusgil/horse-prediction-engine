@@ -51,7 +51,7 @@
     const f = v => (+Number(v).toFixed(1));
     let out = `<div class="ds"><span class="ds-num num ${win_pct >= 30 ? 'v-win' : ''}">${f(win_pct)}%</span><span class="ds-lbl">win prediction</span></div>`;
     if (place_pct != null) out += `<div class="ds-sep"></div><div class="ds"><span class="ds-num num ${place_pct >= 50 ? 'v-plc' : ''}">${f(place_pct)}%</span><span class="ds-lbl">place prediction</span></div>`;
-    if (accuracy != null) out += `<div class="ds-sep"></div><div class="ds"><span class="ds-num num">${f(accuracy)}%</span><span class="ds-lbl">model accuracy at this level</span></div>`;
+    if (accuracy != null) out += `<div class="ds-sep"></div><div class="ds"><span class="ds-num num v-acc">${f(accuracy)}%</span><span class="ds-lbl">model accuracy at this level</span></div>`;
     return `<div class="dual-stat-row">${out}</div>`;
   }
 
