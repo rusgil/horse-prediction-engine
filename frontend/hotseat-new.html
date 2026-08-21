@@ -1686,8 +1686,8 @@
       };
       return window.PickCard.render(pick, {
         venueBadge: venueBadge,
-        triStrip: () => triStrip(r) + fieldHtml(r),
-        showSpark: false,
+        triStrip: () => triStrip(r),  // no inline field — clicking the card opens
+        showSpark: false,             // the drawer (openRace), same as the Lounge
       });
     };
     const _cardOLD = (r, settledCard) => {
