@@ -1702,21 +1702,7 @@
     } catch (e) {}
     return _resultsCache[key];
   }
-  function resultBlockHtml(fin, pickName) {
-    if (!fin.length) return '';
-    const ORD = { 1: '1st', 2: '2nd', 3: '3rd', 4: '4th' };
-    const pn = (pickName || '').toLowerCase();
-    return `<div class="dw-result"><div class="dw-result-t">RESULT</div>` + fin.map(f => {
-      const isPick = (f.name || '').toLowerCase() === pn;
-      return `<div class="dw-res-row ${f.position === 1 ? 'w' : ''} ${isPick ? 'mine' : ''}">
-        <span class="pos num">${ORD[f.position]}</span>
-        <span class="nm">${esc(f.name)}${isPick ? ' <span class="pick-tag">OUR PICK</span>' : ''}</span>
-        ${f.position === 1
-          ? `${f.sp ? `<span class="sp num">$${(+f.sp).toFixed(2)}</span>` : ''}${f.place_odds ? `<span class="sp num" style="color:var(--blue)">$${(+f.place_odds).toFixed(2)}</span>` : ''}`
-          : (f.place_odds ? `<span class="sp num" style="color:var(--blue)">$${(+f.place_odds).toFixed(2)}</span>` : '')}
-      </div>`;
-    }).join('') + `</div>`;
-  }
+  // resultBlock now lives in the shared pick-card.js (window.PickCard.resultBlock).
   function closeDrawer() { drawer.classList.remove('open'); ovl.classList.remove('open'); }
   document.getElementById('dwClose').onclick = closeDrawer;
   ovl.onclick = closeDrawer;
@@ -1731,17 +1717,16 @@
     const body = document.getElementById('dwBody');
     body.innerHTML = '<div class="loading"><div class="spin"></div>Loading full field…</div>';
     drawer.classList.add('open'); ovl.classList.add('open');
-    // Settled? show the actual finishing order (1st–4th) like the Lounge.
+    // Completed race? show the actual finishing order (1st–4th) — shared Lounge format.
     let resultHtml = '';
-    const rmap = (E.resultsMap || {})[raceId];
-    const settled = rmap && !rmap.scratched && !rmap.no_result && (rmap.winner === true || rmap.placed === true || rmap.position != null);
-    if (settled) {
+    const _jump = (p && p.scheduled_time) ? new Date(p.scheduled_time).getTime() : null;
+    if (_jump && _jump < Date.now()) {
       const vc = vcOf(p || { venue: raceId.split('_')[1] });
       const vres = await fetchVenueResults(raceId.slice(0, 10), vc);
       const rnum = p ? p.race_number : parseInt((raceId.split('_R')[1] || ''), 10);
       const rr = vres[rnum];
       const fin = (rr && rr.runners) ? rr.runners.filter(x => x.position >= 1 && x.position <= 4).sort((a, b) => a.position - b.position) : [];
-      resultHtml = resultBlockHtml(fin, ourHorse || (p && p.horse_name));
+      resultHtml = window.PickCard.resultBlock(fin, ourHorse || (p && p.horse_name));
     }
     const rs = (await fetchRunners(raceId)).filter(x => !x.cancelled)
       .sort((a, b) => (a.model_rank || 99) - (b.model_rank || 99) || (b.win_probability || 0) - (a.win_probability || 0));

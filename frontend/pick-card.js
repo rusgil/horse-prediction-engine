@@ -150,5 +150,24 @@
     </div>`;
   }
 
-  window.PickCard = { render, dualStat, esc, wallTime, countdown };
+  // Finishing-order RESULT block — the exact Lounge drawer format. `fin` is the
+  // 1st–4th finishers ([{position,name,sp,place_odds}]). Shared so Edge / Hot
+  // Seat / Lounge render identical results.
+  function resultBlock(fin, pickName) {
+    if (!fin || !fin.length) return '';
+    const ORD = { 1: '1st', 2: '2nd', 3: '3rd', 4: '4th' };
+    const pn = (pickName || '').toLowerCase();
+    return `<div class="dw-result"><div class="dw-result-t">RESULT</div>` + fin.map(f => {
+      const isPick = (f.name || '').toLowerCase() === pn;
+      return `<div class="dw-res-row ${f.position === 1 ? 'w' : ''} ${isPick ? 'mine' : ''}">
+        <span class="pos num">${ORD[f.position] || (f.position + 'th')}</span>
+        <span class="nm">${esc(f.name)}${isPick ? ' <span class="pick-tag">OUR PICK</span>' : ''}</span>
+        ${f.position === 1
+          ? `${f.sp ? `<span class="sp num">$${(+f.sp).toFixed(2)}</span>` : ''}${f.place_odds ? `<span class="sp num" style="color:var(--blue)">$${(+f.place_odds).toFixed(2)}</span>` : ''}`
+          : (f.place_odds ? `<span class="sp num" style="color:var(--blue)">$${(+f.place_odds).toFixed(2)}</span>` : '')}
+      </div>`;
+    }).join('') + `</div>`;
+  }
+
+  window.PickCard = { render, dualStat, resultBlock, esc, wallTime, countdown };
 })();

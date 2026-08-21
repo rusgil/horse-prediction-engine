@@ -883,6 +883,7 @@
 
   .ff { font-variant-numeric: tabular-nums; letter-spacing: 0.14em; font-weight: 800; }
 </style>
+  <script src="/pick-card.js"></script>
 </head>
 <body>
 
@@ -1790,20 +1791,7 @@
       const rr = vres[r.race_number];
       const fin = (rr && rr.runners) ? rr.runners.filter(x => x.position >= 1 && x.position <= 4)
         .sort((a, b) => a.position - b.position) : [];
-      if (fin.length) {
-        const ORD = { 1: '1st', 2: '2nd', 3: '3rd', 4: '4th' };
-        const pickNorm = (r.top_pick || (top[0] && top[0].horse_name) || '').toLowerCase();
-        resultHtml = `<div class="dw-result"><div class="dw-result-t">RESULT</div>` + fin.map(f => {
-          const isPick = (f.name || '').toLowerCase() === pickNorm;
-          return `<div class="dw-res-row ${f.position === 1 ? 'w' : ''} ${isPick ? 'mine' : ''}">
-            <span class="pos num">${ORD[f.position]}</span>
-            <span class="nm">${esc(f.name)}${isPick ? ' <span class="pick-tag">OUR PICK</span>' : ''}</span>
-            ${f.position === 1
-              ? `${f.sp ? `<span class="sp num">$${(+f.sp).toFixed(2)}</span>` : ''}${f.place_odds ? `<span class="sp num" style="color:var(--blue)">$${(+f.place_odds).toFixed(2)}</span>` : ''}`
-              : (f.place_odds ? `<span class="sp num" style="color:var(--blue)">$${(+f.place_odds).toFixed(2)}</span>` : '')}
-          </div>`;
-        }).join('') + `</div>`;
-      }
+      resultHtml = window.PickCard.resultBlock(fin, r.top_pick || (top[0] && top[0].horse_name));
     }
 
     if (!top.length) {
