@@ -6,9 +6,15 @@
 .jcard {
   background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius, 12px);
   padding: 12px 15px; margin-bottom: 9px;
-  display: grid; grid-template-columns: 104px 1fr auto; gap: 4px 14px; align-items: center;
+  display: grid; grid-template-columns: 1fr auto; gap: 4px 14px; align-items: start;
   cursor: pointer; transition: border-color 0.15s; box-shadow: var(--shadow);
 }
+.jcard .mid { text-align: left; }
+.jcard .right { text-align: right; }
+.jcard .when-top { font-size: 0.72rem; font-weight: 700; color: var(--text-3); margin-bottom: 5px; white-space: nowrap; }
+.jcard .when-top .cd.far  { color: var(--mint); }
+.jcard .when-top .cd.hour { color: var(--amber); }
+.jcard .when-top .cd.soon { color: var(--red); font-weight: 800; }
 .jcard:hover { border-color: var(--mint); }
 .jcard.settled { opacity: 0.75; }
 .jcard.settled:hover { opacity: 1; }
@@ -34,7 +40,7 @@
 .pcard.res-place { border-color: color-mix(in srgb, var(--amber) 55%, var(--line)); }
 .pcard.res-miss  { border-color: color-mix(in srgb, var(--red)   45%, var(--line)); }
 
-.pk-venue { font-family: 'Barlow Condensed'; font-weight: 700; font-size: 0.94rem; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-2); text-align: center; }
+.pk-venue { font-family: 'Barlow Condensed'; font-weight: 700; font-size: 0.94rem; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-2); text-align: left; }
 .pk-venue b { font-weight: 800; color: var(--text); }
 .pk-horse { font-family: 'Barlow Condensed'; font-weight: 800; font-size: 1.28rem; line-height: 1.1; }
 .pk-sub { font-size: 0.72rem; color: var(--text-3); margin-top: 2px; }
@@ -94,9 +100,6 @@
 .chip.ff   { background: rgba(142,169,255,0.16); color: #8ea9ff; flex-shrink: 0; }
 
 @media (max-width: 640px) {
-  .jcard { grid-template-columns: 78px 1fr; }
-  .jcard .when { grid-row: span 3; }
-  .jcard .when .clock { font-size: 1.02rem; }
-  .jcard .right { grid-column: 2; text-align: left; }
+  .jcard { grid-template-columns: 1fr auto; }
   .pk-horse { font-size: 1.12rem; }
 }

@@ -1880,7 +1880,7 @@
   const drawer = document.getElementById('drawer');
   const ovl = document.getElementById('ovl');
   function bindOpen(root) {
-    root.querySelectorAll('[data-open]').forEach(n => n.onclick = n.onclick || (() => openRace(n.dataset.open)));
+    root.querySelectorAll('[data-open]').forEach(n => n.onclick = n.onclick || (() => openRaceDrawer(n.dataset.open)));
   }
   function closeDrawer() { drawer.classList.remove('open'); ovl.classList.remove('open'); }
   document.getElementById('dwClose').onclick = closeDrawer;

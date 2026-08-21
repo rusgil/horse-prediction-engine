@@ -127,20 +127,22 @@
     const jt = `${pick.jockey ? 'J: ' + esc(pick.jockey) : ''}${pick.jockey_pct != null ? ` ${Math.round(pick.jockey_pct)}%` : ''}${pick.trainer ? (pick.jockey ? ' · ' : '') + 'T: ' + esc(pick.trainer) : ''}${pick.trainer_pct != null ? ` ${Math.round(pick.trainer_pct)}%` : ''}`;
     const badge = ctx.venueBadge ? (ctx.venueBadge(pick.venue) || '') : '';
     const tri = ctx.triStrip ? (ctx.triStrip(pick) || '') : '';
+    const resultMark = (isPast && hasResult)
+      ? (res.winner ? '<span class="res win">✓</span>' : res.placed ? '<span class="res place">✓' + (posLbl ? ' ' + posLbl : '') + '</span>' : '<span class="res miss">✗</span>')
+      : '';
+    const timeTop = isPast
+      ? `<div class="when-top num">${wallTime(pick.scheduled_time)}</div>`
+      : `<div class="when-top">${cd.label ? `<span class="cd ${cd.urg || ''}">${cd.label}</span> ` : ''}<span class="num">${wallTime(pick.scheduled_time)}</span></div>`;
     return `<div class="jcard pcard ${outcome} ${!isPast && pick.confidence_tier === 'hot' ? 'hot' : ''} ${!isPast && pick.is_premium ? 'prem' : ''}" style="${dim}" data-open="${esc(pick.race_id)}" data-horse="${esc(pick.horse_name)}">
-      <div class="when">
-        ${isPast
-          ? `<div class="clock num">${wallTime(pick.scheduled_time)}</div><div class="cd">${hasResult ? (res.winner ? '<span class="res win">✓</span>' : res.placed ? '<span class="res place">✓' + (posLbl ? ' ' + posLbl : '') + '</span>' : '<span class="res miss">✗</span>') : ''}</div>`
-          : `<div class="cd big ${cd.urg || ''}">${cd.label || ''}</div><div class="wt num">${wallTime(pick.scheduled_time)}</div>`}
-      </div>
       <div class="mid">
         <div class="pk-venue">${esc(pick.venue)} <b>R${pick.race_number}</b>${badge}</div>
-        <div class="pk-horse">${esc(pick.horse_name)}${streak}</div>
+        <div class="pk-horse">${esc(pick.horse_name)}${streak}${resultMark ? ' ' + resultMark : ''}</div>
         <div class="pk-sub num">${[pick.distance ? pick.distance + 'm' : '', pick.barrier ? 'B' + pick.barrier : '', pick.weight ? pick.weight + 'kg' : ''].filter(Boolean).join(' · ')}${l10}</div>
         <div class="pk-sub">${jt}${pick.days_off != null && pick.days_off < 999 ? ` · ${pick.days_off}d off` : ''}</div>
         <div class="pk-chips">${tierChip(pick)}${!isPast && pick.is_premium ? '<span class="chip prem">💎 PREMIUM</span>' : ''}${pick.is_sharp ? '<span class="chip sharp">🎯 SHARP</span>' : ''}${!isPast ? favChip(pick) : ''}${!isPast ? exoticChips(pick) : ''}${pick.sportsbet_available === false ? '<span class="chip nosb">🚫 Not on Sportsbet</span>' : ''}</div>
       </div>
       <div class="right">
+        ${timeTop}
         ${displayOdds ? `<div class="odds-pill ${oddsCls}"><b class="num">$${(+displayOdds).toFixed(2)}</b>${oddsLbl}</div>` : '<div class="odds-pill">TBA</div>'}
         ${settledRes && res.winner && res.place_odds ? `<div class="odds-pill"><b class="num" style="font-size:1rem;color:var(--blue)">$${(+res.place_odds).toFixed(2)}</b>place</div>` : ''}
         ${!isPast && ctx.showSpark ? `<div class="spark-slot" id="spark-${pick.race_id.replace(/[^a-z0-9]/gi, '-')}"></div>` : ''}
