@@ -135,7 +135,7 @@
       </div>
       <div class="mid">
         <div class="pk-venue">${esc(pick.venue)} <b>R${pick.race_number}</b>${badge}</div>
-        <div class="pk-horse">${esc(pick.horse_name)}${streak}${!isPast ? placeChip(pick) : ''}</div>
+        <div class="pk-horse">${esc(pick.horse_name)}${streak}</div>
         <div class="pk-sub num">${[pick.distance ? pick.distance + 'm' : '', pick.barrier ? 'B' + pick.barrier : '', pick.weight ? pick.weight + 'kg' : ''].filter(Boolean).join(' · ')}${l10}</div>
         <div class="pk-sub">${jt}${pick.days_off != null && pick.days_off < 999 ? ` · ${pick.days_off}d off` : ''}</div>
         <div class="pk-chips">${tierChip(pick)}${!isPast && pick.is_premium ? '<span class="chip prem">💎 PREMIUM</span>' : ''}${pick.is_sharp ? '<span class="chip sharp">🎯 SHARP</span>' : ''}${!isPast ? favChip(pick) : ''}${!isPast ? exoticChips(pick) : ''}${pick.sportsbet_available === false ? '<span class="chip nosb">🚫 Not on Sportsbet</span>' : ''}</div>

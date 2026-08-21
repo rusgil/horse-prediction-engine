@@ -1539,7 +1539,7 @@
       const picksHtml = rs.length ? rs.map((x, i) => `
         <div class="hrunner ${i === 0 ? 'top1' : ''}">
           <div class="saddle num">${x.tab_number ?? '–'}</div>
-          <div class="nm"><div class="h">${esc(x.horse_name)}${i === 0 ? placeChip(hero) : ''}</div><div class="j">${esc(x.jockey || '')}</div></div>
+          <div class="nm"><div class="h">${esc(x.horse_name)}</div><div class="j">${esc(x.jockey || '')}</div></div>
           ${x.best_available_odds > 1 ? `<div class="hodds num">$${(+x.best_available_odds).toFixed(2)}</div>` : ''}
           <div class="bars">${barsHtml(x.win_probability, x.place_probability)}</div>
         </div>`).join('')
@@ -1580,7 +1580,7 @@
           ${(() => {
             const nm = r.top_pick || (tp && tp.horse_name) || null;
             const od = (r.top_pick_odds > 1 ? +r.top_pick_odds : null) || (tp && tp.best_available_odds > 1 ? +tp.best_available_odds : null);
-            return `<div class="pname ${nm ? '' : 'ghost'}"><span class="pn-t">${nm ? esc(nm) : (r.top_win_probability != null ? 'Tap for our pick' : 'No prediction yet')}</span>${isSettled(r) ? '' : placeChip(r)}${od ? `<span class="pk-odds num">$${od.toFixed(2)}</span>` : ''}</div>`;
+            return `<div class="pname ${nm ? '' : 'ghost'}"><span class="pn-t">${nm ? esc(nm) : (r.top_win_probability != null ? 'Tap for our pick' : 'No prediction yet')}</span>${od ? `<span class="pk-odds num">$${od.toFixed(2)}</span>` : ''}</div>`;
           })()}
           ${barsHtml(r.top_win_probability, r.top_place_probability)}
         </div>
@@ -1687,7 +1687,7 @@
             if (isSettled(r) || !od || od < 3 || r.top_win_probability == null) return '';
             return (r.top_win_probability - (1 / od)) >= 0.05
               ? ` <span class="chip" style="font-size:0.56rem;padding:1px 5px;margin-left:4px;background:var(--purple-dim);color:var(--purple);border:1px solid var(--purple)">💎 VALUE</span>` : '';
-          })()}${r.is_sharp ? ` <span class="chip sharp" style="font-size:0.56rem;padding:1px 5px;margin-left:4px">🎯 SHARP</span>` : (isSettled(r) ? '' : placeChip(r))}</div>
+          })()}${r.is_sharp ? ` <span class="chip sharp" style="font-size:0.56rem;padding:1px 5px;margin-left:4px">🎯 SHARP</span>` : ''}</div>
         </div>
         <div class="right">
           ${barsHtml(r.top_win_probability, r.top_place_probability)}
