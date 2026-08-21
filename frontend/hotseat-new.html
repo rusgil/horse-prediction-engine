@@ -1743,8 +1743,8 @@
       </div>`;
     };
 
-    el.innerHTML = chips + heroHtml +
-      (upcoming.length > 1 ? `<div class="feed-sec-title">Coming up</div>` + upcoming.slice(1).map(r => card(r, false)).join('') : '') +
+    el.innerHTML = chips +
+      (upcoming.length ? `<div class="feed-sec-title">Coming up</div>` + upcoming.map(r => card(r, false)).join('') : '') +
       (settled.length ? `<div class="feed-sec-title">Earlier — how our picks went</div>` + settled.map(r => card(r, true)).join('') : '') +
       (!upcoming.length && !settled.length ? `<div class="empty"><div class="big">🐎</div>No races for this filter.</div>` : '');
     el.querySelectorAll('[data-fv]').forEach(b => b.onclick = e => { e.stopPropagation(); S.feedVenue = b.dataset.fv; renderB(); });
