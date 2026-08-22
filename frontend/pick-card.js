@@ -55,6 +55,18 @@
     return `<div class="dual-stat-row">${out}</div>`;
   }
 
+  // Compact 2-up WIN/PLACE for drawer runner rows — side by side, big and bold.
+  // Takes fractions (0–1). Sub-threshold numbers keep full --text weight (never
+  // dimmed to grey) so they stay legible below 30% win / 50% place.
+  function winPlace(winP, placeP) {
+    const pc = v => v == null ? null : Math.round(v * 1000) / 10;
+    const w = pc(winP), p = pc(placeP);
+    if (w == null) return `<div style="font-size:0.68rem;color:var(--text-3)">No prediction yet</div>`;
+    let out = `<div class="ds"><span class="ds-num num ${w >= 30 ? 'v-win' : ''}">${w}%</span><span class="ds-lbl">win</span></div>`;
+    if (p != null) out += `<div class="ds-sep"></div><div class="ds"><span class="ds-num num ${p >= 50 ? 'v-plc' : ''}">${p}%</span><span class="ds-lbl">place</span></div>`;
+    return `<div class="dual-stat-row wp">${out}</div>`;
+  }
+
   function tierChip(pick) {
     const ct = pick.confidence_tier, conf = pick.win_pct || 0;
     if (ct === 'hot' || (ct == null && conf >= 46 && !pick.going_offtrack)) return '<span class="chip tier-hot2">🔥 HOT PICK</span>';
@@ -171,5 +183,5 @@
     }).join('') + `</div>`;
   }
 
-  window.PickCard = { render, dualStat, resultBlock, esc, wallTime, countdown };
+  window.PickCard = { render, dualStat, winPlace, resultBlock, esc, wallTime, countdown };
 })();
