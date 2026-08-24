@@ -149,16 +149,16 @@
    non-member sees a colour-lit grid teasing the picks, not a wall of padlocks. */
 td.cell.locked-cell { cursor: pointer; text-align: center; }
 td.cell.locked-cell .lk-val {
-  display: inline-block; font-family: 'Barlow Condensed', sans-serif;
-  font-weight: 800; font-size: 1rem; letter-spacing: 0.06em;
-  filter: blur(4px); opacity: 0.9; user-select: none; color: var(--text-3);
+  display: inline-block; width: 30px; height: 12px; border-radius: 3px;
+  vertical-align: middle; filter: blur(2.5px); opacity: 0.5;
+  background: var(--text-3); user-select: none;
 }
-td.cell.locked-cell.heat-hot    { background: color-mix(in srgb, var(--hot, #f97316)  15%, transparent); }
-td.cell.locked-cell.heat-high   { background: color-mix(in srgb, var(--blue)         13%, transparent); }
-td.cell.locked-cell.heat-strong { background: color-mix(in srgb, var(--strong, var(--mint)) 13%, transparent); }
-td.cell.locked-cell.heat-hot    .lk-val { color: var(--hot, #f97316); }
-td.cell.locked-cell.heat-high   .lk-val { color: var(--blue); }
-td.cell.locked-cell.heat-strong .lk-val { color: var(--strong, var(--mint)); }
+td.cell.locked-cell.heat-hot    { background: color-mix(in srgb, var(--hot, #f97316)  14%, transparent); }
+td.cell.locked-cell.heat-high   { background: color-mix(in srgb, var(--blue)         12%, transparent); }
+td.cell.locked-cell.heat-strong { background: color-mix(in srgb, var(--strong, var(--mint)) 12%, transparent); }
+td.cell.locked-cell.heat-hot    .lk-val { background: var(--hot, #f97316); opacity: 0.6; }
+td.cell.locked-cell.heat-high   .lk-val { background: var(--blue);         opacity: 0.6; }
+td.cell.locked-cell.heat-strong .lk-val { background: var(--strong, var(--mint)); opacity: 0.6; }
 td.cell.locked-cell:hover { filter: brightness(1.06); }
 
 @media (max-width: 640px) {

@@ -883,7 +883,8 @@
 
   .ff { font-variant-numeric: tabular-nums; letter-spacing: 0.14em; font-weight: 800; }
 </style>
-  <script src="/pick-card.js"></script>
+  <link rel="stylesheet" href="/pick-card.css?v=2">
+  <script src="/pick-card.js?v=2"></script>
   <script defer src="/_vercel/insights/script.js"></script>
 </head>
 <body>
@@ -1435,7 +1436,7 @@
       const cells = Array.from({ length: maxR }, (_, i) => {
         const r = races?.[i];
         if (!r) return `<td class="cell blank"></td>`;
-        if (r.locked) return `<td class="cell locked-cell ${r.locked_heat || ''}" data-unlock title="Members only — unlock to see this pick"><span class="lk-val">00%</span></td>`;
+        if (r.locked) return `<td class="cell locked-cell ${r.locked_heat || ''}" data-unlock title="Members only — unlock to see this pick"><span class="lk-val"></span></td>`;
         if (S.sharpOnly && r.is_sharp !== true) return `<td class="cell blank"></td>`;
         if (isSettled(r)) {
           colS[i]++;
