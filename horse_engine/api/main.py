@@ -4566,7 +4566,10 @@ def _billing_enabled() -> bool:
     All need a product/price id."""
     if not settings.billing_price_id:
         return False
-    if (settings.billing_provider or "").lower() == "creem":
+    prov = (settings.billing_provider or "").lower()
+    if prov == "stripe":
+        return bool(settings.stripe_secret_key)
+    if prov == "creem":
         return bool(settings.creem_api_key)
     return bool(settings.billing_client_token)
 

@@ -226,10 +226,10 @@
   // Currency-aware money label, e.g. "US$6.99 (~A$9.90)". The real charge is
   // the USD amount; the (~A$…) note is display-only, from billing.price_note.
   function _money() {
-    const c = (_billing && _billing.currency) || 'USD';
-    const sym = c === 'USD' ? 'US$' : c === 'EUR' ? '€' : (c + ' ');
+    const c = (_billing && _billing.currency) || 'AUD';
+    const sym = c === 'AUD' ? 'A$' : c === 'USD' ? 'US$' : c === 'EUR' ? '€' : (c + ' ');
     const note = _billing && _billing.price_note ? ' (' + _billing.price_note + ')' : '';
-    return sym + _price() + note;
+    return sym + Number(_price()).toFixed(2) + note;
   }
   const _unlockLabel = () => `Unlock — ${_money()} / ${_days()} days`;
 

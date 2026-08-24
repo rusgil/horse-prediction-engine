@@ -62,7 +62,7 @@ class Settings(BaseSettings):
     # Flip to false via PAYWALL_ENABLED=false on Railway to instantly open
     # the whole site back up — no code change / redeploy needed.
     paywall_enabled: bool = True
-    billing_provider: str = "creem"
+    billing_provider: str = "stripe"
     billing_env: str = "test"
     # client_token stays for SDK-based providers (Stripe/Paddle); Creem
     # uses a server-created redirect checkout, so it needs no public token.
@@ -71,11 +71,19 @@ class Settings(BaseSettings):
     # Creem charges USD/EUR only — no AUD. Price in USD; the button shows a
     # ~AUD approximation via billing_price_note (display only; the real charge
     # is the USD amount, converted by the buyer's bank). US$6.99 ≈ A$9.90.
-    billing_price_amount: float = 6.99
-    billing_currency: str = "USD"
-    billing_price_note: str = "~A$9.90"
+    # Stripe supports AUD, so we can charge A$9.90 directly (no USD workaround
+    # and no ~A$ note needed).
+    billing_price_amount: float = 9.90
+    billing_currency: str = "AUD"
+    billing_price_note: str = ""
     billing_pass_days: int = 5
-    # Creem (merchant of record).
+    # Stripe (direct processor; you are merchant of record). Test vs live is by
+    # key prefix (sk_test_ / sk_live_) — no env switch. BILLING_PRICE_ID is the
+    # Stripe Price id (price_...). STRIPE_WEBHOOK_SECRET is the whsec_... signing
+    # secret for the checkout.session.completed webhook.
+    stripe_secret_key: str = ""
+    stripe_webhook_secret: str = ""
+    # Creem (merchant of record) — retained; unused now Stripe is the provider.
     creem_api_key: str = ""
     creem_webhook_secret: str = ""
     # Session-cookie Domain. Default "" = host-only (works on localhost +

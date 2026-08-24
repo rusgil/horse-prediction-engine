@@ -20,9 +20,9 @@ def get_provider() -> BillingProvider:
     if name == "creem":
         from horse_engine.api.billing.creem import CreemProvider
         prov = CreemProvider()
-    # elif name == "stripe":
-    #     from horse_engine.api.billing.stripe import StripeProvider
-    #     prov = StripeProvider()
+    elif name == "stripe":
+        from horse_engine.api.billing.stripe import StripeProvider
+        prov = StripeProvider()
     else:
         raise RuntimeError(f"Unknown billing provider: {name!r}")
     _PROVIDERS[name] = prov
