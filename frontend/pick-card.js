@@ -244,13 +244,13 @@
         method: 'POST', credentials: 'include',
         headers: { 'content-type': 'application/json' }, body: '{}',
       });
-      if (r.status === 401) { window.location.href = '/login?next=' + nx; return; }
+      if (r.status === 401) { window.location.href = '/signup?next=' + nx; return; }
       if (r.ok) {
         const d = await r.json();
         if (d && d.url) { window.location.href = d.url; return; }
       }
     } catch (e) { /* fall through */ }
-    window.location.href = '/login?next=' + nx;
+    window.location.href = '/signup?next=' + nx;
   }
 
   // Delegated click handler — any [data-unlock] element opens checkout.
@@ -303,7 +303,7 @@
         <div class="pk-venue">${venue}${rno !== '' ? ` <b>R${rno}</b>` : ''}</div>
         <div class="pk-horse locked-blur">Our pick</div>
         ${meta ? `<div class="pk-sub num">${meta}</div>` : ''}
-        <div class="lock-cta"><span class="lock-ico">🔒</span> Members only · <span class="lock-link">${_unlockLabel()}</span></div>
+        <div class="lock-cta"><span class="lock-ico">🔒</span> Members only</div>
       </div>
       <div class="right">
         ${t ? `<div class="when-top num">${t}</div>` : ''}

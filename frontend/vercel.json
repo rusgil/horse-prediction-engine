@@ -53,6 +53,10 @@
       "destination": "/login.html"
     },
     {
+      "source": "/signup",
+      "destination": "/login.html"
+    },
+    {
       "source": "/verify",
       "destination": "/verify.html"
     },
