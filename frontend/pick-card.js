@@ -160,6 +160,7 @@
         ${!isPast && ctx.showSpark ? `<div class="spark-slot" id="spark-${pick.race_id.replace(/[^a-z0-9]/gi, '-')}"></div>` : ''}
       </div>
       ${dualStat(pick.win_pct, pick.place_pct, pick.accuracy != null ? pick.accuracy : calibratedRate(pick.win_pct))}
+      ${pick.is_teaser ? confidenceCallout(pick) : ''}
       ${!isPast && ctx.footer ? (ctx.footer(pick) || '') : ''}${verdict}${tri}
     </div>`;
   }
@@ -191,7 +192,35 @@
   // comes from /api/config/public — pages call configureBilling(cfg.billing)
   // once. Until Paddle is wired (billing.enabled=false) Unlock → /login.
   let _billing = null;
-  function configureBilling(b) { _billing = b || null; }
+  function configureBilling(b) { _billing = b || null; loadTierStats(); }
+
+  // Live tier calibration (from /api/track-record) for the free-pick callout —
+  // "at this confidence our picks win X% / place Y%". Fetched once per page; the
+  // pick's win% maps to a tier band → the tier's REAL historical win/place.
+  let _tierStats = null;
+  async function loadTierStats() {
+    if (_tierStats) return;
+    try {
+      const r = await fetch('/api/track-record');
+      if (r.ok) {
+        const d = await r.json();
+        _tierStats = (d.tiers || []).map(t => ({
+          lo: t.conf_min == null ? 0 : t.conf_min,
+          hi: t.conf_max == null ? 999 : t.conf_max,
+          win: t.win_pct, place: t.place_pct, n: t.races,
+        }));
+      }
+    } catch (e) { /* callout just won't render */ }
+  }
+  function _tierFor(winPct) {
+    if (!_tierStats || winPct == null) return null;
+    return _tierStats.find(t => winPct >= t.lo && winPct <= t.hi) || null;
+  }
+  function confidenceCallout(pick) {
+    const t = _tierFor(pick.win_pct);
+    if (!t || !t.n) return '';
+    return `<div class="conf-callout">🎯 At this confidence, our picks <b class="cc-win">win ${t.win}%</b> · <b class="cc-plc">place ${t.place}%</b> <span class="cc-n">— ${t.n} picks at this level</span></div>`;
+  }
   const _price = () => (_billing && _billing.price != null ? _billing.price : 6.99);
   const _days = () => (_billing && _billing.pass_days != null ? _billing.pass_days : 5);
   // Currency-aware money label, e.g. "US$6.99 (~A$9.90)". The real charge is
@@ -243,6 +272,23 @@
     </div>`;
   }
 
+  const _shortDate = iso => {
+    try { return new Date(iso + 'T00:00:00+10:00').toLocaleDateString('en-AU', { weekday: 'short', day: 'numeric', month: 'short' }); }
+    catch (e) { return iso || ''; }
+  };
+  // "Trophy for the day" — our biggest recent WIN. A curated green highlight
+  // (proof) shown to non-members even when there's no free upcoming pick.
+  function trophyBanner(t) {
+    if (!t || !t.horse_name) return '';
+    const sp = t.sp != null ? '$' + Number(t.sp).toFixed(2) : '';
+    const meta = [t.venue, _shortDate(t.race_date)].filter(Boolean).join(' · ');
+    return `<div class="trophy-banner" data-unlock>
+      <span class="tr-ico">🏆</span>
+      <div class="tr-txt"><b>Recent winner</b> — <b class="tr-horse">${esc(t.horse_name)}</b> won at <b class="tr-sp">${sp}</b>
+        <span class="tr-meta">our top pick${meta ? ' · ' + esc(meta) : ''}</span></div>
+    </div>`;
+  }
+
   function lockedCard(stub) {
     stub = stub || {};
     const venue = esc(stub.venue || stub.venue_name || stub.venue_display || '');
@@ -267,6 +313,6 @@
 
   window.PickCard = {
     render, dualStat, winPlace, resultBlock, esc, wallTime, countdown,
-    lockedCard, paywallBanner, configureBilling, openCheckout, bindUnlock,
+    lockedCard, paywallBanner, trophyBanner, configureBilling, openCheckout, bindUnlock,
   };
 })();

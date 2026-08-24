@@ -9,7 +9,7 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700;800&family=Barlow:wght@400;500;600;700;800&family=Outfit:wght@300;400;500;600&display=swap" rel="stylesheet">
 <script src="/sharp.js"></script>
-<script src="/pick-card.js?v=2"></script>
+<script src="/pick-card.js?v=3"></script>
 <style>
   /* ── Tokens ─────────────────────────────────────────────── */
   :root {
@@ -949,7 +949,7 @@
 
   .ff { font-variant-numeric: tabular-nums; letter-spacing: 0.14em; font-weight: 800; }
 </style>
-  <link rel="stylesheet" href="/pick-card.css?v=2">
+  <link rel="stylesheet" href="/pick-card.css?v=3">
   <script defer src="/_vercel/insights/script.js"></script>
 </head>
 <body>
@@ -1420,7 +1420,7 @@
     const field = (p.field || []).filter(r => !r.scratched && r.win_pct != null);
     const pick = {
       race_id: p.race_id, venue: p.venue, race_number: p.race_number, horse_name: p.horse_name,
-      scheduled_time: p.scheduled_time,
+      scheduled_time: p.scheduled_time, is_teaser: p.is_teaser,
       win_pct: p.model_pct, place_pct: p.place_probability,
       rank2_pct: field[1] ? field[1].win_pct : (p.rank2_pct != null ? p.rank2_pct : null),
       rank3_pct: field[2] ? field[2].win_pct : null,
@@ -1582,7 +1582,8 @@
     const byDate = {};
     picks.forEach(p => (byDate[p.date] = byDate[p.date] || []).push(p));
     const today = aestToday(), tomorrow = aestToday(1);
-    let html = (E.paywall && E.paywall.active ? window.PickCard.paywallBanner(E.paywall) : '');
+    let html = (E.paywall && E.paywall.trophy ? window.PickCard.trophyBanner(E.paywall.trophy) : '')
+      + (E.paywall && E.paywall.active ? window.PickCard.paywallBanner(E.paywall) : '');
     html += m.fallback ? '<div class="banner-sharp"><b>🎯 No Sharp picks available</b><br>Sharp thresholds were not met for any race in the window — showing all picks.</div>' : '';
     Object.keys(byDate).sort().forEach(d => {
       const now = Date.now();

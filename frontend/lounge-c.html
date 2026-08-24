@@ -883,8 +883,8 @@
 
   .ff { font-variant-numeric: tabular-nums; letter-spacing: 0.14em; font-weight: 800; }
 </style>
-  <link rel="stylesheet" href="/pick-card.css?v=2">
-  <script src="/pick-card.js?v=2"></script>
+  <link rel="stylesheet" href="/pick-card.css?v=3">
+  <script src="/pick-card.js?v=3"></script>
   <script defer src="/_vercel/insights/script.js"></script>
 </head>
 <body>
@@ -1510,7 +1510,8 @@
         <td class="mcell tally-lab">Win / Plc %</td>
         ${Array.from({ length: maxR }, (_, i) => `<td class="cell-tally num">${colS[i] ? `<span class="rs-w">${Math.round(colW[i] / colS[i] * 100)}%</span><span class="rs-p">${Math.round(colP[i] / colS[i] * 100)}%</span>` : '<span class="tn">–</span>'}</td>`).join('')}
       </tr>` : '';
-    el.innerHTML = (S.paywall && S.paywall.active ? window.PickCard.paywallBanner(S.paywall) : '')
+    el.innerHTML = (S.paywall && S.paywall.trophy ? window.PickCard.trophyBanner(S.paywall.trophy) : '')
+      + (S.paywall && S.paywall.active ? window.PickCard.paywallBanner(S.paywall) : '')
       + `<div class="grid-wrap"><table class="race-grid">
       <thead><tr><th>Meeting</th>${head}</tr>${totalsRow}</thead><tbody>${rows}</tbody></table></div>`;
     const gw = el.querySelector('.grid-wrap');

@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
   <script src="/theme.js"></script>
-  <script src="/pick-card.js?v=2"></script>
+  <script src="/pick-card.js?v=3"></script>
 <meta name="robots" content="noindex">
 <title>FunkyIQ — Hot Seat</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -882,7 +882,7 @@
 
   .ff { font-variant-numeric: tabular-nums; letter-spacing: 0.14em; font-weight: 800; }
 </style>
-  <link rel="stylesheet" href="/pick-card.css?v=2">
+  <link rel="stylesheet" href="/pick-card.css?v=3">
   <script defer src="/_vercel/insights/script.js"></script>
 </head>
 <body>
@@ -1671,7 +1671,7 @@
       const pick = {
         race_id: r.race_id, venue: r._venue, race_number: r.race_number,
         horse_name: nm || (r.top_win_probability != null ? 'Tap for our pick' : 'No prediction yet'),
-        scheduled_time: r.scheduled_time,
+        scheduled_time: r.scheduled_time, is_teaser: r.is_teaser,
         win_pct: pct(r.top_win_probability), place_pct: pct(r.top_place_probability),
         rank2_pct: pct(r.rank2_win_probability), rank3_pct: pct(r.rank3_win_probability),
         rank4_pct: pct(r.rank4_win_probability), rank5_pct: pct(r.rank5_win_probability),
@@ -1745,7 +1745,8 @@
       </div>`;
     };
 
-    el.innerHTML = (S.paywall && S.paywall.active ? window.PickCard.paywallBanner(S.paywall) : '') + chips +
+    el.innerHTML = (S.paywall && S.paywall.trophy ? window.PickCard.trophyBanner(S.paywall.trophy) : '')
+      + (S.paywall && S.paywall.active ? window.PickCard.paywallBanner(S.paywall) : '') + chips +
       (upcoming.length ? `<div class="feed-sec-title">Coming up</div>` + upcoming.map(r => card(r, false)).join('') : '') +
       (settled.length ? `<div class="feed-sec-title">Earlier — how our picks went</div>` + settled.map(r => card(r, true)).join('') : '') +
       (!upcoming.length && !settled.length ? `<div class="empty"><div class="big">🐎</div>No races for this filter.</div>` : '');

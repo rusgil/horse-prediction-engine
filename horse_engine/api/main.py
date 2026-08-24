@@ -3747,6 +3747,8 @@ _PAYWALL_KEEP_KEYS = frozenset({
 
 _teaser_cache: "tuple[datetime, str | None] | None" = None
 _TEASER_TTL = 60  # seconds
+_trophy_cache: "tuple[datetime, dict | None] | None" = None
+_TROPHY_TTL = 600  # 10 min — the day's biggest winner moves slowly
 
 
 async def _current_teaser_race_id() -> "str | None":
@@ -3785,6 +3787,70 @@ async def _current_teaser_race_id() -> "str | None":
         rid = None
     _teaser_cache = (now, rid)
     return rid
+
+
+async def _current_trophy() -> "dict | None":
+    """The 'trophy for the day' — our biggest recent WIN: over the last 7 days,
+    the race where OUR top pick (history rank-1) finished 1st, at the highest
+    winning SP. A curated green highlight for non-members (proof), shown even
+    when there's no free upcoming pick. Cached ~10 min."""
+    global _trophy_cache
+    now = datetime.utcnow()
+    if _trophy_cache is not None and (now - _trophy_cache[0]).total_seconds() < _TROPHY_TTL:
+        return _trophy_cache[1]
+    trophy = None
+    try:
+        start = (_today_aest() - timedelta(days=7)).isoformat()
+        async with get_session() as session:
+            # Our rank-1 picks over the window (FIX-S: live + not-cancelled +
+            # dedup latest enriched_at per race).
+            hrows = (await session.execute(
+                select(RunnerPredictionHistoryRow.race_id, RunnerPredictionHistoryRow.horse_name,
+                       RunnerPredictionHistoryRow.win_probability)
+                .where(RunnerPredictionHistoryRow.race_id >= start)
+                .where(RunnerPredictionHistoryRow.model_rank == 1)
+                .where(RunnerPredictionHistoryRow.source == "live")
+                .where(RunnerPredictionHistoryRow.cancelled.is_(False) | RunnerPredictionHistoryRow.cancelled.is_(None))
+                .order_by(RunnerPredictionHistoryRow.enriched_at.desc())
+            )).all()
+            pick_by_race: dict[str, tuple] = {}
+            for rid, horse, wp in hrows:
+                pick_by_race.setdefault(rid, (horse, wp))
+            if pick_by_race:
+                res = (await session.execute(
+                    select(HistoricalResultRow.race_id, HistoricalResultRow.horse_name,
+                           HistoricalResultRow.starting_price, HistoricalResultRow.venue)
+                    .where(HistoricalResultRow.race_id.in_(list(pick_by_race.keys())))
+                    .where(HistoricalResultRow.position == 1)
+                )).all()
+                best = None  # (sp, race_id, horse, wp, venue)
+                for rid, winner_horse, sp, venue in res:
+                    pk = pick_by_race.get(rid)
+                    if not pk or sp is None or sp <= 1:
+                        continue
+                    if _normalize_horse(winner_horse) != _normalize_horse(pk[0]):
+                        continue  # our pick must be the winner
+                    if best is None or sp > best[0]:
+                        best = (sp, rid, pk[0], pk[1], venue)
+                if best:
+                    sp, rid, horse, wp, venue = best
+                    try:
+                        rno = int(rid.rsplit("_R", 1)[-1])
+                    except (ValueError, IndexError):
+                        rno = None
+                    trophy = {
+                        "horse_name": horse,
+                        "sp": round(float(sp), 2),
+                        "race_date": rid.split("_")[0],
+                        "race_number": rno,
+                        "venue": venue,
+                        "win_pct": round((wp or 0) * 100, 1),
+                    }
+    except Exception:
+        log.exception("trophy lookup failed")
+        trophy = None
+    _trophy_cache = (now, trophy)
+    return trophy
 
 
 def _heat_band(d: dict) -> "str | None":
@@ -3828,6 +3894,7 @@ def _apply_paywall(obj, teaser_id: "str | None") -> int:
         rid = obj.get("race_id")
         if rid is not None:
             if rid == teaser_id:
+                obj["is_teaser"] = True  # the free pick — card shows the confidence callout
                 return 0
             _redact_race_dict(obj)
             return 1
@@ -3878,9 +3945,20 @@ async def _display_prob_cap(request, call_next):
         # any endpoint-level cache (this is per-request), on the parsed JSON.
         if settings.paywall_enabled and _path_is_paywalled(path) and not await _request_has_access(request):
             teaser_id = await _current_teaser_race_id()
-            locked = _apply_paywall(data, teaser_id)
-            if locked and isinstance(data, dict):
-                data["paywall"] = {"active": True, "teaser_race_id": teaser_id}
+            _apply_paywall(data, teaser_id)
+            if isinstance(data, dict):
+                trophy = await _current_trophy()
+                # 'active' (→ "you're seeing 1 free race" banner) only when there
+                # IS a free upcoming pick to headline — driven by teaser existence
+                # so it's consistent across the meetings-list and venue-detail
+                # payloads (the list has no lockable races). The trophy shows
+                # regardless, including end of day when nothing's free.
+                if teaser_id is not None or trophy:
+                    data["paywall"] = {
+                        "active": teaser_id is not None,
+                        "teaser_race_id": teaser_id,
+                        "trophy": trophy,
+                    }
         new_body = json.dumps(data).encode()
     except Exception:
         new_body = body
