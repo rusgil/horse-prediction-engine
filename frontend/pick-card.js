@@ -183,5 +183,77 @@
     }).join('') + `</div>`;
   }
 
-  window.PickCard = { render, dualStat, winPlace, resultBlock, esc, wallTime, countdown };
+  // ── Freemium paywall (Stage 3, 2026-08-24) ─────────────────────────
+  // The API redacts all-but-the-next race to a locked stub (race_id, venue,
+  // race_number, scheduled_time, distance, field_size + locked:true) and
+  // adds a top-level paywall{active,teaser_race_id}. These helpers render
+  // the locked card + banner identically on every page. Billing config
+  // comes from /api/config/public — pages call configureBilling(cfg.billing)
+  // once. Until Paddle is wired (billing.enabled=false) Unlock → /login.
+  let _billing = null;
+  function configureBilling(b) { _billing = b || null; }
+  const _price = () => (_billing && _billing.price != null ? _billing.price : 10);
+  const _days = () => (_billing && _billing.pass_days != null ? _billing.pass_days : 5);
+  const _unlockLabel = () => `Unlock — $${_price()} / ${_days()} days`;
+
+  function openCheckout() {
+    const b = _billing;
+    if (b && b.enabled && b.provider === 'paddle' && window.Paddle && window.Paddle.Checkout) {
+      try {
+        window.Paddle.Checkout.open({
+          items: [{ priceId: b.price_id, quantity: 1 }],
+          settings: { displayMode: 'overlay', theme: 'dark' },
+        });
+        return;
+      } catch (e) { /* fall through to sign-in */ }
+    }
+    // Stage 3 fallback (billing not live yet): route to sign in / join.
+    window.location.href = '/login';
+  }
+
+  // Delegated click handler — any [data-unlock] element opens checkout.
+  // Idempotent: safe to call on every render.
+  function bindUnlock() {
+    if (document._pcUnlockBound) return;
+    document._pcUnlockBound = true;
+    document.addEventListener('click', e => {
+      const t = e.target.closest && e.target.closest('[data-unlock]');
+      if (t) { e.preventDefault(); e.stopPropagation(); openCheckout(); }
+    }, true);
+  }
+
+  function paywallBanner(paywall) {
+    if (!paywall || !paywall.active) return '';
+    return `<div class="paywall-banner" data-unlock>
+      <div class="pb-txt"><b>You're seeing 1 free race.</b> Unlock every pick, all meetings.</div>
+      <button class="unlock-btn" data-unlock>${_unlockLabel()}</button>
+    </div>`;
+  }
+
+  function lockedCard(stub) {
+    stub = stub || {};
+    const venue = esc(stub.venue || stub.venue_name || stub.venue_display || '');
+    const rno = stub.race_number != null ? stub.race_number
+      : (stub.race_no != null ? stub.race_no : (stub.number != null ? stub.number : ''));
+    const t = wallTime(stub.scheduled_time);
+    const meta = [stub.distance ? stub.distance + 'm' : '', stub.field_size ? stub.field_size + ' runners' : '']
+      .filter(Boolean).join(' · ');
+    return `<div class="jcard pcard locked" data-unlock data-race="${esc(stub.race_id || '')}">
+      <div class="mid">
+        <div class="pk-venue">${venue}${rno !== '' ? ` <b>R${rno}</b>` : ''}</div>
+        <div class="pk-horse locked-blur">Our pick</div>
+        ${meta ? `<div class="pk-sub num">${meta}</div>` : ''}
+        <div class="lock-cta"><span class="lock-ico">🔒</span> Members only · <span class="lock-link">${_unlockLabel()}</span></div>
+      </div>
+      <div class="right">
+        ${t ? `<div class="when-top num">${t}</div>` : ''}
+        <div class="lock-odds locked-blur">$0.00</div>
+      </div>
+    </div>`;
+  }
+
+  window.PickCard = {
+    render, dualStat, winPlace, resultBlock, esc, wallTime, countdown,
+    lockedCard, paywallBanner, configureBilling, openCheckout, bindUnlock,
+  };
 })();

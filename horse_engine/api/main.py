@@ -3738,7 +3738,7 @@ _PAYWALL_PREFIXES = ("/api/edge", "/api/meetings", "/api/lounge", "/api/hotseat"
 # drops everything else. Fail-closed — an unknown key can never leak a pick.
 _PAYWALL_KEEP_KEYS = frozenset({
     "race_id", "venue", "venue_code", "venue_name", "venue_display", "state",
-    "meeting", "race_number", "race_no", "number", "race_name",
+    "meeting", "race_number", "race_no", "number", "race_name", "date",
     "scheduled_time", "jump_time", "distance", "field_size", "runners_count",
     "going", "track_condition", "surface", "status", "weather", "temp", "rain_mm",
     "is_past", "settled", "resulted", "model_correct", "model_placed",

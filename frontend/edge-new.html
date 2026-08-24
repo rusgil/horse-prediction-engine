@@ -1260,6 +1260,7 @@
     if (!r.ok) throw new Error(r.statusText);
     const d = await r.json();
     E.picks = d.picks || [];
+    E.paywall = d.paywall || null;
     E.generatedAt = d.generated_at;
     E.threshold = d.threshold_pct || 25;
     try { const br = await fetch(`${API}/api/venue-badges`); if (br.ok) VENUE_BADGES = (await br.json()).badges || {}; } catch (e) {}
@@ -1415,6 +1416,7 @@
   /* ── pick card ── now renders via the shared window.PickCard component.
      This adapter maps the /api/edge pick shape → the normalized card shape. */
   function card(p, res) {
+    if (p.locked) return window.PickCard.lockedCard(p);
     const field = (p.field || []).filter(r => !r.scratched && r.win_pct != null);
     const pick = {
       race_id: p.race_id, venue: p.venue, race_number: p.race_number, horse_name: p.horse_name,
@@ -1580,7 +1582,8 @@
     const byDate = {};
     picks.forEach(p => (byDate[p.date] = byDate[p.date] || []).push(p));
     const today = aestToday(), tomorrow = aestToday(1);
-    let html = m.fallback ? '<div class="banner-sharp"><b>🎯 No Sharp picks available</b><br>Sharp thresholds were not met for any race in the window — showing all picks.</div>' : '';
+    let html = (E.paywall && E.paywall.active ? window.PickCard.paywallBanner(E.paywall) : '');
+    html += m.fallback ? '<div class="banner-sharp"><b>🎯 No Sharp picks available</b><br>Sharp thresholds were not met for any race in the window — showing all picks.</div>' : '';
     Object.keys(byDate).sort().forEach(d => {
       const now = Date.now();
       const ps = [...byDate[d]].sort((a, b) => {
@@ -1754,8 +1757,16 @@
   });
 
   /* ── boot ── */
+  async function loadBilling() {
+    try {
+      const r = await fetch(`${API}/api/config/public`);
+      if (r.ok) window.PickCard.configureBilling((await r.json()).billing);
+    } catch (e) {}
+    window.PickCard.bindUnlock();
+  }
   async function boot() {
     renderControls();
+    loadBilling();
     loadEdgePerf();
     try {
       await loadEdge();

@@ -1036,9 +1036,9 @@
   function applySharp(mode) {
     S.sharpOnly = mode === 'sharp';
     localStorage.setItem('loungeCSharp', mode);
-    renderA();
+    try { renderA(); } catch (e) {}
     renderB();
-    renderC();
+    try { renderC(); } catch (e) {}
     renderDayStrip();
     loadPerf();
   }
@@ -1273,6 +1273,7 @@
       const r = await fetch(`${API}/api/meetings/${S.date}`);
       const d = await r.json();
       if (seq !== S.loadSeq) return;
+      S.paywall = d.paywall || null;
       S.meetings = (d.meetings || d || []).filter(m => m.venue || m.venue_code);
       // Legacy display alias: rows stored before the venue rename keep the
       // RA-era name; show the bookmaker/town name everywhere.
@@ -1459,7 +1460,7 @@
       }
       stopTodayPoll();
     } else { stopTodayPoll(); }
-    renderDayStrip(); renderA(); renderB(); renderC(); buildDateRow();
+    renderDayStrip(); try { renderA(); } catch (e) {} renderB(); try { renderC(); } catch (e) {} buildDateRow();
   }
   function renderEmptyAll() {
     ['A','B','C'].forEach(v => document.getElementById('view' + v).innerHTML =
@@ -1649,6 +1650,7 @@
     // Renders via the shared window.PickCard component (same card as Edge).
     // Adapter: map the /api/meetings race shape → the normalized card shape.
     const card = (r, settledCard) => {
+      if (r.locked) return window.PickCard.lockedCard(r);
       const tp = topPickOf(r.race_id);
       const done = isSettled(r);
       const pct = v => v != null ? v * 100 : null;
@@ -1743,7 +1745,7 @@
       </div>`;
     };
 
-    el.innerHTML = chips +
+    el.innerHTML = (S.paywall && S.paywall.active ? window.PickCard.paywallBanner(S.paywall) : '') + chips +
       (upcoming.length ? `<div class="feed-sec-title">Coming up</div>` + upcoming.map(r => card(r, false)).join('') : '') +
       (settled.length ? `<div class="feed-sec-title">Earlier — how our picks went</div>` + settled.map(r => card(r, true)).join('') : '') +
       (!upcoming.length && !settled.length ? `<div class="empty"><div class="big">🐎</div>No races for this filter.</div>` : '');
@@ -2038,6 +2040,10 @@
   loadAll();
   loadPerf();
   loadTrifectas();
+  (async () => {
+    try { const r = await fetch(`${API}/api/config/public`); if (r.ok) window.PickCard.configureBilling((await r.json()).billing); } catch (e) {}
+    window.PickCard.bindUnlock();
+  })();
 })();
 </script>
 </body>

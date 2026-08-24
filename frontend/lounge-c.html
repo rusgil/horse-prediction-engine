@@ -1247,6 +1247,7 @@
       const r = await fetch(`${API}/api/meetings/${S.date}`);
       const d = await r.json();
       if (seq !== S.loadSeq) return;
+      S.paywall = d.paywall || null;
       S.meetings = (d.meetings || d || []).filter(m => m.venue || m.venue_code);
       try { const br = await fetch(`${API}/api/venue-badges`); if (br.ok) VENUE_BADGES = (await br.json()).badges || {}; } catch (e) {}
       // Legacy display alias: rows stored before the venue rename keep the
@@ -1390,7 +1391,7 @@
       }
       stopTodayPoll();
     } else { stopTodayPoll(); }
-    renderDayStrip(); renderA(); renderB(); renderC();
+    renderDayStrip(); try { renderA(); } catch (e) {} try { renderB(); } catch (e) {} try { renderC(); } catch (e) {}
   }
   function renderEmptyAll() {
     ['A','B','C'].forEach(v => document.getElementById('view' + v).innerHTML =
@@ -1434,6 +1435,7 @@
       const cells = Array.from({ length: maxR }, (_, i) => {
         const r = races?.[i];
         if (!r) return `<td class="cell blank"></td>`;
+        if (r.locked) return `<td class="cell locked-cell" data-unlock title="Members only — unlock to see this pick">🔒</td>`;
         if (S.sharpOnly && r.is_sharp !== true) return `<td class="cell blank"></td>`;
         if (isSettled(r)) {
           colS[i]++;
@@ -1507,7 +1509,8 @@
         <td class="mcell tally-lab">Win / Plc %</td>
         ${Array.from({ length: maxR }, (_, i) => `<td class="cell-tally num">${colS[i] ? `<span class="rs-w">${Math.round(colW[i] / colS[i] * 100)}%</span><span class="rs-p">${Math.round(colP[i] / colS[i] * 100)}%</span>` : '<span class="tn">–</span>'}</td>`).join('')}
       </tr>` : '';
-    el.innerHTML = `<div class="grid-wrap"><table class="race-grid">
+    el.innerHTML = (S.paywall && S.paywall.active ? window.PickCard.paywallBanner(S.paywall) : '')
+      + `<div class="grid-wrap"><table class="race-grid">
       <thead><tr><th>Meeting</th>${head}</tr>${totalsRow}</thead><tbody>${rows}</tbody></table></div>`;
     const gw = el.querySelector('.grid-wrap');
     if (gw && prevScroll) gw.scrollLeft = prevScroll;
@@ -1529,7 +1532,7 @@
     const settled = races.filter(r => countdown(r.scheduled_time).past).reverse();
     const hero = upcoming[0];
 
-    const heroHtml = hero ? (() => {
+    const heroHtml = hero ? (hero.locked ? window.PickCard.lockedCard(hero) : (() => {
       const g = goingInfo(hero.track_condition);
       const off = isOffGoing(hero.track_condition);
       const tier = tierOf(hero.top_win_probability, off);
@@ -1561,9 +1564,10 @@
         <div class="hero-picks">${picksHtml}</div>
         <div class="hero-note">Our top ${rs.length || 3} for this race — tap for the full breakdown.</div>
       </div>`;
-    })() : '';
+    })()) : '';
 
     const card = (r, settledCard) => {
+      if (r.locked) return window.PickCard.lockedCard(r);
       const cd = countdown(r.scheduled_time);
       const off = isOffGoing(r.track_condition);
       const g = goingInfo(r.track_condition);
@@ -1841,6 +1845,10 @@
   applyVersion(loungeView() === 'heat' ? 'A' : 'C');
   loadAll();
   loadPerf();
+  (async () => {
+    try { const r = await fetch(`${API}/api/config/public`); if (r.ok) window.PickCard.configureBilling((await r.json()).billing); } catch (e) {}
+    window.PickCard.bindUnlock();
+  })();
 })();
 </script>
 </body>
