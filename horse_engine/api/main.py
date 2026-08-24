@@ -3885,9 +3885,9 @@ def _heat_band(d: dict) -> "str | None":
         v = d.get(k)
         if isinstance(v, (int, float)) and not isinstance(v, bool):
             p = v * 100 if v <= 1.0 else v
-            if p >= 25.5:
+            if p >= 23:
                 return "heat-green"
-            if p >= 23.2:
+            if p >= 20.5:
                 return "heat-amber"
             return "heat-red"
     return None
