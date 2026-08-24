@@ -4414,6 +4414,17 @@ async def waitlist_join(request: Request):
     return {"ok": True, "message": "We'll email you when a seat opens up."}
 
 
+def _billing_enabled() -> bool:
+    """True when the active provider has enough config to run live checkout.
+    Creem needs its server API key; SDK providers need a public client token.
+    All need a product/price id."""
+    if not settings.billing_price_id:
+        return False
+    if (settings.billing_provider or "").lower() == "creem":
+        return bool(settings.creem_api_key)
+    return bool(settings.billing_client_token)
+
+
 @app.get("/api/config/public")
 async def public_config():
     """Non-secret config the frontend needs at load time.
@@ -4429,12 +4440,13 @@ async def public_config():
         "billing": {
             "provider": settings.billing_provider,
             "env": settings.billing_env,
+            # SDK providers (Stripe/Paddle) need a public token; Creem uses a
+            # server-created redirect checkout and exposes nothing here.
             "client_token": settings.billing_client_token or None,
-            "price_id": settings.billing_price_id or None,
             "price": settings.billing_price_amount,
             "currency": settings.billing_currency,
             "pass_days": settings.billing_pass_days,
-            "enabled": bool(settings.billing_client_token and settings.billing_price_id),
+            "enabled": _billing_enabled(),
         },
     }
 
@@ -4468,6 +4480,54 @@ async def admin_access_grant(request: Request, admin=Depends(_auth_current_admin
         "email": email, "user_id": user.id, "days": days,
         "access_until": new_until.isoformat() if new_until else None,
     }
+
+
+# ── Billing (freemium pass) — provider-agnostic checkout + webhook ────────
+
+@app.post("/api/billing/checkout")
+async def billing_checkout(user=Depends(_auth_current_user_optional)):
+    """Create a hosted checkout for the logged-in user and return its URL.
+    The frontend redirects there. Requires login so the webhook can map the
+    payment back to this user (via metadata.user_id / request_id)."""
+    if user is None:
+        raise HTTPException(401, "login required")
+    from horse_engine.api.billing import get_provider
+    try:
+        provider = get_provider()
+        success_url = f"{settings.app_base_url.rstrip('/')}/account?welcome=1"
+        url = await provider.create_checkout(
+            user_id=user.id, email=user.email, success_url=success_url
+        )
+    except Exception as e:
+        log.warning("[billing] checkout creation failed: %s", e)
+        raise HTTPException(502, "checkout unavailable")
+    return {"url": url}
+
+
+@app.post("/api/billing/webhook")
+async def billing_webhook(request: Request):
+    """Provider webhook → grant paid access. Signature is verified inside the
+    adapter against the RAW body (never the reparsed JSON). Idempotent: a
+    duplicate/retried event no-ops via AccessGrantRow.external_txn_id."""
+    raw = await request.body()
+    from horse_engine.api.billing import get_provider
+    from horse_engine.api.access import grant_access
+    provider = get_provider()
+    try:
+        intent = provider.verify_and_parse(raw, request.headers)
+    except Exception as e:
+        log.warning("[billing] webhook rejected: %s", e)
+        raise HTTPException(400, "invalid webhook")
+    if intent is None:
+        return {"ok": True, "ignored": True}
+    new_until = await grant_access(
+        user_id=intent.user_id, days=intent.days, provider=provider.name,
+        external_txn_id=intent.external_txn_id, amount=intent.amount,
+        currency=intent.currency,
+    )
+    log.info("[billing] granted access via %s txn=%s user=%s -> %s",
+             provider.name, intent.external_txn_id, intent.user_id, new_until)
+    return {"ok": True, "access_until": new_until.isoformat() if new_until else None}
 
 
 # ── Admin invite/waitlist endpoints ──────────────────────────────────────

@@ -48,31 +48,39 @@ class Settings(BaseSettings):
     member_cap: int = 1000
 
     # ── Billing (freemium 5-day pass, 2026-08-24) ─────────────────────
-    # Provider-agnostic surface. Only the PUBLIC bits below are returned
-    # to the frontend via /api/config/public; secrets (paddle_api_key,
-    # paddle_webhook_secret) are read server-side only, in the billing
+    # Provider-agnostic surface (Creem is merchant-of-record — handles
+    # AU/global tax). Secrets are read server-side only, in the billing
     # adapter, and NEVER serialised to a client. Set via Railway env vars:
-    #   BILLING_PROVIDER      — 'paddle' (default) | 'stripe' | ...
-    #   BILLING_ENV           — 'sandbox' | 'production'
-    #   BILLING_CLIENT_TOKEN  — public client token for the checkout SDK
-    #   BILLING_PRICE_ID      — the $10 / 5-day price (or product) id
-    #   PADDLE_API_KEY        — (Stage 2) server secret for API calls
-    #   PADDLE_WEBHOOK_SECRET — (Stage 2) HMAC secret for webhook verify
-    # Blank client_token/price_id ⇒ billing.enabled=false (buy button
-    # stays hidden) — so Stage 1 ships inert until the Paddle keys land.
+    #   BILLING_PROVIDER      — 'creem' (default) | 'stripe' | ...
+    #   BILLING_ENV           — 'test' | 'production'  (drives Creem base URL)
+    #   BILLING_PRICE_ID      — the $10 / 5-day product id (Creem product_id)
+    #   CREEM_API_KEY         — server secret (x-api-key); creem_ / creem_test_
+    #   CREEM_WEBHOOK_SECRET  — HMAC-SHA256 secret for creem-signature verify
+    # Blank api_key/price_id ⇒ billing.enabled=false (Unlock routes to
+    # /login instead of a checkout) — so this ships inert until keys land.
     # Master kill-switch for the freemium gate. Default ON (gating live).
     # Flip to false via PAYWALL_ENABLED=false on Railway to instantly open
     # the whole site back up — no code change / redeploy needed.
     paywall_enabled: bool = True
-    billing_provider: str = "paddle"
-    billing_env: str = "sandbox"
+    billing_provider: str = "creem"
+    billing_env: str = "test"
+    # client_token stays for SDK-based providers (Stripe/Paddle); Creem
+    # uses a server-created redirect checkout, so it needs no public token.
     billing_client_token: str = ""
     billing_price_id: str = ""
     billing_price_amount: float = 10.0
     billing_currency: str = "AUD"
     billing_pass_days: int = 5
-    paddle_api_key: str = ""
-    paddle_webhook_secret: str = ""
+    # Creem (merchant of record).
+    creem_api_key: str = ""
+    creem_webhook_secret: str = ""
+    # Session-cookie Domain. Default "" = host-only (works on localhost +
+    # *.vercel.app previews). In prod set COOKIE_DOMAIN=.funkyiq.com so the
+    # session cookie is shared across the apex + api + product subdomains —
+    # REQUIRED for the paywall to recognise a logged-in member on the
+    # product pages, which call /api/* same-origin (Vercel rewrite → Railway)
+    # and otherwise wouldn't carry the api.funkyiq.com host-only cookie.
+    cookie_domain: str = ""
 
     # Benter blend (2026-07-22): final ranking score is
     #   alpha·log(p_model) + beta·log(p_market)  →  softmax within race,

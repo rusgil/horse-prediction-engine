@@ -196,19 +196,24 @@
   const _days = () => (_billing && _billing.pass_days != null ? _billing.pass_days : 5);
   const _unlockLabel = () => `Unlock — $${_price()} / ${_days()} days`;
 
-  function openCheckout() {
-    const b = _billing;
-    if (b && b.enabled && b.provider === 'paddle' && window.Paddle && window.Paddle.Checkout) {
-      try {
-        window.Paddle.Checkout.open({
-          items: [{ priceId: b.price_id, quantity: 1 }],
-          settings: { displayMode: 'overlay', theme: 'dark' },
-        });
-        return;
-      } catch (e) { /* fall through to sign-in */ }
-    }
-    // Stage 3 fallback (billing not live yet): route to sign in / join.
-    window.location.href = '/login';
+  // Provider-agnostic: ask the server to create a checkout and redirect to
+  // it. The server owns the provider (Creem now, anything later) — the page
+  // never names one. Not logged in → sign in first (so the payment maps to a
+  // user). No billing configured / any error → fall back to /login.
+  async function openCheckout() {
+    const nx = encodeURIComponent(location.pathname + location.search);
+    try {
+      const r = await fetch('/api/billing/checkout', {
+        method: 'POST', credentials: 'include',
+        headers: { 'content-type': 'application/json' }, body: '{}',
+      });
+      if (r.status === 401) { window.location.href = '/login?next=' + nx; return; }
+      if (r.ok) {
+        const d = await r.json();
+        if (d && d.url) { window.location.href = d.url; return; }
+      }
+    } catch (e) { /* fall through */ }
+    window.location.href = '/login?next=' + nx;
   }
 
   // Delegated click handler — any [data-unlock] element opens checkout.

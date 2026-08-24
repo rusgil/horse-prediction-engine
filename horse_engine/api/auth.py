@@ -320,8 +320,12 @@ def set_session_cookie(response: Response, cookie_token: str) -> None:
         secure=True,
         samesite="none",
         path="/",
+        # Shared across *.funkyiq.com in prod (COOKIE_DOMAIN=.funkyiq.com) so
+        # the product pages' same-origin /api/* rewrites carry the session and
+        # the paywall can recognise members. Blank ⇒ host-only (dev/preview).
+        domain=settings.cookie_domain or None,
     )
 
 
 def clear_session_cookie(response: Response) -> None:
-    response.delete_cookie(key=COOKIE_NAME, path="/")
+    response.delete_cookie(key=COOKIE_NAME, path="/", domain=settings.cookie_domain or None)
