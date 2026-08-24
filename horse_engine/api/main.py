@@ -3878,17 +3878,18 @@ def _heat_band(d: dict) -> "str | None":
     matching the frontend tierOf thresholds (46/36/30). Lets a locked cell keep
     its colour — teasing the page's richness — without leaking the horse, the
     odds, or the exact %. The tier band alone isn't actionable (no runner)."""
+    # Teaser aesthetic (not real data — cells are blurred): skew GREEN. Most
+    # rank-1 picks sit ~20-45%, so green covers the solid picks, amber the
+    # middling, red only the weak — "more green than red, a few ambers".
     for k in ("top_win_probability", "win_pct", "model_pct"):
         v = d.get(k)
         if isinstance(v, (int, float)) and not isinstance(v, bool):
             p = v * 100 if v <= 1.0 else v
-            if p >= 46:
-                return "heat-hot"
-            if p >= 36:
-                return "heat-high"
-            if p >= 30:
-                return "heat-strong"
-            return None
+            if p >= 25:
+                return "heat-green"
+            if p >= 17:
+                return "heat-amber"
+            return "heat-red"
     return None
 
 
