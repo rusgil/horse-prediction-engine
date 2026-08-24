@@ -276,16 +276,16 @@
     try { return new Date(iso + 'T00:00:00+10:00').toLocaleDateString('en-AU', { weekday: 'short', day: 'numeric', month: 'short' }); }
     catch (e) { return iso || ''; }
   };
-  // "Trophy for the day" — our biggest recent WIN. A curated green highlight
+  // "Trophy for the day" — our biggest recent WIN, rendered as a full (settled)
+  // race card so it carries all the normal info. A curated green highlight
   // (proof) shown to non-members even when there's no free upcoming pick.
   function trophyBanner(t) {
     if (!t || !t.horse_name) return '';
     const sp = t.sp != null ? '$' + Number(t.sp).toFixed(2) : '';
-    const meta = [t.venue, _shortDate(t.race_date)].filter(Boolean).join(' · ');
-    return `<div class="trophy-banner" data-unlock>
-      <span class="tr-ico">🏆</span>
-      <div class="tr-txt"><b>Recent winner</b> — <b class="tr-horse">${esc(t.horse_name)}</b> won at <b class="tr-sp">${sp}</b>
-        <span class="tr-meta">our top pick${meta ? ' · ' + esc(meta) : ''}</span></div>
+    const when = _shortDate(t.race_date);
+    return `<div class="trophy-wrap" data-unlock>
+      <div class="trophy-label">🏆 Recent winner — our top pick won at <b>${sp}</b>${when ? ' · ' + esc(when) : ''}</div>
+      ${render(t, { trophy: true })}
     </div>`;
   }
 

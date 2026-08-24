@@ -146,18 +146,20 @@
 .paywall-banner .pb-txt { font-size: 0.86rem; color: var(--text-2); }
 .paywall-banner .pb-txt b { color: var(--text); }
 
-/* Trophy for the day — our biggest recent win (proof), always green. */
-.trophy-banner {
-  display: flex; align-items: center; gap: 12px; margin: 0 0 12px; padding: 11px 16px;
-  border-radius: var(--radius, 12px); cursor: pointer;
+/* Trophy for the day — our biggest recent win, shown as a full race card
+   inside a gold-accented wrap (proof, always green). */
+.trophy-wrap {
+  margin: 0 0 14px; padding: 5px; border-radius: calc(var(--radius, 12px) + 3px);
+  cursor: pointer;
   border: 1px solid color-mix(in srgb, var(--gold, #f5c842) 45%, var(--line));
-  background: linear-gradient(90deg, color-mix(in srgb, var(--gold, #f5c842) 15%, var(--surface)), var(--surface));
+  background: color-mix(in srgb, var(--gold, #f5c842) 9%, transparent);
 }
-.trophy-banner .tr-ico { font-size: 1.4rem; line-height: 1; flex-shrink: 0; }
-.trophy-banner .tr-txt { font-size: 0.86rem; color: var(--text-2); }
-.trophy-banner .tr-horse { color: var(--text); }
-.trophy-banner .tr-sp { color: var(--gold, #f5c842); }
-.trophy-banner .tr-meta { display: block; font-size: 0.72rem; color: var(--text-3); font-weight: 500; margin-top: 1px; }
+.trophy-label {
+  font-size: 0.72rem; font-weight: 800; letter-spacing: 0.05em; text-transform: uppercase;
+  color: var(--gold, #f5c842); padding: 4px 8px 6px;
+}
+.trophy-label b { color: var(--text); }
+.trophy-wrap .jcard { margin-bottom: 0; }
 
 .unlock-btn {
   flex-shrink: 0;

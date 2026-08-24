@@ -3834,18 +3834,38 @@ async def _current_trophy() -> "dict | None":
                         best = (sp, rid, pk[0], pk[1], venue)
                 if best:
                     sp, rid, horse, wp, venue = best
-                    try:
-                        rno = int(rid.rsplit("_R", 1)[-1])
-                    except (ValueError, IndexError):
-                        rno = None
-                    trophy = {
-                        "horse_name": horse,
-                        "sp": round(float(sp), 2),
-                        "race_date": rid.split("_")[0],
-                        "race_number": rno,
-                        "venue": venue,
-                        "win_pct": round((wp or 0) * 100, 1),
-                    }
+                    # Pull the FULL rank-1 history row so the trophy renders as a
+                    # normal (settled) race card with all the usual info.
+                    full = (await session.execute(
+                        select(RunnerPredictionHistoryRow)
+                        .where(RunnerPredictionHistoryRow.race_id == rid)
+                        .where(RunnerPredictionHistoryRow.model_rank == 1)
+                        .where(RunnerPredictionHistoryRow.source == "live")
+                        .where(RunnerPredictionHistoryRow.cancelled.is_(False) | RunnerPredictionHistoryRow.cancelled.is_(None))
+                        .order_by(RunnerPredictionHistoryRow.enriched_at.desc())
+                        .limit(1)
+                    )).scalars().first()
+                    if full is not None:
+                        wpc = round((full.win_probability or wp or 0) * 100, 1)
+                        spr = round(float(sp), 2)
+                        trophy = {
+                            "race_id": full.race_id,
+                            "race_date": rid.split("_")[0],
+                            "venue": full.venue or venue,
+                            "race_number": full.race_number,
+                            "horse_name": full.horse_name,
+                            "scheduled_time": full.scheduled_time,
+                            "win_pct": wpc,
+                            "place_pct": (round((full.place_probability or 0) * 100, 1)
+                                          if full.place_probability is not None else None),
+                            "odds": spr,   # show the winning price on the card
+                            "sp": spr,
+                            "jockey": full.jockey, "trainer": full.trainer,
+                            "barrier": full.barrier, "weight": full.weight,
+                            "distance": full.distance, "field_size": full.field_size,
+                            "confidence_tier": ("hot" if wpc >= 46 else "high" if wpc >= 36 else "strong"),
+                            "result": {"winner": True, "placed": True, "position": 1, "sp": spr},
+                        }
     except Exception:
         log.exception("trophy lookup failed")
         trophy = None
