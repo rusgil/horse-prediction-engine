@@ -98,6 +98,26 @@ class Settings(BaseSettings):
     benter_alpha: float = 0.0
     benter_beta: float = 0.0
 
+    # R1-3 segment calibration (2026-08-25, Crucible-confirmed). The model
+    # UNDER-rates early-card rank-1 picks: 180d scan (n=2918) predicted 21.4%
+    # vs actual 30.2%, OOS-confirmed (train 1.63x, test 1.22x). When set >1.0,
+    # the final rank-1 on races 1-3 is scaled by this factor (capped at 0.90).
+    # Calibration only — does NOT change which horse is picked (rank order
+    # preserved), so it lifts the displayed %, tier and Sharp-eligibility of
+    # early-race top picks to match reality; it does not change win rate. Set
+    # R1_3_SEGMENT_CALIB=1.22 (the conservative OOS-test ratio) on Railway to
+    # enable. Default off — a deliberate human release action.
+    r1_3_segment_calib: float = 0.0
+
+    # +EV "value bet" gate (2026-08-25, Crucible-confirmed). The bet set that
+    # survived out-of-sample walk-forward at positive ROI (180d flat SP): HOT
+    # (rank-1 >= 46%, +28% ROI, OOS train +33% / test +23%) OR a HIGH pick
+    # (36-45%) the MARKET DOUBTS (market_rank >= 3). Combined = ~+19% ROI,
+    # OOS-stable. This is the profitable EDGE tier, distinct from the Sharp
+    # QUALITY gate. When true, picks carry value_bet=true so the product can
+    # surface / filter to the +EV set. Off by default — a human release action.
+    value_bet_gate: bool = False
+
     # Market-defer guardrail (2026-08-19): on a marginal win-rank disagreement,
     # defer our rank-1 to the MARKET favourite. Fires only when the market
     # favourite is NOT our rank-1 AND our rank-1's win_prob leads the market

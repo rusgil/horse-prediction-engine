@@ -701,6 +701,23 @@ def predict_race(race: Race, model: HorseModel, venue_calibration: dict[str, flo
                     f"promoted_to_rank1(edge<{_defer_edge*100:.0f}pp)"
                 )
 
+    # R1-3 segment calibration (2026-08-25, Crucible-confirmed OOS on n=2918:
+    # early-card rank-1s predicted 21.4% but actually win 30.2%). When enabled
+    # (R1_3_SEGMENT_CALIB > 1.0), scale up the FINAL rank-1 on races 1-3 by the
+    # conservative OOS-test ratio. Deflation-multiplier style (per-runner scale,
+    # no renorm — matches the going/thin-record stages); capped at 0.90 for the
+    # display rule. Rank-preserving: only the current top pick is lifted, so the
+    # PICK never changes — this corrects the displayed %/tier/Sharp-eligibility,
+    # not win rate. Applied last, on the post-defer favourite.
+    from horse_engine.config import settings as _seg_settings
+    _r13 = float(getattr(_seg_settings, "r1_3_segment_calib", 0.0) or 0.0)
+    if _r13 > 1.0 and predictions and getattr(race, "race_number", None) in (1, 2, 3):
+        _top = max(predictions, key=lambda p: p.win_prob)
+        _boosted = min(round(_top.win_prob * _r13, 4), 0.90)
+        if trace is not None and _top.runner.horse_name in trace:
+            trace[_top.runner.horse_name]["r1_3_segment_calib"] = f"x{_r13}->{_boosted}"
+        _top.win_prob = _boosted
+
     # Rank by place probability (using the trained place model when provided,
     # else the heuristic carried on each prediction). Sorting predictions by
     # their own place_prob guarantees the ranking matches the horse.

@@ -189,6 +189,22 @@ _SHARP_GATE_LATE_NONMETRO_FROM = "2026-08-02"
 _SHARP_GATE_CLEAR_FAV_FROM = "2026-08-14"
 
 
+def _is_value_bet(rank1_prob, market_rank) -> bool:
+    """The +EV EDGE tier (Crucible-confirmed 2026-08-25) — distinct from the
+    Sharp QUALITY gate. A rank-1 pick is a value bet iff:
+      • rank-1 win prob >= 46%  (HOT — +28% ROI, OOS-confirmed), OR
+      • 36% <= rank-1 < 46% AND the market ranks it >=3rd (HIGH the market
+        doubts — the model beats the market at a price it under-rates).
+    Combined set is OOS-stable at ~+19% ROI (180d flat SP). rank1_prob on the
+    0-1 scale. Gate is inert unless settings.value_bet_gate is on."""
+    r1 = rank1_prob or 0.0
+    if r1 >= 0.46:
+        return True
+    if 0.36 <= r1 < 0.46 and isinstance(market_rank, (int, float)) and market_rank >= 3:
+        return True
+    return False
+
+
 def _is_sharp_gate(
     rank1_prob,
     rank2_prob,
@@ -6073,10 +6089,13 @@ async def get_edge_picks():
                 meeting_max_race=_mx,
                 race_date=target_date,
             )
+            value_bet = bool(settings.value_bet_gate and _is_value_bet(
+                (model_pct or 0) / 100.0, getattr(runner_row, "market_rank", None)))
 
             picks.append({
                 "date": target_date,
                 "race_id": runner_row.race_id,
+                "value_bet": value_bet,
                 "venue": venue_code,
                 "state": None,
                 "race_number": race_num,
