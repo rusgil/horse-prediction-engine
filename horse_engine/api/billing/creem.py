@@ -32,8 +32,10 @@ log = logging.getLogger(__name__)
 
 
 def _base_url() -> str:
-    env = (settings.billing_env or "").lower()
-    test = env.startswith("test") or env in ("sandbox", "dev")
+    # .strip() — a stray space in BILLING_ENV must never silently flip
+    # test↔production (observed " test" with a leading space, 2026-08-24).
+    env = (settings.billing_env or "").strip().lower()
+    test = env.startswith("test") or env in ("sandbox", "dev", "")
     return "https://test-api.creem.io/v1" if test else "https://api.creem.io/v1"
 
 
