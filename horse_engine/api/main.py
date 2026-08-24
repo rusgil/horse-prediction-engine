@@ -3723,6 +3723,112 @@ def _cap_probs_in(obj) -> None:
             _cap_probs_in(item)
 
 
+# ── Freemium paywall (Stage 1, 2026-08-24) ─────────────────────────────
+# Non-members see ONE free race (the next upcoming, globally) in full on the
+# pick surfaces; every other race is redacted to a locked stub. Enforced HERE
+# in the response layer — never in the pick-computation code — so the
+# history/mutable ground rules are untouched. The gate is provider-agnostic:
+# it reads only UserRow.access_until via access.has_active_access().
+#
+# Paths gated (subset of the prob-cap prefixes — track-record / performance /
+# results stay fully public, they're the shopfront stats).
+_PAYWALL_PREFIXES = ("/api/edge", "/api/meetings", "/api/lounge", "/api/hotseat")
+
+# ALLOWLIST, not denylist: a redacted race dict keeps ONLY these meta keys and
+# drops everything else. Fail-closed — an unknown key can never leak a pick.
+_PAYWALL_KEEP_KEYS = frozenset({
+    "race_id", "venue", "venue_code", "venue_name", "venue_display", "state",
+    "meeting", "race_number", "race_no", "number", "race_name",
+    "scheduled_time", "jump_time", "distance", "field_size", "runners_count",
+    "going", "track_condition", "surface", "status", "weather", "temp", "rain_mm",
+    "is_past", "settled", "resulted", "model_correct", "model_placed",
+    "locked",
+})
+
+_teaser_cache: "tuple[datetime, str | None] | None" = None
+_TEASER_TTL = 60  # seconds
+
+
+async def _current_teaser_race_id() -> "str | None":
+    """The ONE race non-members get for free — the next-upcoming race today,
+    computed globally so it's identical across every payload (otherwise a
+    non-member could unlock one race per venue via the drill-in endpoint).
+    Short TTL cache; parses scheduled_time via the tz-safe helper."""
+    global _teaser_cache
+    now = datetime.utcnow()
+    if _teaser_cache is not None and (now - _teaser_cache[0]).total_seconds() < _TEASER_TTL:
+        return _teaser_cache[1]
+    rid = None
+    try:
+        prefix = _today_aest().isoformat()
+        async with get_session() as session:
+            rows = (await session.execute(
+                select(RunnerPredictionRow.race_id, RunnerPredictionRow.scheduled_time)
+                .where(RunnerPredictionRow.race_id.like(f"{prefix}%"))
+                .where(RunnerPredictionRow.scheduled_time.isnot(None))
+            )).all()
+        best = None
+        for r_id, sched in rows:
+            dt = sched_to_utc_naive(sched)
+            if dt is None or dt <= now:
+                continue
+            if best is None or dt < best[0]:
+                best = (dt, r_id)
+        rid = best[1] if best else None
+    except Exception:
+        log.exception("teaser race lookup failed; locking all races for non-members")
+        rid = None
+    _teaser_cache = (now, rid)
+    return rid
+
+
+def _redact_race_dict(d: dict) -> None:
+    """In place: strip a locked race to meta-only + mark locked."""
+    kept = {k: d[k] for k in list(d.keys()) if k in _PAYWALL_KEEP_KEYS}
+    kept["locked"] = True
+    d.clear()
+    d.update(kept)
+
+
+def _apply_paywall(obj, teaser_id: "str | None") -> None:
+    """Walk the payload; any dict carrying a race_id != teaser is redacted to
+    a locked stub. The teaser race (and dicts with no race_id) pass through."""
+    if isinstance(obj, dict):
+        rid = obj.get("race_id")
+        if rid is not None:
+            if rid == teaser_id:
+                return  # the free race — keep in full
+            _redact_race_dict(obj)
+            return
+        for v in obj.values():
+            _apply_paywall(v, teaser_id)
+    elif isinstance(obj, list):
+        for item in obj:
+            _apply_paywall(item, teaser_id)
+
+
+async def _request_has_access(request) -> bool:
+    """Resolve the session cookie → member access. Logged-out (no cookie)
+    short-circuits with no DB hit. Never raises into the middleware."""
+    try:
+        from horse_engine.api.auth import COOKIE_NAME, get_user_by_cookie
+        from horse_engine.api.access import has_active_access
+        token = request.cookies.get(COOKIE_NAME)
+        if not token:
+            return False
+        return has_active_access(await get_user_by_cookie(token))
+    except Exception:
+        log.exception("paywall access check failed; treating as non-member")
+        return False
+
+
+def _path_is_paywalled(path: str) -> bool:
+    # Results (finishing order) are public factual data — never gated.
+    if path.endswith("/results"):
+        return False
+    return path.startswith(_PAYWALL_PREFIXES)
+
+
 @app.middleware("http")
 async def _display_prob_cap(request, call_next):
     response = await call_next(request)
@@ -3738,6 +3844,13 @@ async def _display_prob_cap(request, call_next):
     try:
         data = json.loads(body)
         _cap_probs_in(data)
+        # Paywall: redact all-but-the-teaser race for non-members. Runs after
+        # any endpoint-level cache (this is per-request), on the parsed JSON.
+        if settings.paywall_enabled and _path_is_paywalled(path) and not await _request_has_access(request):
+            teaser_id = await _current_teaser_race_id()
+            _apply_paywall(data, teaser_id)
+            if isinstance(data, dict):
+                data["paywall"] = {"active": True, "teaser_race_id": teaser_id}
         new_body = json.dumps(data).encode()
     except Exception:
         new_body = body
@@ -4310,6 +4423,50 @@ async def public_config():
     return {
         "turnstile_site_key": settings.turnstile_site_key or None,
         "turnstile_enabled": _turnstile_enabled(),
+        # Public billing config for the checkout SDK. Secrets never appear
+        # here. `enabled` is false until the provider's public keys are set,
+        # so the frontend keeps the buy button hidden through Stage 1.
+        "billing": {
+            "provider": settings.billing_provider,
+            "env": settings.billing_env,
+            "client_token": settings.billing_client_token or None,
+            "price_id": settings.billing_price_id or None,
+            "price": settings.billing_price_amount,
+            "currency": settings.billing_currency,
+            "pass_days": settings.billing_pass_days,
+            "enabled": bool(settings.billing_client_token and settings.billing_price_id),
+        },
+    }
+
+
+# ── Admin: paid-access test/comp grant (provider-agnostic) ───────────────
+
+@app.post("/api/admin/access/grant")
+async def admin_access_grant(request: Request, admin=Depends(_auth_current_admin)):
+    """TEST / COMP grant of paid access — no Paddle needed. Lets us exercise
+    the paywall end-to-end before billing is wired.
+
+    Body: { "email": "...", "days"?: int }. Creates the user if absent,
+    extends access_until by `days` (default = the standard pass length) via
+    the same access.grant_access() the real webhook will call, and ledgers
+    an 'admin' grant. Each call uses a timestamped txn id so repeats stack.
+    """
+    body = await request.json() if request.headers.get("content-type", "").startswith("application/json") else {}
+    email = (body.get("email") or "").strip().lower()
+    if not email:
+        raise HTTPException(400, "email required")
+    days = int(body.get("days") or settings.billing_pass_days)
+    from horse_engine.api.auth import get_or_create_user
+    from horse_engine.api.access import grant_access
+    user = await get_or_create_user(email)
+    txn = f"admin:{user.id}:{datetime.utcnow().isoformat()}"
+    new_until = await grant_access(
+        user_id=user.id, days=days, provider="admin",
+        external_txn_id=txn, amount=None, currency=settings.billing_currency,
+    )
+    return {
+        "email": email, "user_id": user.id, "days": days,
+        "access_until": new_until.isoformat() if new_until else None,
     }
 
 

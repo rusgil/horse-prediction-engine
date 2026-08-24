@@ -683,6 +683,16 @@ class UserRow(Base):
     # a different flow. Refill via admin adjustment if genuinely needed.
     invites_remaining = Column(Integer, nullable=False, default=20)
 
+    # ── Paid access (freemium 5-day pass, 2026-08-24) ────────────────
+    # THE single source of truth for "can this user see full picks".
+    # Set by billing grant_access() on a completed payment, or by the
+    # admin test-grant endpoint. NULL = never paid. Access is live while
+    # access_until > utcnow(); the paywall gate checks exactly this and
+    # nothing else. Deliberately provider-agnostic — the provider only
+    # ever calls grant_access(), which extends this column. See
+    # AccessGrantRow for the append-only payment ledger behind it.
+    access_until = Column(DateTime, nullable=True, index=True)
+
 
 class MagicLinkRow(Base):
     """Short-lived (15 min) one-time-use tokens sent by email to prove
@@ -784,6 +794,39 @@ class WaitlistRow(Base):
     # or admin notes attached during outreach.
     notes = Column(String, nullable=True)
     invited_at = Column(DateTime, nullable=True)  # set when admin mints an invite for this waitlister
+
+
+class AccessGrantRow(Base):
+    """Append-only ledger of paid-access grants — one row per settled
+    payment (plus admin/comp grants). The row is the audit trail; the
+    live access state lives on UserRow.access_until, which grant_access()
+    extends.
+
+    Provider-agnostic ON PURPOSE (2026-08-24): a billing-provider swap
+    (Paddle → Stripe → …) just writes rows with a different `provider`
+    tag — no schema change, and the access check never learns the
+    provider's name. Historical Paddle rows stay interpretable forever.
+
+    `external_txn_id` is the provider's transaction/order id and is
+    UNIQUE, which gives idempotent webhooks for free: a retried delivery
+    of the same transaction can't double-grant (grant_access() no-ops if
+    the id already exists). Grants match a user by OUR user_id — passed
+    to the provider as checkout metadata — never by the provider's
+    customer id, so the provider's customer graph is never load-bearing.
+    """
+    __tablename__ = "access_grants"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    user_id = Column(Integer, nullable=False, index=True)
+    provider = Column(String, nullable=False)              # 'paddle' | 'stripe' | 'admin' | 'comp'
+    external_txn_id = Column(String, nullable=False, unique=True, index=True)
+    days_granted = Column(Integer, nullable=False)
+    amount = Column(Float, nullable=True)                  # decimal major units (e.g. 10.00)
+    currency = Column(String, nullable=True)               # 'AUD'
+    # What access_until became right after applying this grant — pure
+    # audit, so the ledger fully explains the current access state.
+    access_until_after = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
 
 
 class RAVenueKeyCacheRow(Base):
@@ -1155,6 +1198,16 @@ async def init_db() -> None:
         # invite still creates a normal member account.
         "ALTER TABLE invites ADD COLUMN IF NOT EXISTS role TEXT NOT NULL DEFAULT 'member'",
         "CREATE INDEX IF NOT EXISTS ix_waitlist_created ON waitlist (created_at)",
+        # ── Paid access (freemium 5-day pass, 2026-08-24) ────────────
+        # access_until on users + the provider-agnostic access_grants
+        # ledger (the table itself is auto-created by create_all above;
+        # these statements add the column on older deployments and the
+        # supporting indexes / idempotency unique). TIMESTAMP is correct
+        # on Postgres and accepted by SQLite.
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS access_until TIMESTAMP",
+        "CREATE INDEX IF NOT EXISTS ix_users_access_until ON users (access_until)",
+        "CREATE UNIQUE INDEX IF NOT EXISTS uq_access_grants_external_txn ON access_grants (external_txn_id)",
+        "CREATE INDEX IF NOT EXISTS ix_access_grants_user ON access_grants (user_id)",
         "CREATE INDEX IF NOT EXISTS ix_hist_results_race_winner ON historical_results (race_id, winner)",
         "CREATE INDEX IF NOT EXISTS ix_hist_results_race_placed ON historical_results (race_id, placed)",
         # Composite for common top-3/top-4 fetches: SELECT ... WHERE race_id = X AND position IN (1,2,3)

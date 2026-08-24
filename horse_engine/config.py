@@ -47,6 +47,33 @@ class Settings(BaseSettings):
     first_admin_email: str = "rusgil@gmail.com"
     member_cap: int = 1000
 
+    # ── Billing (freemium 5-day pass, 2026-08-24) ─────────────────────
+    # Provider-agnostic surface. Only the PUBLIC bits below are returned
+    # to the frontend via /api/config/public; secrets (paddle_api_key,
+    # paddle_webhook_secret) are read server-side only, in the billing
+    # adapter, and NEVER serialised to a client. Set via Railway env vars:
+    #   BILLING_PROVIDER      — 'paddle' (default) | 'stripe' | ...
+    #   BILLING_ENV           — 'sandbox' | 'production'
+    #   BILLING_CLIENT_TOKEN  — public client token for the checkout SDK
+    #   BILLING_PRICE_ID      — the $10 / 5-day price (or product) id
+    #   PADDLE_API_KEY        — (Stage 2) server secret for API calls
+    #   PADDLE_WEBHOOK_SECRET — (Stage 2) HMAC secret for webhook verify
+    # Blank client_token/price_id ⇒ billing.enabled=false (buy button
+    # stays hidden) — so Stage 1 ships inert until the Paddle keys land.
+    # Master kill-switch for the freemium gate. Default ON (gating live).
+    # Flip to false via PAYWALL_ENABLED=false on Railway to instantly open
+    # the whole site back up — no code change / redeploy needed.
+    paywall_enabled: bool = True
+    billing_provider: str = "paddle"
+    billing_env: str = "sandbox"
+    billing_client_token: str = ""
+    billing_price_id: str = ""
+    billing_price_amount: float = 10.0
+    billing_currency: str = "AUD"
+    billing_pass_days: int = 5
+    paddle_api_key: str = ""
+    paddle_webhook_secret: str = ""
+
     # Benter blend (2026-07-22): final ranking score is
     #   alpha·log(p_model) + beta·log(p_market)  →  softmax within race,
     # applied mass-preservingly (see engine._apply_benter_blend). Both 0.0
