@@ -9,7 +9,7 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700;800&family=Barlow:wght@400;500;600;700;800&family=Outfit:wght@300;400;500;600&display=swap" rel="stylesheet">
 <script src="/sharp.js"></script>
-<script src="/pick-card.js?v=4"></script>
+<script src="/pick-card.js?v=6"></script>
 <style>
   /* ── Tokens ─────────────────────────────────────────────── */
   :root {
@@ -949,7 +949,7 @@
 
   .ff { font-variant-numeric: tabular-nums; letter-spacing: 0.14em; font-weight: 800; }
 </style>
-  <link rel="stylesheet" href="/pick-card.css?v=4">
+  <link rel="stylesheet" href="/pick-card.css?v=6">
   <script defer src="/_vercel/insights/script.js"></script>
 </head>
 <body>
@@ -1584,7 +1584,7 @@
     const today = aestToday(), tomorrow = aestToday(1);
     let html = (E.paywall && E.paywall.trophy ? window.PickCard.trophyBanner(E.paywall.trophy) : '')
       + (E.paywall && E.paywall.active ? window.PickCard.paywallBanner(E.paywall) : '');
-    html += (m.fallback && !(E.paywall && E.paywall.active)) ? '<div class="banner-sharp"><b>🎯 No Sharp picks available</b><br>Sharp thresholds were not met for any race in the window — showing all picks.</div>' : '';
+    html += (m.fallback && !E.paywall) ? '<div class="banner-sharp"><b>🎯 No Sharp picks available</b><br>Sharp thresholds were not met for any race in the window — showing all picks.</div>' : '';
     Object.keys(byDate).sort().forEach(d => {
       const now = Date.now();
       const ps = [...byDate[d]].sort((a, b) => {
@@ -1628,7 +1628,7 @@
     const picks = m.picks;
     const cards = picks.map(p => card(p, p)).join('')
       || `<div class="empty"><div class="big">🐎</div>No ${E.mode === 'sharp' ? 'Sharp ' : ''}picks recorded for this date.</div>`;
-    el.innerHTML = nav + (m.fallback && !(E.paywall && E.paywall.active) ? '<div class="banner-sharp"><b>🎯 No Sharp picks this day</b> — showing all picks.</div>' : '') + cards;
+    el.innerHTML = nav + (m.fallback && !E.paywall ? '<div class="banner-sharp"><b>🎯 No Sharp picks this day</b> — showing all picks.</div>' : '') + cards;
     renderControls();   // rebuild the date-bar + strip from the now-loaded data so both match
     bindResNav(el);
     bindCards(el);

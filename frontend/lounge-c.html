@@ -883,8 +883,8 @@
 
   .ff { font-variant-numeric: tabular-nums; letter-spacing: 0.14em; font-weight: 800; }
 </style>
-  <link rel="stylesheet" href="/pick-card.css?v=5">
-  <script src="/pick-card.js?v=5"></script>
+  <link rel="stylesheet" href="/pick-card.css?v=6">
+  <script src="/pick-card.js?v=6"></script>
   <script defer src="/_vercel/insights/script.js"></script>
 </head>
 <body>
@@ -1502,7 +1502,7 @@
         </td>${cells}</tr>`;
     }).join('');
 
-    if (S.sharpOnly && !rows && !(S.paywall && S.paywall.active)) {
+    if (S.sharpOnly && !rows && !S.paywall) {
       el.innerHTML = `<div class="empty"><div class="big">🎯</div>No Sharp races today — switch to 'All picks' to see the full grid.</div>`;
       return;
     }

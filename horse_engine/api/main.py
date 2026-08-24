@@ -3968,17 +3968,18 @@ async def _display_prob_cap(request, call_next):
             _apply_paywall(data, teaser_id)
             if isinstance(data, dict):
                 trophy = await _current_trophy()
-                # 'active' (→ "you're seeing 1 free race" banner) only when there
-                # IS a free upcoming pick to headline — driven by teaser existence
-                # so it's consistent across the meetings-list and venue-detail
-                # payloads (the list has no lockable races). The trophy shows
-                # regardless, including end of day when nothing's free.
-                if teaser_id is not None or trophy:
-                    data["paywall"] = {
-                        "active": teaser_id is not None,
-                        "teaser_race_id": teaser_id,
-                        "trophy": trophy,
-                    }
+                # Always attach paywall for a gated non-member so the frontend
+                # has a reliable "this viewer is gated" signal (used to hide the
+                # 'No Sharp picks' empty-state, etc.). 'active' (→ "you're seeing
+                # 1 free race" banner) is only true when there IS a free upcoming
+                # pick to headline — driven by teaser existence so it's consistent
+                # across the meetings-list + venue-detail payloads. The trophy
+                # shows regardless, including end of day when nothing's free.
+                data["paywall"] = {
+                    "active": teaser_id is not None,
+                    "teaser_race_id": teaser_id,
+                    "trophy": trophy,
+                }
         new_body = json.dumps(data).encode()
     except Exception:
         new_body = body
