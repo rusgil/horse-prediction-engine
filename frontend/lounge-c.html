@@ -883,8 +883,8 @@
 
   .ff { font-variant-numeric: tabular-nums; letter-spacing: 0.14em; font-weight: 800; }
 </style>
-  <link rel="stylesheet" href="/pick-card.css?v=8">
-  <script src="/pick-card.js?v=8"></script>
+  <link rel="stylesheet" href="/pick-card.css?v=9">
+  <script src="/pick-card.js?v=9"></script>
   <script defer src="/_vercel/insights/script.js"></script>
 </head>
 <body>
@@ -1345,7 +1345,8 @@
       <div class="ds-divider"></div>
       <div class="ds-stat"><b class="a num">${placed}</b> more placed <span class="num">(${placePct}% placed incl. wins)</span></div>
     </div>` : '';
-    const sharpHtml = `<div class="ds-row">
+    if (S.paywall) S.sharpOnly = false;   // non-members can't filter — force off
+    const sharpHtml = S.paywall ? '' : `<div class="ds-row">
       <span class="seg seg-sm" role="radiogroup" aria-label="Sharp filter">
         <button data-s="all" class="${S.sharpOnly ? '' : 'on'}">All picks</button>
         <button data-s="sharp" class="${S.sharpOnly ? 'on' : ''}">🎯 Sharp only</button>

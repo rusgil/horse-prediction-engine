@@ -9,7 +9,7 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700;800&family=Barlow:wght@400;500;600;700;800&family=Outfit:wght@300;400;500;600&display=swap" rel="stylesheet">
 <script src="/sharp.js"></script>
-<script src="/pick-card.js?v=8"></script>
+<script src="/pick-card.js?v=9"></script>
 <style>
   /* ── Tokens ─────────────────────────────────────────────── */
   :root {
@@ -949,7 +949,7 @@
 
   .ff { font-variant-numeric: tabular-nums; letter-spacing: 0.14em; font-weight: 800; }
 </style>
-  <link rel="stylesheet" href="/pick-card.css?v=8">
+  <link rel="stylesheet" href="/pick-card.css?v=9">
   <script defer src="/_vercel/insights/script.js"></script>
 </head>
 <body>
@@ -1340,9 +1340,10 @@
     const el = document.getElementById('ctlRows');
     const seg = (items, cur, attr) => `<span class="seg seg-sm">${items.map(([v, l]) =>
       `<button data-${attr}="${v}" class="${cur === v ? 'on' : ''}">${l}</button>`).join('')}</span>`;
+    if (E.paywall) E.mode = 'all';   // non-members can't filter — force off
     el.innerHTML = `<div class="row">${edgeDateBarHTML()}</div>
       <div class="row">
-        ${seg([['sharp', '🎯 Sharp only'], ['all', 'All picks']], E.mode, 'md')}
+        ${E.paywall ? '' : seg([['sharp', '🎯 Sharp only'], ['all', 'All picks']], E.mode, 'md')}
         ${E.view === 'up' ? seg([['best', 'Best pick'], ['next', 'Next race']], E.sort, 'st') : ''}
       </div>`;
     el.querySelectorAll('[data-pt]').forEach(b => b.onclick = () => { E.parent = b.dataset.pt; renderControls(); renderFeed(); });
