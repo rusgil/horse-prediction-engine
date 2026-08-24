@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
   <script src="/theme.js"></script>
-  <script src="/pick-card.js?v=4"></script>
+  <script src="/pick-card.js?v=5"></script>
 <meta name="robots" content="noindex">
 <title>FunkyIQ — Hot Seat</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -882,7 +882,7 @@
 
   .ff { font-variant-numeric: tabular-nums; letter-spacing: 0.14em; font-weight: 800; }
 </style>
-  <link rel="stylesheet" href="/pick-card.css?v=4">
+  <link rel="stylesheet" href="/pick-card.css?v=5">
   <script defer src="/_vercel/insights/script.js"></script>
 </head>
 <body>
@@ -1650,7 +1650,7 @@
     // Renders via the shared window.PickCard component (same card as Edge).
     // Adapter: map the /api/meetings race shape → the normalized card shape.
     const card = (r, settledCard) => {
-      if (r.locked) return window.PickCard.lockedCard(r);
+      if (r.locked) return window.PickCard.lockedCard(Object.assign({}, r, { venue: r._venue || r.venue }));
       const tp = topPickOf(r.race_id);
       const done = isSettled(r);
       const pct = v => v != null ? v * 100 : null;

@@ -286,6 +286,7 @@
     return `<div class="trophy-wrap" data-unlock>
       <div class="trophy-label">🏆 Recent winner — our top pick won at <b>${sp}</b>${when ? ' · ' + esc(when) : ''}</div>
       ${render(t, { trophy: true })}
+      <button class="unlock-btn trophy-cta" data-unlock>Sign up — ${_money()} / ${_days()} days</button>
     </div>`;
   }
 

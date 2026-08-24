@@ -883,8 +883,8 @@
 
   .ff { font-variant-numeric: tabular-nums; letter-spacing: 0.14em; font-weight: 800; }
 </style>
-  <link rel="stylesheet" href="/pick-card.css?v=4">
-  <script src="/pick-card.js?v=4"></script>
+  <link rel="stylesheet" href="/pick-card.css?v=5">
+  <script src="/pick-card.js?v=5"></script>
   <script defer src="/_vercel/insights/script.js"></script>
 </head>
 <body>
@@ -1569,7 +1569,7 @@
     })()) : '';
 
     const card = (r, settledCard) => {
-      if (r.locked) return window.PickCard.lockedCard(r);
+      if (r.locked) return window.PickCard.lockedCard(Object.assign({}, r, { venue: r._venue || r.venue }));
       const cd = countdown(r.scheduled_time);
       const off = isOffGoing(r.track_condition);
       const g = goingInfo(r.track_condition);

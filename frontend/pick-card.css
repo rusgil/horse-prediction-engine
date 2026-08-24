@@ -160,6 +160,7 @@
 }
 .trophy-label b { color: var(--text); }
 .trophy-wrap .jcard { margin-bottom: 0; }
+.trophy-cta { display: block; width: calc(100% - 10px); margin: 8px 5px 4px; padding: 11px 18px; }
 
 .unlock-btn {
   flex-shrink: 0;
