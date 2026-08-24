@@ -4445,6 +4445,7 @@ async def public_config():
             "client_token": settings.billing_client_token or None,
             "price": settings.billing_price_amount,
             "currency": settings.billing_currency,
+            "price_note": settings.billing_price_note or None,
             "pass_days": settings.billing_pass_days,
             "enabled": _billing_enabled(),
         },

@@ -68,8 +68,12 @@ class Settings(BaseSettings):
     # uses a server-created redirect checkout, so it needs no public token.
     billing_client_token: str = ""
     billing_price_id: str = ""
-    billing_price_amount: float = 10.0
-    billing_currency: str = "AUD"
+    # Creem charges USD/EUR only — no AUD. Price in USD; the button shows a
+    # ~AUD approximation via billing_price_note (display only; the real charge
+    # is the USD amount, converted by the buyer's bank). US$6.99 ≈ A$9.90.
+    billing_price_amount: float = 6.99
+    billing_currency: str = "USD"
+    billing_price_note: str = "~A$9.90"
     billing_pass_days: int = 5
     # Creem (merchant of record).
     creem_api_key: str = ""

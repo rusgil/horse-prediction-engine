@@ -192,9 +192,17 @@
   // once. Until Paddle is wired (billing.enabled=false) Unlock → /login.
   let _billing = null;
   function configureBilling(b) { _billing = b || null; }
-  const _price = () => (_billing && _billing.price != null ? _billing.price : 10);
+  const _price = () => (_billing && _billing.price != null ? _billing.price : 6.99);
   const _days = () => (_billing && _billing.pass_days != null ? _billing.pass_days : 5);
-  const _unlockLabel = () => `Unlock — $${_price()} / ${_days()} days`;
+  // Currency-aware money label, e.g. "US$6.99 (~A$9.90)". The real charge is
+  // the USD amount; the (~A$…) note is display-only, from billing.price_note.
+  function _money() {
+    const c = (_billing && _billing.currency) || 'USD';
+    const sym = c === 'USD' ? 'US$' : c === 'EUR' ? '€' : (c + ' ');
+    const note = _billing && _billing.price_note ? ' (' + _billing.price_note + ')' : '';
+    return sym + _price() + note;
+  }
+  const _unlockLabel = () => `Unlock — ${_money()} / ${_days()} days`;
 
   // Provider-agnostic: ask the server to create a checkout and redirect to
   // it. The server owns the provider (Creem now, anything later) — the page
