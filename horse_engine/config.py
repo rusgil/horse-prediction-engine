@@ -83,6 +83,12 @@ class Settings(BaseSettings):
     # secret for the checkout.session.completed webhook.
     stripe_secret_key: str = ""
     stripe_webhook_secret: str = ""
+    # Managed Payments (2026-08-25 blueprint): Stripe acts as merchant of record
+    # and handles tax (AU GST). Requires the preview API version below and
+    # managed_payments[enabled]=true on the Checkout Session, and a Product with
+    # an eligible tax_code. The blueprint pins this version — do not blank it.
+    stripe_api_version: str = "2026-02-25.preview"
+    stripe_managed_payments: bool = True
     # Creem (merchant of record) — retained; unused now Stripe is the provider.
     creem_api_key: str = ""
     creem_webhook_secret: str = ""

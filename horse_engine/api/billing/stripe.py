@@ -48,12 +48,19 @@ class StripeProvider(BillingProvider):
             "client_reference_id": str(user_id),
             "metadata[user_id]": str(user_id),
         }
+        # Managed Payments — Stripe is merchant of record + handles tax (needs the
+        # preview API version header below and a Product with an eligible tax_code).
+        if settings.stripe_managed_payments:
+            data["managed_payments[enabled]"] = "true"
         if email:
             data["customer_email"] = email
+        headers = {"Authorization": f"Bearer {settings.stripe_secret_key}"}
+        if settings.stripe_api_version:
+            headers["Stripe-Version"] = settings.stripe_api_version
         async with httpx.AsyncClient(timeout=20.0) as client:
             resp = await client.post(
                 f"{_API}/checkout/sessions",
-                headers={"Authorization": f"Bearer {settings.stripe_secret_key}"},
+                headers=headers,
                 data=data,  # Stripe wants application/x-www-form-urlencoded
             )
             resp.raise_for_status()
