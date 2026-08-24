@@ -35,19 +35,28 @@ class StripeProvider(BillingProvider):
     name = "stripe"
 
     async def create_checkout(
-        self, *, user_id: int, email: Optional[str], success_url: str
+        self, *, user_id: int, email: Optional[str], success_url: str,
+        price_id: str, days: int, plan: str,
     ) -> str:
-        if not settings.stripe_secret_key or not settings.billing_price_id:
-            raise RuntimeError("Stripe not configured (STRIPE_SECRET_KEY / BILLING_PRICE_ID)")
+        if not settings.stripe_secret_key or not price_id:
+            raise RuntimeError("Stripe not configured (STRIPE_SECRET_KEY / price id)")
         data = {
-            "mode": "payment",
-            "line_items[0][price]": settings.billing_price_id,
+            "mode": mode,   # 'payment' (5-day one-off) | 'subscription' (monthly/annual)
+            "line_items[0][price]": price_id,
             "line_items[0][quantity]": "1",
             "success_url": success_url,
             "cancel_url": success_url,
             "client_reference_id": str(user_id),
             "metadata[user_id]": str(user_id),
+            "metadata[days]": str(days),   # webhook grants exactly this many
+            "metadata[plan]": str(plan),
         }
+        if mode == "subscription":
+            # Stamp the subscription itself so RENEWAL invoices can map back to
+            # the user + grant length (checkout metadata only covers the 1st pay).
+            data["subscription_data[metadata][user_id]"] = str(user_id)
+            data["subscription_data[metadata][days]"] = str(days)
+            data["subscription_data[metadata][plan]"] = str(plan)
         # Managed Payments — Stripe is merchant of record + handles tax (needs the
         # preview API version header below and a Product with an eligible tax_code).
         if settings.stripe_managed_payments:
@@ -93,32 +102,68 @@ class StripeProvider(BillingProvider):
             raise ValueError("Stripe signature mismatch")
 
         evt = json.loads(raw_body)
-        if evt.get("type") != "checkout.session.completed":
-            log.info("stripe webhook: ignoring event %s", evt.get("type"))
-            return None
+        etype = evt.get("type")
         obj = (evt.get("data") or {}).get("object") or {}
-        if obj.get("payment_status") not in (None, "paid"):
-            log.info("stripe webhook: session not paid (%s)", obj.get("payment_status"))
-            return None
-        meta = obj.get("metadata") or {}
-        raw_uid = meta.get("user_id") or obj.get("client_reference_id")
+
+        # First payment of ANY plan (one-off 5-day OR the first cycle of a sub).
+        if etype == "checkout.session.completed":
+            if obj.get("payment_status") not in (None, "paid"):
+                log.info("stripe webhook: session not paid (%s)", obj.get("payment_status"))
+                return None
+            meta = obj.get("metadata") or {}
+            return self._grant(
+                meta.get("user_id") or obj.get("client_reference_id"),
+                meta.get("days"),
+                obj.get("payment_intent") or obj.get("id"),
+                obj.get("amount_total"), obj.get("currency"))
+
+        # Subscription RENEWALS (monthly/annual). Only the recurring cycles —
+        # the first cycle is already granted by checkout.session.completed, so
+        # skip subscription_create to avoid a double-grant. The user/days ride
+        # on the subscription metadata we stamped at checkout.
+        if etype in ("invoice.payment_succeeded", "invoice.paid"):
+            if obj.get("billing_reason") not in ("subscription_cycle", "subscription_update"):
+                return None
+            meta = self._invoice_metadata(obj)
+            return self._grant(
+                meta.get("user_id"), meta.get("days"),
+                obj.get("id"),  # invoice id — one per cycle, idempotency key
+                obj.get("amount_paid") or obj.get("total"), obj.get("currency"))
+
+        log.info("stripe webhook: ignoring event %s", etype)
+        return None
+
+    @staticmethod
+    def _invoice_metadata(inv: dict) -> dict:
+        """Best-effort pull of the subscription metadata off a renewal invoice —
+        its location shifts across Stripe API shapes, so check the known spots.
+        NOTE: verify against a live renewal event on the preview API."""
+        for m in (
+            (inv.get("subscription_details") or {}).get("metadata"),
+            ((inv.get("parent") or {}).get("subscription_details") or {}).get("metadata"),
+        ):
+            if m:
+                return m
+        for ln in (inv.get("lines") or {}).get("data") or []:
+            if ln.get("metadata"):
+                return ln["metadata"]
+        return {}
+
+    @staticmethod
+    def _grant(uid, days_str, txn, amount_minor, currency) -> Optional[GrantIntent]:
         try:
-            user_id = int(raw_uid)
+            user_id = int(uid)
         except (TypeError, ValueError):
-            log.warning("stripe webhook: no usable user_id (meta=%s, ref=%s)",
-                        meta, obj.get("client_reference_id"))
+            log.warning("stripe webhook: no usable user_id (%s)", uid)
             return None
-        # payment_intent is the stable per-payment id → idempotency key.
-        txn = obj.get("payment_intent") or obj.get("id")
         if not txn:
-            log.warning("stripe webhook: no payment_intent/session id for idempotency")
+            log.warning("stripe webhook: no id for idempotency")
             return None
-        amt = obj.get("amount_total")
-        amount = (amt / 100.0) if isinstance(amt, (int, float)) else None
+        try:
+            days = int(days_str)
+        except (TypeError, ValueError):
+            days = settings.billing_pass_days
+        amount = (amount_minor / 100.0) if isinstance(amount_minor, (int, float)) else None
         return GrantIntent(
-            user_id=user_id,
-            days=settings.billing_pass_days,
-            external_txn_id=str(txn),
-            amount=amount,
-            currency=(obj.get("currency") or "").upper() or None,
-        )
+            user_id=user_id, days=days, external_txn_id=str(txn),
+            amount=amount, currency=(currency or "").upper() or None)

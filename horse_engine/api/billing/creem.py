@@ -43,14 +43,15 @@ class CreemProvider(BillingProvider):
     name = "creem"
 
     async def create_checkout(
-        self, *, user_id: int, email: Optional[str], success_url: str
+        self, *, user_id: int, email: Optional[str], success_url: str,
+        price_id: str, days: int, plan: str, mode: str = "payment",
     ) -> str:
-        if not settings.creem_api_key or not settings.billing_price_id:
-            raise RuntimeError("Creem not configured (CREEM_API_KEY / BILLING_PRICE_ID)")
+        if not settings.creem_api_key or not price_id:
+            raise RuntimeError("Creem not configured (CREEM_API_KEY / price id)")
         payload: dict = {
-            "product_id": settings.billing_price_id,
+            "product_id": price_id,
             "request_id": str(user_id),          # echoed back in the webhook
-            "metadata": {"user_id": str(user_id)},
+            "metadata": {"user_id": str(user_id), "days": str(days), "plan": str(plan)},
             "success_url": success_url,
         }
         if email:
@@ -110,9 +111,13 @@ class CreemProvider(BillingProvider):
             return None
         amt = order.get("amount")
         amount = (amt / 100.0) if isinstance(amt, (int, float)) else None
+        try:
+            days = int(meta.get("days"))
+        except (TypeError, ValueError):
+            days = settings.billing_pass_days
         return GrantIntent(
             user_id=user_id,
-            days=settings.billing_pass_days,
+            days=days,
             external_txn_id=str(txn),
             amount=amount,
             currency=order.get("currency"),

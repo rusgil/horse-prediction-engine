@@ -89,6 +89,17 @@ class Settings(BaseSettings):
     # an eligible tax_code. The blueprint pins this version — do not blank it.
     stripe_api_version: str = "2026-02-25.preview"
     stripe_managed_payments: bool = True
+
+    # ALL plans in ONE var (not a var per product). BILLING_PLANS is a JSON list:
+    #   [{"key":"5day","label":"5-Day Pass","price_id":"price_...","days":5,
+    #     "mode":"payment","amount":9.90},
+    #    {"key":"monthly","label":"Monthly","price_id":"price_...","days":30,
+    #     "mode":"subscription","amount":...},
+    #    {"key":"annual", ...,"mode":"subscription","days":365}]
+    # mode = 'payment' (one-off, 5-day pass) | 'subscription' (monthly/annual).
+    # If empty, a single default plan is synthesised from billing_price_id /
+    # billing_pass_days / billing_price_amount (legacy single-product path).
+    billing_plans: list = []
     # Creem (merchant of record) — retained; unused now Stripe is the provider.
     creem_api_key: str = ""
     creem_webhook_secret: str = ""

@@ -4560,11 +4560,43 @@ async def waitlist_join(request: Request):
     return {"ok": True, "message": "We'll email you when a seat opens up."}
 
 
+def _billing_plans() -> list:
+    """All configured plans (from BILLING_PLANS json). Falls back to a single
+    '5day' plan synthesised from the legacy billing_price_id when unset."""
+    plans = list(settings.billing_plans or [])
+    if plans:
+        return plans
+    if settings.billing_price_id:
+        return [{"key": "5day", "label": "5-Day Pass",
+                 "price_id": settings.billing_price_id, "days": settings.billing_pass_days,
+                 "mode": "payment", "amount": settings.billing_price_amount,
+                 "currency": settings.billing_currency}]
+    return []
+
+
+def _resolve_plan(key) -> "dict | None":
+    plans = _billing_plans()
+    if not plans:
+        return None
+    if key:
+        for p in plans:
+            if p.get("key") == key:
+                return p
+    return plans[0]  # default = first plan (the 5-day pass)
+
+
+def _public_plans() -> list:
+    """Plans for the frontend — no server-only fields (price_id stays server-side)."""
+    return [{"key": p.get("key"), "label": p.get("label"), "amount": p.get("amount"),
+             "days": p.get("days"), "mode": p.get("mode", "payment"),
+             "currency": p.get("currency") or settings.billing_currency}
+            for p in _billing_plans()]
+
+
 def _billing_enabled() -> bool:
-    """True when the active provider has enough config to run live checkout.
-    Creem needs its server API key; SDK providers need a public client token.
-    All need a product/price id."""
-    if not settings.billing_price_id:
+    """True when the active provider has enough config to run live checkout —
+    at least one plan with a price id, plus the provider's server credential."""
+    if not any(p.get("price_id") for p in _billing_plans()):
         return False
     prov = (settings.billing_provider or "").lower()
     if prov == "stripe":
@@ -4596,6 +4628,7 @@ async def public_config():
             "currency": settings.billing_currency,
             "price_note": settings.billing_price_note or None,
             "pass_days": settings.billing_pass_days,
+            "plans": _public_plans(),
             "enabled": _billing_enabled(),
         },
     }
@@ -4635,18 +4668,26 @@ async def admin_access_grant(request: Request, admin=Depends(_auth_current_admin
 # ── Billing (freemium pass) — provider-agnostic checkout + webhook ────────
 
 @app.post("/api/billing/checkout")
-async def billing_checkout(user=Depends(_auth_current_user_optional)):
-    """Create a hosted checkout for the logged-in user and return its URL.
-    The frontend redirects there. Requires login so the webhook can map the
-    payment back to this user (via metadata.user_id / request_id)."""
+async def billing_checkout(request: Request, user=Depends(_auth_current_user_optional)):
+    """Create a hosted checkout for the logged-in user + chosen plan; return its
+    URL. Body: {"plan": "5day"|"monthly"|"annual"} (defaults to the first plan).
+    Requires login so the webhook can map the payment back to this user."""
     if user is None:
         raise HTTPException(401, "login required")
+    body = await request.json() if request.headers.get("content-type", "").startswith("application/json") else {}
+    plan = _resolve_plan((body or {}).get("plan"))
+    if not plan or not plan.get("price_id"):
+        raise HTTPException(503, "no billing plan configured")
     from horse_engine.api.billing import get_provider
     try:
         provider = get_provider()
         success_url = f"{settings.app_base_url.rstrip('/')}/account?welcome=1"
         url = await provider.create_checkout(
-            user_id=user.id, email=user.email, success_url=success_url
+            user_id=user.id, email=user.email, success_url=success_url,
+            price_id=plan["price_id"],
+            days=int(plan.get("days") or settings.billing_pass_days),
+            plan=plan.get("key") or "default",
+            mode=plan.get("mode") or "payment",
         )
     except Exception as e:
         log.warning("[billing] checkout creation failed: %s", e)

@@ -33,10 +33,14 @@ class BillingProvider(Protocol):
     name: str
 
     async def create_checkout(
-        self, *, user_id: int, email: Optional[str], success_url: str
+        self, *, user_id: int, email: Optional[str], success_url: str,
+        price_id: str, days: int, plan: str, mode: str = "payment",
     ) -> str:
-        """Create a hosted checkout for the standard access pass and return the
-        URL to redirect the customer to. Raises on failure."""
+        """Create a hosted checkout for the given plan and return the redirect
+        URL. `mode` is 'payment' (one-off, e.g. the 5-day pass) or 'subscription'
+        (recurring, e.g. monthly/annual). `days` and `plan` are stamped into the
+        payment metadata (and the subscription metadata, for renewals) so the
+        webhook grants the right access length. Raises on failure."""
         ...
 
     def verify_and_parse(
