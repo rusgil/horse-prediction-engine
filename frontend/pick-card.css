@@ -145,13 +145,21 @@
 .unlock-btn:hover { filter: brightness(1.08); }
 .unlock-btn:active { transform: translateY(1px); }
 
-/* Locked heat-grid cell (Lounge / Hot Seat board) */
-.race-grid td.cell.locked-cell,
-td.cell.locked-cell {
-  cursor: pointer; text-align: center; opacity: 0.72;
-  background: color-mix(in srgb, var(--mint) 8%, transparent);
+/* Locked heat-grid cell (Lounge / Hot Seat board) — blurred + RAG-tinted so a
+   non-member sees a colour-lit grid teasing the picks, not a wall of padlocks. */
+td.cell.locked-cell { cursor: pointer; text-align: center; }
+td.cell.locked-cell .lk-val {
+  display: inline-block; font-family: 'Barlow Condensed', sans-serif;
+  font-weight: 800; font-size: 1rem; letter-spacing: 0.06em;
+  filter: blur(4px); opacity: 0.9; user-select: none; color: var(--text-3);
 }
-td.cell.locked-cell:hover { opacity: 1; }
+td.cell.locked-cell.heat-hot    { background: color-mix(in srgb, var(--hot, #f97316)  15%, transparent); }
+td.cell.locked-cell.heat-high   { background: color-mix(in srgb, var(--blue)         13%, transparent); }
+td.cell.locked-cell.heat-strong { background: color-mix(in srgb, var(--strong, var(--mint)) 13%, transparent); }
+td.cell.locked-cell.heat-hot    .lk-val { color: var(--hot, #f97316); }
+td.cell.locked-cell.heat-high   .lk-val { color: var(--blue); }
+td.cell.locked-cell.heat-strong .lk-val { color: var(--strong, var(--mint)); }
+td.cell.locked-cell:hover { filter: brightness(1.06); }
 
 @media (max-width: 640px) {
   .jcard { grid-template-columns: 1fr auto; }

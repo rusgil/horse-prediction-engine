@@ -1435,7 +1435,7 @@
       const cells = Array.from({ length: maxR }, (_, i) => {
         const r = races?.[i];
         if (!r) return `<td class="cell blank"></td>`;
-        if (r.locked) return `<td class="cell locked-cell" data-unlock title="Members only — unlock to see this pick">🔒</td>`;
+        if (r.locked) return `<td class="cell locked-cell ${r.locked_heat || ''}" data-unlock title="Members only — unlock to see this pick"><span class="lk-val">00%</span></td>`;
         if (S.sharpOnly && r.is_sharp !== true) return `<td class="cell blank"></td>`;
         if (isSettled(r)) {
           colS[i]++;

@@ -3750,10 +3750,12 @@ _TEASER_TTL = 60  # seconds
 
 
 async def _current_teaser_race_id() -> "str | None":
-    """The ONE race non-members get for free — the next-upcoming race today,
-    computed globally so it's identical across every payload (otherwise a
-    non-member could unlock one race per venue via the drill-in endpoint).
-    Short TTL cache; parses scheduled_time via the tz-safe helper."""
+    """The ONE free live pick for non-members — our HIGHEST-CONFIDENCE UPCOMING
+    race today (the model's strongest forward pick, our best foot forward), not
+    the next-in-time one. Computed globally so it's identical across every
+    payload (else a non-member could unlock one race per venue via the drill-in).
+    None once nothing's left to run — end-of-day showcase is the trophy, not a
+    free pick. Short TTL cache; scheduled_time parsed via the tz-safe helper."""
     global _teaser_cache
     now = datetime.utcnow()
     if _teaser_cache is not None and (now - _teaser_cache[0]).total_seconds() < _TEASER_TTL:
@@ -3763,17 +3765,20 @@ async def _current_teaser_race_id() -> "str | None":
         prefix = _today_aest().isoformat()
         async with get_session() as session:
             rows = (await session.execute(
-                select(RunnerPredictionRow.race_id, RunnerPredictionRow.scheduled_time)
+                select(RunnerPredictionRow.race_id, RunnerPredictionRow.scheduled_time,
+                       RunnerPredictionRow.win_probability)
                 .where(RunnerPredictionRow.race_id.like(f"{prefix}%"))
+                .where(RunnerPredictionRow.model_rank == 1)
                 .where(RunnerPredictionRow.scheduled_time.isnot(None))
+                .where(RunnerPredictionRow.cancelled.is_(False) | RunnerPredictionRow.cancelled.is_(None))
             )).all()
-        best = None
-        for r_id, sched in rows:
+        best = None  # (win_probability, race_id)
+        for r_id, sched, wp in rows:
             dt = sched_to_utc_naive(sched)
-            if dt is None or dt <= now:
-                continue
-            if best is None or dt < best[0]:
-                best = (dt, r_id)
+            if dt is None or dt <= now or wp is None:
+                continue  # upcoming races only
+            if best is None or wp > best[0]:
+                best = (wp, r_id)
         rid = best[1] if best else None
     except Exception:
         log.exception("teaser race lookup failed; locking all races for non-members")
@@ -3782,29 +3787,54 @@ async def _current_teaser_race_id() -> "str | None":
     return rid
 
 
+def _heat_band(d: dict) -> "str | None":
+    """Coarse RAG heat class from a race's (about-to-be-stripped) win prob,
+    matching the frontend tierOf thresholds (46/36/30). Lets a locked cell keep
+    its colour — teasing the page's richness — without leaking the horse, the
+    odds, or the exact %. The tier band alone isn't actionable (no runner)."""
+    for k in ("top_win_probability", "win_pct", "model_pct"):
+        v = d.get(k)
+        if isinstance(v, (int, float)) and not isinstance(v, bool):
+            p = v * 100 if v <= 1.0 else v
+            if p >= 46:
+                return "heat-hot"
+            if p >= 36:
+                return "heat-high"
+            if p >= 30:
+                return "heat-strong"
+            return None
+    return None
+
+
 def _redact_race_dict(d: dict) -> None:
-    """In place: strip a locked race to meta-only + mark locked."""
+    """In place: strip a locked race to meta-only + mark locked. Keeps a coarse
+    RAG heat band (locked_heat) so non-members see a blurred, colour-lit grid
+    (show off the page) rather than a dead wall of padlocks."""
+    heat = _heat_band(d)
     kept = {k: d[k] for k in list(d.keys()) if k in _PAYWALL_KEEP_KEYS}
     kept["locked"] = True
+    if heat:
+        kept["locked_heat"] = heat
     d.clear()
     d.update(kept)
 
 
-def _apply_paywall(obj, teaser_id: "str | None") -> None:
-    """Walk the payload; any dict carrying a race_id != teaser is redacted to
-    a locked stub. The teaser race (and dicts with no race_id) pass through."""
+def _apply_paywall(obj, teaser_id: "str | None") -> int:
+    """Walk the payload; redact every race whose race_id != teaser to a locked
+    stub. Returns the count locked. The single teaser stays full — that's the
+    next upcoming race during the day, or (once racing's done) the day's
+    highest-paying winning pick, chosen by _current_teaser_race_id()."""
     if isinstance(obj, dict):
         rid = obj.get("race_id")
         if rid is not None:
             if rid == teaser_id:
-                return  # the free race — keep in full
+                return 0
             _redact_race_dict(obj)
-            return
-        for v in obj.values():
-            _apply_paywall(v, teaser_id)
-    elif isinstance(obj, list):
-        for item in obj:
-            _apply_paywall(item, teaser_id)
+            return 1
+        return sum(_apply_paywall(v, teaser_id) for v in obj.values())
+    if isinstance(obj, list):
+        return sum(_apply_paywall(item, teaser_id) for item in obj)
+    return 0
 
 
 async def _request_has_access(request) -> bool:
@@ -3848,8 +3878,8 @@ async def _display_prob_cap(request, call_next):
         # any endpoint-level cache (this is per-request), on the parsed JSON.
         if settings.paywall_enabled and _path_is_paywalled(path) and not await _request_has_access(request):
             teaser_id = await _current_teaser_race_id()
-            _apply_paywall(data, teaser_id)
-            if isinstance(data, dict):
+            locked = _apply_paywall(data, teaser_id)
+            if locked and isinstance(data, dict):
                 data["paywall"] = {"active": True, "teaser_race_id": teaser_id}
         new_body = json.dumps(data).encode()
     except Exception:
