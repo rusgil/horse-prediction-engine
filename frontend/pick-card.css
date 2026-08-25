@@ -305,3 +305,16 @@ td.cell.locked-cell:hover { filter: brightness(1.06); }
 .fp-cta { margin-top: auto; width: 100%; border: 1px solid var(--line); border-radius: 10px; padding: 11px; cursor: pointer; font-family: 'Barlow Condensed'; font-weight: 800; font-size: 0.95rem; letter-spacing: 0.03em; text-transform: uppercase; background: var(--surface-2); color: var(--text); }
 .fp-tier.best .fp-cta { background: var(--mint); color: #062b13; border-color: var(--mint); }
 .fp-cta:hover { filter: brightness(1.03); }
+
+/* Compact the embedded plan tiers a touch; stack cleanly on mobile. */
+.fiq-plans { grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; }
+.fp-tier { padding: 16px 15px; }
+.fp-price { font-size: 1.7rem; }
+.fp-feats { margin: 10px 0 14px; gap: 6px; }
+.fp-feats li { font-size: 0.8rem; }
+.fp-cta { padding: 10px; font-size: 0.9rem; }
+@media (max-width: 560px) {
+  .today-gate.fiq-wide { padding: 24px 14px; max-width: 460px; }
+  .today-gate.fiq-wide .tg-upsell { max-width: none; }
+  .fp-tier { padding: 16px 14px; }
+}
