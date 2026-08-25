@@ -322,6 +322,14 @@
 
   function paywallBanner(paywall) {
     if (!paywall || !paywall.active) return '';
+    // Edge is subscription-tier (Monthly/Annual); Lounge/Hot Seat unlock with
+    // any pass. Message + CTA adapt so a 5-day member sees the right thing.
+    if (paywall.plan_required === 'subscription') {
+      return `<div class="paywall-banner" data-unlock>
+        <div class="pb-txt"><b>The Edge is a Monthly &amp; Annual feature.</b> You're seeing 1 free race.</div>
+        <a class="unlock-btn" href="/plans">See Monthly &amp; Annual</a>
+      </div>`;
+    }
     return `<div class="paywall-banner" data-unlock>
       <div class="pb-txt"><b>You're seeing 1 free race.</b> Unlock every pick, all meetings.</div>
       <button class="unlock-btn" data-unlock>${_unlockLabel()}</button>

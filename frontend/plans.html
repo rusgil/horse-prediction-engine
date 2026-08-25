@@ -55,6 +55,7 @@
     .tier-feats li { font-size: 0.9rem; color: var(--text-2); display: flex; gap: 9px; align-items: flex-start; }
     .tier-feats li::before { content: '✓'; color: var(--green); font-weight: 800; }
     .tier-feats i { font-style: italic; color: var(--text); }
+    .tier-feats b { font-weight: 600; color: var(--text); }
     .tier .cta {
       margin-top: auto; width: 100%; border: 0; border-radius: 12px; padding: 13px; cursor: pointer;
       font-family: 'Barlow Condensed', sans-serif; font-weight: 800; font-size: 1.05rem; letter-spacing: 0.04em;
@@ -87,11 +88,11 @@
     </div>
   </div>
 
-  <script src="/pick-card.js?v=16"></script>
+  <script src="/pick-card.js?v=17"></script>
   <script>
     const FEATURES = {
-      base: ['Every pick, all meetings', 'Edge, Hot Seat & Listings', 'Sharp filter & value plays'],
-      sub: ['Cancel anytime'],
+      base: ['Full form for every pick, all meetings', 'Lounge, Hot Seat & Listings', 'Sharp filter & value plays'],
+      sub: ['<b>The Edge</b> — best picks, best odds', '<b>The Playbook</b> — daily betting plays', 'Cancel anytime'],
       annual: ['<i>Exclusive access to NRL Predictions (70%+ accuracy for 2026 season)</i>'],
     };
     function period(p) {

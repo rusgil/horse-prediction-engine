@@ -3946,18 +3946,55 @@ def _apply_paywall(obj, teaser_id: "str | None") -> int:
     return 0
 
 
-async def _request_has_access(request) -> bool:
-    """Resolve the session cookie → member access. Logged-out (no cookie)
-    short-circuits with no DB hit. Never raises into the middleware."""
+async def _request_user(request):
+    """Session cookie → UserRow (or None). Never raises."""
     try:
         from horse_engine.api.auth import COOKIE_NAME, get_user_by_cookie
-        from horse_engine.api.access import has_active_access
         token = request.cookies.get(COOKIE_NAME)
-        if not token:
-            return False
-        return has_active_access(await get_user_by_cookie(token))
+        return await get_user_by_cookie(token) if token else None
+    except Exception:
+        return None
+
+
+async def _user_plan_days(user):
+    """days_granted of the user's most recent access grant (5 | 30 | 365 | …),
+    or None. Used to tell a 5-day pass from a monthly/annual subscription."""
+    if user is None:
+        return None
+    try:
+        async with get_session() as s:
+            g = (await s.execute(
+                select(AccessGrantRow).where(AccessGrantRow.user_id == user.id)
+                .order_by(AccessGrantRow.id.desc()).limit(1)
+            )).scalars().first()
+            return int(g.days_granted) if g and g.days_granted is not None else None
+    except Exception:
+        return None
+
+
+async def _request_has_access(request) -> bool:
+    """Resolve the session cookie → member access (any active pass). Logged-out
+    (no cookie) short-circuits with no DB hit. Never raises into the middleware."""
+    try:
+        from horse_engine.api.access import has_active_access
+        return has_active_access(await _request_user(request))
     except Exception:
         log.exception("paywall access check failed; treating as non-member")
+        return False
+
+
+async def _request_is_subscriber(request) -> bool:
+    """True only for MONTHLY/ANNUAL members (active access + latest plan
+    >= 30 days). A 5-day pass returns False. Gates Edge + Playbook."""
+    try:
+        from horse_engine.api.access import has_active_access
+        user = await _request_user(request)
+        if not has_active_access(user):
+            return False
+        days = await _user_plan_days(user)
+        return days is not None and days >= 30
+    except Exception:
+        log.exception("subscriber check failed; treating as non-subscriber")
         return False
 
 
@@ -3985,7 +4022,14 @@ async def _display_prob_cap(request, call_next):
         _cap_probs_in(data)
         # Paywall: redact all-but-the-teaser race for non-members. Runs after
         # any endpoint-level cache (this is per-request), on the parsed JSON.
-        if settings.paywall_enabled and _path_is_paywalled(path) and not await _request_has_access(request):
+        # Edge is a subscription-tier feature (monthly/annual): a 5-day pass
+        # gets the teaser there too. Everything else unlocks with any pass.
+        _needs_sub = path.startswith("/api/edge")
+        _gated = settings.paywall_enabled and _path_is_paywalled(path) and (
+            (not await _request_is_subscriber(request)) if _needs_sub
+            else (not await _request_has_access(request))
+        )
+        if _gated:
             teaser_id = await _current_teaser_race_id()
             _apply_paywall(data, teaser_id)
             if isinstance(data, dict):
@@ -4001,6 +4045,9 @@ async def _display_prob_cap(request, call_next):
                     "active": teaser_id is not None,
                     "teaser_race_id": teaser_id,
                     "trophy": trophy,
+                    # 'subscription' → this feature needs Monthly/Annual (Edge);
+                    # None → any pass unlocks it (Lounge/Hot Seat).
+                    "plan_required": "subscription" if _needs_sub else None,
                 }
         new_body = json.dumps(data).encode()
     except Exception:
@@ -9439,7 +9486,7 @@ async def _resolve_play_outcome(play: dict, target_date: str) -> dict:
 
 
 @app.get("/api/funk-me-up/today")
-async def funk_me_up_today(date: Optional[str] = None):
+async def funk_me_up_today(request: Request, date: Optional[str] = None):
     """Funk Me Up playbook for a given date.
 
     - date omitted or today  → live picks from /api/edge
@@ -9455,6 +9502,21 @@ async def funk_me_up_today(date: Optional[str] = None):
         raise HTTPException(400, "date must be YYYY-MM-DD")
     today_dt = _today_aest()
     is_past = target_dt < today_dt
+
+    # Playbook is a subscription-tier feature (monthly/annual). Free and 5-day
+    # pass users get a gated stub → the frontend shows an upsell (a blurred
+    # betting-multi carries no value, so no teaser plays).
+    if settings.paywall_enabled and not await _request_is_subscriber(request):
+        return {
+            "date": target_date, "is_past": is_past, "tier": "pro",
+            "base_stake": _FUNK_BASE_STAKE, "hero_kind": None, "plays": [],
+            "no_selection_kinds": [], "cash_exposure_dollars": 0,
+            "bonus_exposure_dollars": 0, "expected_profit_dollars": 0,
+            "actual_profit_dollars": None, "disclaimer": "",
+            "gated": True,
+            "paywall": {"active": True, "plan_required": "subscription",
+                        "trophy": await _current_trophy()},
+        }
 
     if is_past:
         picks_for_date = await _build_historical_funk_picks(target_date)

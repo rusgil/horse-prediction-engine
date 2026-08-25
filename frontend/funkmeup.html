@@ -120,6 +120,17 @@
       margin-top: 2px;
     }
 
+    /* Subscription upsell (Playbook = Monthly/Annual) */
+    .pb-upsell { text-align: center; max-width: 460px; margin: 30px auto; padding: 34px 26px;
+      background: var(--bg-card, #0e1220); border: 1px solid var(--border, #1e2840); border-radius: 16px; }
+    .pb-upsell .pb-lock { font-size: 34px; }
+    .pb-upsell h3 { font-family: 'Barlow Condensed', sans-serif; font-weight: 800; font-size: 1.6rem;
+      margin: 10px 0 8px; text-wrap: balance; }
+    .pb-upsell p { color: var(--text-muted, #8792a3); font-size: 0.95rem; line-height: 1.5; margin-bottom: 20px; }
+    .pb-upsell .pb-cta { display: inline-block; text-decoration: none; background: var(--green, #22c55e);
+      color: #062b13; font-family: 'Barlow Condensed', sans-serif; font-weight: 800; font-size: 1.05rem;
+      letter-spacing: 0.03em; text-transform: uppercase; padding: 12px 24px; border-radius: 11px; }
+
     /* Body */
     main { padding: 14px 16px 24px; max-width: 720px; margin: 0 auto; }
 
@@ -1284,6 +1295,18 @@
       const planRes = await fetch(`${API}/api/funk-me-up/today?date=${targetDate}`);
       if (!planRes.ok) throw new Error('HTTP ' + planRes.status);
       const data = await planRes.json();
+      // Subscription-gated (free / 5-day pass) → upsell, no plays.
+      if (data.gated) {
+        window._funkData = data;
+        root.innerHTML = `
+          <div class="pb-upsell">
+            <div class="pb-lock">🔒</div>
+            <h3>Playbook is a Monthly &amp; Annual feature</h3>
+            <p>The daily betting playbook — Lock, Doubles, Banker, Quaddie &amp; more — comes with a Monthly or Annual membership.</p>
+            <a class="pb-cta" href="/plans">See plans →</a>
+          </div>`;
+        return;
+      }
       // Wait for the shared track-condition helper once — after this,
       // goingChip()/FIQConditions.chip() lookups are synchronous.
       if (window.FIQConditions) { try { await FIQConditions.ready; } catch (e) {} }
