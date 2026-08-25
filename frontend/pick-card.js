@@ -258,8 +258,15 @@
         const d = await r.json();
         if (d && d.url) { window.location.href = d.url; return; }
       }
-    } catch (e) { /* fall through */ }
-    window.location.href = '/signup?next=' + nx;
+      // Signed in but checkout couldn't be created (5xx/other) — surface it
+      // rather than bouncing to sign-in, which looks like a login problem.
+      console.error('[billing] checkout failed', r.status);
+      alert('Sorry — checkout is temporarily unavailable. Please try again in a moment.');
+      return;
+    } catch (e) {
+      console.error('[billing] checkout error', e);
+      alert('Sorry — checkout is temporarily unavailable. Please try again in a moment.');
+    }
   }
 
   function _sym(cur) {

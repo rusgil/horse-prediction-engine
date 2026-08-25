@@ -36,7 +36,7 @@ class StripeProvider(BillingProvider):
 
     async def create_checkout(
         self, *, user_id: int, email: Optional[str], success_url: str,
-        price_id: str, days: int, plan: str,
+        price_id: str, days: int, plan: str, mode: str = "payment",
     ) -> str:
         if not settings.stripe_secret_key or not price_id:
             raise RuntimeError("Stripe not configured (STRIPE_SECRET_KEY / price id)")
