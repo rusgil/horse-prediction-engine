@@ -1012,12 +1012,13 @@
     const line = st.after_publish_time === false
       ? `Today's predictions publish at <b>${st.publish_time || '9:30'}am</b> AEST, once the morning form &amp; market update has finished.`
       : `The morning form &amp; market update is still finalising. Today's predictions will appear here the moment it completes.`;
-    return `<div class="today-gate">
+    const up = window.PickCard.splashUpsell();
+    return `<div class="today-gate${up.indexOf('fiq-plans') >= 0 ? ' fiq-wide' : ''}">
       <div class="tg-emoji">🏇</div>
       <h2>Today's picks are being prepared</h2>
       <p>${line}</p>
       <div class="tg-sub"><span class="tg-dot"></span>${st.now_aest ? esc(st.now_aest) + ' AEST · ' : ''}this page refreshes automatically</div>
-      ${window.PickCard.splashUpsell()}
+      ${up}
     </div>`;
   }
   function startTodayPoll(rerender) { if (!_todayPoll) _todayPoll = setInterval(() => checkTodayGate(rerender), 60000); }
