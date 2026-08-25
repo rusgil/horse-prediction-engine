@@ -57,6 +57,14 @@
       "destination": "/login.html"
     },
     {
+      "source": "/plans",
+      "destination": "/plans.html"
+    },
+    {
+      "source": "/pricing",
+      "destination": "/plans.html"
+    },
+    {
       "source": "/verify",
       "destination": "/verify.html"
     },

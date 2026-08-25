@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>FunkyIQ — Plans</title>
+  <meta name="description" content="Unlock every FunkyIQ pick, across all meetings. Choose a 5-day pass, monthly or annual membership." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@400;600;700;800;900&family=Outfit:wght@300;400;500;600&display=swap" rel="stylesheet" />
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --bg: #07090f; --card: #0e1220; --card-2: #121830; --border: #1e2840;
+      --text: #f0f4ff; --text-2: #aeb8d4; --text-3: #6b7699;
+      --green: #22c55e; --amber: #e8a020; --blue: #5b9dff;
+    }
+    body {
+      font-family: 'Outfit', sans-serif; background: var(--bg); color: var(--text);
+      min-height: 100vh; padding: 28px 20px 60px; -webkit-font-smoothing: antialiased;
+      background-image:
+        radial-gradient(ellipse 80% 50% at 50% -10%, rgba(34,197,94,0.07), transparent),
+        radial-gradient(ellipse 60% 40% at 90% 100%, rgba(232,160,32,0.05), transparent);
+    }
+    .wrap { max-width: 960px; margin: 0 auto; }
+    .topbar { display: flex; align-items: center; justify-content: space-between; margin-bottom: 40px; }
+    .brand { display: flex; align-items: center; gap: 10px; }
+    .brand-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--green); box-shadow: 0 0 10px var(--green); }
+    .brand-name { font-family: 'Barlow Condensed', sans-serif; font-size: 1.3rem; font-weight: 900; letter-spacing: 0.08em; text-transform: uppercase; }
+    .back { color: var(--text-3); text-decoration: none; font-size: 0.9rem; }
+    .back:hover { color: var(--text-2); }
+    .hero { text-align: center; margin-bottom: 40px; }
+    .hero h1 { font-family: 'Barlow Condensed', sans-serif; font-weight: 900; font-size: 2.6rem; line-height: 1.05; text-wrap: balance; letter-spacing: 0.01em; }
+    .hero p { color: var(--text-2); font-size: 1.05rem; margin-top: 12px; }
+    .tiers { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; align-items: stretch; }
+    @media (max-width: 760px) { .tiers { grid-template-columns: 1fr; max-width: 420px; margin: 0 auto; } }
+    .tier {
+      position: relative; background: var(--card); border: 1px solid var(--border); border-radius: 18px;
+      padding: 26px 22px; display: flex; flex-direction: column; gap: 4px;
+    }
+    .tier.best { border-color: var(--green); background: linear-gradient(180deg, rgba(34,197,94,0.08), var(--card) 60%); box-shadow: 0 8px 40px rgba(0,0,0,0.5); }
+    .tier-badge {
+      position: absolute; top: -11px; left: 50%; transform: translateX(-50%);
+      background: var(--green); color: #062b13; font-weight: 800; font-size: 0.68rem; letter-spacing: 0.08em;
+      text-transform: uppercase; padding: 4px 12px; border-radius: 999px; white-space: nowrap;
+    }
+    .tier-label { font-family: 'Barlow Condensed', sans-serif; font-weight: 800; font-size: 1.15rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-2); }
+    .tier-price { font-family: 'Barlow Condensed', sans-serif; font-weight: 900; font-size: 2.5rem; line-height: 1; margin: 6px 0 2px; font-variant-numeric: tabular-nums; }
+    .tier-price small { font-size: 0.9rem; font-weight: 600; color: var(--text-3); margin-left: 4px; }
+    .tier-note { color: var(--text-3); font-size: 0.82rem; min-height: 1.1em; }
+    .tier-feats { list-style: none; margin: 16px 0 20px; display: flex; flex-direction: column; gap: 9px; }
+    .tier-feats li { font-size: 0.9rem; color: var(--text-2); display: flex; gap: 9px; align-items: flex-start; }
+    .tier-feats li::before { content: '✓'; color: var(--green); font-weight: 800; }
+    .tier .cta {
+      margin-top: auto; width: 100%; border: 0; border-radius: 12px; padding: 13px; cursor: pointer;
+      font-family: 'Barlow Condensed', sans-serif; font-weight: 800; font-size: 1.05rem; letter-spacing: 0.04em;
+      text-transform: uppercase; background: var(--card-2); color: var(--text); border: 1px solid var(--border);
+      transition: transform 0.08s ease, background 0.15s ease;
+    }
+    .tier.best .cta { background: var(--green); color: #062b13; border-color: var(--green); }
+    .tier .cta:hover { transform: translateY(-1px); }
+    .tier .cta:disabled { opacity: 0.6; cursor: default; transform: none; }
+    .foot { text-align: center; color: var(--text-3); font-size: 0.85rem; margin-top: 30px; }
+    .foot .lock { color: var(--text-2); }
+    .msg { text-align: center; color: var(--text-2); padding: 60px 20px; font-size: 1rem; }
+    .subnote { text-align: center; color: var(--text-3); font-size: 0.8rem; margin-top: 14px; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="topbar">
+      <div class="brand"><span class="brand-dot"></span><span class="brand-name">FunkyIQ</span></div>
+      <a class="back" href="/">← Back to picks</a>
+    </div>
+    <div class="hero">
+      <h1>Unlock every pick, every meeting</h1>
+      <p>See our full form for every race, every venue — not just the free race of the day.</p>
+    </div>
+    <div id="tiers" class="tiers"></div>
+    <div id="foot" class="foot" style="display:none">
+      <span class="lock">🔒 Secure checkout via Stripe</span> · cancel anytime
+      <div class="subnote">Payment is processed by Stripe. Prices in AUD.</div>
+    </div>
+  </div>
+
+  <script src="/pick-card.js?v=14"></script>
+  <script>
+    const FEATURES = {
+      base: ['Every pick, all meetings', 'Edge, Hot Seat & Listings', 'Sharp filter & value plays'],
+      sub: ['Cancel anytime'],
+    };
+    function period(p) {
+      if (p.mode === 'subscription') {
+        if (p.days >= 360) return '/year';
+        if (p.days >= 28) return '/month';
+        return '/' + p.days + ' days';
+      }
+      return null; // one-off pass
+    }
+    function noteFor(p) {
+      if (p.mode === 'subscription') return p.days >= 360 ? 'billed yearly' : 'billed monthly';
+      return p.days + '-day pass · one-off';
+    }
+    const sym = c => c === 'AUD' ? 'A$' : c === 'USD' ? 'US$' : c === 'EUR' ? '€' : (c || '') + ' ';
+
+    async function init() {
+      const tiersEl = document.getElementById('tiers');
+      let cfg = null;
+      try { const r = await fetch('/api/config/public'); if (r.ok) cfg = (await r.json()).billing; } catch (e) {}
+      if (!cfg || !cfg.enabled || !(cfg.plans && cfg.plans.length)) {
+        tiersEl.innerHTML = '<div class="msg">Memberships aren’t available just yet — check back soon.</div>';
+        return;
+      }
+      window.PickCard.configureBilling(cfg);
+      const cur = cfg.currency || 'AUD';
+      const plans = cfg.plans;
+      tiersEl.innerHTML = plans.map((p, i) => {
+        const best = i === plans.length - 1;
+        const per = period(p);
+        const feats = FEATURES.base.concat(p.mode === 'subscription' ? FEATURES.sub : []);
+        return `<div class="tier ${best ? 'best' : ''}">
+          ${best ? '<span class="tier-badge">Best value</span>' : ''}
+          <span class="tier-label">${(p.label || p.key)}</span>
+          <span class="tier-price">${sym(cur)}${Number(p.amount).toFixed(2)}${per ? `<small>${per}</small>` : ''}</span>
+          <span class="tier-note">${noteFor(p)}</span>
+          <ul class="tier-feats">${feats.map(f => `<li>${f}</li>`).join('')}</ul>
+          <button class="cta" data-plan="${p.key}">Choose ${p.label || p.key}</button>
+        </div>`;
+      }).join('');
+      document.getElementById('foot').style.display = 'block';
+      tiersEl.addEventListener('click', e => {
+        const b = e.target.closest('[data-plan]');
+        if (!b) return;
+        b.disabled = true; b.textContent = 'Redirecting…';
+        window.PickCard.openCheckout(b.dataset.plan);
+      });
+    }
+    init();
+  </script>
+</body>
+</html>
