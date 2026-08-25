@@ -3927,17 +3927,31 @@ def _redact_race_dict(d: dict) -> None:
     d.update(kept)
 
 
+def _race_is_past(d: dict) -> bool:
+    """True once a race has jumped. Its pick value is spent and the result is
+    public, so the paywall never locks it (settled/historical races stay
+    visible as proof — this is what keeps Edge's past-results view unlocked)."""
+    try:
+        st = sched_to_utc_naive(d.get("scheduled_time"))
+        return st is not None and st < datetime.utcnow()
+    except Exception:
+        return False
+
+
 def _apply_paywall(obj, teaser_id: "str | None") -> int:
-    """Walk the payload; redact every race whose race_id != teaser to a locked
-    stub. Returns the count locked. The single teaser stays full — that's the
-    next upcoming race during the day, or (once racing's done) the day's
-    highest-paying winning pick, chosen by _current_teaser_race_id()."""
+    """Walk the payload; redact every UPCOMING race whose race_id != teaser to a
+    locked stub. Past/settled races stay full (value spent, results public).
+    Returns the count locked. The single teaser stays full — the next upcoming
+    race during the day, or (once racing's done) the day's highest-paying
+    winning pick, chosen by _current_teaser_race_id()."""
     if isinstance(obj, dict):
         rid = obj.get("race_id")
         if rid is not None:
             if rid == teaser_id:
                 obj["is_teaser"] = True  # the free pick — card shows the confidence callout
                 return 0
+            if _race_is_past(obj):
+                return 0  # settled/historical — never locked
             _redact_race_dict(obj)
             return 1
         return sum(_apply_paywall(v, teaser_id) for v in obj.values())
