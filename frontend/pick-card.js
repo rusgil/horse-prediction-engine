@@ -200,7 +200,7 @@
   // comes from /api/config/public — pages call configureBilling(cfg.billing)
   // once. Until Paddle is wired (billing.enabled=false) Unlock → /login.
   let _billing = null;
-  function configureBilling(b) { _billing = b || null; loadTierStats(); }
+  function configureBilling(b) { _billing = b || null; loadTierStats(); refreshSplashUpsell(); }
 
   // Live tier calibration (from /api/track-record) for the free-pick callout —
   // "at this confidence our picks win X% / place Y%". Fetched once per page; the
@@ -399,38 +399,101 @@
   }
 
   // Membership state (for the "picks being prepared" splash upsell). Resolved
-  // once on load; isMember() is false until known, so prospects see the upsell
-  // immediately and confirmed members have it removed on the next render.
-  let _hasAccess = null;
+  // once on load. { has: any active pass, days: latest plan length } — 5-day
+  // pass = has:true, days:5; subscriber = days>=30.
+  let _access = null;
   async function loadMembership() {
     try {
       const r = await fetch('/api/auth/me', { credentials: 'include' });
-      _hasAccess = r.ok ? !!(await r.json()).has_access : false;
-    } catch (e) { _hasAccess = false; }
+      if (r.ok) { const u = await r.json(); _access = { has: !!u.has_access, days: u.plan_days }; }
+      else { _access = { has: false, days: null }; }
+    } catch (e) { _access = { has: false, days: null }; }
+    refreshSplashUpsell();
   }
   loadMembership();
-  function isMember() { return _hasAccess === true; }
+  function isMember() { return !!(_access && _access.has); }
+  function isSubscriber() { return !!(_access && _access.has && _access.days != null && _access.days >= 30); }
 
-  // Upsell block for the pre-publish splash — only shown to non-members, to
-  // convert the "come back at 9:30" moment into a membership purchase.
-  function splashUpsell() {
-    if (isMember()) return '';
+  // The 3-tier plans grid (same content as /plans), rendered from live billing.
+  const _SPLASH_FEATS = {
+    base: ['Full form for every pick, all meetings', 'Lounge, Hot Seat & Listings', 'Sharp filter & value plays'],
+    sub: ['<b>The Edge</b> — best picks, best odds', '<b>The Playbook</b> — daily betting plays', 'Cancel anytime'],
+    annual: ['<i>Exclusive NRL Predictions (70%+ accuracy, 2026)</i>'],
+  };
+  function _planPeriod(p) {
+    if (p.mode === 'subscription') return p.days >= 360 ? '/year' : p.days >= 28 ? '/month' : '/' + p.days + ' days';
+    return '';
+  }
+  function _planNote(p) {
+    if (p.mode === 'subscription') return p.days >= 360 ? 'billed yearly' : 'billed monthly';
+    return p.days + '-day pass · one-off';
+  }
+  function plansGrid(list) {
+    const all = (_billing && _billing.plans) || [];
+    if (!all.length) return '';
+    list = list || all;
+    if (!list.length) return '';
     const cur = (_billing && _billing.currency) || 'AUD';
-    const p5 = ((_billing && _billing.plans) || []).find(p => p.key === '5day');
-    const price5 = p5 && p5.amount != null ? ' · ' + _sym(cur) + Number(p5.amount).toFixed(2) : '';
-    return `<div class="tg-upsell">
-      <div class="tg-upsell-t">🔓 Don't wait for the first jump</div>
-      <div class="tg-upsell-s">Unlock every pick the moment they publish — full form &amp; best odds across every meeting.</div>
-      <div class="tg-upsell-btns">
-        <button class="tg-upsell-btn ghost" data-buy="5day">5-Day Pass${price5}</button>
-        <a class="tg-upsell-btn" href="/plans">Monthly &amp; Annual →</a>
-      </div>
-    </div>`;
+    const monthly = all.find(p => p.mode === 'subscription' && p.days >= 28 && p.days < 360);
+    const saveLine = p => {
+      if (!(p.mode === 'subscription' && p.days >= 360 && monthly)) return '';
+      const yearly = Number(monthly.amount) * 12;
+      const pct = Math.round((1 - Number(p.amount) / yearly) * 100);
+      return pct > 0 ? `<span class="fp-save"><span class="fp-was">${_sym(cur)}${yearly.toFixed(2)}/yr</span><span class="fp-off">Save ${pct}%</span></span>` : '';
+    };
+    return '<div class="fiq-plans">' + list.map((p, i) => {
+      const best = i === list.length - 1 && list.length > 1;
+      const isAnnual = p.mode === 'subscription' && p.days >= 360;
+      const feats = _SPLASH_FEATS.base
+        .concat(p.mode === 'subscription' ? _SPLASH_FEATS.sub : [])
+        .concat(isAnnual ? _SPLASH_FEATS.annual : []);
+      return `<div class="fp-tier${best ? ' best' : ''}">
+        ${best ? '<span class="fp-badge">Best value</span>' : ''}
+        <span class="fp-label">${esc(p.label || p.key)}</span>
+        <span class="fp-price">${_sym(cur)}${Number(p.amount).toFixed(2)}${_planPeriod(p) ? `<small>${_planPeriod(p)}</small>` : ''}</span>
+        ${saveLine(p)}
+        <span class="fp-note">${_planNote(p)}</span>
+        <ul class="fp-feats">${feats.map(f => `<li>${f}</li>`).join('')}</ul>
+        <button class="fp-cta" data-buy="${esc(p.key)}">Choose ${esc(p.label || p.key)}</button>
+      </div>`;
+    }).join('') + '</div>';
+  }
+
+  // Upsell for the pre-publish splash — embeds the plan cards inline. Hidden for
+  // subscribers. 5-day pass holders see only Monthly/Annual (upgrade pitch);
+  // non-members see all three.
+  function splashUpsell() {
+    if (isSubscriber()) return '';
+    const all = (_billing && _billing.plans) || [];
+    if (!all.length) return '';
+    const hasPass = isMember();              // active 5-day pass (not a subscriber)
+    const list = hasPass ? all.filter(p => p.mode === 'subscription') : all;
+    const grid = plansGrid(list);
+    if (!grid) return '';
+    const head = hasPass
+      ? `<div class="tg-upsell-t">Get more from your membership</div>
+         <div class="tg-upsell-s">You're on a 5-day pass. Go Monthly or Annual to unlock <b>the Edge</b> and the daily <b>Playbook</b> — and save with annual.</div>`
+      : `<div class="tg-upsell-t">🔓 Unlock every pick</div>
+         <div class="tg-upsell-s">Full form &amp; best odds the moment they publish — choose a plan below.</div>`;
+    return `<div class="tg-upsell">${head}${grid}</div>`;
+  }
+
+  // Swap the splash upsell in place once membership/billing resolve, so the
+  // right plans show without waiting for the page's slow (60s) poll.
+  function refreshSplashUpsell() {
+    var gates = document.querySelectorAll('.today-gate');
+    for (var i = 0; i < gates.length; i++) {
+      var gate = gates[i];
+      var old = gate.querySelector('.tg-upsell');
+      var html = splashUpsell();
+      if (old) { old.outerHTML = html; }
+      else if (html) { gate.insertAdjacentHTML('beforeend', html); }
+    }
   }
 
   window.PickCard = {
     render, dualStat, winPlace, resultBlock, esc, wallTime, countdown,
     lockedCard, paywallBanner, trophyBanner, configureBilling, openCheckout, openPricing, bindUnlock,
-    fetchJSON, isMember, splashUpsell, loadMembership,
+    fetchJSON, isMember, isSubscriber, splashUpsell, plansGrid, refreshSplashUpsell, loadMembership,
   };
 })();

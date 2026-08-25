@@ -282,3 +282,25 @@ td.cell.locked-cell:hover { filter: brightness(1.06); }
 .tg-upsell-btn { border: 0; cursor: pointer; }
 .tg-upsell-btn.ghost { background: transparent; color: var(--text); border: 1px solid var(--line); }
 .tg-upsell-btn.ghost:hover { border-color: var(--mint); color: var(--mint); filter: none; }
+
+/* Embedded plans grid inside the pre-publish splash upsell. */
+.today-gate:has(.fiq-plans) { max-width: 940px; }
+.fiq-plans { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 14px; margin-top: 22px; text-align: left; }
+.fp-tier { position: relative; background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 20px 18px; display: flex; flex-direction: column; gap: 3px; }
+.fp-tier.best { border-color: color-mix(in srgb, var(--mint) 55%, var(--line)); background: linear-gradient(180deg, color-mix(in srgb, var(--mint) 8%, var(--surface)), var(--surface) 60%); }
+.fp-badge { position: absolute; top: -10px; left: 50%; transform: translateX(-50%); background: var(--mint); color: #062b13; font-weight: 800; font-size: 0.62rem; letter-spacing: 0.06em; text-transform: uppercase; padding: 3px 10px; border-radius: 999px; white-space: nowrap; }
+.fp-label { font-family: 'Barlow Condensed'; font-weight: 800; font-size: 1rem; text-transform: uppercase; letter-spacing: 0.05em; color: var(--text-2); }
+.fp-price { font-family: 'Barlow Condensed'; font-weight: 900; font-size: 2rem; line-height: 1; margin: 4px 0 2px; font-variant-numeric: tabular-nums; color: var(--text); }
+.fp-price small { font-size: 0.8rem; font-weight: 600; color: var(--text-3); margin-left: 3px; }
+.fp-save { display: inline-flex; align-items: baseline; gap: 6px; margin: 4px 0 2px; font-size: 0.75rem; }
+.fp-save .fp-was { color: var(--text-3); text-decoration: line-through; }
+.fp-save .fp-off { background: var(--amber); color: #2a1a00; font-weight: 800; font-size: 0.66rem; padding: 2px 7px; border-radius: 999px; text-transform: uppercase; }
+.fp-note { color: var(--text-3); font-size: 0.76rem; }
+.fp-feats { list-style: none; margin: 12px 0 16px; padding: 0; display: flex; flex-direction: column; gap: 7px; }
+.fp-feats li { font-size: 0.82rem; color: var(--text-2); display: flex; gap: 8px; align-items: flex-start; }
+.fp-feats li::before { content: '✓'; color: var(--mint); font-weight: 800; }
+.fp-feats b { font-weight: 600; color: var(--text); }
+.fp-feats i { font-style: italic; color: var(--text); }
+.fp-cta { margin-top: auto; width: 100%; border: 1px solid var(--line); border-radius: 10px; padding: 11px; cursor: pointer; font-family: 'Barlow Condensed'; font-weight: 800; font-size: 0.95rem; letter-spacing: 0.03em; text-transform: uppercase; background: var(--surface-2); color: var(--text); }
+.fp-tier.best .fp-cta { background: var(--mint); color: #062b13; border-color: var(--mint); }
+.fp-cta:hover { filter: brightness(1.03); }
