@@ -102,9 +102,19 @@
        (Outfit vs Barlow), which made the FunkyIQ title shift between pages */
     'body .brand-bar { justify-content: flex-start; }',
     'body .brand-bar-logo, body .brand-bar-subtitle { font-family: \'Outfit\', \'Barlow\', system-ui, sans-serif; }',
+    /* top-right cluster: About link sits to the LEFT of the theme toggle */
+    '.fiq-topright {',
+    '  position: absolute; top: 10px; right: 12px; z-index: 120;',
+    '  display: inline-flex; align-items: center; gap: 10px;',
+    '}',
+    '.fiq-topright-link {',
+    '  font-size: 0.72rem; font-weight: 700; letter-spacing: 0.02em;',
+    '  color: var(--text-dim, var(--text-3, #6b7688)); text-decoration: none;',
+    '  white-space: nowrap;',
+    '}',
+    '.fiq-topright-link:hover { color: var(--text-primary, var(--text, #e8ecf4)); }',
     /* toggle control — works on both themes */
     '.fiq-theme-toggle {',
-    '  position: absolute; top: 10px; right: 12px; z-index: 120;',
     '  display: inline-flex; align-items: center; gap: 2px;',
     '  background: var(--bg-elevated, var(--surface-2, #1a2130));',
     '  border: 1px solid var(--border, var(--line, #232c3d));',
@@ -142,9 +152,25 @@
   }
 
   function mount() {
-    if (document.querySelector('.fiq-theme-toggle')) return;
+    if (document.querySelector('.fiq-topright')) return;
     var host = document.body;
     if (!host) return;
+
+    var bar = document.createElement('span');
+    bar.className = 'fiq-topright';
+
+    // About moves up here, to the LEFT of the toggle. Reuse the nav-row
+    // About's href but render it as a plain top-right link; hide the original.
+    var aboutSrc = document.querySelector('.page-nav a[href="/about"]');
+    if (aboutSrc) {
+      var about = document.createElement('a');
+      about.href = aboutSrc.getAttribute('href') || '/about';
+      about.className = 'fiq-topright-link';
+      about.textContent = 'About';
+      bar.appendChild(about);
+      aboutSrc.style.display = 'none';
+    }
+
     var wrap = document.createElement('span');
     wrap.className = 'fiq-theme-toggle';
     wrap.setAttribute('role', 'radiogroup');
@@ -159,7 +185,20 @@
       b.addEventListener('click', function () { apply(t); });
       wrap.appendChild(b);
     });
-    host.appendChild(wrap);
+    bar.appendChild(wrap);
+
+    host.appendChild(bar);
+  }
+
+  /* Account nav: only for signed-in members. Hidden by default so anonymous
+   * visitors never see it; revealed once /api/auth/me confirms a session. */
+  function gateAccountNav() {
+    var acct = document.querySelector('.page-nav a[href="/account"]');
+    if (!acct) return;
+    acct.style.display = 'none';
+    fetch('/api/auth/me', { credentials: 'include' })
+      .then(function (r) { if (r.ok) acct.style.display = ''; })
+      .catch(function () {});
   }
 
   /* Admin-only nav: Labs lives under the admin section (2026-07-30). Its
@@ -176,7 +215,7 @@
     for (var i = 0; i < nodes.length; i++) nodes[i].style.display = 'none';
   }
 
-  function init() { mount(); gateAdminNav(); }
+  function init() { mount(); gateAdminNav(); gateAccountNav(); }
 
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', init);
