@@ -195,6 +195,35 @@
       font-size: 1.4rem; font-weight: 700; line-height: 1;
     }
     .profile-value.mono { font-family: 'JetBrains Mono', monospace; font-size: 0.95rem; }
+
+    /* ── Membership card ── */
+    .membership { background:
+        linear-gradient(180deg, color-mix(in srgb, var(--green) 10%, var(--card)), var(--card) 70%);
+      border: 1px solid color-mix(in srgb, var(--green) 35%, var(--edge)); }
+    .membership.inactive { background: var(--card); border-color: var(--edge); }
+    .mem-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; }
+    .mem-hi { font-size: 0.9rem; color: var(--muted); }
+    .mem-hi b { color: var(--text); font-weight: 700; }
+    .mem-plan { font-family: 'Barlow Condensed', sans-serif; font-weight: 800; font-size: 1.7rem;
+      line-height: 1.05; margin-top: 2px; letter-spacing: 0.01em; }
+    .mem-badge { flex: 0 0 auto; font-size: 0.7rem; font-weight: 800; text-transform: uppercase;
+      letter-spacing: 0.06em; padding: 5px 11px; border-radius: 999px; white-space: nowrap; }
+    .mem-badge.on { background: color-mix(in srgb, var(--green) 20%, transparent); color: var(--green);
+      border: 1px solid color-mix(in srgb, var(--green) 45%, transparent); }
+    .mem-badge.off { background: rgba(120,130,150,0.14); color: var(--muted);
+      border: 1px solid rgba(120,130,150,0.3); }
+    .mem-status { margin-top: 14px; font-size: 1rem; color: var(--text); }
+    .mem-status .big { font-family: 'Barlow Condensed', sans-serif; font-weight: 800; font-size: 1.35rem;
+      color: var(--text); font-variant-numeric: tabular-nums; }
+    .mem-status .sub { color: var(--muted); font-size: 0.85rem; margin-top: 3px; }
+    .mem-bar { height: 8px; border-radius: 999px; background: rgba(120,130,150,0.2);
+      overflow: hidden; margin: 14px 0 2px; }
+    .mem-bar > span { display: block; height: 100%; border-radius: 999px; background: var(--green); }
+    .mem-cta { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 18px; }
+    .mem-cta a { text-decoration: none; font-family: 'Barlow Condensed', sans-serif; font-weight: 800;
+      font-size: 0.98rem; letter-spacing: 0.03em; text-transform: uppercase; padding: 10px 18px;
+      border-radius: 10px; border: 1px solid var(--edge); color: var(--text); background: transparent; }
+    .mem-cta a.primary { background: var(--green); color: #062b13; border-color: var(--green); }
     .badge-founding {
       display: inline-block; margin-left: 6px;
       background: rgba(232,160,32,0.15);
@@ -391,6 +420,19 @@
   <div class="wrap">
 
     <div id="content" style="display:none">
+      <section class="membership" id="memberSection">
+        <div class="mem-head">
+          <div>
+            <div class="mem-hi" id="mem-hi">Welcome</div>
+            <div class="mem-plan" id="mem-plan">—</div>
+          </div>
+          <span class="mem-badge off" id="mem-badge">—</span>
+        </div>
+        <div class="mem-status" id="mem-status"></div>
+        <div class="mem-bar" id="mem-bar" style="display:none"><span style="width:0%"></span></div>
+        <div class="mem-cta" id="mem-cta"></div>
+      </section>
+
       <section>
         <h2>Profile</h2>
         <div class="profile-row">
@@ -401,10 +443,6 @@
           <div class="profile-item">
             <div class="profile-label">Member #</div>
             <div class="profile-value" id="p-mn">—</div>
-          </div>
-          <div class="profile-item">
-            <div class="profile-label">Role</div>
-            <div class="profile-value" id="p-role">—</div>
           </div>
           <div class="profile-item">
             <div class="profile-label">Joined</div>
@@ -538,15 +576,80 @@
       }
     }
 
+    function escHtml(s) {
+      return String(s == null ? '' : s)
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    }
+    const PLAN_NAME = { 5: '5-Day Pass', 30: 'Monthly Membership', 365: 'Annual Membership' };
+    function planName(days) { return PLAN_NAME[days] || (days ? days + '-Day Pass' : 'Membership'); }
+
+    function parseUTC(iso) {
+      if (!iso) return null;
+      let s = String(iso);
+      if (!/([zZ]|[+-]\d{2}:?\d{2})$/.test(s)) s += 'Z';
+      const t = new Date(s).getTime();
+      return isNaN(t) ? null : t;
+    }
+
+    function renderMembership(u) {
+      const sec = document.getElementById('memberSection');
+      const badge = document.getElementById('mem-badge');
+      const planEl = document.getElementById('mem-plan');
+      const statusEl = document.getElementById('mem-status');
+      const bar = document.getElementById('mem-bar');
+      const cta = document.getElementById('mem-cta');
+      const until = parseUTC(u.access_until);
+      const active = !!u.has_access && until && until > Date.now();
+
+      if (active) {
+        const days = u.plan_days || null;
+        sec.classList.remove('inactive');
+        badge.className = 'mem-badge on'; badge.textContent = 'Active';
+        planEl.textContent = planName(days);
+        const ms = until - Date.now();
+        const d = Math.floor(ms / 86400000);
+        const h = Math.floor((ms % 86400000) / 3600000);
+        const expires = new Date(until).toLocaleString('en-AU', {
+          timeZone: 'Australia/Sydney', weekday: 'short', day: '2-digit', month: 'short',
+          hour: '2-digit', minute: '2-digit',
+        });
+        statusEl.innerHTML =
+          `<span class="big">${d} day${d === 1 ? '' : 's'}, ${h} hour${h === 1 ? '' : 's'}</span> remaining` +
+          `<div class="sub">Access until ${expires} (Sydney)</div>`;
+        // Progress bar: fraction of the plan window still left.
+        if (days) {
+          const frac = Math.max(0, Math.min(1, ms / (days * 86400000)));
+          bar.style.display = ''; bar.firstElementChild.style.width = (frac * 100).toFixed(1) + '%';
+        } else { bar.style.display = 'none'; }
+        // Upgrade options (only offer longer plans than the current one).
+        let btns = '';
+        if (!days || days < 30) btns += '<a class="primary" href="/plans">Upgrade to Monthly</a>';
+        if (!days || days < 365) btns += '<a href="/plans">Go Annual — save 40%</a>';
+        cta.innerHTML = btns || '<a href="/plans">Manage plan</a>';
+      } else {
+        sec.classList.add('inactive');
+        badge.className = 'mem-badge off'; badge.textContent = 'No pass';
+        planEl.textContent = 'No active membership';
+        statusEl.innerHTML = 'Unlock every pick, across every meeting.' +
+          '<div class="sub">Choose a 5-day pass, monthly or annual plan.</div>';
+        bar.style.display = 'none';
+        cta.innerHTML = '<a class="primary" href="/plans">View plans</a>';
+      }
+    }
+
     function renderProfile(u) {
-      document.getElementById('p-email').textContent = u.email;
+      const name = [u.first_name, u.last_name].filter(Boolean).join(' ').trim();
+      const hi = document.getElementById('mem-hi');
+      if (hi) hi.innerHTML = name ? `Welcome back, <b>${escHtml(name)}</b>` : 'Welcome back';
       const mini = document.getElementById('whoami-mini');
-      if (mini) mini.textContent = u.email;
+      if (mini) mini.textContent = name || u.email;
+      document.getElementById('p-email').textContent = u.email;
       document.getElementById('p-mn').innerHTML =
         (u.member_number ?? '—') +
         (u.founding ? ' <span class="badge-founding">Founding</span>' : '');
-      document.getElementById('p-role').textContent = u.role;
       document.getElementById('p-joined').textContent = fmtDate(u.created_at);
+      renderMembership(u);
     }
 
     function updateCapChip(remaining) {

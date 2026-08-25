@@ -655,6 +655,10 @@ class UserRow(Base):
     # Display name — collected later (Stripe checkout, profile edit).
     # Kept nullable so passwordless signup doesn't demand it up front.
     name = Column(String, nullable=True)
+    # Collected at signup (sign-in page form). Nullable for pre-existing users.
+    first_name = Column(String, nullable=True)
+    last_name = Column(String, nullable=True)
+    referral_source = Column(String, nullable=True)   # "How did you find us?"
     role = Column(String, nullable=False, default="member", index=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
@@ -710,6 +714,10 @@ class MagicLinkRow(Base):
     token_hash = Column(String, nullable=False, unique=True, index=True)
     intent = Column(String, nullable=False)              # 'login' | 'signup' — determines redirect target
     invite_token_hash = Column(String, nullable=True)    # tie-in with an InviteRow when intent='signup'
+    # Signup profile carried from request-code → applied on account creation.
+    first_name = Column(String, nullable=True)
+    last_name = Column(String, nullable=True)
+    referral_source = Column(String, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     expires_at = Column(DateTime, nullable=False, index=True)
     used_at = Column(DateTime, nullable=True)
@@ -1212,6 +1220,14 @@ async def init_db() -> None:
         # A failure (e.g. pre-existing dupes) is logged and skipped, not fatal.
         "CREATE UNIQUE INDEX IF NOT EXISTS uq_users_email ON users (email)",
         "CREATE UNIQUE INDEX IF NOT EXISTS uq_users_member_number ON users (member_number)",
+        # Signup profile fields (name + referral source), on users and carried
+        # on the magic-link row from request-code through to account creation.
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS first_name TEXT",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS last_name TEXT",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS referral_source TEXT",
+        "ALTER TABLE magic_links ADD COLUMN IF NOT EXISTS first_name TEXT",
+        "ALTER TABLE magic_links ADD COLUMN IF NOT EXISTS last_name TEXT",
+        "ALTER TABLE magic_links ADD COLUMN IF NOT EXISTS referral_source TEXT",
         # One-shot backfill: give existing accounts a sequential member number
         # (earliest join = lowest number), continuing after the current max.
         # Idempotent — only touches rows still NULL, so it's a no-op once run.

@@ -66,12 +66,17 @@ async def issue_magic_link(
     email: str,
     intent: str = "login",
     invite_token_hash: Optional[str] = None,
+    first_name: Optional[str] = None,
+    last_name: Optional[str] = None,
+    referral_source: Optional[str] = None,
 ) -> str:
     """Create a magic-link row, return the RAW token (caller emails it
     inside a verify URL). Never stores the raw token — only the hash.
 
     intent = 'login' for existing accounts, 'signup' when the flow
-    should redirect to onboarding on verify.
+    should redirect to onboarding on verify. Signup profile fields
+    (first/last name, referral source) ride along and are applied to the
+    account on creation.
     """
     email_norm = email.strip().lower()
     token = generate_token()
@@ -82,6 +87,9 @@ async def issue_magic_link(
             token_hash=hash_token(token),
             intent=intent,
             invite_token_hash=invite_token_hash,
+            first_name=(first_name or None),
+            last_name=(last_name or None),
+            referral_source=(referral_source or None),
             created_at=now,
             expires_at=now + MAGIC_LINK_TTL,
         ))
@@ -199,16 +207,26 @@ async def touch_session(cookie_hash: str) -> None:
 
 # ── User lookup + creation ─────────────────────────────────────────────
 
-async def get_or_create_user(email: str) -> UserRow:
+async def get_or_create_user(
+    email: str,
+    first_name: Optional[str] = None,
+    last_name: Optional[str] = None,
+    referral_source: Optional[str] = None,
+) -> UserRow:
     """Return the user with this email, creating a fresh row if none
     exists. Called after magic-link verification — at which point we
     know the user controls this email address.
 
     Newly created users have role='member', no seat allocation, no
     invited_by attribution (those get set by the invite consumption
-    flow, not here).
+    flow, not here). Signup profile fields (name + referral) are applied
+    only on creation; existing users keep whatever they already had.
     """
     email_norm = email.strip().lower()
+    fn = (first_name or "").strip() or None
+    ln = (last_name or "").strip() or None
+    ref = (referral_source or "").strip() or None
+    display = " ".join(p for p in (fn, ln) if p) or None
     async with get_session() as session:
         row = (await session.execute(
             select(UserRow).where(UserRow.email == email_norm).limit(1)
@@ -226,6 +244,7 @@ async def get_or_create_user(email: str) -> UserRow:
             row = UserRow(
                 email=email_norm, role="member", member_number=num,
                 founding=(num <= 100), created_at=datetime.utcnow(),
+                first_name=fn, last_name=ln, referral_source=ref, name=display,
             )
             session.add(row)
             try:

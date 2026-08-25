@@ -87,6 +87,7 @@ from horse_engine.models.database import (
     SessionRow,
     InviteRow,
     WaitlistRow,
+    AccessGrantRow,
 )
 from horse_engine.analysis.nightly_review import (
     generate_review as _generate_nightly_review,
@@ -4196,6 +4197,11 @@ async def auth_request_code(request: Request, response: Response):
     email = (body.get("email") or "").strip().lower()
     invite_code = (body.get("invite_code") or "").strip() or None
     turnstile_token = (body.get("turnstile_token") or "").strip() or None
+    # Signup profile (new accounts only) — carried on the magic link, applied
+    # on account creation. Trimmed/capped; ignored for existing users.
+    first_name = (body.get("first_name") or "").strip()[:80] or None
+    last_name = (body.get("last_name") or "").strip()[:80] or None
+    referral_source = (body.get("referral_source") or "").strip()[:60] or None
     if not email or "@" not in email or len(email) > 254:
         raise HTTPException(status_code=400, detail="Invalid email address")
     await _enforce_turnstile(request, turnstile_token)
@@ -4254,6 +4260,7 @@ async def auth_request_code(request: Request, response: Response):
     # crash the endpoint. User can retry request-code if nothing arrives.
     token = await _auth_issue_magic_link(
         email, intent=intent, invite_token_hash=invite_hash,
+        first_name=first_name, last_name=last_name, referral_source=referral_source,
     )
     # Route the click through the frontend host (Vercel) which proxies
     # /api/* to the Railway backend. This way the browser thinks the
@@ -4301,7 +4308,12 @@ async def auth_verify(t: str, request: Request):
     if row is None:
         return RedirectResponse(url=f"{app_url}/login?err=link_expired", status_code=302)
 
-    user = await _auth_get_or_create_user(row.email)
+    user = await _auth_get_or_create_user(
+        row.email,
+        first_name=getattr(row, "first_name", None),
+        last_name=getattr(row, "last_name", None),
+        referral_source=getattr(row, "referral_source", None),
+    )
 
     # Attribute invite lineage. Only fires for new users (existing users
     # keep their original invited_by_user_id) and only if the magic link
@@ -4360,15 +4372,38 @@ async def auth_me(user=Depends(_auth_current_user_optional)):
     in. Frontend polls this on page load to decide what to render."""
     if user is None:
         raise HTTPException(status_code=401, detail="Not signed in")
+    from horse_engine.api.access import has_active_access
+    # Most recent grant → infer the current plan (5/30/365 days) for display.
+    last_days = None
+    last_provider = None
+    try:
+        async with get_session() as _s:
+            g = (await _s.execute(
+                select(AccessGrantRow)
+                .where(AccessGrantRow.user_id == user.id)
+                .order_by(AccessGrantRow.id.desc()).limit(1)
+            )).scalars().first()
+            if g is not None:
+                last_days = int(g.days_granted) if g.days_granted is not None else None
+                last_provider = g.provider
+    except Exception:
+        pass
     return {
         "id": user.id,
         "email": user.email,
+        "first_name": getattr(user, "first_name", None),
+        "last_name": getattr(user, "last_name", None),
         "role": user.role,
         "member_number": user.member_number,
         "seat_active": bool(user.seat_active),
         "founding": bool(user.founding),
         "invites_remaining": int(user.invites_remaining or 0),
         "created_at": user.created_at.isoformat() if user.created_at else None,
+        # Paid-access state for the account page.
+        "access_until": user.access_until.isoformat() if getattr(user, "access_until", None) else None,
+        "has_access": has_active_access(user),
+        "plan_days": last_days,          # 5 | 30 | 365 → 5-Day / Monthly / Annual
+        "plan_provider": last_provider,  # 'stripe' | 'admin' | 'comp' | …
     }
 
 
