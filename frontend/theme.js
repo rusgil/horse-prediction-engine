@@ -107,6 +107,23 @@
     '  position: absolute; top: 10px; right: 12px; z-index: 120;',
     '  display: inline-flex; flex-direction: column; align-items: flex-end; gap: 6px;',
     '}',
+    /* Toggle + account avatar sit in a row; auth link (mobile) drops below. */
+    '.fiq-tr-top { display: inline-flex; align-items: center; gap: 8px; }',
+    /* Modern circular account button (replaces the nav "Account" text link). */
+    '.fiq-acct {',
+    '  display: none; width: 30px; height: 30px; border-radius: 50%;',
+    '  align-items: center; justify-content: center; text-decoration: none;',
+    '  font-family: \'Barlow Condensed\', system-ui, sans-serif; font-weight: 800;',
+    '  font-size: 0.86rem; line-height: 1; cursor: pointer; flex-shrink: 0;',
+    '  background: var(--bg-elevated, var(--surface-2, #1a2130));',
+    '  border: 1px solid var(--border, var(--line, #232c3d));',
+    '  color: var(--text-primary, var(--text, #e8ecf4));',
+    '  transition: border-color 0.15s, box-shadow 0.15s;',
+    '}',
+    '.fiq-acct.on { display: inline-flex; }',
+    '.fiq-acct:hover { border-color: var(--green, #22c55e); box-shadow: 0 0 0 3px rgba(34,197,94,0.14); }',
+    /* The old nav-row Account text button is replaced by the avatar. */
+    '.page-nav a[href="/account"] { display: none !important; }',
     '.fiq-topright-link {',
     '  font-size: 0.72rem; font-weight: 700; letter-spacing: 0.02em;',
     '  color: var(--text-dim, var(--text-3, #6b7688)); text-decoration: none;',
@@ -176,7 +193,10 @@
     var bar = document.createElement('span');
     bar.className = 'fiq-topright';
 
-    // Dark/Light toggle on top …
+    // Top row: Dark/Light toggle, then the account avatar to its right.
+    var topRow = document.createElement('span');
+    topRow.className = 'fiq-tr-top';
+
     var wrap = document.createElement('span');
     wrap.className = 'fiq-theme-toggle';
     wrap.setAttribute('role', 'radiogroup');
@@ -191,7 +211,17 @@
       b.addEventListener('click', function () { apply(t); });
       wrap.appendChild(b);
     });
-    bar.appendChild(wrap);
+    topRow.appendChild(wrap);
+
+    // Circular account button — revealed for signed-in members (gateAuthUi).
+    var acct = document.createElement('a');
+    acct.className = 'fiq-acct';
+    acct.href = '/account';
+    acct.setAttribute('aria-label', 'Account');
+    acct.setAttribute('title', 'Account');
+    topRow.appendChild(acct);
+
+    bar.appendChild(topRow);
 
     // Sign in / Sign out. Two placements, one shown per breakpoint:
     //  • desktop → right end of the menu bar (.page-nav), vertically centred.
@@ -220,13 +250,24 @@
    *  - Account nav link: hidden for anon, shown once signed in.
    *  - Auth link: "Sign in" (anon) → "Sign out" (signed in, POSTs logout). */
   function gateAuthUi() {
-    var acct = document.querySelector('.page-nav a[href="/account"]');
-    if (acct) acct.style.display = 'none';
+    var circle = document.querySelector('.fiq-acct');
     var links = document.querySelectorAll('.fiq-auth-link');
     fetch('/api/auth/me', { credentials: 'include' })
       .then(function (r) {
-        var signedIn = r.ok;
-        if (acct) acct.style.display = signedIn ? '' : 'none';
+        if (!r.ok) return null;
+        return r.json().catch(function () { return {}; });
+      })
+      .then(function (u) {
+        var signedIn = !!u;
+        if (circle) {
+          if (signedIn) {
+            var src = (u.first_name || u.email || '?').trim();
+            circle.textContent = (src[0] || '?').toUpperCase();
+            circle.classList.add('on');
+          } else {
+            circle.classList.remove('on');
+          }
+        }
         for (var i = 0; i < links.length; i++) {
           var authLink = links[i];
           if (signedIn) {
