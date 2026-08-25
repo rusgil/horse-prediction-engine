@@ -276,11 +276,17 @@
     .buy-amt { font-variant-numeric: tabular-nums; white-space: nowrap; }
     .buy-prov { display: inline-block; font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.05em;
       color: var(--muted); background: var(--edge); border-radius: 999px; padding: 2px 8px; }
+    /* Mobile: the right-side menu collapses behind a hamburger button. */
+    .acct-burger { display: none; }
     @media (max-width: 760px) {
-      .acct-layout { grid-template-columns: 1fr; }
-      .acct-menu { position: static; flex-direction: row; flex-wrap: wrap; }
-      .acct-menu-item, .acct-signout { width: auto; flex: 1 1 auto; justify-content: center; }
-      .acct-signout { flex-basis: 100%; }
+      .acct-layout { grid-template-columns: 1fr; gap: 14px; }
+      .acct-burger { order: -1; display: inline-flex; align-items: center; gap: 10px; width: 100%;
+        background: var(--card); border: 1px solid var(--edge); border-radius: 11px; padding: 13px 15px;
+        color: var(--text); font-family: inherit; font-weight: 700; font-size: 0.98rem; cursor: pointer; }
+      .acct-burger .bars { display: inline-flex; color: var(--muted); }
+      .acct-menu { order: 0; display: none; position: static; margin-top: -6px; }
+      .acct-menu.open { display: flex; }
+      .acct-main { order: 1; }
     }
     .badge-founding {
       display: inline-block; margin-left: 6px;
@@ -479,6 +485,11 @@
 
     <div id="content" style="display:none">
     <div class="acct-layout">
+      <button class="acct-burger" type="button" id="acctBurger" aria-label="Account menu" aria-expanded="false">
+        <span class="bars"><svg width="18" height="14" viewBox="0 0 18 14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M1 1h16M1 7h16M1 13h16"/></svg></span>
+        <span id="acctBurgerLbl">Account menu</span>
+      </button>
+
       <div class="acct-main">
 
       <div class="acct-panel" data-panel="profile">
@@ -691,17 +702,33 @@
 
     // ── Right-side menu: switch panels (deep-linkable via #hash) ──
     let _purchasesLoaded = false;
+    const PANEL_LABELS = { profile: 'Your Profile', invite: 'Invite a Friend', prefs: 'Personalised Preferences', purchases: 'Purchase History' };
+    function closeAcctMenu() {
+      const menu = document.querySelector('.acct-menu');
+      if (menu) menu.classList.remove('open');
+      const burger = document.getElementById('acctBurger');
+      if (burger) burger.setAttribute('aria-expanded', 'false');
+    }
     function showPanel(name) {
       document.querySelectorAll('.acct-panel').forEach(p => { p.hidden = p.dataset.panel !== name; });
       document.querySelectorAll('.acct-menu-item').forEach(b => b.classList.toggle('active', b.dataset.menu === name));
+      const lbl = document.getElementById('acctBurgerLbl');
+      if (lbl) lbl.textContent = PANEL_LABELS[name] || 'Account menu';
+      closeAcctMenu();
       if (name === 'purchases' && !_purchasesLoaded) { _purchasesLoaded = true; loadPurchases(); }
       try { history.replaceState(null, '', '#' + name); } catch (e) {}
     }
     function setupMenu() {
       document.querySelectorAll('.acct-menu-item').forEach(b =>
         b.addEventListener('click', () => showPanel(b.dataset.menu)));
+      const burger = document.getElementById('acctBurger');
+      const menu = document.querySelector('.acct-menu');
+      if (burger && menu) burger.addEventListener('click', () => {
+        const open = menu.classList.toggle('open');
+        burger.setAttribute('aria-expanded', open ? 'true' : 'false');
+      });
       const start = (location.hash || '').replace('#', '');
-      if (['profile', 'invite', 'prefs', 'purchases'].includes(start)) showPanel(start);
+      showPanel(['profile', 'invite', 'prefs', 'purchases'].includes(start) ? start : 'profile');
     }
 
     // ── Personalised preferences ──
