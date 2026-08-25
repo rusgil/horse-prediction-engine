@@ -102,6 +102,10 @@
        (Outfit vs Barlow), which made the FunkyIQ title shift between pages */
     'body .brand-bar { justify-content: flex-start; }',
     'body .brand-bar-logo, body .brand-bar-subtitle { font-family: \'Outfit\', \'Barlow\', system-ui, sans-serif; }',
+    /* Mobile: stack the brand — "FunkyIQ" over "Horse Racing". */
+    '@media (max-width: 560px) {',
+    '  body .brand-bar { flex-direction: column; align-items: flex-start; gap: 1px; }',
+    '}',
     /* top-right cluster: About link sits to the LEFT of the theme toggle */
     '.fiq-topright {',
     '  position: absolute; top: 10px; right: 12px; z-index: 120;',
