@@ -171,6 +171,14 @@
       aboutSrc.style.display = 'none';
     }
 
+    // Sign in / Sign out — top-right on every page. Defaults to "Sign in";
+    // gateAuthUi() flips it to "Sign out" once a session is confirmed.
+    var authLink = document.createElement('a');
+    authLink.className = 'fiq-topright-link fiq-auth-link';
+    authLink.href = '/login';
+    authLink.textContent = 'Sign in';
+    bar.appendChild(authLink);
+
     var wrap = document.createElement('span');
     wrap.className = 'fiq-theme-toggle';
     wrap.setAttribute('role', 'radiogroup');
@@ -190,15 +198,34 @@
     host.appendChild(bar);
   }
 
-  /* Account nav: only for signed-in members. Hidden by default so anonymous
-   * visitors never see it; revealed once /api/auth/me confirms a session. */
-  function gateAccountNav() {
+  /* One auth check drives the top-right UI:
+   *  - Account nav link: hidden for anon, shown once signed in.
+   *  - Auth link: "Sign in" (anon) → "Sign out" (signed in, POSTs logout). */
+  function gateAuthUi() {
     var acct = document.querySelector('.page-nav a[href="/account"]');
-    if (!acct) return;
-    acct.style.display = 'none';
+    if (acct) acct.style.display = 'none';
+    var authLink = document.querySelector('.fiq-auth-link');
     fetch('/api/auth/me', { credentials: 'include' })
-      .then(function (r) { if (r.ok) acct.style.display = ''; })
-      .catch(function () {});
+      .then(function (r) {
+        var signedIn = r.ok;
+        if (acct) acct.style.display = signedIn ? '' : 'none';
+        if (!authLink) return;
+        if (signedIn) {
+          authLink.textContent = 'Sign out';
+          authLink.href = '#';
+          authLink.onclick = function (e) {
+            e.preventDefault();
+            fetch('/api/auth/logout', { method: 'POST', credentials: 'include' })
+              .then(function () { location.href = '/login'; })
+              .catch(function () { location.href = '/login'; });
+          };
+        } else {
+          authLink.textContent = 'Sign in';
+          authLink.href = '/login';
+          authLink.onclick = null;
+        }
+      })
+      .catch(function () { /* leave default "Sign in" */ });
   }
 
   /* Admin-only nav: Labs lives under the admin section (2026-07-30). Its
@@ -215,7 +242,7 @@
     for (var i = 0; i < nodes.length; i++) nodes[i].style.display = 'none';
   }
 
-  function init() { mount(); gateAdminNav(); gateAccountNav(); }
+  function init() { mount(); gateAdminNav(); gateAuthUi(); }
 
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', init);

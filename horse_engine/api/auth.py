@@ -24,7 +24,8 @@ from datetime import datetime, timedelta
 from typing import Optional
 
 from fastapi import Cookie, HTTPException, Request, Response
-from sqlalchemy import select, delete
+from sqlalchemy import select, delete, func
+from sqlalchemy.exc import IntegrityError
 
 from horse_engine.config import settings
 from horse_engine.models.database import (
@@ -214,11 +215,41 @@ async def get_or_create_user(email: str) -> UserRow:
         )).scalars().first()
         if row is not None:
             return row
-        row = UserRow(email=email_norm, role="member", created_at=datetime.utcnow())
-        session.add(row)
-        await session.commit()
-        await session.refresh(row)
-        return row
+        # New account: assign the next sequential member number now (founding
+        # = the first 100). member_number is UNIQUE, so on the rare concurrent
+        # collision we roll back and retry with a fresh max.
+        for _ in range(5):
+            max_num = (await session.execute(
+                select(func.max(UserRow.member_number))
+            )).scalar() or 0
+            num = int(max_num) + 1
+            row = UserRow(
+                email=email_norm, role="member", member_number=num,
+                founding=(num <= 100), created_at=datetime.utcnow(),
+            )
+            session.add(row)
+            try:
+                await session.commit()
+            except IntegrityError:
+                await session.rollback()
+                # Either the number was taken concurrently, or this email was
+                # just created by a parallel request — re-check for the email.
+                existing = (await session.execute(
+                    select(UserRow).where(UserRow.email == email_norm).limit(1)
+                )).scalars().first()
+                if existing is not None:
+                    return existing
+                continue
+            await session.refresh(row)
+            return row
+        # Exhausted retries (should never happen at our volume) — surface the
+        # user if they now exist, else re-raise on a final attempt.
+        existing = (await session.execute(
+            select(UserRow).where(UserRow.email == email_norm).limit(1)
+        )).scalars().first()
+        if existing is not None:
+            return existing
+        raise RuntimeError("could not allocate member_number for new user")
 
 
 async def get_user_by_cookie(cookie_token: Optional[str]) -> Optional[UserRow]:

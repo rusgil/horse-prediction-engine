@@ -1206,6 +1206,25 @@ async def init_db() -> None:
         # on Postgres and accepted by SQLite.
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS access_until TIMESTAMP",
         "CREATE INDEX IF NOT EXISTS ix_users_access_until ON users (access_until)",
+        # Guarantee no duplicate accounts / member numbers even on tables that
+        # predate the model's unique=True. Idempotent; in Postgres NULL
+        # member_number rows (pre-allocation) are exempt from the unique check.
+        # A failure (e.g. pre-existing dupes) is logged and skipped, not fatal.
+        "CREATE UNIQUE INDEX IF NOT EXISTS uq_users_email ON users (email)",
+        "CREATE UNIQUE INDEX IF NOT EXISTS uq_users_member_number ON users (member_number)",
+        # One-shot backfill: give existing accounts a sequential member number
+        # (earliest join = lowest number), continuing after the current max.
+        # Idempotent — only touches rows still NULL, so it's a no-op once run.
+        """
+        UPDATE users u SET member_number = s.newnum FROM (
+            SELECT id,
+                   (SELECT COALESCE(MAX(member_number), 0) FROM users)
+                   + row_number() OVER (ORDER BY created_at NULLS FIRST, id) AS newnum
+            FROM users WHERE member_number IS NULL
+        ) s WHERE u.id = s.id
+        """,
+        # Founding = first 100 member numbers.
+        "UPDATE users SET founding = TRUE WHERE member_number IS NOT NULL AND member_number <= 100 AND founding = FALSE",
         "CREATE UNIQUE INDEX IF NOT EXISTS uq_access_grants_external_txn ON access_grants (external_txn_id)",
         "CREATE INDEX IF NOT EXISTS ix_access_grants_user ON access_grants (user_id)",
         "CREATE INDEX IF NOT EXISTS ix_hist_results_race_winner ON historical_results (race_id, winner)",
