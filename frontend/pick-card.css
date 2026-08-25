@@ -285,6 +285,7 @@ td.cell.locked-cell:hover { filter: brightness(1.06); }
 
 /* Embedded plans grid inside the pre-publish splash upsell. */
 .today-gate:has(.fiq-plans), .today-gate.fiq-wide { max-width: 940px; }
+.today-gate.fiq-wide .tg-upsell { max-width: none; }
 .fiq-plans { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 14px; margin-top: 22px; text-align: left; }
 .fp-tier { position: relative; background: var(--surface); border: 1px solid var(--line); border-radius: 14px; padding: 20px 18px; display: flex; flex-direction: column; gap: 3px; }
 .fp-tier.best { border-color: color-mix(in srgb, var(--mint) 55%, var(--line)); background: linear-gradient(180deg, color-mix(in srgb, var(--mint) 8%, var(--surface)), var(--surface) 60%); }
