@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
   <script src="/theme.js"></script>
-  <script src="/pick-card.js?v=13"></script>
+  <script src="/pick-card.js?v=14"></script>
 <meta name="robots" content="noindex">
 <title>FunkyIQ — Hot Seat</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -882,7 +882,7 @@
 
   .ff { font-variant-numeric: tabular-nums; letter-spacing: 0.14em; font-weight: 800; }
 </style>
-  <link rel="stylesheet" href="/pick-card.css?v=13">
+  <link rel="stylesheet" href="/pick-card.css?v=14">
   <script defer src="/_vercel/insights/script.js"></script>
 </head>
 <body>
@@ -1584,6 +1584,9 @@
       const edge = (r.top_win_probability || 0) * 100 - 100 / od;
       return edge >= +S.valFilter;
     });
+    // Free teaser pick is always pinned to the top of the list (stable sort
+    // keeps the rest in time order).
+    upcoming.sort((a, b) => (b.is_teaser ? 1 : 0) - (a.is_teaser ? 1 : 0));
     const settled = races.filter(r => countdown(r.scheduled_time).past).reverse();
     const hero = upcoming[0];
 

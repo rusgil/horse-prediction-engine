@@ -9,7 +9,7 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700;800&family=Barlow:wght@400;500;600;700;800&family=Outfit:wght@300;400;500;600&display=swap" rel="stylesheet">
 <script src="/sharp.js"></script>
-<script src="/pick-card.js?v=13"></script>
+<script src="/pick-card.js?v=14"></script>
 <style>
   /* ── Tokens ─────────────────────────────────────────────── */
   :root {
@@ -949,7 +949,7 @@
 
   .ff { font-variant-numeric: tabular-nums; letter-spacing: 0.14em; font-weight: 800; }
 </style>
-  <link rel="stylesheet" href="/pick-card.css?v=13">
+  <link rel="stylesheet" href="/pick-card.css?v=14">
   <script defer src="/_vercel/insights/script.js"></script>
 </head>
 <body>
@@ -1589,6 +1589,9 @@
     Object.keys(byDate).sort().forEach(d => {
       const now = Date.now();
       const ps = [...byDate[d]].sort((a, b) => {
+        // Free teaser pick is always pinned to the top of the list.
+        const ate = a.is_teaser ? 1 : 0, bte = b.is_teaser ? 1 : 0;
+        if (ate !== bte) return bte - ate;
         if (E.sort === 'next') {
           const at = a.scheduled_time ? new Date(a.scheduled_time).getTime() : 9e15;
           const bt = b.scheduled_time ? new Date(b.scheduled_time).getTime() : 9e15;
