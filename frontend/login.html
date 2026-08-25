@@ -188,7 +188,7 @@
 
     <div id="formSection">
       <h1>Sign In</h1>
-      <p class="sub">Enter your email and we'll send you a magic sign-in link. This site has exclusive Membership and requires a member to invite you.</p>
+      <p class="sub" id="subCopy">Enter your email and we'll send you a magic sign-in link.</p>
 
       <div class="error" id="errMsg"></div>
 
@@ -205,7 +205,7 @@
         />
         <button class="btn" type="submit" id="submitBtn">Send Link</button>
       </form>
-      <div class="success-hint" style="margin-top:24px; padding-top:16px; border-top:1px solid #1e2840; text-align:center;">
+      <div class="success-hint" id="waitlistHint" style="display:none; margin-top:24px; padding-top:16px; border-top:1px solid #1e2840; text-align:center;">
         Don't have an invite? <a href="/waitlist">Join the waitlist →</a>
       </div>
     </div>
@@ -241,9 +241,21 @@
     // (Turnstile tokens are valid for ~5 min, plenty of headroom).
     let _turnstileToken = null;
     let _turnstileWidgetId = null;
+    // Restore invite-only copy only if the backend flag is on; default
+    // (open signup) keeps the plain "we'll email you a link" wording.
+    function applyInviteCopy(cfg) {
+      if (!cfg || !cfg.invite_only) return;
+      const sub = document.getElementById('subCopy');
+      if (sub) sub.textContent =
+        "Enter your email and we'll send you a magic sign-in link. This site has exclusive Membership and requires a member to invite you.";
+      const wl = document.getElementById('waitlistHint');
+      if (wl) wl.style.display = '';
+    }
+
     async function _initTurnstile() {
       try {
         const cfg = await (await fetch(`${API}/api/config/public`)).json();
+        applyInviteCopy(cfg);
         if (!cfg.turnstile_enabled || !cfg.turnstile_site_key) return;
         // Wait for the CF API script to finish loading.
         while (!window.turnstile) await new Promise(r => setTimeout(r, 50));

@@ -62,6 +62,10 @@ class Settings(BaseSettings):
     # Flip to false via PAYWALL_ENABLED=false on Railway to instantly open
     # the whole site back up — no code change / redeploy needed.
     paywall_enabled: bool = True
+    # Invite-only signup gate. OFF for now (open signup): anyone can request a
+    # magic link and create an account. Flip back on with INVITE_ONLY=true on
+    # Railway to restore the invite/waitlist gate — no code change needed.
+    invite_only: bool = False
     billing_provider: str = "stripe"
     billing_env: str = "test"
     # client_token stays for SDK-based providers (Stripe/Paddle); Creem

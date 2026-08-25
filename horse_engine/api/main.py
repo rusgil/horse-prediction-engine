@@ -4209,10 +4209,12 @@ async def auth_request_code(request: Request, response: Response):
     is_existing = row is not None
     intent = "login" if is_existing else "signup"
 
-    # Invite gate — only enforced for new signups. Existing members can
-    # always log in even if the invite they came from later expired.
+    # Invite gate — only enforced for new signups, and only while
+    # settings.invite_only is on. Existing members can always log in.
+    # With invite_only OFF (open signup) a new email just gets a magic link;
+    # a supplied invite code is still honoured for lineage, but not required.
     invite_hash: Optional[str] = None
-    if not is_existing:
+    if not is_existing and settings.invite_only:
         if not invite_code:
             # No invite → drop them on the waitlist so we can promote later.
             await _inv_add_to_waitlist(email, source="request_code_no_invite")
@@ -4239,6 +4241,14 @@ async def auth_request_code(request: Request, response: Response):
                 detail="This invite was issued to a different email address.",
             )
         invite_hash = _inv_hash_code(invite_code)
+    elif not is_existing and invite_code:
+        # Open signup, but an invite code was supplied — keep its lineage if
+        # valid & email-matched; silently ignore anything invalid.
+        inv_row, inv_status = await _inv_resolve(invite_code)
+        if inv_status == "valid" and (
+            not inv_row.issued_to_email or inv_row.issued_to_email == email
+        ):
+            invite_hash = _inv_hash_code(invite_code)
 
     # Generate + email the link. Best-effort — Resend failures don't
     # crash the endpoint. User can retry request-code if nothing arrives.
@@ -4619,6 +4629,7 @@ async def public_config():
     return {
         "turnstile_site_key": settings.turnstile_site_key or None,
         "turnstile_enabled": _turnstile_enabled(),
+        "invite_only": settings.invite_only,
         # Public billing config for the checkout SDK. Secrets never appear
         # here. `enabled` is false until the provider's public keys are set,
         # so the frontend keeps the buy button hidden through Stage 1.
