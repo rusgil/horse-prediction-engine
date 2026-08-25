@@ -54,6 +54,7 @@
     .tier-feats { list-style: none; margin: 16px 0 20px; display: flex; flex-direction: column; gap: 9px; }
     .tier-feats li { font-size: 0.9rem; color: var(--text-2); display: flex; gap: 9px; align-items: flex-start; }
     .tier-feats li::before { content: '✓'; color: var(--green); font-weight: 800; }
+    .tier-feats i { font-style: italic; color: var(--text); }
     .tier .cta {
       margin-top: auto; width: 100%; border: 0; border-radius: 12px; padding: 13px; cursor: pointer;
       font-family: 'Barlow Condensed', sans-serif; font-weight: 800; font-size: 1.05rem; letter-spacing: 0.04em;
@@ -91,7 +92,7 @@
     const FEATURES = {
       base: ['Every pick, all meetings', 'Edge, Hot Seat & Listings', 'Sharp filter & value plays'],
       sub: ['Cancel anytime'],
-      annual: ['<b>Exclusive access to NRL Predictions (70%+ accuracy for 2026 season)</b>'],
+      annual: ['<i>Exclusive access to NRL Predictions (70%+ accuracy for 2026 season)</i>'],
     };
     function period(p) {
       if (p.mode === 'subscription') {
