@@ -147,10 +147,18 @@
       : `<div class="when-top">${cd.label ? `<span class="cd ${cd.urg || ''}">${cd.label}</span> ` : ''}<span class="num">${wallTime(pick.scheduled_time)}</span></div>`;
     return `<div class="jcard pcard ${outcome} ${!isPast && pick.confidence_tier === 'hot' ? 'hot' : ''} ${!isPast && pick.is_premium ? 'prem' : ''}" style="${dim}" data-open="${esc(pick.race_id)}" data-horse="${esc(pick.horse_name)}">
       <div class="mid">
-        <div class="pk-venue">${esc(pick.venue)} <b>R${pick.race_number}</b>${badge}</div>
-        <div class="pk-horse">${esc(pick.horse_name)}${streak}${resultMark ? ' ' + resultMark : ''}</div>
-        <div class="pk-sub num">${[pick.distance ? pick.distance + 'm' : '', pick.barrier ? 'B' + pick.barrier : '', pick.weight ? pick.weight + 'kg' : ''].filter(Boolean).join(' · ')}${l10}</div>
-        <div class="pk-sub">${jt}${pick.days_off != null && pick.days_off < 999 ? ` · ${pick.days_off}d off` : ''}</div>
+        ${(() => {
+          const idEl = `<div class="pk-venue">${esc(pick.venue)} <b>R${pick.race_number}</b>${badge}</div>`
+            + `<div class="pk-horse">${esc(pick.horse_name)}${streak}${resultMark ? ' ' + resultMark : ''}</div>`;
+          const metaEl = `<div class="pk-sub num">${[pick.distance ? pick.distance + 'm' : '', pick.barrier ? 'B' + pick.barrier : '', pick.weight ? pick.weight + 'kg' : ''].filter(Boolean).join(' · ')}${l10}</div>`
+            + `<div class="pk-sub">${jt}${pick.days_off != null && pick.days_off < 999 ? ` · ${pick.days_off}d off` : ''}</div>`;
+          // Trophy card: name and meta sit side by side on wide screens (they
+          // stack under the name on narrow/mobile via .pk-split). Everywhere
+          // else keeps the original stacked flow.
+          return ctx.trophy
+            ? `<div class="pk-split"><div class="pk-id">${idEl}</div><div class="pk-meta">${metaEl}</div></div>`
+            : idEl + metaEl;
+        })()}
         <div class="pk-chips">${tierChip(pick)}${!isPast && pick.is_premium ? '<span class="chip prem">💎 PREMIUM</span>' : ''}${pick.is_sharp ? '<span class="chip sharp">🎯 SHARP</span>' : ''}${!isPast ? favChip(pick) : ''}${!isPast ? exoticChips(pick) : ''}${pick.sportsbet_available === false ? '<span class="chip nosb">🚫 Not on Sportsbet</span>' : ''}</div>
       </div>
       <div class="right">

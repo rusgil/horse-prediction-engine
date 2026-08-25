@@ -46,6 +46,17 @@
 .pk-sub { font-size: 0.72rem; color: var(--text-3); margin-top: 2px; }
 .pk-sub .ff { font-variant-numeric: tabular-nums; }
 .pk-chips { display: flex; gap: 5px; flex-wrap: wrap; margin-top: 6px; }
+/* Trophy card: name block + meta block side by side on wide screens. */
+.pk-split { display: flex; align-items: baseline; gap: 2px 1.4rem; }
+.pk-split .pk-id { flex: 0 0 auto; }
+.pk-split .pk-meta { flex: 1 1 auto; min-width: 0; align-self: flex-end; }
+.pk-split .pk-meta .pk-sub { margin-top: 0; }
+.pk-split .pk-meta .pk-sub + .pk-sub { margin-top: 2px; }
+@media (max-width: 560px) {
+  .pk-split { flex-direction: column; gap: 0; }
+  .pk-split .pk-meta { align-self: stretch; }
+  .pk-split .pk-meta .pk-sub:first-child { margin-top: 2px; }
+}
 
 .odds-pill { text-align: right; margin-top: 6px; font-size: 0.68rem; color: var(--text-3); font-weight: 700; }
 .odds-pill b { display: block; font-family: 'Barlow Condensed'; font-size: 1.35rem; font-weight: 800; color: var(--text); line-height: 1.05; }
