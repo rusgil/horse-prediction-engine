@@ -193,20 +193,22 @@
     </div>
 
     <div id="formSection">
-      <h1>Sign in or join</h1>
-      <p class="sub" id="subCopy">Tell us who you are and we'll email you a magic sign-in link — no password.</p>
+      <h1 id="formTitle">Sign in</h1>
+      <p class="sub" id="subCopy">Enter your email and we'll send you a magic sign-in link — no password.</p>
 
       <div class="error" id="errMsg"></div>
 
       <form id="loginForm" autocomplete="on">
-        <div class="row2">
-          <div>
-            <label for="firstName">First name</label>
-            <input type="text" id="firstName" name="firstName" placeholder="Jane" autocomplete="given-name" required autofocus />
-          </div>
-          <div>
-            <label for="lastName">Last name</label>
-            <input type="text" id="lastName" name="lastName" placeholder="Doe" autocomplete="family-name" required />
+        <div id="joinName" style="display:none">
+          <div class="row2">
+            <div>
+              <label for="firstName">First name</label>
+              <input type="text" id="firstName" name="firstName" placeholder="Jane" autocomplete="given-name" />
+            </div>
+            <div>
+              <label for="lastName">Last name</label>
+              <input type="text" id="lastName" name="lastName" placeholder="Doe" autocomplete="family-name" />
+            </div>
           </div>
         </div>
         <label for="email">Email</label>
@@ -217,23 +219,30 @@
           placeholder="you@example.com"
           autocomplete="email"
           required
+          autofocus
         />
-        <label for="referral">How did you find us?</label>
-        <select id="referral" name="referral" required>
-          <option value="" disabled selected>Select one…</option>
-          <option>Word of mouth (friend or family)</option>
-          <option>Google / search</option>
-          <option>Facebook</option>
-          <option>Instagram</option>
-          <option>X (Twitter)</option>
-          <option>TikTok</option>
-          <option>YouTube</option>
-          <option>Reddit / online forum</option>
-          <option>Podcast</option>
-          <option>Other</option>
-        </select>
-        <button class="btn" type="submit" id="submitBtn">Send Link</button>
+        <div id="joinReferral" style="display:none">
+          <label for="referral">How did you find us?</label>
+          <select id="referral" name="referral">
+            <option value="" disabled selected>Select one…</option>
+            <option>Word of mouth (friend or family)</option>
+            <option>Google / search</option>
+            <option>Facebook</option>
+            <option>Instagram</option>
+            <option>X (Twitter)</option>
+            <option>TikTok</option>
+            <option>YouTube</option>
+            <option>Reddit / online forum</option>
+            <option>Podcast</option>
+            <option>Other</option>
+          </select>
+        </div>
+        <button class="btn" type="submit" id="submitBtn">Send sign-in link</button>
       </form>
+      <div class="success-hint" id="toggleWrap" style="margin-top:22px; padding-top:16px; border-top:1px solid #1e2840; text-align:center;">
+        <span id="toggleText">New to FunkyIQ?</span>
+        <a id="toggleMode" href="#">Create an account →</a>
+      </div>
       <div class="success-hint" id="waitlistHint" style="display:none; margin-top:24px; padding-top:16px; border-top:1px solid #1e2840; text-align:center;">
         Don't have an invite? <a href="/waitlist">Join the waitlist →</a>
       </div>
@@ -308,9 +317,7 @@
         .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
     }
 
-    // Prefill name + referral from a previous visit so returning members
-    // aren't retyping (fields are required, backend applies them only on new
-    // account creation).
+    // Prefill name + referral from a previous visit (only matters in join mode).
     try {
       const saved = JSON.parse(localStorage.getItem('fiqSignup') || '{}');
       if (saved.first_name) document.getElementById('firstName').value = saved.first_name;
@@ -318,22 +325,51 @@
       if (saved.referral_source) document.getElementById('referral').value = saved.referral_source;
     } catch (_) {}
 
+    // Sign in (email only) by default; toggle reveals join fields for new accounts.
+    let _mode = 'signin';
+    function setMode(mode) {
+      _mode = mode;
+      const join = mode === 'join';
+      document.getElementById('joinName').style.display = join ? '' : 'none';
+      document.getElementById('joinReferral').style.display = join ? '' : 'none';
+      document.getElementById('formTitle').textContent = join ? 'Create your account' : 'Sign in';
+      document.getElementById('subCopy').textContent = join
+        ? "A few details and we'll email you a magic link to finish — no password."
+        : "Enter your email and we'll send you a magic sign-in link — no password.";
+      document.getElementById('submitBtn').textContent = join ? 'Create account' : 'Send sign-in link';
+      document.getElementById('toggleText').textContent = join ? 'Already a member?' : 'New to FunkyIQ?';
+      document.getElementById('toggleMode').textContent = join ? 'Sign in →' : 'Create an account →';
+      document.getElementById('errMsg').classList.remove('show');
+      document.getElementById(join ? 'firstName' : 'email').focus();
+    }
+    document.getElementById('toggleMode').addEventListener('click', function(e) {
+      e.preventDefault(); setMode(_mode === 'join' ? 'signin' : 'join');
+    });
+
     document.getElementById('loginForm').addEventListener('submit', async function(e) {
       e.preventDefault();
       const btn = document.getElementById('submitBtn');
       const errEl = document.getElementById('errMsg');
       const email = document.getElementById('email').value.trim();
-      const first_name = document.getElementById('firstName').value.trim();
-      const last_name = document.getElementById('lastName').value.trim();
-      const referral_source = document.getElementById('referral').value;
+      const joining = _mode === 'join';
+      const first_name = joining ? document.getElementById('firstName').value.trim() : '';
+      const last_name = joining ? document.getElementById('lastName').value.trim() : '';
+      const referral_source = joining ? document.getElementById('referral').value : '';
+
+      if (joining && (!first_name || !last_name || !referral_source)) {
+        errEl.textContent = 'Please add your name and how you found us.';
+        errEl.classList.add('show');
+        return;
+      }
 
       btn.disabled = true;
-      btn.textContent = 'Sending…';
+      btn.textContent = joining ? 'Creating…' : 'Sending…';
       errEl.classList.remove('show');
-      try { localStorage.setItem('fiqSignup', JSON.stringify({ first_name, last_name, referral_source })); } catch (_) {}
+      if (joining) { try { localStorage.setItem('fiqSignup', JSON.stringify({ first_name, last_name, referral_source })); } catch (_) {} }
 
       try {
-        const body = { email, first_name, last_name, referral_source };
+        const body = { email };
+        if (joining) { body.first_name = first_name; body.last_name = last_name; body.referral_source = referral_source; }
         if (_turnstileToken) body.turnstile_token = _turnstileToken;
         const res = await fetch(`${API}/api/auth/request-code`, {
           method: 'POST',
@@ -369,7 +405,7 @@
         errEl.classList.add('show');
       } finally {
         btn.disabled = false;
-        btn.textContent = 'Send Link';
+        btn.textContent = joining ? 'Create account' : 'Send sign-in link';
         // Turnstile tokens are single-use — reset the widget so a
         // retry (wrong email → resubmit) gets a fresh token.
         _turnstileToken = null;
