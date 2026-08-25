@@ -237,12 +237,13 @@
   // it. The server owns the provider (Creem now, anything later) — the page
   // never names one. Not logged in → sign in first (so the payment maps to a
   // user). No billing configured / any error → fall back to /login.
-  async function openCheckout() {
+  async function openCheckout(plan) {
     const nx = encodeURIComponent(location.pathname + location.search);
     try {
       const r = await fetch('/api/billing/checkout', {
         method: 'POST', credentials: 'include',
-        headers: { 'content-type': 'application/json' }, body: '{}',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(plan ? { plan } : {}),
       });
       if (r.status === 401) { window.location.href = '/signup?next=' + nx; return; }
       if (r.ok) {
@@ -253,14 +254,54 @@
     window.location.href = '/signup?next=' + nx;
   }
 
-  // Delegated click handler — any [data-unlock] element opens checkout.
+  function _sym(cur) {
+    return cur === 'AUD' ? 'A$' : cur === 'USD' ? 'US$' : cur === 'EUR' ? '€' : (cur || '') + ' ';
+  }
+  function _period(p) {
+    if (p.mode === 'subscription') {
+      if (p.days >= 360) return '/year';
+      if (p.days >= 28) return '/month';
+      return '/' + p.days + ' days';
+    }
+    return ' · ' + p.days + '-day pass';
+  }
+  // The 3-tier pricing chooser. One plan (or none) → straight to checkout.
+  function openPricing() {
+    const plans = (_billing && _billing.plans) || [];
+    if (plans.length <= 1) { openCheckout(plans[0] && plans[0].key); return; }
+    if (document.querySelector('.pricing-overlay')) return;
+    const cur = (_billing && _billing.currency) || 'AUD';
+    const tiers = plans.map((p, i) => `
+      <button class="tier ${i === plans.length - 1 ? 'tier-best' : ''}" data-plan="${esc(p.key)}">
+        ${i === plans.length - 1 ? '<span class="tier-badge">Best value</span>' : ''}
+        <span class="tier-label">${esc(p.label || p.key)}</span>
+        <span class="tier-price">${_sym(cur)}${Number(p.amount).toFixed(2)}<small>${esc(_period(p))}</small></span>
+        <span class="tier-cta">Choose</span>
+      </button>`).join('');
+    const ov = document.createElement('div');
+    ov.className = 'pricing-overlay';
+    ov.innerHTML = `<div class="pricing-modal" role="dialog" aria-label="Choose a plan">
+      <button class="pricing-close" aria-label="Close">&times;</button>
+      <div class="pricing-head">Unlock every pick, all meetings</div>
+      <div class="pricing-tiers">${tiers}</div>
+      <div class="pricing-foot">Secure checkout via Stripe · cancel anytime</div>
+    </div>`;
+    ov.addEventListener('click', e => {
+      if (e.target === ov || (e.target.closest && e.target.closest('.pricing-close'))) { ov.remove(); return; }
+      const t = e.target.closest && e.target.closest('[data-plan]');
+      if (t) { ov.remove(); openCheckout(t.dataset.plan); }
+    });
+    document.body.appendChild(ov);
+  }
+
+  // Delegated click handler — any [data-unlock] element opens the pricing chooser.
   // Idempotent: safe to call on every render.
   function bindUnlock() {
     if (document._pcUnlockBound) return;
     document._pcUnlockBound = true;
     document.addEventListener('click', e => {
       const t = e.target.closest && e.target.closest('[data-unlock]');
-      if (t) { e.preventDefault(); e.stopPropagation(); openCheckout(); }
+      if (t) { e.preventDefault(); e.stopPropagation(); openPricing(); }
     }, true);
   }
 
@@ -314,6 +355,6 @@
 
   window.PickCard = {
     render, dualStat, winPlace, resultBlock, esc, wallTime, countdown,
-    lockedCard, paywallBanner, trophyBanner, configureBilling, openCheckout, bindUnlock,
+    lockedCard, paywallBanner, trophyBanner, configureBilling, openCheckout, openPricing, bindUnlock,
   };
 })();

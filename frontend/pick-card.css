@@ -172,6 +172,66 @@
 .unlock-btn:hover { filter: brightness(1.08); }
 .unlock-btn:active { transform: translateY(1px); }
 
+/* 3-tier pricing chooser (modal) */
+.pricing-overlay {
+  position: fixed; inset: 0; z-index: 9999; display: flex; align-items: center;
+  justify-content: center; padding: 20px;
+  background: color-mix(in srgb, #000 55%, transparent); backdrop-filter: blur(2px);
+}
+.pricing-modal {
+  position: relative; width: 100%; max-width: 720px;
+  background: var(--surface); border: 1px solid var(--line); border-radius: 16px;
+  padding: 26px 22px 18px; box-shadow: 0 20px 60px rgba(0,0,0,0.45);
+}
+.pricing-close {
+  position: absolute; top: 10px; right: 14px; border: none; background: none;
+  color: var(--text-3); font-size: 1.6rem; line-height: 1; cursor: pointer;
+}
+.pricing-close:hover { color: var(--text); }
+.pricing-head {
+  font-family: 'Barlow Condensed', sans-serif; font-weight: 800; font-size: 1.4rem;
+  text-align: center; color: var(--text); margin-bottom: 18px; text-wrap: balance;
+}
+.pricing-tiers { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+.tier {
+  position: relative; display: flex; flex-direction: column; align-items: center;
+  gap: 8px; padding: 20px 14px 16px; cursor: pointer; text-align: center;
+  background: var(--surface-2); border: 1px solid var(--line); border-radius: 12px;
+  transition: border-color 0.15s, transform 0.05s;
+}
+.tier:hover { border-color: var(--mint); }
+.tier:active { transform: translateY(1px); }
+.tier.tier-best { border-color: var(--mint); background: color-mix(in srgb, var(--mint) 8%, var(--surface-2)); }
+.tier-badge {
+  position: absolute; top: -10px; left: 50%; transform: translateX(-50%);
+  background: var(--mint); color: #06231b; font-size: 0.6rem; font-weight: 800;
+  letter-spacing: 0.05em; text-transform: uppercase; padding: 3px 9px; border-radius: 999px;
+  white-space: nowrap;
+}
+.tier-label {
+  font-family: 'Barlow Condensed', sans-serif; font-weight: 700; font-size: 1rem;
+  letter-spacing: 0.04em; text-transform: uppercase; color: var(--text-2);
+}
+.tier-price {
+  font-family: 'Barlow Condensed', sans-serif; font-weight: 900; font-size: 1.9rem;
+  color: var(--text); line-height: 1;
+}
+.tier-price small { display: block; font-size: 0.72rem; font-weight: 600; color: var(--text-3); margin-top: 3px; }
+.tier-cta {
+  margin-top: auto; width: 100%; padding: 9px 12px; border-radius: 999px;
+  font-weight: 800; font-size: 0.82rem;
+  background: var(--surface); border: 1px solid var(--line); color: var(--text);
+}
+.tier.tier-best .tier-cta { background: var(--mint); border-color: var(--mint); color: #06231b; }
+.pricing-foot { text-align: center; font-size: 0.72rem; color: var(--text-3); margin-top: 16px; }
+
+@media (max-width: 560px) {
+  .pricing-tiers { grid-template-columns: 1fr; }
+  .tier { flex-direction: row; justify-content: space-between; padding: 14px 16px; }
+  .tier-cta { width: auto; margin: 0; }
+  .tier-badge { top: 50%; left: auto; right: 12px; transform: translateY(-50%); }
+}
+
 /* Locked heat-grid cell (Lounge / Hot Seat board) — blurred + RAG-tinted so a
    non-member sees a colour-lit grid teasing the picks, not a wall of padlocks. */
 td.cell.locked-cell { cursor: pointer; text-align: center; }
