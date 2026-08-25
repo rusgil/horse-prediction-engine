@@ -107,21 +107,22 @@
     '  position: absolute; top: 10px; right: 12px; z-index: 120;',
     '  display: inline-flex; flex-direction: column; align-items: flex-end; gap: 6px;',
     '}',
-    /* Toggle + account avatar sit in a row; auth link (mobile) drops below. */
-    '.fiq-tr-top { display: inline-flex; align-items: center; gap: 8px; }',
-    /* Modern circular account button (replaces the nav "Account" text link). */
-    '.fiq-acct {',
-    '  display: none; width: 30px; height: 30px; border-radius: 50%;',
-    '  align-items: center; justify-content: center; text-decoration: none;',
-    '  font-family: \'Barlow Condensed\', system-ui, sans-serif; font-weight: 800;',
-    '  font-size: 0.86rem; line-height: 1; cursor: pointer; flex-shrink: 0;',
+    /* Account group + toggle sit in a row; toggle is pushed to the far right. */
+    '.fiq-tr-top { display: inline-flex; align-items: center; gap: 10px; }',
+    /* "Hello <name>" + circular person avatar (replaces the nav Account link). */
+    '.fiq-acct { display: none; align-items: center; gap: 8px; text-decoration: none; cursor: pointer; }',
+    '.fiq-acct.on { display: inline-flex; }',
+    '.fiq-hello { font-size: 0.8rem; font-weight: 700; letter-spacing: 0.01em; white-space: nowrap;',
+    '  color: var(--text-primary, var(--text, #e8ecf4)); }',
+    '.fiq-avatar {',
+    '  width: 30px; height: 30px; border-radius: 50%; flex-shrink: 0;',
+    '  display: inline-flex; align-items: center; justify-content: center;',
     '  background: var(--bg-elevated, var(--surface-2, #1a2130));',
     '  border: 1px solid var(--border, var(--line, #232c3d));',
     '  color: var(--text-primary, var(--text, #e8ecf4));',
     '  transition: border-color 0.15s, box-shadow 0.15s;',
     '}',
-    '.fiq-acct.on { display: inline-flex; }',
-    '.fiq-acct:hover { border-color: var(--green, #22c55e); box-shadow: 0 0 0 3px rgba(34,197,94,0.14); }',
+    '.fiq-acct:hover .fiq-avatar { border-color: var(--green, #22c55e); box-shadow: 0 0 0 3px rgba(34,197,94,0.14); }',
     /* The old nav-row Account text button is replaced by the avatar. */
     '.page-nav a[href="/account"] { display: none !important; }',
     '.fiq-topright-link {',
@@ -193,9 +194,23 @@
     var bar = document.createElement('span');
     bar.className = 'fiq-topright';
 
-    // Top row: Dark/Light toggle, then the account avatar to its right.
+    // Top row: "Hello <name>" + account avatar on the left, Dark/Light toggle
+    // pushed to the far right.
     var topRow = document.createElement('span');
     topRow.className = 'fiq-tr-top';
+
+    // Account: greeting + circular person avatar — revealed for signed-in
+    // members by gateAuthUi().
+    var acct = document.createElement('a');
+    acct.className = 'fiq-acct';
+    acct.href = '/account';
+    acct.setAttribute('aria-label', 'Account');
+    acct.setAttribute('title', 'Account');
+    acct.innerHTML =
+      '<span class="fiq-hello"></span>' +
+      '<span class="fiq-avatar"><svg viewBox="0 0 24 24" width="17" height="17" fill="currentColor" aria-hidden="true">' +
+      '<path d="M12 12a5 5 0 1 0-5-5 5 5 0 0 0 5 5zm0 2c-4.4 0-8 2.2-8 5v1h16v-1c0-2.8-3.6-5-8-5z"/></svg></span>';
+    topRow.appendChild(acct);
 
     var wrap = document.createElement('span');
     wrap.className = 'fiq-theme-toggle';
@@ -212,14 +227,6 @@
       wrap.appendChild(b);
     });
     topRow.appendChild(wrap);
-
-    // Circular account button — revealed for signed-in members (gateAuthUi).
-    var acct = document.createElement('a');
-    acct.className = 'fiq-acct';
-    acct.href = '/account';
-    acct.setAttribute('aria-label', 'Account');
-    acct.setAttribute('title', 'Account');
-    topRow.appendChild(acct);
 
     bar.appendChild(topRow);
 
@@ -261,8 +268,9 @@
         var signedIn = !!u;
         if (circle) {
           if (signedIn) {
-            var src = (u.first_name || u.email || '?').trim();
-            circle.textContent = (src[0] || '?').toUpperCase();
+            var hello = circle.querySelector('.fiq-hello');
+            var fn = (u.first_name || '').trim();
+            if (hello) { hello.textContent = fn ? ('Hello ' + fn) : ''; hello.style.display = fn ? '' : 'none'; }
             circle.classList.add('on');
           } else {
             circle.classList.remove('on');
