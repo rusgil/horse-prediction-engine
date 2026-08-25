@@ -411,6 +411,9 @@
     refreshSplashUpsell();
   }
   loadMembership();
+  // Catch splashes that render after membership/billing already resolved.
+  setTimeout(refreshSplashUpsell, 1500);
+  setTimeout(refreshSplashUpsell, 3500);
   function isMember() { return !!(_access && _access.has); }
   function isSubscriber() { return !!(_access && _access.has && _access.days != null && _access.days >= 30); }
 
@@ -488,6 +491,8 @@
       var html = splashUpsell();
       if (old) { old.outerHTML = html; }
       else if (html) { gate.insertAdjacentHTML('beforeend', html); }
+      // Widen the splash so the plan cards can sit side by side.
+      gate.classList.toggle('fiq-wide', !!gate.querySelector('.fiq-plans'));
     }
   }
 
