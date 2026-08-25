@@ -315,6 +315,9 @@
     if (document._pcUnlockBound) return;
     document._pcUnlockBound = true;
     document.addEventListener('click', e => {
+      // Direct plan buy (e.g. the splash "5-Day Pass" button) → checkout.
+      const buy = e.target.closest && e.target.closest('[data-buy]');
+      if (buy) { e.preventDefault(); e.stopPropagation(); openCheckout(buy.dataset.buy); return; }
       const t = e.target.closest && e.target.closest('[data-unlock]');
       if (t) { e.preventDefault(); e.stopPropagation(); openPricing(); }
     }, true);
@@ -412,10 +415,16 @@
   // convert the "come back at 9:30" moment into a membership purchase.
   function splashUpsell() {
     if (isMember()) return '';
-    return `<div class="tg-upsell" data-unlock>
+    const cur = (_billing && _billing.currency) || 'AUD';
+    const p5 = ((_billing && _billing.plans) || []).find(p => p.key === '5day');
+    const price5 = p5 && p5.amount != null ? ' · ' + _sym(cur) + Number(p5.amount).toFixed(2) : '';
+    return `<div class="tg-upsell">
       <div class="tg-upsell-t">🔓 Don't wait for the first jump</div>
-      <div class="tg-upsell-s">Unlock every pick the moment they publish — full form &amp; best odds across every meeting, plus the Edge and the daily Playbook.</div>
-      <a class="tg-upsell-btn" href="/plans">See membership plans →</a>
+      <div class="tg-upsell-s">Unlock every pick the moment they publish — full form &amp; best odds across every meeting.</div>
+      <div class="tg-upsell-btns">
+        <button class="tg-upsell-btn ghost" data-buy="5day">5-Day Pass${price5}</button>
+        <a class="tg-upsell-btn" href="/plans">Monthly &amp; Annual →</a>
+      </div>
     </div>`;
   }
 

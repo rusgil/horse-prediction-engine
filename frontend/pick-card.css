@@ -278,3 +278,7 @@ td.cell.locked-cell:hover { filter: brightness(1.06); }
   font-family: 'Barlow Condensed', sans-serif; font-weight: 800; letter-spacing: 0.03em; text-transform: uppercase;
   padding: 11px 22px; border-radius: 10px; font-size: 0.98rem; }
 .tg-upsell-btn:hover { filter: brightness(1.05); }
+.tg-upsell-btns { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; }
+.tg-upsell-btn { border: 0; cursor: pointer; }
+.tg-upsell-btn.ghost { background: transparent; color: var(--text); border: 1px solid var(--line); }
+.tg-upsell-btn.ghost:hover { border-color: var(--mint); color: var(--mint); filter: none; }

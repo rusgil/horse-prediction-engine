@@ -113,6 +113,17 @@
     '  white-space: nowrap;',
     '}',
     '.fiq-topright-link:hover { color: var(--text-primary, var(--text, #e8ecf4)); }',
+    /* Desktop: Sign in/out as a link at the right end of the menu bar. */
+    '.fiq-nav-auth {',
+    '  margin-left: auto; align-self: center; white-space: nowrap; text-decoration: none;',
+    '  font-size: 0.8rem; font-weight: 700; letter-spacing: 0.02em;',
+    '  color: var(--text-dim, var(--text-3, #6b7688));',
+    '}',
+    '.fiq-nav-auth:hover { color: var(--text-primary, var(--text, #e8ecf4)); }',
+    '@media (max-width: 760px) { .fiq-auth-desktop { display: none !important; } }',
+    '@media (min-width: 761px) { .fiq-auth-mobile { display: none !important; } }',
+    /* Top-left brand: drop the leading dot. */
+    '.brand-bar-dot { display: none !important; }',
     /* toggle control — works on both themes */
     '.fiq-theme-toggle {',
     '  display: inline-flex; align-items: center; gap: 2px;',
@@ -176,16 +187,27 @@
     });
     bar.appendChild(wrap);
 
-    // … Sign in / Sign out sits UNDERNEATH the toggle. Defaults to "Sign in";
-    // gateAuthUi() flips it to "Sign out" once a session is confirmed. (About
-    // stays in the nav-row menu, not here.)
-    var authLink = document.createElement('a');
-    authLink.className = 'fiq-topright-link fiq-auth-link';
-    authLink.href = '/login';
-    authLink.textContent = 'Sign in';
-    bar.appendChild(authLink);
+    // Sign in / Sign out. Two placements, one shown per breakpoint:
+    //  • desktop → right end of the menu bar (.page-nav), vertically centred.
+    //  • mobile  → under the toggle in the top-right cluster (the bar becomes a
+    //    fixed bottom nav on mobile, so the nav placement can't live there).
+    // gateAuthUi() flips both to "Sign out" once a session is confirmed.
+    var authMobile = document.createElement('a');
+    authMobile.className = 'fiq-topright-link fiq-auth-link fiq-auth-mobile';
+    authMobile.href = '/login';
+    authMobile.textContent = 'Sign in';
+    bar.appendChild(authMobile);
 
     host.appendChild(bar);
+
+    var nav = document.querySelector('.page-nav');
+    if (nav) {
+      var authNav = document.createElement('a');
+      authNav.className = 'fiq-nav-auth fiq-auth-link fiq-auth-desktop';
+      authNav.href = '/login';
+      authNav.textContent = 'Sign in';
+      nav.appendChild(authNav);
+    }
   }
 
   /* One auth check drives the top-right UI:
@@ -194,25 +216,27 @@
   function gateAuthUi() {
     var acct = document.querySelector('.page-nav a[href="/account"]');
     if (acct) acct.style.display = 'none';
-    var authLink = document.querySelector('.fiq-auth-link');
+    var links = document.querySelectorAll('.fiq-auth-link');
     fetch('/api/auth/me', { credentials: 'include' })
       .then(function (r) {
         var signedIn = r.ok;
         if (acct) acct.style.display = signedIn ? '' : 'none';
-        if (!authLink) return;
-        if (signedIn) {
-          authLink.textContent = 'Sign out';
-          authLink.href = '#';
-          authLink.onclick = function (e) {
-            e.preventDefault();
-            fetch('/api/auth/logout', { method: 'POST', credentials: 'include' })
-              .then(function () { location.href = '/login'; })
-              .catch(function () { location.href = '/login'; });
-          };
-        } else {
-          authLink.textContent = 'Sign in';
-          authLink.href = '/login';
-          authLink.onclick = null;
+        for (var i = 0; i < links.length; i++) {
+          var authLink = links[i];
+          if (signedIn) {
+            authLink.textContent = 'Sign out';
+            authLink.href = '#';
+            authLink.onclick = function (e) {
+              e.preventDefault();
+              fetch('/api/auth/logout', { method: 'POST', credentials: 'include' })
+                .then(function () { location.href = '/login'; })
+                .catch(function () { location.href = '/login'; });
+            };
+          } else {
+            authLink.textContent = 'Sign in';
+            authLink.href = '/login';
+            authLink.onclick = null;
+          }
         }
       })
       .catch(function () { /* leave default "Sign in" */ });
