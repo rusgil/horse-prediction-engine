@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
   <script src="/theme.js?v=2"></script>
-  <script src="/pick-card.js?v=17"></script>
+  <script src="/pick-card.js?v=18"></script>
 <meta name="robots" content="noindex">
 <title>FunkyIQ — Hot Seat</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -882,7 +882,7 @@
 
   .ff { font-variant-numeric: tabular-nums; letter-spacing: 0.14em; font-weight: 800; }
 </style>
-  <link rel="stylesheet" href="/pick-card.css?v=17">
+  <link rel="stylesheet" href="/pick-card.css?v=18">
   <script defer src="/_vercel/insights/script.js"></script>
 </head>
 <body>
@@ -1011,6 +1011,7 @@
       <h2>Today's picks are being prepared</h2>
       <p>${line}</p>
       <div class="tg-sub"><span class="tg-dot"></span>${st.now_aest ? esc(st.now_aest) + ' AEST · ' : ''}this page refreshes automatically</div>
+      ${window.PickCard.splashUpsell()}
     </div>`;
   }
   function startTodayPoll(rerender) { if (!_todayPoll) _todayPoll = setInterval(() => checkTodayGate(rerender), 60000); }

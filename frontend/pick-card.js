@@ -395,9 +395,33 @@
     throw lastErr;
   }
 
+  // Membership state (for the "picks being prepared" splash upsell). Resolved
+  // once on load; isMember() is false until known, so prospects see the upsell
+  // immediately and confirmed members have it removed on the next render.
+  let _hasAccess = null;
+  async function loadMembership() {
+    try {
+      const r = await fetch('/api/auth/me', { credentials: 'include' });
+      _hasAccess = r.ok ? !!(await r.json()).has_access : false;
+    } catch (e) { _hasAccess = false; }
+  }
+  loadMembership();
+  function isMember() { return _hasAccess === true; }
+
+  // Upsell block for the pre-publish splash — only shown to non-members, to
+  // convert the "come back at 9:30" moment into a membership purchase.
+  function splashUpsell() {
+    if (isMember()) return '';
+    return `<div class="tg-upsell" data-unlock>
+      <div class="tg-upsell-t">🔓 Don't wait for the first jump</div>
+      <div class="tg-upsell-s">Unlock every pick the moment they publish — full form &amp; best odds across every meeting, plus the Edge and the daily Playbook.</div>
+      <a class="tg-upsell-btn" href="/plans">See membership plans →</a>
+    </div>`;
+  }
+
   window.PickCard = {
     render, dualStat, winPlace, resultBlock, esc, wallTime, countdown,
     lockedCard, paywallBanner, trophyBanner, configureBilling, openCheckout, openPricing, bindUnlock,
-    fetchJSON,
+    fetchJSON, isMember, splashUpsell, loadMembership,
   };
 })();

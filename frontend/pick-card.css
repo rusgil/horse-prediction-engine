@@ -266,3 +266,15 @@ td.cell.locked-cell:hover { filter: brightness(1.06); }
   .paywall-banner { flex-direction: column; align-items: stretch; text-align: center; }
   .unlock-btn { width: 100%; padding: 11px 18px; }
 }
+
+/* Pre-publish splash upsell (non-members) — pushes membership while today's
+   picks are still being prepared. */
+.tg-upsell { margin: 24px auto 0; max-width: 460px; padding: 20px 22px; border-radius: 14px;
+  background: linear-gradient(180deg, color-mix(in srgb, var(--mint) 14%, transparent), transparent);
+  border: 1px solid color-mix(in srgb, var(--mint) 45%, var(--line)); text-align: center; cursor: pointer; }
+.tg-upsell-t { font-family: 'Barlow Condensed', sans-serif; font-weight: 800; font-size: 1.2rem; color: var(--text); }
+.tg-upsell-s { color: var(--text-2); font-size: 0.9rem; line-height: 1.5; margin: 7px 0 15px; }
+.tg-upsell-btn { display: inline-block; text-decoration: none; background: var(--mint); color: #062b13;
+  font-family: 'Barlow Condensed', sans-serif; font-weight: 800; letter-spacing: 0.03em; text-transform: uppercase;
+  padding: 11px 22px; border-radius: 10px; font-size: 0.98rem; }
+.tg-upsell-btn:hover { filter: brightness(1.05); }
