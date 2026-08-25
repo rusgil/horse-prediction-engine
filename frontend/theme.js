@@ -115,13 +115,19 @@
     '.fiq-topright-link:hover { color: var(--text-primary, var(--text, #e8ecf4)); }',
     /* Desktop: Sign in/out as a link at the right end of the menu bar. */
     '.fiq-nav-auth {',
-    '  margin-left: auto; align-self: center; white-space: nowrap; text-decoration: none;',
+    '  white-space: nowrap; text-decoration: none;',
     '  font-size: 0.8rem; font-weight: 700; letter-spacing: 0.02em;',
     '  color: var(--text-dim, var(--text-3, #6b7688));',
     '}',
     '.fiq-nav-auth:hover { color: var(--text-primary, var(--text, #e8ecf4)); }',
     '@media (max-width: 760px) { .fiq-auth-desktop { display: none !important; } }',
-    '@media (min-width: 761px) { .fiq-auth-mobile { display: none !important; } }',
+    // Desktop: pin Sign in/out to the right of the menu bar, vertically centred,
+    // WITHOUT shifting the centred nav buttons (absolute, not a flex item).
+    '@media (min-width: 761px) {',
+    '  .fiq-auth-mobile { display: none !important; }',
+    '  .page-nav { position: relative; }',
+    '  .fiq-nav-auth { position: absolute; right: 14px; top: 50%; transform: translateY(-50%); }',
+    '}',
     /* Top-left brand: drop the leading dot. */
     '.brand-bar-dot { display: none !important; }',
     /* toggle control — works on both themes */
