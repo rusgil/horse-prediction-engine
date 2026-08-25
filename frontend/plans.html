@@ -48,6 +48,9 @@
     .tier-price { font-family: 'Barlow Condensed', sans-serif; font-weight: 900; font-size: 2.5rem; line-height: 1; margin: 6px 0 2px; font-variant-numeric: tabular-nums; }
     .tier-price small { font-size: 0.9rem; font-weight: 600; color: var(--text-3); margin-left: 4px; }
     .tier-note { color: var(--text-3); font-size: 0.82rem; min-height: 1.1em; }
+    .tier-save { display: inline-flex; align-items: baseline; gap: 7px; margin: 6px 0 2px; font-size: 0.82rem; color: var(--text-2); flex-wrap: wrap; }
+    .tier-save .was { color: var(--text-3); text-decoration: line-through; }
+    .tier-save .off { background: var(--amber); color: #2a1a00; font-weight: 800; font-size: 0.72rem; letter-spacing: 0.04em; padding: 2px 8px; border-radius: 999px; text-transform: uppercase; }
     .tier-feats { list-style: none; margin: 16px 0 20px; display: flex; flex-direction: column; gap: 9px; }
     .tier-feats li { font-size: 0.9rem; color: var(--text-2); display: flex; gap: 9px; align-items: flex-start; }
     .tier-feats li::before { content: '✓'; color: var(--green); font-weight: 800; }
@@ -114,6 +117,15 @@
       window.PickCard.configureBilling(cfg);
       const cur = cfg.currency || 'AUD';
       const plans = cfg.plans;
+      // Yearly plan vs paying monthly all year → the real % saving.
+      const monthly = plans.find(p => p.mode === 'subscription' && p.days >= 28 && p.days < 360);
+      const saveLine = p => {
+        if (!(p.mode === 'subscription' && p.days >= 360 && monthly)) return '';
+        const yearly = Number(monthly.amount) * 12;
+        const pct = Math.round((1 - Number(p.amount) / yearly) * 100);
+        if (!(pct > 0)) return '';
+        return `<span class="tier-save"><span class="was">${sym(cur)}${yearly.toFixed(2)}/yr</span><span class="off">Save ${pct}%</span></span>`;
+      };
       tiersEl.innerHTML = plans.map((p, i) => {
         const best = i === plans.length - 1;
         const per = period(p);
@@ -122,6 +134,7 @@
           ${best ? '<span class="tier-badge">Best value</span>' : ''}
           <span class="tier-label">${(p.label || p.key)}</span>
           <span class="tier-price">${sym(cur)}${Number(p.amount).toFixed(2)}${per ? `<small>${per}</small>` : ''}</span>
+          ${saveLine(p)}
           <span class="tier-note">${noteFor(p)}</span>
           <ul class="tier-feats">${feats.map(f => `<li>${f}</li>`).join('')}</ul>
           <button class="cta" data-plan="${p.key}">Choose ${p.label || p.key}</button>
