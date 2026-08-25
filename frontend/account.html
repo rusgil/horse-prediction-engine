@@ -410,9 +410,6 @@
             <div class="profile-label">Joined</div>
             <div class="profile-value" id="p-joined">—</div>
           </div>
-          <div class="profile-item" style="margin-left:auto">
-            <button class="signout" id="signoutBtn">Sign out</button>
-          </div>
         </div>
       </section>
 
@@ -667,11 +664,7 @@
       }
     });
 
-    // ── Sign out ─────────────────────────────────────────────────────
-    document.getElementById('signoutBtn').addEventListener('click', async () => {
-      await fetch(API + '/api/auth/logout', { method:'POST', credentials:'include' });
-      location.href = '/login';
-    });
+    // Sign out now lives in the shared top-right control (theme.js).
 
     boot();
   </script>
