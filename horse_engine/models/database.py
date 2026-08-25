@@ -659,6 +659,9 @@ class UserRow(Base):
     first_name = Column(String, nullable=True)
     last_name = Column(String, nullable=True)
     referral_source = Column(String, nullable=True)   # "How did you find us?"
+    # Personalised preferences (account page).
+    mobile_number = Column(String, nullable=True)
+    marketing_opt_in = Column(Boolean, nullable=False, default=True)
     role = Column(String, nullable=False, default="member", index=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
@@ -1225,6 +1228,8 @@ async def init_db() -> None:
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS first_name TEXT",
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS last_name TEXT",
         "ALTER TABLE users ADD COLUMN IF NOT EXISTS referral_source TEXT",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS mobile_number TEXT",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS marketing_opt_in BOOLEAN NOT NULL DEFAULT TRUE",
         "ALTER TABLE magic_links ADD COLUMN IF NOT EXISTS first_name TEXT",
         "ALTER TABLE magic_links ADD COLUMN IF NOT EXISTS last_name TEXT",
         "ALTER TABLE magic_links ADD COLUMN IF NOT EXISTS referral_source TEXT",

@@ -4454,6 +4454,8 @@ async def auth_me(user=Depends(_auth_current_user_optional)):
         "email": user.email,
         "first_name": getattr(user, "first_name", None),
         "last_name": getattr(user, "last_name", None),
+        "mobile_number": getattr(user, "mobile_number", None),
+        "marketing_opt_in": bool(getattr(user, "marketing_opt_in", True)),
         "role": user.role,
         "member_number": user.member_number,
         "seat_active": bool(user.seat_active),
@@ -4466,6 +4468,60 @@ async def auth_me(user=Depends(_auth_current_user_optional)):
         "plan_days": last_days,          # 5 | 30 | 365 → 5-Day / Monthly / Annual
         "plan_provider": last_provider,  # 'stripe' | 'admin' | 'comp' | …
     }
+
+
+@app.post("/api/account/preferences")
+async def account_preferences(request: Request, user=Depends(_auth_current_user_optional)):
+    """Update the signed-in user's personalised preferences — marketing
+    opt-in (subscribe/unsubscribe) and mobile number. Body may include either
+    or both of {marketing_opt_in: bool, mobile_number: str}."""
+    if user is None:
+        raise HTTPException(401, "login required")
+    body = await request.json()
+    updates: dict = {}
+    if "marketing_opt_in" in body:
+        updates["marketing_opt_in"] = bool(body.get("marketing_opt_in"))
+    if "mobile_number" in body:
+        updates["mobile_number"] = ((body.get("mobile_number") or "").strip()[:32] or None)
+    if updates:
+        async with get_session() as s:
+            row = (await s.execute(
+                select(UserRow).where(UserRow.id == user.id).limit(1)
+            )).scalars().first()
+            if row is None:
+                raise HTTPException(404, "user not found")
+            for k, v in updates.items():
+                setattr(row, k, v)
+            await s.commit()
+    return {"ok": True, **updates}
+
+
+@app.get("/api/account/purchases")
+async def account_purchases(user=Depends(_auth_current_user_optional)):
+    """The signed-in user's purchase history — every access grant (5-day
+    passes, subscription payments, comps), newest first."""
+    if user is None:
+        raise HTTPException(401, "login required")
+    _PLAN = {5: "5-Day Pass", 30: "Monthly", 365: "Annual"}
+    out: list = []
+    async with get_session() as s:
+        rows = (await s.execute(
+            select(AccessGrantRow).where(AccessGrantRow.user_id == user.id)
+            .order_by(AccessGrantRow.id.desc())
+        )).scalars().all()
+        for g in rows:
+            d = int(g.days_granted or 0)
+            out.append({
+                "date": g.created_at.isoformat() if getattr(g, "created_at", None) else None,
+                "plan": _PLAN.get(d, (f"{d}-day" if d else "Access")),
+                "days": d,
+                "amount": g.amount,
+                "currency": g.currency,
+                "provider": g.provider,
+                "txn": g.external_txn_id,
+                "access_until": g.access_until_after.isoformat() if getattr(g, "access_until_after", None) else None,
+            })
+    return {"purchases": out}
 
 
 # ── Invite + waitlist endpoints (Phase 2 — 2026-07-20) ───────────────────

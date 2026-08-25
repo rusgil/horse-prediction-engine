@@ -224,6 +224,64 @@
       font-size: 0.98rem; letter-spacing: 0.03em; text-transform: uppercase; padding: 10px 18px;
       border-radius: 10px; border: 1px solid var(--edge); color: var(--text); background: transparent; }
     .mem-cta a.primary { background: var(--green); color: #062b13; border-color: var(--green); }
+
+    /* ── Account dashboard: content + right-side vertical menu ── */
+    .acct-layout { display: grid; grid-template-columns: 1fr 232px; gap: 22px; align-items: start; }
+    .acct-main { min-width: 0; }
+    .acct-panel[hidden] { display: none; }
+    .acct-menu { position: sticky; top: 16px; display: flex; flex-direction: column; gap: 4px;
+      background: var(--card); border: 1px solid var(--edge); border-radius: 12px; padding: 10px; }
+    .acct-menu-item { display: flex; align-items: center; gap: 10px; padding: 11px 13px; border-radius: 9px;
+      text-decoration: none; cursor: pointer; color: var(--muted); font-size: 0.92rem; font-weight: 600;
+      border: 1px solid transparent; background: none; text-align: left; width: 100%; }
+    .acct-menu-item:hover { background: var(--edge); color: var(--text); }
+    .acct-menu-item.active { background: color-mix(in srgb, var(--green) 14%, transparent);
+      color: var(--green); border-color: color-mix(in srgb, var(--green) 40%, transparent); }
+    .acct-menu-item .mi-ico { font-size: 1.05rem; width: 20px; text-align: center; }
+    .acct-menu-sep { height: 1px; background: var(--edge); margin: 6px 4px; }
+    .acct-signout { display: flex; align-items: center; gap: 10px; padding: 11px 13px; border-radius: 9px;
+      cursor: pointer; color: var(--red); font-size: 0.92rem; font-weight: 700; width: 100%; text-align: left;
+      background: none; border: 1px solid transparent; font-family: inherit; }
+    .acct-signout:hover { background: color-mix(in srgb, var(--red) 12%, transparent); border-color: color-mix(in srgb, var(--red) 35%, transparent); }
+
+    /* Preferences form */
+    .pref-row { display: flex; align-items: center; justify-content: space-between; gap: 16px;
+      padding: 16px 0; border-bottom: 1px solid var(--edge); }
+    .pref-row:last-child { border-bottom: 0; }
+    .pref-txt .t { font-weight: 700; font-size: 0.95rem; }
+    .pref-txt .s { color: var(--muted); font-size: 0.82rem; margin-top: 3px; max-width: 46ch; }
+    .pref-field { display: flex; gap: 8px; align-items: center; }
+    .pref-field input[type="tel"] { background: var(--bg); border: 1px solid var(--edge); border-radius: 9px;
+      color: var(--text); font: inherit; font-size: 0.95rem; padding: 10px 12px; width: 200px; max-width: 52vw; }
+    .pref-field input:focus { outline: none; border-color: var(--green); }
+    /* Toggle switch */
+    .switch { position: relative; width: 46px; height: 26px; flex-shrink: 0; cursor: pointer; }
+    .switch input { opacity: 0; width: 0; height: 0; }
+    .switch .track { position: absolute; inset: 0; background: var(--edge); border-radius: 999px; transition: background .15s; }
+    .switch .track::before { content: ''; position: absolute; width: 20px; height: 20px; left: 3px; top: 3px;
+      background: #fff; border-radius: 50%; transition: transform .15s; }
+    .switch input:checked + .track { background: var(--green); }
+    .switch input:checked + .track::before { transform: translateX(20px); }
+    .pref-save { margin-top: 18px; }
+    .pref-save .btn:disabled { opacity: 0.55; cursor: default; }
+    .pref-saved { color: var(--green); font-size: 0.85rem; margin-left: 12px; opacity: 0; transition: opacity .2s; }
+    .pref-saved.show { opacity: 1; }
+
+    /* Purchase history table */
+    .buy-table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
+    .buy-table th { text-align: left; font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.1em;
+      color: var(--muted); padding: 0 12px 8px; font-weight: 700; }
+    .buy-table td { padding: 12px; border-top: 1px solid var(--edge); vertical-align: top; }
+    .buy-plan { font-weight: 700; }
+    .buy-amt { font-variant-numeric: tabular-nums; white-space: nowrap; }
+    .buy-prov { display: inline-block; font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.05em;
+      color: var(--muted); background: var(--edge); border-radius: 999px; padding: 2px 8px; }
+    @media (max-width: 760px) {
+      .acct-layout { grid-template-columns: 1fr; }
+      .acct-menu { position: static; flex-direction: row; flex-wrap: wrap; }
+      .acct-menu-item, .acct-signout { width: auto; flex: 1 1 auto; justify-content: center; }
+      .acct-signout { flex-basis: 100%; }
+    }
     .badge-founding {
       display: inline-block; margin-left: 6px;
       background: rgba(232,160,32,0.15);
@@ -420,6 +478,10 @@
   <div class="wrap">
 
     <div id="content" style="display:none">
+    <div class="acct-layout">
+      <div class="acct-main">
+
+      <div class="acct-panel" data-panel="profile">
       <section class="membership" id="memberSection">
         <div class="mem-head">
           <div>
@@ -451,6 +513,9 @@
         </div>
       </section>
 
+      </div><!-- /panel: profile -->
+
+      <div class="acct-panel" data-panel="invite" hidden>
       <section>
         <h2>Invite a friend <span class="cap" id="cap-chip"></span></h2>
         <p class="hint" style="margin-top:-4px; margin-bottom:18px">
@@ -512,6 +577,50 @@
           </table>
         </div>
       </section>
+      </div><!-- /panel: invite -->
+
+      <div class="acct-panel" data-panel="prefs" hidden>
+        <section>
+          <h2>Personalised Preferences</h2>
+          <div class="pref-row">
+            <div class="pref-txt">
+              <div class="t">Marketing emails</div>
+              <div class="s">Occasional updates, offers and new features. Turn off to unsubscribe.</div>
+            </div>
+            <label class="switch"><input type="checkbox" id="prefMarketing"><span class="track"></span></label>
+          </div>
+          <div class="pref-row">
+            <div class="pref-txt">
+              <div class="t">Mobile number</div>
+              <div class="s">For optional SMS alerts. We'll never share it.</div>
+            </div>
+            <div class="pref-field"><input type="tel" id="prefMobile" placeholder="04XX XXX XXX" autocomplete="tel" /></div>
+          </div>
+          <div class="pref-save">
+            <button class="btn" type="button" id="prefSaveBtn">Save changes</button>
+            <span class="pref-saved" id="prefSaved">Saved ✓</span>
+          </div>
+        </section>
+      </div><!-- /panel: prefs -->
+
+      <div class="acct-panel" data-panel="purchases" hidden>
+        <section>
+          <h2>Purchase History</h2>
+          <div id="buyWrap" style="overflow-x:auto"><div style="color:var(--muted); padding:8px 0">Loading…</div></div>
+        </section>
+      </div><!-- /panel: purchases -->
+
+      </div><!-- /acct-main -->
+
+      <aside class="acct-menu">
+        <button class="acct-menu-item active" type="button" data-menu="profile"><span class="mi-ico">👤</span>Your Profile</button>
+        <button class="acct-menu-item" type="button" data-menu="invite"><span class="mi-ico">✉️</span>Invite a Friend</button>
+        <button class="acct-menu-item" type="button" data-menu="prefs"><span class="mi-ico">⚙️</span>Personalised Preferences</button>
+        <button class="acct-menu-item" type="button" data-menu="purchases"><span class="mi-ico">🧾</span>Purchase History</button>
+        <div class="acct-menu-sep"></div>
+        <button class="acct-signout" type="button" id="signoutBtn"><span class="mi-ico">↩</span>Sign out</button>
+      </aside>
+    </div><!-- /acct-layout -->
     </div>
 
     <div id="unauth" style="display:none; text-align:center; padding:60px 20px; color:var(--muted)">
@@ -569,11 +678,88 @@
         currentUser = await api('/api/auth/me');
         document.getElementById('content').style.display = 'block';
         renderProfile(currentUser);
+        fillPrefs(currentUser);
+        setupMenu();
+        setupPrefs();
+        setupSignout();
         updateCapChip(currentUser.invites_remaining ?? 0);
         await loadInvites();
       } catch (e) {
         document.getElementById('unauth').style.display = 'block';
       }
+    }
+
+    // ── Right-side menu: switch panels (deep-linkable via #hash) ──
+    let _purchasesLoaded = false;
+    function showPanel(name) {
+      document.querySelectorAll('.acct-panel').forEach(p => { p.hidden = p.dataset.panel !== name; });
+      document.querySelectorAll('.acct-menu-item').forEach(b => b.classList.toggle('active', b.dataset.menu === name));
+      if (name === 'purchases' && !_purchasesLoaded) { _purchasesLoaded = true; loadPurchases(); }
+      try { history.replaceState(null, '', '#' + name); } catch (e) {}
+    }
+    function setupMenu() {
+      document.querySelectorAll('.acct-menu-item').forEach(b =>
+        b.addEventListener('click', () => showPanel(b.dataset.menu)));
+      const start = (location.hash || '').replace('#', '');
+      if (['profile', 'invite', 'prefs', 'purchases'].includes(start)) showPanel(start);
+    }
+
+    // ── Personalised preferences ──
+    function fillPrefs(u) {
+      document.getElementById('prefMarketing').checked = u.marketing_opt_in !== false;
+      document.getElementById('prefMobile').value = u.mobile_number || '';
+    }
+    function setupPrefs() {
+      document.getElementById('prefSaveBtn').addEventListener('click', async () => {
+        const btn = document.getElementById('prefSaveBtn');
+        const saved = document.getElementById('prefSaved');
+        btn.disabled = true; btn.textContent = 'Saving…';
+        try {
+          await api('/api/account/preferences', {
+            method: 'POST',
+            body: JSON.stringify({
+              marketing_opt_in: document.getElementById('prefMarketing').checked,
+              mobile_number: document.getElementById('prefMobile').value.trim(),
+            }),
+          });
+          saved.classList.add('show');
+          setTimeout(() => saved.classList.remove('show'), 2500);
+        } catch (e) { toast('Could not save — ' + e.message, false); }
+        finally { btn.disabled = false; btn.textContent = 'Save changes'; }
+      });
+    }
+
+    // ── Purchase history ──
+    async function loadPurchases() {
+      const wrap = document.getElementById('buyWrap');
+      try {
+        const d = await api('/api/account/purchases');
+        const rows = d.purchases || [];
+        if (!rows.length) {
+          wrap.innerHTML = '<div style="color:var(--muted); padding:8px 0">No purchases yet — a 5-day pass or membership will appear here.</div>';
+          return;
+        }
+        const money = (a, c) => a == null ? '—' : ((c === 'AUD' ? 'A$' : (c ? c + ' ' : '$')) + Number(a).toFixed(2));
+        wrap.innerHTML = `<table class="buy-table">
+          <thead><tr><th>Date</th><th>Plan</th><th>Amount</th><th>Access to</th><th>Via</th></tr></thead>
+          <tbody>${rows.map(r => `<tr>
+            <td>${fmtDate(r.date)}</td>
+            <td class="buy-plan">${escHtml(r.plan)}</td>
+            <td class="buy-amt">${money(r.amount, r.currency)}</td>
+            <td>${r.access_until ? fmtDate(r.access_until) : '—'}</td>
+            <td><span class="buy-prov">${escHtml(r.provider || '')}</span></td>
+          </tr>`).join('')}</tbody></table>`;
+      } catch (e) {
+        wrap.innerHTML = `<div style="color:var(--red); padding:8px 0">Could not load — ${escHtml(e.message)}</div>`;
+      }
+    }
+
+    // ── Sign out ──
+    function setupSignout() {
+      document.getElementById('signoutBtn').addEventListener('click', async () => {
+        try { await fetch(API + '/api/auth/logout', { method: 'POST', credentials: 'include' }); } catch (e) {}
+        location.href = '/login';
+      });
     }
 
     function escHtml(s) {
