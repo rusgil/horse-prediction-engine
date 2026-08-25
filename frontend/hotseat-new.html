@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
   <script src="/theme.js?v=1"></script>
-  <script src="/pick-card.js?v=15"></script>
+  <script src="/pick-card.js?v=16"></script>
 <meta name="robots" content="noindex">
 <title>FunkyIQ — Hot Seat</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -882,7 +882,7 @@
 
   .ff { font-variant-numeric: tabular-nums; letter-spacing: 0.14em; font-weight: 800; }
 </style>
-  <link rel="stylesheet" href="/pick-card.css?v=15">
+  <link rel="stylesheet" href="/pick-card.css?v=16">
   <script defer src="/_vercel/insights/script.js"></script>
 </head>
 <body>
@@ -1270,8 +1270,7 @@
     ['A','B','C'].forEach(v => document.getElementById('view' + v).innerHTML =
       '<div class="loading"><div class="spin"></div>Loading meetings…</div>');
     try {
-      const r = await fetch(`${API}/api/meetings/${S.date}`);
-      const d = await r.json();
+      const d = await window.PickCard.fetchJSON(`${API}/api/meetings/${S.date}`);
       if (seq !== S.loadSeq) return;
       S.paywall = d.paywall || null;
       S.meetings = (d.meetings || d || []).filter(m => m.venue || m.venue_code);

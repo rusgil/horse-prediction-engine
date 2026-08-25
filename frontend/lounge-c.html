@@ -883,8 +883,8 @@
 
   .ff { font-variant-numeric: tabular-nums; letter-spacing: 0.14em; font-weight: 800; }
 </style>
-  <link rel="stylesheet" href="/pick-card.css?v=15">
-  <script src="/pick-card.js?v=15"></script>
+  <link rel="stylesheet" href="/pick-card.css?v=16">
+  <script src="/pick-card.js?v=16"></script>
   <script defer src="/_vercel/insights/script.js"></script>
 </head>
 <body>
@@ -1245,8 +1245,7 @@
     ['A','B','C'].forEach(v => document.getElementById('view' + v).innerHTML =
       '<div class="loading"><div class="spin"></div>Loading meetings…</div>');
     try {
-      const r = await fetch(`${API}/api/meetings/${S.date}`);
-      const d = await r.json();
+      const d = await window.PickCard.fetchJSON(`${API}/api/meetings/${S.date}`);
       if (seq !== S.loadSeq) return;
       S.paywall = d.paywall || null;
       // Non-members: Listings is members-only, so default them to the free

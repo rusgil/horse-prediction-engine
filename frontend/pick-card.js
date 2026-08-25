@@ -368,8 +368,28 @@
     </div>`;
   }
 
+  // Resilient JSON fetch. The /api/* proxy occasionally returns a transient
+  // HTML error page (502/504) which blows up JSON.parse ("Unexpected token
+  // '<'"). Retry once after a short pause before surfacing the error. Bounded
+  // (single retry) — never a hammering loop.
+  async function fetchJSON(url, init, retries) {
+    retries = retries == null ? 1 : retries;
+    let lastErr;
+    for (let attempt = 0; attempt <= retries; attempt++) {
+      try {
+        const r = await fetch(url, init || {});
+        const ct = r.headers.get('content-type') || '';
+        if (r.ok && ct.indexOf('json') !== -1) return await r.json();
+        lastErr = new Error('server busy (HTTP ' + r.status + ')');
+      } catch (e) { lastErr = e; }
+      if (attempt < retries) await new Promise(res => setTimeout(res, 600 + attempt * 600));
+    }
+    throw lastErr;
+  }
+
   window.PickCard = {
     render, dualStat, winPlace, resultBlock, esc, wallTime, countdown,
     lockedCard, paywallBanner, trophyBanner, configureBilling, openCheckout, openPricing, bindUnlock,
+    fetchJSON,
   };
 })();

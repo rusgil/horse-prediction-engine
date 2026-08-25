@@ -9,7 +9,7 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700;800&family=Barlow:wght@400;500;600;700;800&family=Outfit:wght@300;400;500;600&display=swap" rel="stylesheet">
 <script src="/sharp.js"></script>
-<script src="/pick-card.js?v=15"></script>
+<script src="/pick-card.js?v=16"></script>
 <style>
   /* ── Tokens ─────────────────────────────────────────────── */
   :root {
@@ -949,7 +949,7 @@
 
   .ff { font-variant-numeric: tabular-nums; letter-spacing: 0.14em; font-weight: 800; }
 </style>
-  <link rel="stylesheet" href="/pick-card.css?v=15">
+  <link rel="stylesheet" href="/pick-card.css?v=16">
   <script defer src="/_vercel/insights/script.js"></script>
 </head>
 <body>
@@ -1256,9 +1256,7 @@
 
   /* ── loaders ── */
   async function loadEdge() {
-    const r = await fetch(API + '/api/edge');
-    if (!r.ok) throw new Error(r.statusText);
-    const d = await r.json();
+    const d = await window.PickCard.fetchJSON(API + '/api/edge');
     E.picks = d.picks || [];
     E.paywall = d.paywall || null;
     E.generatedAt = d.generated_at;
