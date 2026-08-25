@@ -105,7 +105,7 @@
     /* top-right cluster: About link sits to the LEFT of the theme toggle */
     '.fiq-topright {',
     '  position: absolute; top: 10px; right: 12px; z-index: 120;',
-    '  display: inline-flex; align-items: center; gap: 10px;',
+    '  display: inline-flex; flex-direction: column; align-items: flex-end; gap: 6px;',
     '}',
     '.fiq-topright-link {',
     '  font-size: 0.72rem; font-weight: 700; letter-spacing: 0.02em;',
@@ -159,26 +159,7 @@
     var bar = document.createElement('span');
     bar.className = 'fiq-topright';
 
-    // About moves up here, to the LEFT of the toggle. Reuse the nav-row
-    // About's href but render it as a plain top-right link; hide the original.
-    var aboutSrc = document.querySelector('.page-nav a[href="/about"]');
-    if (aboutSrc) {
-      var about = document.createElement('a');
-      about.href = aboutSrc.getAttribute('href') || '/about';
-      about.className = 'fiq-topright-link';
-      about.textContent = 'About';
-      bar.appendChild(about);
-      aboutSrc.style.display = 'none';
-    }
-
-    // Sign in / Sign out — top-right on every page. Defaults to "Sign in";
-    // gateAuthUi() flips it to "Sign out" once a session is confirmed.
-    var authLink = document.createElement('a');
-    authLink.className = 'fiq-topright-link fiq-auth-link';
-    authLink.href = '/login';
-    authLink.textContent = 'Sign in';
-    bar.appendChild(authLink);
-
+    // Dark/Light toggle on top …
     var wrap = document.createElement('span');
     wrap.className = 'fiq-theme-toggle';
     wrap.setAttribute('role', 'radiogroup');
@@ -194,6 +175,15 @@
       wrap.appendChild(b);
     });
     bar.appendChild(wrap);
+
+    // … Sign in / Sign out sits UNDERNEATH the toggle. Defaults to "Sign in";
+    // gateAuthUi() flips it to "Sign out" once a session is confirmed. (About
+    // stays in the nav-row menu, not here.)
+    var authLink = document.createElement('a');
+    authLink.className = 'fiq-topright-link fiq-auth-link';
+    authLink.href = '/login';
+    authLink.textContent = 'Sign in';
+    bar.appendChild(authLink);
 
     host.appendChild(bar);
   }
