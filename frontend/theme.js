@@ -123,6 +123,13 @@
     '  transition: border-color 0.15s, box-shadow 0.15s;',
     '}',
     '.fiq-acct:hover .fiq-avatar { border-color: var(--green, #22c55e); box-shadow: 0 0 0 3px rgba(34,197,94,0.14); }',
+    /* Login / Join button — shown to logged-out visitors, left of the toggle. */
+    '.fiq-login { display: none; text-decoration: none; white-space: nowrap; cursor: pointer;',
+    '  font-family: \'Barlow Condensed\', system-ui, sans-serif; font-weight: 800; font-size: 0.82rem;',
+    '  letter-spacing: 0.03em; text-transform: uppercase; padding: 7px 14px; border-radius: 999px;',
+    '  background: var(--green, #22c55e); color: #062b13; border: 1px solid var(--green, #22c55e); }',
+    '.fiq-login.on { display: inline-flex; align-items: center; }',
+    '.fiq-login:hover { filter: brightness(1.06); }',
     /* The old nav-row Account text button is replaced by the avatar. */
     '.page-nav a[href="/account"] { display: none !important; }',
     '.fiq-topright-link {',
@@ -212,6 +219,13 @@
       '<path d="M12 12a5 5 0 1 0-5-5 5 5 0 0 0 5 5zm0 2c-4.4 0-8 2.2-8 5v1h16v-1c0-2.8-3.6-5-8-5z"/></svg></span>';
     topRow.appendChild(acct);
 
+    // Login / Join — shown to logged-out visitors (left of the toggle).
+    var login = document.createElement('a');
+    login.className = 'fiq-login';
+    login.href = '/login';
+    login.textContent = 'Login / Join';
+    topRow.appendChild(login);
+
     var wrap = document.createElement('span');
     wrap.className = 'fiq-theme-toggle';
     wrap.setAttribute('role', 'radiogroup');
@@ -229,28 +243,7 @@
     topRow.appendChild(wrap);
 
     bar.appendChild(topRow);
-
-    // Sign in / Sign out. Two placements, one shown per breakpoint:
-    //  • desktop → right end of the menu bar (.page-nav), vertically centred.
-    //  • mobile  → under the toggle in the top-right cluster (the bar becomes a
-    //    fixed bottom nav on mobile, so the nav placement can't live there).
-    // gateAuthUi() flips both to "Sign out" once a session is confirmed.
-    var authMobile = document.createElement('a');
-    authMobile.className = 'fiq-topright-link fiq-auth-link fiq-auth-mobile';
-    authMobile.href = '/login';
-    authMobile.textContent = 'Sign in';
-    bar.appendChild(authMobile);
-
     host.appendChild(bar);
-
-    var nav = document.querySelector('.page-nav');
-    if (nav) {
-      var authNav = document.createElement('a');
-      authNav.className = 'fiq-nav-auth fiq-auth-link fiq-auth-desktop';
-      authNav.href = '/login';
-      authNav.textContent = 'Sign in';
-      nav.appendChild(authNav);
-    }
   }
 
   /* One auth check drives the top-right UI:
@@ -258,7 +251,7 @@
    *  - Auth link: "Sign in" (anon) → "Sign out" (signed in, POSTs logout). */
   function gateAuthUi() {
     var circle = document.querySelector('.fiq-acct');
-    var links = document.querySelectorAll('.fiq-auth-link');
+    var login = document.querySelector('.fiq-login');
     fetch('/api/auth/me', { credentials: 'include' })
       .then(function (r) {
         if (!r.ok) return null;
@@ -276,25 +269,10 @@
             circle.classList.remove('on');
           }
         }
-        for (var i = 0; i < links.length; i++) {
-          var authLink = links[i];
-          if (signedIn) {
-            authLink.textContent = 'Sign out';
-            authLink.href = '#';
-            authLink.onclick = function (e) {
-              e.preventDefault();
-              fetch('/api/auth/logout', { method: 'POST', credentials: 'include' })
-                .then(function () { location.href = '/login'; })
-                .catch(function () { location.href = '/login'; });
-            };
-          } else {
-            authLink.textContent = 'Sign in';
-            authLink.href = '/login';
-            authLink.onclick = null;
-          }
-        }
+        // Login/Join only for logged-out visitors. Sign out lives on /account.
+        if (login) login.classList.toggle('on', !signedIn);
       })
-      .catch(function () { /* leave default "Sign in" */ });
+      .catch(function () { /* leave default (login hidden) */ });
   }
 
   /* Admin-only nav: Labs lives under the admin section (2026-07-30). Its
