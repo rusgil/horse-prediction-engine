@@ -3899,22 +3899,17 @@ async def _current_trophy() -> "dict | None":
 
 
 def _heat_band(d: dict) -> "str | None":
-    """Coarse RAG heat class from a race's (about-to-be-stripped) win prob,
-    matching the frontend tierOf thresholds (46/36/30). Lets a locked cell keep
-    its colour — teasing the page's richness — without leaking the horse, the
-    odds, or the exact %. The tier band alone isn't actionable (no runner)."""
-    # Teaser aesthetic (not real data — cells are blurred): skew GREEN. Most
-    # rank-1 picks sit ~20-45%, so green covers the solid picks, amber the
-    # middling, red only the weak — "more green than red, a few ambers".
-    for k in ("top_win_probability", "win_pct", "model_pct"):
-        v = d.get(k)
-        if isinstance(v, (int, float)) and not isinstance(v, bool):
-            p = v * 100 if v <= 1.0 else v
-            if p >= 23:
-                return "heat-green"
-            if p >= 20.5:
-                return "heat-amber"
-            return "heat-red"
+    """RAG heat class for a locked cell — reflects the RESULT, not confidence.
+    An unstarted race has NO colour (model_correct is None until it's run), so
+    today's grid stays neutral until races complete. Once settled: green = our
+    top pick WON, amber = it placed, red = it ran but missed. Reveals only the
+    outcome colour, never the horse / odds / %."""
+    if d.get("model_correct") is True:
+        return "heat-green"
+    if d.get("model_placed") is True:
+        return "heat-amber"
+    if d.get("model_correct") is False:
+        return "heat-red"
     return None
 
 
