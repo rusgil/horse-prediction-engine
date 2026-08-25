@@ -883,8 +883,8 @@
 
   .ff { font-variant-numeric: tabular-nums; letter-spacing: 0.14em; font-weight: 800; }
 </style>
-  <link rel="stylesheet" href="/pick-card.css?v=11">
-  <script src="/pick-card.js?v=11"></script>
+  <link rel="stylesheet" href="/pick-card.css?v=12">
+  <script src="/pick-card.js?v=12"></script>
   <script defer src="/_vercel/insights/script.js"></script>
 </head>
 <body>
@@ -1249,6 +1249,12 @@
       const d = await r.json();
       if (seq !== S.loadSeq) return;
       S.paywall = d.paywall || null;
+      // Non-members: Listings is members-only, so default them to the free
+      // teaser Heat Map rather than landing on a locked panel.
+      if (S.paywall && loungeView() !== 'heat') {
+        try { localStorage.setItem('fiqLoungeView', 'heat'); } catch (e) {}
+        applyVersion('A'); markLoungeSeg();
+      }
       S.meetings = (d.meetings || d || []).filter(m => m.venue || m.venue_code);
       try { const br = await fetch(`${API}/api/venue-badges`); if (br.ok) VENUE_BADGES = (await br.json()).badges || {}; } catch (e) {}
       // Legacy display alias: rows stored before the venue rename keep the
@@ -1611,6 +1617,15 @@
   function renderC() {
     const el = document.getElementById('viewC');
     if (!S.meetings.length) return;
+    if (S.paywall) {   // Listings (full field cards) is members-only
+      el.innerHTML = (S.paywall.trophy ? window.PickCard.trophyBanner(S.paywall.trophy) : '')
+        + `<div class="empty" data-unlock style="cursor:pointer">
+             <div class="big">🔒</div>
+             <b>Listings are members only.</b><br>Unlock every pick and full race card, all meetings.
+             <div style="margin-top:14px"><button class="unlock-btn" data-unlock>Sign up to unlock</button></div>
+           </div>`;
+      return;
+    }
     if (!S.selVenue || !S.meetings.some(m => vcOf(m) === S.selVenue)) S.selVenue = vcOf(S.meetings[0]);
 
     const railItems = S.meetings.map(m => {

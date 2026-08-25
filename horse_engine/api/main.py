@@ -3768,12 +3768,11 @@ _TROPHY_TTL = 600  # 10 min — the day's biggest winner moves slowly
 
 
 async def _current_teaser_race_id() -> "str | None":
-    """The ONE free live pick for non-members — our HIGHEST-CONFIDENCE UPCOMING
-    race today (the model's strongest forward pick, our best foot forward), not
-    the next-in-time one. Computed globally so it's identical across every
-    payload (else a non-member could unlock one race per venue via the drill-in).
-    None once nothing's left to run — end-of-day showcase is the trophy, not a
-    free pick. Short TTL cache; scheduled_time parsed via the tz-safe helper."""
+    """The ONE free race for non-members — the LAST race of the day. Each meeting
+    has a closing race; when there's more than one, we surface the BEST of them
+    (highest rank-1 win prob). Fixed for the whole day (a forward pick early, its
+    result late) so it doesn't rotate. Global + identical across every payload
+    (else the drill-in could unlock one race per venue). Short TTL cache."""
     global _teaser_cache
     now = datetime.utcnow()
     if _teaser_cache is not None and (now - _teaser_cache[0]).total_seconds() < _TEASER_TTL:
@@ -3790,13 +3789,23 @@ async def _current_teaser_race_id() -> "str | None":
                 .where(RunnerPredictionRow.scheduled_time.isnot(None))
                 .where(RunnerPredictionRow.cancelled.is_(False) | RunnerPredictionRow.cancelled.is_(None))
             )).all()
-        best = None  # (win_probability, race_id)
+        # Each meeting's LAST race (latest scheduled_time within the venue)...
+        last_per_vc: dict[str, tuple] = {}   # vc -> (dt, race_id, win_prob)
         for r_id, sched, wp in rows:
             dt = sched_to_utc_naive(sched)
-            if dt is None or dt <= now or wp is None:
-                continue  # upcoming races only
-            if best is None or wp > best[0]:
-                best = (wp, r_id)
+            if dt is None:
+                continue
+            parts = r_id.split("_")   # {date}_{vc}_R{n}; date/vc carry no "_"
+            vc = parts[1] if len(parts) >= 2 else r_id
+            cur = last_per_vc.get(vc)
+            if cur is None or dt > cur[0]:
+                last_per_vc[vc] = (dt, r_id, wp)
+        # ...then the BEST closing race (highest win prob) across meetings.
+        best = None  # (win_prob, race_id)
+        for _dt, r_id, wp in last_per_vc.values():
+            w = wp if wp is not None else 0.0
+            if best is None or w > best[0]:
+                best = (w, r_id)
         rid = best[1] if best else None
     except Exception:
         log.exception("teaser race lookup failed; locking all races for non-members")
