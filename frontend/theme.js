@@ -115,9 +115,14 @@
     'body .brand-bar-powered:hover { border-color: rgba(245,200,66,0.4); background: rgba(245,200,66,0.08); }',
     ':root[data-theme="light"] body .brand-bar-powered { color: #5d6b80; background: rgba(23,33,47,0.04); border-color: rgba(23,33,47,0.15); }',
     ':root[data-theme="light"] body .brand-bar-powered b { color: #9c7500; }',
-    /* Mobile: stack the brand — "Horse Racing Intelligence" over the pill. */
+    /* Mobile: stack the brand — "Horse Racing Intelligence" over the pill;
+       and drop the Login / Join button onto its own line UNDER the toggle. */
     '@media (max-width: 560px) {',
     '  body .brand-bar { flex-direction: column; align-items: flex-start; gap: 6px; }',
+    '  .fiq-tr-top { flex-wrap: wrap; justify-content: flex-end; row-gap: 6px; }',
+    '  .fiq-tr-top .fiq-acct { order: 0; }',
+    '  .fiq-tr-top .fiq-theme-toggle { order: 1; }',
+    '  .fiq-tr-top .fiq-login { order: 2; flex-basis: 100%; justify-content: flex-end; }',
     '}',
     /* top-right cluster: About link sits to the LEFT of the theme toggle */
     '.fiq-topright {',
