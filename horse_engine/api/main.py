@@ -4048,7 +4048,9 @@ async def _display_prob_cap(request, call_next):
             teaser_id = await _current_teaser_race_id()
             _apply_paywall(data, teaser_id)
             if isinstance(data, dict):
-                trophy = await _current_trophy()
+                # Trophy is a conversion hook for ANONYMOUS visitors only — a
+                # signed-in account (member or not) never sees it.
+                trophy = None if (await _request_user(request)) is not None else await _current_trophy()
                 # Always attach paywall for a gated non-member so the frontend
                 # has a reliable "this viewer is gated" signal (used to hide the
                 # 'No Sharp picks' empty-state, etc.). 'active' (→ "you're seeing
