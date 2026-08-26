@@ -8,4 +8,4 @@ Disallow: /waitlist
 Disallow: /login
 Disallow: /verify
 
-Sitemap: https://horse-racing-predictions.funkyiq.com/sitemap.xml
+Sitemap: https://myhorse.tips/sitemap.xml
