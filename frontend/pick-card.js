@@ -416,6 +416,9 @@
   setTimeout(refreshSplashUpsell, 3500);
   function isMember() { return !!(_access && _access.has); }
   function isSubscriber() { return !!(_access && _access.has && _access.days != null && _access.days >= 30); }
+  // Active 5-day pass → eligible for the $9.90 credit on upgrade (mirrors the
+  // backend _user_has_active_5day gate). Drives the in-app credit hint.
+  function isFiveDayHolder() { return !!(_access && _access.has && _access.days === 5); }
 
   // The 3-tier plans grid (same content as /plans), rendered from live billing.
   const _SPLASH_FEATS = {
@@ -455,6 +458,7 @@
         <span class="fp-label">${esc(p.label || p.key)}</span>
         <span class="fp-price">${_sym(cur)}${Number(p.amount).toFixed(2)}${_planPeriod(p) ? `<small>${_planPeriod(p)}</small>` : ''}</span>
         ${saveLine(p)}
+        ${(p.mode === 'subscription' && isFiveDayHolder()) ? `<span class="fp-credit">−${_sym(cur)}9.90 pass credit applied</span>` : ''}
         <span class="fp-note">${_planNote(p)}</span>
         <ul class="fp-feats">${feats.map(f => `<li>${f}</li>`).join('')}</ul>
         <button class="fp-cta" data-buy="${esc(p.key)}">Choose ${esc(p.label || p.key)}</button>
@@ -477,7 +481,7 @@
     if (!grid) return '';
     const head = hasPass
       ? `<div class="tg-upsell-t">Get more from your membership</div>
-         <div class="tg-upsell-s">You're on a 5-day pass. Go Monthly or Annual to unlock <b>the Edge</b> and the daily <b>Playbook</b> — and save with annual.</div>`
+         <div class="tg-upsell-s">You're on a 5-day pass. Go Monthly or Annual to unlock <b>the Edge</b> and the daily <b>Playbook</b> — and save with annual. Your <b>$9.90 pass credit</b> comes off your first payment.</div>`
       : `<div class="tg-upsell-t">🔓 Unlock every pick</div>
          <div class="tg-upsell-s">Choose a plan to unlock every pick, best odds, and the daily Playbook.</div>`;
     return `<div class="tg-upsell${wide ? ' fp-wide' : ''}">${head}${grid}</div>`;
@@ -502,6 +506,6 @@
   window.PickCard = {
     render, dualStat, winPlace, resultBlock, esc, wallTime, countdown,
     lockedCard, paywallBanner, trophyBanner, configureBilling, openCheckout, openPricing, bindUnlock,
-    fetchJSON, isMember, isSubscriber, splashUpsell, plansUpsell, plansGrid, refreshSplashUpsell, loadMembership,
+    fetchJSON, isMember, isSubscriber, isFiveDayHolder, splashUpsell, plansUpsell, plansGrid, refreshSplashUpsell, loadMembership,
   };
 })();

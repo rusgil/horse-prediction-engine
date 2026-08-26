@@ -48,6 +48,9 @@
     .tier-price { font-family: 'Barlow Condensed', sans-serif; font-weight: 900; font-size: 2.5rem; line-height: 1; margin: 6px 0 2px; font-variant-numeric: tabular-nums; }
     .tier-price small { font-size: 0.9rem; font-weight: 600; color: var(--text-3); margin-left: 4px; }
     .tier-note { color: var(--text-3); font-size: 0.82rem; min-height: 1.1em; }
+    .tier-credit { display: inline-block; margin: 4px 0 2px; font-size: 0.72rem; font-weight: 800; letter-spacing: 0.02em;
+      color: var(--green); background: rgba(34,197,94,0.13); border: 1px solid rgba(34,197,94,0.4);
+      padding: 2px 9px; border-radius: 999px; font-variant-numeric: tabular-nums; }
     .tier-save { display: inline-flex; align-items: baseline; gap: 7px; margin: 6px 0 2px; font-size: 0.82rem; color: var(--text-2); flex-wrap: wrap; }
     .tier-save .was { color: var(--text-3); text-decoration: line-through; }
     .tier-save .off { background: var(--amber); color: #2a1a00; font-weight: 800; font-size: 0.72rem; letter-spacing: 0.04em; padding: 2px 8px; border-radius: 999px; text-transform: uppercase; }
@@ -88,7 +91,7 @@
     </div>
   </div>
 
-  <script src="/pick-card.js?v=25"></script>
+  <script src="/pick-card.js?v=26"></script>
   <script>
     const FEATURES = {
       base: ['Full form for every pick, all meetings', 'Lounge, Hot Seat & Listings', 'Sharp filter & value plays'],
@@ -118,6 +121,9 @@
         return;
       }
       window.PickCard.configureBilling(cfg);
+      // Resolve membership so active 5-day holders see their $9.90 upgrade credit.
+      try { await window.PickCard.loadMembership(); } catch (e) {}
+      const eligibleCredit = !!(window.PickCard.isFiveDayHolder && window.PickCard.isFiveDayHolder());
       const cur = cfg.currency || 'AUD';
       const plans = cfg.plans;
       // Yearly plan vs paying monthly all year → the real % saving.
@@ -141,6 +147,7 @@
           <span class="tier-label">${(p.label || p.key)}</span>
           <span class="tier-price">${sym(cur)}${Number(p.amount).toFixed(2)}${per ? `<small>${per}</small>` : ''}</span>
           ${saveLine(p)}
+          ${(p.mode === 'subscription' && eligibleCredit) ? `<span class="tier-credit">−${sym(cur)}9.90 pass credit applied</span>` : ''}
           <span class="tier-note">${noteFor(p)}</span>
           <ul class="tier-feats">${feats.map(f => `<li>${f}</li>`).join('')}</ul>
           <button class="cta" data-plan="${p.key}">Choose ${p.label || p.key}</button>
