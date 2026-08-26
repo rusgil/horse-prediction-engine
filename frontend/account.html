@@ -207,9 +207,13 @@
     .prof-name { font-family: 'Barlow Condensed', sans-serif; font-weight: 800; font-size: 1.5rem;
       line-height: 1.1; letter-spacing: 0.01em; }
     .prof-email { color: var(--muted); font-size: 0.9rem; margin-top: 3px; overflow-wrap: anywhere; }
-    .prof-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px 28px; margin-top: 16px; }
-    .prof-cell .profile-value { font-size: 1.15rem; }
-    @media (max-width: 420px) { .prof-grid { grid-template-columns: 1fr; } }
+    /* Member # pinned to the top-right of the profile header. */
+    .prof-member { margin-left: auto; text-align: right; flex-shrink: 0; align-self: flex-start; }
+    .prof-member .profile-value { font-size: 1.3rem; }
+    /* Joined: a single left-justified row. */
+    .prof-joined { display: flex; align-items: baseline; gap: 12px; margin-top: 16px; }
+    .prof-joined .profile-label { margin-bottom: 0; }
+    .prof-joined .profile-value { font-size: 1.15rem; }
 
     /* ── Membership card ── */
     .membership { background:
@@ -540,16 +544,14 @@
             <div class="prof-name" id="p-name">—</div>
             <div class="prof-email mono" id="p-email">—</div>
           </div>
-        </div>
-        <div class="prof-grid">
-          <div class="prof-cell">
+          <div class="prof-member">
             <div class="profile-label">Member #</div>
             <div class="profile-value" id="p-mn">—</div>
           </div>
-          <div class="prof-cell">
-            <div class="profile-label">Joined</div>
-            <div class="profile-value" id="p-joined">—</div>
-          </div>
+        </div>
+        <div class="prof-joined">
+          <div class="profile-label">Joined</div>
+          <div class="profile-value" id="p-joined">—</div>
         </div>
       </section>
 
