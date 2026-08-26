@@ -1,0 +1,241 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <script src="/theme.js?v=10"></script>
+  <title>Subscription Agreement | FunkyIQ</title>
+  <meta name="description" content="The terms that govern a FunkyIQ subscription — what the service is, how billing and auto-renewal work, how to cancel, and the disclaimers that apply." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700;800;900&family=Outfit:wght@300;400;500;600&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --bg: #0b0f17;
+      --panel: #121826;
+      --panel-2: #0f141f;
+      --line: #202a3c;
+      --accent: #22c55e;
+      --accent-soft: rgba(34,197,94,0.12);
+      --amber: #f5b83a;
+      --text: #eef2f9;
+      --text-2: #aab4c9;
+      --text-3: #6d7890;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; background: var(--bg); color: var(--text);
+      font-family: "Outfit", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      line-height: 1.62; -webkit-font-smoothing: antialiased;
+      background-image:
+        radial-gradient(ellipse 70% 45% at 50% -8%, rgba(34,197,94,0.08), transparent),
+        radial-gradient(ellipse 50% 40% at 100% 100%, rgba(245,184,58,0.05), transparent);
+      min-height: 100vh;
+    }
+    .topbar {
+      display: flex; align-items: center; gap: 14px;
+      padding: 16px 24px; border-bottom: 1px solid var(--line);
+      position: sticky; top: 0; background: rgba(11,15,23,0.9); backdrop-filter: blur(8px); z-index: 5;
+    }
+    .brand { font-family: "Barlow Condensed", sans-serif; font-weight: 900; font-size: 22px;
+      letter-spacing: 0.04em; text-transform: uppercase; text-decoration: none; color: var(--text); }
+    .brand span { color: var(--accent); }
+    .topbar .back { margin-left: auto; color: var(--text-3); text-decoration: none; font-size: 0.9rem; }
+    .topbar .back:hover { color: var(--text-2); }
+
+    .shell { max-width: 860px; margin: 0 auto; padding: 44px 24px 90px; }
+
+    .doc-head { margin-bottom: 26px; }
+    .eyebrow { font-family: "Barlow Condensed", sans-serif; text-transform: uppercase; letter-spacing: 0.22em;
+      font-size: 0.74rem; color: var(--accent); font-weight: 700; }
+    h1 { font-family: "Barlow Condensed", sans-serif; font-weight: 900; font-size: clamp(2.2rem, 6vw, 3.1rem);
+      line-height: 1.02; margin: 6px 0 8px; letter-spacing: 0.01em; }
+    .meta { color: var(--text-3); font-size: 0.85rem; }
+
+    .draft { display: flex; gap: 12px; align-items: flex-start;
+      background: linear-gradient(180deg, rgba(245,184,58,0.10), transparent);
+      border: 1px solid rgba(245,184,58,0.35); border-radius: 12px; padding: 14px 16px; margin: 22px 0;
+      font-size: 0.88rem; color: var(--text-2); }
+    .draft b { color: var(--amber); }
+    .care { background: var(--panel-2); border: 1px solid var(--line); border-left: 3px solid var(--accent);
+      border-radius: 10px; padding: 14px 16px; margin: 22px 0; font-size: 0.88rem; color: var(--text-2); }
+    .care b { color: var(--text); }
+    .care a, .clause a, .signoff a { color: var(--accent); }
+
+    .lede { font-size: 1.05rem; color: var(--text-2); margin: 20px 0 8px; }
+
+    /* Numbered section cards — the distinct part of this page */
+    .clause { position: relative; background: var(--panel); border: 1px solid var(--line);
+      border-radius: 14px; padding: 22px 24px 22px 66px; margin: 16px 0; }
+    .clause .num { position: absolute; left: 18px; top: 22px; width: 34px; height: 34px; border-radius: 9px;
+      display: flex; align-items: center; justify-content: center;
+      background: var(--accent-soft); color: var(--accent); border: 1px solid rgba(34,197,94,0.35);
+      font-family: "Barlow Condensed", sans-serif; font-weight: 800; font-size: 1.15rem; }
+    .clause h2 { font-family: "Barlow Condensed", sans-serif; font-weight: 800; font-size: 1.4rem;
+      margin: 2px 0 10px; letter-spacing: 0.01em; }
+    .clause p { margin: 0 0 10px; color: var(--text-2); }
+    .clause p:last-child { margin-bottom: 0; }
+    .clause p b, .clause li b { color: var(--text); font-weight: 600; }
+    .clause ul { margin: 0 0 4px; padding-left: 20px; color: var(--text-2); }
+    .clause li { margin-bottom: 8px; }
+    @media (max-width: 520px) {
+      .clause { padding: 20px 18px 20px 18px; }
+      .clause .num { position: static; margin-bottom: 12px; }
+    }
+
+    .signoff { margin: 26px 0 0; font-size: 1.02rem; font-weight: 600; color: var(--text);
+      background: var(--accent-soft); border: 1px solid rgba(34,197,94,0.3); border-radius: 12px; padding: 18px 20px; }
+
+    footer { border-top: 1px solid var(--line); padding: 26px 24px; text-align: center;
+      color: var(--text-3); font-size: 0.82rem; }
+    footer a { color: var(--text-3); margin: 0 8px; text-decoration: none; }
+    footer a:hover { color: var(--text-2); }
+  </style>
+</head>
+<body>
+  <div class="topbar">
+    <a href="/" class="brand">Funky<span>IQ</span></a>
+    <a href="/plans" class="back">← Plans</a>
+  </div>
+
+  <div class="shell">
+    <div class="doc-head">
+      <div class="eyebrow">Legal</div>
+      <h1>Subscription Agreement</h1>
+      <div class="meta">Effective 26 August 2026</div>
+    </div>
+
+    <div class="draft">
+      <span>⚠️</span>
+      <div><b>Draft for review.</b> This page is a working draft and has not been checked by a lawyer.
+      Have it reviewed by a qualified legal professional before you rely on it. Anything shown in
+      [brackets] still needs to be confirmed.</div>
+    </div>
+
+    <div class="care">
+      <b>18+ and informational only.</b> FunkyIQ publishes statistical analysis for information and
+      entertainment — it is not a bookmaker and never takes bets. If gambling is causing you harm,
+      free confidential help is available in Australia on 1800 858 858 or at
+      <a href="https://www.gamblinghelponline.org.au" rel="noopener nofollow">gamblinghelponline.org.au</a>.
+    </div>
+
+    <p class="lede">These terms set out the arrangement between you and FunkyIQ when you take out a
+    subscription. Starting or continuing a subscription means you accept them.</p>
+
+    <div class="clause">
+      <div class="num">1</div>
+      <h2>What FunkyIQ is</h2>
+      <p>FunkyIQ is a data model that reads Australian racing form and publishes ranked selections and
+      win/place probabilities. You reach it through a one-off 5-day pass or through a monthly or annual
+      membership.</p>
+      <p>We are an analysis service, not a wagering operator — we don't take bets, hold your money, or
+      encourage you to gamble. Everything we publish is general in nature, for information and
+      entertainment.</p>
+      <p>Our output is the same for every subscriber. It is not tailored to your finances, goals or
+      situation, so treat it as one input among many and seek independent advice where a decision
+      matters to you.</p>
+    </div>
+
+    <div class="clause">
+      <div class="num">2</div>
+      <h2>Your access</h2>
+      <p>Paying the applicable fee gives you a personal, non-transferable right to use FunkyIQ while your
+      subscription is active. It is for your own use, not for resale.</p>
+      <p>Selections are produced by statistical models. Racing is inherently uncertain: we cannot promise
+      results, and past performance does not predict future outcomes.</p>
+      <p>We keep developing the product, so individual features may change, pause or improve over time.</p>
+    </div>
+
+    <div class="clause">
+      <div class="num">3</div>
+      <h2>What we ask of you</h2>
+      <p>You must be at least 18 years old to subscribe. You sign in using an email &ldquo;magic
+      link&rdquo;, so keep your email account secure — anyone who can read it can reach your account. You
+      are responsible for activity carried out under your account.</p>
+      <p>Please don't scrape, republish or resell our selections, data or other content without our
+      written permission.</p>
+      <p>Don't treat FunkyIQ as your only reason to bet or spend money. The final decision, and its
+      consequences, are always yours.</p>
+    </div>
+
+    <div class="clause">
+      <div class="num">4</div>
+      <h2>No guarantees</h2>
+      <p>The service is provided on an &ldquo;as is&rdquo; and &ldquo;as available&rdquo; basis. We work
+      to keep it reliable and available but can't guarantee it will always be uninterrupted or
+      error-free.</p>
+      <p>We make no promise, express or implied, that any selection is accurate or will be profitable.</p>
+      <p>To the fullest extent the law allows, we are not liable for any loss, damage or expense arising
+      from your use of, or reliance on, the service. None of this limits rights or remedies you have under
+      the Australian Consumer Law that cannot be excluded.</p>
+    </div>
+
+    <div class="clause">
+      <div class="num">5</div>
+      <h2>Plans, billing and cancelling</h2>
+      <ul>
+        <li><b>Your options.</b> A one-off <b>5-day pass</b> that does not renew, and <b>monthly</b> or
+        <b>annual</b> memberships that renew automatically until you cancel. Each period is paid for in
+        advance.</li>
+        <li><b>How you pay.</b> Payments are handled by our processor, Stripe. By subscribing to a
+        membership you authorise us, through Stripe, to charge your chosen payment method at the start of
+        each period until you cancel.</li>
+        <li><b>Upgrade credit.</b> If you hold a live 5-day pass and move up to a monthly or annual
+        membership, we apply a one-time credit equal to the pass price (currently A$9.90) to your first
+        membership invoice.</li>
+        <li><b>Refunds.</b> Fees are non-refundable except where the Australian Consumer Law requires
+        otherwise.</li>
+        <li><b>Cancelling.</b> You can cancel a membership at any time. It continues to the end of the
+        period you've already paid for and then stops — you keep access until then. A 5-day pass simply
+        lapses when its five days are up.</li>
+        <li><b>Price changes.</b> If we change pricing we'll let you know beforehand; continuing to use the
+        service afterwards means you accept the new price.</li>
+      </ul>
+    </div>
+
+    <div class="clause">
+      <div class="num">6</div>
+      <h2>Who owns what</h2>
+      <p>The models, software, data and content that make up FunkyIQ belong to us or our licensors.</p>
+      <p>You may not copy, modify, reverse-engineer, or pass on the service or its output without our prior
+      written consent.</p>
+    </div>
+
+    <div class="clause">
+      <div class="num">7</div>
+      <h2>Your data</h2>
+      <p>We collect and handle your information in line with our <a href="/privacy">Privacy Policy</a>.</p>
+      <p>You agree that we may use de-identified data to improve our models and our analytics.</p>
+    </div>
+
+    <div class="clause">
+      <div class="num">8</div>
+      <h2>Ending access</h2>
+      <p>We may suspend or end your access if you breach these terms.</p>
+      <p>When access ends, your right to use the service ends with it. We may retain some records for
+      backup and legal-compliance purposes.</p>
+    </div>
+
+    <div class="clause">
+      <div class="num">9</div>
+      <h2>General</h2>
+      <p>This agreement is governed by the laws of [State/Territory], Australia, and you submit to the
+      non-exclusive jurisdiction of the courts of that place.</p>
+      <p>We may revise these terms from time to time; the effective date at the top shows the current
+      version, and continuing to use the service means you accept the changes.</p>
+      <p>Questions? Email <a href="mailto:support@funkyiq.com">support@funkyiq.com</a>.</p>
+    </div>
+
+    <p class="signoff">Taking out a FunkyIQ subscription confirms that you have read these terms and agree
+    to them.</p>
+  </div>
+
+  <footer>
+    <a href="/">Home</a> ·
+    <a href="/subscription-agreement">Subscription Agreement</a> ·
+    <a href="/privacy">Privacy</a> ·
+    <a href="/about">About</a>
+    <div style="margin-top:8px">© 2026 FunkyIQ · Predictions are informational only · 18+ · Gamble responsibly</div>
+  </footer>
+</body>
+</html>
