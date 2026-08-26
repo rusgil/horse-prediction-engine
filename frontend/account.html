@@ -210,8 +210,8 @@
       letter-spacing: 0.06em; padding: 5px 11px; border-radius: 999px; white-space: nowrap; }
     .mem-badge.on { background: color-mix(in srgb, var(--green) 20%, transparent); color: var(--green);
       border: 1px solid color-mix(in srgb, var(--green) 45%, transparent); }
-    .mem-badge.off { background: rgba(120,130,150,0.14); color: var(--muted);
-      border: 1px solid rgba(120,130,150,0.3); }
+    .mem-badge.off { background: color-mix(in srgb, var(--red) 13%, transparent); color: var(--red);
+      border: 1px solid color-mix(in srgb, var(--red) 35%, transparent); }
     .mem-status { margin-top: 14px; font-size: 1rem; color: var(--text); }
     .mem-status .big { font-family: 'Barlow Condensed', sans-serif; font-weight: 800; font-size: 1.35rem;
       color: var(--text); font-variant-numeric: tabular-nums; }
@@ -858,9 +858,7 @@
       const mini = document.getElementById('whoami-mini');
       if (mini) mini.textContent = name || u.email;
       document.getElementById('p-email').textContent = u.email;
-      document.getElementById('p-mn').innerHTML =
-        (u.member_number ?? '—') +
-        (u.founding ? ' <span class="badge-founding">Founding</span>' : '');
+      document.getElementById('p-mn').textContent = (u.member_number ?? '—');
       document.getElementById('p-joined').textContent = fmtDate(u.created_at);
       renderMembership(u);
     }
