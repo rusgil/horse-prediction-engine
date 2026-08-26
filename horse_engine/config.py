@@ -33,6 +33,10 @@ class Settings(BaseSettings):
     #                          server-side against Cloudflare's siteverify.
     turnstile_site_key: str = ""
     turnstile_secret_key: str = ""
+    # Kill-switch: TURNSTILE_DISABLED=true makes the guard no-op (fail-open)
+    # and tells the frontend not to render the widget — even when keys are set.
+    # Used to unblock login when the widget can't validate on a new domain.
+    turnstile_disabled: bool = False
     # funkyiq.com is the parent brand. Horse-prediction lives on a
     # subdomain so future products (NRL predictions, etc.) get their
     # own subdomain under the same brand.

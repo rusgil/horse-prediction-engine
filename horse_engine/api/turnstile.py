@@ -29,6 +29,8 @@ def is_enabled() -> bool:
     """True when both site + secret are configured. Frontend uses the
     site-key half to decide whether to render the widget; the guard
     below uses the secret-key half to decide whether to verify."""
+    if settings.turnstile_disabled:
+        return False
     return bool(settings.turnstile_secret_key and settings.turnstile_site_key)
 
 
@@ -41,6 +43,9 @@ async def verify(token: Optional[str], remote_ip: Optional[str] = None) -> bool:
     match that with httpx's `data=` kwarg. `remote_ip` is optional
     but recommended — Cloudflare uses it as an anti-replay signal.
     """
+    if settings.turnstile_disabled:
+        # Explicit kill-switch — accept every request (rate limits still apply).
+        return True
     if not settings.turnstile_secret_key:
         # Unconfigured — treat as pass-through so local dev + pre-config
         # deploys don't 403 every request.
