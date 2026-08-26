@@ -102,9 +102,22 @@
        (Outfit vs Barlow), which made the FunkyIQ title shift between pages */
     'body .brand-bar { justify-content: flex-start; }',
     'body .brand-bar-logo, body .brand-bar-subtitle { font-family: \'Outfit\', \'Barlow\', system-ui, sans-serif; }',
-    /* Mobile: stack the brand — "FunkyIQ" over "Horse Racing". */
+    /* "Powered by FunkyIQ™" pill — matches the mynrl.tips treatment
+       (grey label + gold FUNKYIQ in a rounded translucent pill). */
+    'body .brand-bar-powered {',
+    '  display: inline-flex; align-items: center; gap: 5px; text-decoration: none;',
+    '  font-family: \'Barlow Condensed\', \'Outfit\', system-ui, sans-serif; font-weight: 700;',
+    '  font-size: 11px; letter-spacing: 0.12em; text-transform: uppercase; line-height: 1;',
+    '  color: #8892a4; background: rgba(255,255,255,0.045);',
+    '  border: 1px solid rgba(255,255,255,0.14); padding: 5px 11px; border-radius: 999px;',
+    '  white-space: nowrap; transition: border-color 0.15s ease, background 0.15s ease; }',
+    'body .brand-bar-powered b { color: #f5c842; font-weight: 800; }',
+    'body .brand-bar-powered:hover { border-color: rgba(245,200,66,0.4); background: rgba(245,200,66,0.08); }',
+    ':root[data-theme="light"] body .brand-bar-powered { color: #5d6b80; background: rgba(23,33,47,0.04); border-color: rgba(23,33,47,0.15); }',
+    ':root[data-theme="light"] body .brand-bar-powered b { color: #9c7500; }',
+    /* Mobile: stack the brand — "Horse Racing Intelligence" over the pill. */
     '@media (max-width: 560px) {',
-    '  body .brand-bar { flex-direction: column; align-items: flex-start; gap: 1px; }',
+    '  body .brand-bar { flex-direction: column; align-items: flex-start; gap: 6px; }',
     '}',
     /* top-right cluster: About link sits to the LEFT of the theme toggle */
     '.fiq-topright {',
