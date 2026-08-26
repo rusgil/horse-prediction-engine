@@ -152,12 +152,9 @@
             + `<div class="pk-horse">${esc(pick.horse_name)}${streak}${resultMark ? ' ' + resultMark : ''}</div>`;
           const metaEl = `<div class="pk-sub num">${[pick.distance ? pick.distance + 'm' : '', pick.barrier ? 'B' + pick.barrier : '', pick.weight ? pick.weight + 'kg' : ''].filter(Boolean).join(' · ')}${l10}</div>`
             + `<div class="pk-sub">${jt}${pick.days_off != null && pick.days_off < 999 ? ` · ${pick.days_off}d off` : ''}</div>`;
-          // Trophy card: name and meta sit side by side on wide screens (they
-          // stack under the name on narrow/mobile via .pk-split). Everywhere
-          // else keeps the original stacked flow.
-          return ctx.trophy
-            ? `<div class="pk-split"><div class="pk-id">${idEl}</div><div class="pk-meta">${metaEl}</div></div>`
-            : idEl + metaEl;
+          // Name and meta sit side by side on wide screens; they stack under
+          // the name on narrow/mobile-portrait via .pk-split's media query.
+          return `<div class="pk-split"><div class="pk-id">${idEl}</div><div class="pk-meta">${metaEl}</div></div>`;
         })()}
         <div class="pk-chips">${tierChip(pick)}${!isPast && pick.is_premium ? '<span class="chip prem">💎 PREMIUM</span>' : ''}${pick.is_sharp ? '<span class="chip sharp">🎯 SHARP</span>' : ''}${!isPast ? favChip(pick) : ''}${!isPast ? exoticChips(pick) : ''}${pick.sportsbet_available === false ? '<span class="chip nosb">🚫 Not on Sportsbet</span>' : ''}</div>
       </div>
