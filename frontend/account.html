@@ -233,7 +233,10 @@
     .mem-status .sub { color: var(--muted); font-size: 0.85rem; margin-top: 3px; }
     .mem-bar { height: 8px; border-radius: 999px; background: rgba(120,130,150,0.2);
       overflow: hidden; margin: 14px 0 2px; }
-    .mem-bar > span { display: block; height: 100%; border-radius: 999px; background: var(--green); }
+    .mem-bar > span { display: block; height: 100%; border-radius: 999px; background: var(--green);
+      transition: width 0.4s ease, background 0.3s ease; }
+    .mem-bar.warn > span { background: #f0b84e; }   /* light amber — final ~2 days */
+    .mem-bar.danger > span { background: #f2726f; } /* light red — last day */
     .mem-cta { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 18px; }
     .mem-cta a { text-decoration: none; font-family: 'Barlow Condensed', sans-serif; font-weight: 800;
       font-size: 0.98rem; letter-spacing: 0.03em; text-transform: uppercase; padding: 10px 18px;
@@ -848,10 +851,19 @@
         statusEl.innerHTML =
           `<span class="big">${d} day${d === 1 ? '' : 's'}, ${h} hour${h === 1 ? '' : 's'}</span> remaining` +
           `<div class="sub">Access until ${expires} (Sydney)</div>`;
-        // Progress bar: fraction of the plan window still left.
+        // Progress bar fills LEFT→RIGHT as the pass is used up. On a short
+        // (5-day) pass the colour warns as expiry nears: light amber in the
+        // final ~2 days (day 4), light red on the last day (day 5).
         if (days) {
-          const frac = Math.max(0, Math.min(1, ms / (days * 86400000)));
-          bar.style.display = ''; bar.firstElementChild.style.width = (frac * 100).toFixed(1) + '%';
+          const elapsed = Math.max(0, Math.min(1, 1 - ms / (days * 86400000)));
+          bar.style.display = '';
+          bar.firstElementChild.style.width = (elapsed * 100).toFixed(1) + '%';
+          const hoursLeft = ms / 3600000;
+          bar.classList.remove('warn', 'danger');
+          if (days <= 7) {
+            if (hoursLeft <= 24) bar.classList.add('danger');
+            else if (hoursLeft <= 48) bar.classList.add('warn');
+          }
         } else { bar.style.display = 'none'; }
         // Upgrade options (only offer longer plans than the current one).
         let btns = '';
