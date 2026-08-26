@@ -196,6 +196,21 @@
     }
     .profile-value.mono { font-family: 'JetBrains Mono', monospace; font-size: 0.95rem; }
 
+    /* Professional profile card */
+    .prof-head { display: flex; align-items: center; gap: 16px; padding-bottom: 18px; margin-bottom: 4px;
+      border-bottom: 1px solid var(--edge); }
+    .prof-avatar { width: 54px; height: 54px; border-radius: 50%; flex-shrink: 0;
+      display: inline-flex; align-items: center; justify-content: center; color: #fff;
+      font-family: 'Barlow Condensed', sans-serif; font-weight: 800; font-size: 1.5rem; line-height: 1;
+      background: linear-gradient(135deg, var(--green), color-mix(in srgb, var(--green) 55%, var(--blue))); }
+    .prof-id { min-width: 0; }
+    .prof-name { font-family: 'Barlow Condensed', sans-serif; font-weight: 800; font-size: 1.5rem;
+      line-height: 1.1; letter-spacing: 0.01em; }
+    .prof-email { color: var(--muted); font-size: 0.9rem; margin-top: 3px; overflow-wrap: anywhere; }
+    .prof-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px 28px; margin-top: 16px; }
+    .prof-cell .profile-value { font-size: 1.15rem; }
+    @media (max-width: 420px) { .prof-grid { grid-template-columns: 1fr; } }
+
     /* ── Membership card ── */
     .membership { background:
         linear-gradient(180deg, color-mix(in srgb, var(--green) 10%, var(--card)), var(--card) 70%);
@@ -508,16 +523,19 @@
 
       <section>
         <h2>Profile</h2>
-        <div class="profile-row">
-          <div class="profile-item">
-            <div class="profile-label">Email</div>
-            <div class="profile-value mono" id="p-email">—</div>
+        <div class="prof-head">
+          <div class="prof-avatar" id="p-avatar">—</div>
+          <div class="prof-id">
+            <div class="prof-name" id="p-name">—</div>
+            <div class="prof-email mono" id="p-email">—</div>
           </div>
-          <div class="profile-item">
+        </div>
+        <div class="prof-grid">
+          <div class="prof-cell">
             <div class="profile-label">Member #</div>
             <div class="profile-value" id="p-mn">—</div>
           </div>
-          <div class="profile-item">
+          <div class="prof-cell">
             <div class="profile-label">Joined</div>
             <div class="profile-value" id="p-joined">—</div>
           </div>
@@ -857,6 +875,10 @@
       if (hi) hi.innerHTML = name ? `Welcome back, <b>${escHtml(name)}</b>` : 'Welcome back';
       const mini = document.getElementById('whoami-mini');
       if (mini) mini.textContent = name || u.email;
+      const pName = document.getElementById('p-name');
+      if (pName) pName.textContent = name || '—';
+      const av = document.getElementById('p-avatar');
+      if (av) av.textContent = ((name || u.email || '?').trim()[0] || '?').toUpperCase();
       document.getElementById('p-email').textContent = u.email;
       document.getElementById('p-mn').textContent = (u.member_number ?? '—');
       document.getElementById('p-joined').textContent = fmtDate(u.created_at);
