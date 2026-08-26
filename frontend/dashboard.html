@@ -564,6 +564,8 @@
     document.getElementById('tabFollowUps').classList.toggle('active', tab === 'followups');
     document.getElementById('tabIntegrity').classList.toggle('active', tab === 'integrity');
     document.getElementById('tabSecurity').classList.toggle('active', tab === 'security');
+    document.getElementById('tabCustomers').classList.toggle('active', tab === 'customers');
+    document.getElementById('panelCustomers').style.display = tab === 'customers' ? '' : 'none';
     document.getElementById('panelWin').style.display = tab === 'win' ? '' : 'none';
     document.getElementById('panelExotic').style.display = tab === 'exotic' ? '' : 'none';
     document.getElementById('panelReviews').style.display = tab === 'reviews' ? '' : 'none';
@@ -577,6 +579,83 @@
     if (tab === 'followups' && !followUpsLoaded) loadFollowUps();
     if (tab === 'integrity') loadIntegrity();
     if (tab === 'security' && !securityLoaded) loadSecurity();
+    if (tab === 'customers' && !customersLoaded) loadCustomers();
+  }
+
+  // ═══════════════════════════════════════════════════════════
+  //   CUSTOMERS TAB
+  // ═══════════════════════════════════════════════════════════
+  let customersLoaded = false, _customers = [];
+  function buildCustomersPlaceholder() {
+    return `
+      <div style="display:flex;gap:10px;align-items:center;margin-bottom:14px;flex-wrap:wrap">
+        <input id="custSearch" placeholder="Search email or name…" oninput="renderCustomers()"
+          style="background:var(--bg-card);border:1px solid var(--border);color:var(--text);border-radius:6px;padding:8px 12px;min-width:220px">
+        <span class="btn-status" id="custCount"></span>
+      </div>
+      <div id="custBody">Loading…</div>`;
+  }
+  const _custMoney = a => (a == null || a === 0) ? '—' : 'A$' + Number(a).toFixed(2);
+  const _custChip = t => {
+    const c = t === 'Free' ? '#8a93a8' : t === 'Lapsed' ? '#f87171' : t === '5-Day Pass' ? '#e8a020' : '#22c55e';
+    return `<span style="color:${c};font-weight:700">${escHtml(t)}</span>`;
+  };
+  async function loadCustomers() {
+    customersLoaded = true;
+    const body = document.getElementById('custBody');
+    try {
+      const res = await fetch(`${API}/api/admin/customers`, { headers: { 'x-cron-secret': adminSecret } });
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      _customers = (await res.json()).customers || [];
+      renderCustomers();
+    } catch (e) { body.innerHTML = `<div class="nr-empty">Failed to load: ${escHtml(e.message)}</div>`; }
+  }
+  function renderCustomers() {
+    const q = (document.getElementById('custSearch')?.value || '').toLowerCase().trim();
+    const rows = _customers.filter(c => !q || (c.email || '').toLowerCase().includes(q) || (c.name || '').toLowerCase().includes(q));
+    const cc = document.getElementById('custCount'); if (cc) cc.textContent = `${rows.length} of ${_customers.length}`;
+    document.getElementById('custBody').innerHTML = `<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:0.8rem">
+      <thead><tr style="text-align:left;color:var(--text-secondary)">
+        <th style="padding:6px 10px">Email</th><th>Name</th><th>Type</th><th>Access until</th><th>Buys</th><th>Spent</th><th>Invites</th><th>Last login</th></tr></thead>
+      <tbody>${rows.map(c => `<tr style="border-top:1px solid var(--border);cursor:pointer" onclick="openCustomer(${c.id})">
+        <td style="padding:8px 10px">${escHtml(c.email)}</td><td>${escHtml(c.name || '—')}</td><td>${_custChip(c.account_type)}</td>
+        <td>${c.has_access ? fmtDateTime(c.access_until) : '—'}</td><td>${c.purchases || 0}</td><td>${_custMoney(c.total_spent)}</td>
+        <td>${c.invites_sent || 0}</td><td>${c.last_login ? fmtDateTime(c.last_login) : '—'}</td></tr>`).join('') || '<tr><td colspan="8" style="padding:10px;color:var(--text-secondary)">No customers.</td></tr>'}</tbody></table></div>`;
+  }
+  async function openCustomer(uid) {
+    const ov = document.createElement('div');
+    ov.style.cssText = 'position:fixed;inset:0;z-index:400;background:rgba(4,6,12,0.72);display:flex;align-items:flex-start;justify-content:center;padding:40px 16px;overflow:auto';
+    ov.innerHTML = `<div style="background:var(--bg-card);border:1px solid var(--border);border-radius:12px;max-width:720px;width:100%;padding:24px 26px;position:relative">
+      <button id="custX" style="position:absolute;top:8px;right:14px;background:none;border:0;color:var(--text-secondary);font-size:1.6rem;line-height:1;cursor:pointer">&times;</button>
+      <div id="custDetailBody">Loading…</div></div>`;
+    ov.addEventListener('click', e => { if (e.target === ov || e.target.id === 'custX') ov.remove(); });
+    document.body.appendChild(ov);
+    const tbl = (head, rows) => rows.length
+      ? `<table style="width:100%;border-collapse:collapse;font-size:0.8rem;margin-top:6px"><thead><tr style="text-align:left;color:var(--text-secondary)">${head.map(h => `<th style="padding:4px 8px">${h}</th>`).join('')}</tr></thead><tbody>${rows.join('')}</tbody></table>`
+      : '<div style="color:var(--text-secondary);font-size:0.82rem;padding:4px 0">None.</div>';
+    try {
+      const res = await fetch(`${API}/api/admin/customers/${uid}`, { headers: { 'x-cron-secret': adminSecret } });
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      const c = await res.json();
+      const td = 'padding:6px 8px;border-top:1px solid var(--border)';
+      const purchases = tbl(['Date', 'Plan', 'Amount', 'Access to', 'Via'], (c.purchases || []).map(p =>
+        `<tr><td style="${td}">${fmtDateTime(p.date)}</td><td style="${td}">${escHtml(p.plan)}</td><td style="${td}">${_custMoney(p.amount)}</td><td style="${td}">${p.access_until ? fmtDateTime(p.access_until) : '—'}</td><td style="${td}">${escHtml(p.provider || '')}</td></tr>`));
+      const emails = tbl(['Sent', 'Type', 'Subject', 'Status'], (c.emails || []).map(e =>
+        `<tr><td style="${td}">${fmtDateTime(e.sent_at)}</td><td style="${td}">${escHtml(e.kind)}</td><td style="${td}">${escHtml(e.subject || '')}</td><td style="${td};color:${e.ok ? '#22c55e' : '#f87171'}">${e.ok ? 'sent' : 'failed'}</td></tr>`));
+      const invites = tbl(['To', 'Created', 'Expires', 'Status'], (c.invites || []).map(i =>
+        `<tr><td style="${td}">${escHtml(i.to || 'open link')}</td><td style="${td}">${fmtDateTime(i.created_at)}</td><td style="${td}">${fmtDateTime(i.expires_at)}</td><td style="${td}">${i.consumed ? 'consumed' : i.revoked ? 'revoked' : 'pending'}</td></tr>`));
+      ov.querySelector('#custDetailBody').innerHTML = `
+        <div style="font-family:'Barlow Condensed',sans-serif;font-weight:800;font-size:1.5rem">${escHtml(c.name || c.email)}</div>
+        <div style="color:var(--text-secondary);font-size:0.88rem">${escHtml(c.email)}${c.mobile_number ? ' · ' + escHtml(c.mobile_number) : ''}</div>
+        <div style="display:flex;gap:8px 18px;flex-wrap:wrap;margin:12px 0;font-size:0.84rem">
+          <span><b>Type:</b> ${escHtml(c.account_type)}</span><span><b>Member #:</b> ${c.member_number ?? '—'}</span>
+          <span><b>Joined:</b> ${fmtDateTime(c.created_at)}</span><span><b>Last login:</b> ${c.last_login ? fmtDateTime(c.last_login) : '—'}</span>
+          <span><b>Spent:</b> ${_custMoney(c.total_spent)}</span><span><b>Marketing:</b> ${c.marketing_opt_in ? 'opted in' : 'unsubscribed'}</span>
+          <span><b>Found us:</b> ${escHtml(c.referral_source || '—')}</span></div>
+        <div style="font-family:'Barlow Condensed',sans-serif;font-weight:800;text-transform:uppercase;letter-spacing:0.05em;color:var(--text-secondary);margin:18px 0 4px">Purchase history</div>${purchases}
+        <div style="font-family:'Barlow Condensed',sans-serif;font-weight:800;text-transform:uppercase;letter-spacing:0.05em;color:var(--text-secondary);margin:18px 0 4px">Emails sent</div>${emails}
+        <div style="font-family:'Barlow Condensed',sans-serif;font-weight:800;text-transform:uppercase;letter-spacing:0.05em;color:var(--text-secondary);margin:18px 0 4px">Invites sent</div>${invites}`;
+    } catch (e) { ov.querySelector('#custDetailBody').innerHTML = `Failed to load: ${escHtml(e.message)}`; }
   }
 
   // ═══════════════════════════════════════════════════════════
@@ -1364,6 +1443,7 @@
         <button class="model-tab reviews" id="tabFollowUps" onclick="switchTab('followups')">Follow-Ups</button>
         <button class="model-tab reviews" id="tabIntegrity" onclick="switchTab('integrity')">Prediction Integrity</button>
         <button class="model-tab reviews" id="tabSecurity" onclick="switchTab('security')">🛡️ Security</button>
+        <button class="model-tab reviews" id="tabCustomers" onclick="switchTab('customers')">👥 Customers</button>
       </div>
       <div id="panelWin">${winContent}</div>
       <div id="panelExotic" style="display:none">${exoContent}</div>
@@ -1372,6 +1452,7 @@
       <div id="panelFollowUps" style="display:none">${followUpsContent}</div>
       <div id="panelIntegrity" style="display:none">${buildIntegrityPlaceholder()}</div>
       <div id="panelSecurity" style="display:none">${buildSecurityPlaceholder()}</div>
+      <div id="panelCustomers" style="display:none">${buildCustomersPlaceholder()}</div>
     `;
 
     mountWinCharts(calData, perfData);

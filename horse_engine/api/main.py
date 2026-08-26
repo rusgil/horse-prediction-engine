@@ -5199,10 +5199,23 @@ def _account_type(active: bool, days, had_grants: bool) -> str:
     return "Lapsed" if had_grants else "Free"
 
 
+async def _check_admin_dual(x_cron_secret, fiq_session) -> None:
+    """Admin auth via EITHER the browser admin cookie (members page) OR the
+    x-cron-secret header (model dashboard). Raises 401 if neither passes."""
+    from horse_engine.api.auth import current_user_optional as _cuo
+    if fiq_session:
+        u = await _cuo(fiq_session)
+        if u is not None and u.role == "admin":
+            return
+    _check_admin(x_cron_secret)
+
+
 @app.get("/api/admin/customers")
-async def admin_customers(admin=Depends(_auth_current_admin), limit: int = 1000):
+async def admin_customers(limit: int = 1000, x_cron_secret: Optional[str] = Header(None),
+                          fiq_session: Optional[str] = Cookie(default=None, alias="fiq_session")):
     """All accounts with account type + activity summary for the admin
     customer view (newest first)."""
+    await _check_admin_dual(x_cron_secret, fiq_session)
     from horse_engine.api.access import has_active_access
     out = []
     async with get_session() as s:
@@ -5241,9 +5254,11 @@ async def admin_customers(admin=Depends(_auth_current_admin), limit: int = 1000)
 
 
 @app.get("/api/admin/customers/{user_id}")
-async def admin_customer_detail(user_id: int, admin=Depends(_auth_current_admin)):
+async def admin_customer_detail(user_id: int, x_cron_secret: Optional[str] = Header(None),
+                                fiq_session: Optional[str] = Cookie(default=None, alias="fiq_session")):
     """Full detail for one customer: profile, purchase history, invites sent,
     and every email we've sent them."""
+    await _check_admin_dual(x_cron_secret, fiq_session)
     from horse_engine.api.access import has_active_access
     async with get_session() as s:
         u = (await s.execute(select(UserRow).where(UserRow.id == user_id).limit(1))).scalars().first()
