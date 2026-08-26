@@ -35,6 +35,7 @@ class BillingProvider(Protocol):
     async def create_checkout(
         self, *, user_id: int, email: Optional[str], success_url: str,
         price_id: str, days: int, plan: str, mode: str = "payment",
+        discount_coupon: Optional[str] = None,
     ) -> str:
         """Create a hosted checkout for the given plan and return the redirect
         URL. `mode` is 'payment' (one-off, e.g. the 5-day pass) or 'subscription'

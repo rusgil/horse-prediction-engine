@@ -93,6 +93,10 @@ class Settings(BaseSettings):
     # an eligible tax_code. The blueprint pins this version — do not blank it.
     stripe_api_version: str = "2026-02-25.preview"
     stripe_managed_payments: bool = True
+    # One-time coupon id (Stripe) worth the 5-day-pass price, auto-applied when
+    # an ACTIVE 5-day-pass holder upgrades to monthly/annual — "credits" the
+    # $9.90 toward their first sub invoice. Blank = feature off (no discount).
+    stripe_upgrade_coupon: str = ""
 
     # ALL plans in ONE var (not a var per product). BILLING_PLANS is a JSON list:
     #   [{"key":"5day","label":"5-Day Pass","price_id":"price_...","days":5,

@@ -37,6 +37,7 @@ class StripeProvider(BillingProvider):
     async def create_checkout(
         self, *, user_id: int, email: Optional[str], success_url: str,
         price_id: str, days: int, plan: str, mode: str = "payment",
+        discount_coupon: Optional[str] = None,
     ) -> str:
         if not settings.stripe_secret_key or not price_id:
             raise RuntimeError("Stripe not configured (STRIPE_SECRET_KEY / price id)")
@@ -57,6 +58,10 @@ class StripeProvider(BillingProvider):
             data["subscription_data[metadata][user_id]"] = str(user_id)
             data["subscription_data[metadata][days]"] = str(days)
             data["subscription_data[metadata][plan]"] = str(plan)
+        # One-time coupon (e.g. 5-day-pass credit on upgrade). Applied to the
+        # first invoice for both payment and subscription modes.
+        if discount_coupon:
+            data["discounts[0][coupon]"] = discount_coupon
         # Managed Payments — Stripe is merchant of record + handles tax (needs the
         # preview API version header below and a Product with an eligible tax_code).
         if settings.stripe_managed_payments:

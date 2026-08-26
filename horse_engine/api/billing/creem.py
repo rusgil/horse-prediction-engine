@@ -45,6 +45,7 @@ class CreemProvider(BillingProvider):
     async def create_checkout(
         self, *, user_id: int, email: Optional[str], success_url: str,
         price_id: str, days: int, plan: str, mode: str = "payment",
+        discount_coupon: Optional[str] = None,  # accepted for interface parity; unused
     ) -> str:
         if not settings.creem_api_key or not price_id:
             raise RuntimeError("Creem not configured (CREEM_API_KEY / price id)")

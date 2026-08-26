@@ -4845,6 +4845,20 @@ async def admin_access_grant(request: Request, admin=Depends(_auth_current_admin
 
 # ── Billing (freemium pass) — provider-agnostic checkout + webhook ────────
 
+async def _user_has_active_5day(user_id: int) -> bool:
+    """True if this user currently holds an unexpired 5-day pass (latest grant
+    was 5 days AND access is still live). Gates the upgrade credit."""
+    async with get_session() as s:
+        u = (await s.execute(select(UserRow).where(UserRow.id == user_id).limit(1))).scalars().first()
+        if not u or not u.access_until or u.access_until <= datetime.utcnow():
+            return False
+        latest = (await s.execute(
+            select(AccessGrantRow).where(AccessGrantRow.user_id == user_id)
+            .order_by(AccessGrantRow.id.desc()).limit(1)
+        )).scalars().first()
+        return bool(latest and int(latest.days_granted or 0) == 5)
+
+
 @app.post("/api/billing/checkout")
 async def billing_checkout(request: Request, user=Depends(_auth_current_user_optional)):
     """Create a hosted checkout for the logged-in user + chosen plan; return its
@@ -4856,6 +4870,12 @@ async def billing_checkout(request: Request, user=Depends(_auth_current_user_opt
     plan = _resolve_plan((body or {}).get("plan"))
     if not plan or not plan.get("price_id"):
         raise HTTPException(503, "no billing plan configured")
+    mode = plan.get("mode") or "payment"
+    # 5-day-pass credit: auto-apply the one-time coupon when an ACTIVE 5-day
+    # holder upgrades to a subscription (monthly/annual). Off if unconfigured.
+    coupon = None
+    if mode == "subscription" and settings.stripe_upgrade_coupon and await _user_has_active_5day(user.id):
+        coupon = settings.stripe_upgrade_coupon
     from horse_engine.api.billing import get_provider
     try:
         provider = get_provider()
@@ -4865,7 +4885,8 @@ async def billing_checkout(request: Request, user=Depends(_auth_current_user_opt
             price_id=plan["price_id"],
             days=int(plan.get("days") or settings.billing_pass_days),
             plan=plan.get("key") or "default",
-            mode=plan.get("mode") or "payment",
+            mode=mode,
+            discount_coupon=coupon,
         )
     except Exception as e:
         log.warning("[billing] checkout creation failed: %s", e)
