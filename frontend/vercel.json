@@ -57,6 +57,10 @@
       "destination": "/privacy.html"
     },
     {
+      "source": "/subscription-agreement",
+      "destination": "/subscription-agreement.html"
+    },
+    {
       "source": "/login",
       "destination": "/login.html"
     },
