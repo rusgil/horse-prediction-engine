@@ -101,6 +101,11 @@
     select:invalid { color: #4a5a7a; }
     .row2 { display: flex; gap: 12px; }
     .row2 > div { flex: 1; }
+    .dob-row { display: flex; gap: 10px; margin-bottom: 6px; }
+    .dob-row select { margin-bottom: 0; }
+    .dob-row .d-day  { flex: 0 0 74px; }
+    .dob-row .d-year { flex: 0 0 96px; }
+    .dob-row .d-month { flex: 1; }
     input[type="email"]:focus, input[type="text"]:focus, select:focus {
       border-color: #22c55e;
       box-shadow: 0 0 0 3px rgba(34,197,94,0.12);
@@ -210,9 +215,13 @@
               <input type="text" id="lastName" name="lastName" placeholder="Doe" autocomplete="family-name" />
             </div>
           </div>
-          <label for="dob">Date of birth</label>
-          <input type="date" id="dob" name="dob" autocomplete="bday" />
-          <div style="font-size:0.78rem; color:var(--muted, #8892a4); margin:-4px 0 8px">You must be 18 or over to join.</div>
+          <label for="dobDay">Date of birth</label>
+          <div class="dob-row">
+            <select id="dobDay" class="d-day" aria-label="Day" required><option value="" disabled selected>DD</option></select>
+            <select id="dobMonth" class="d-month" aria-label="Month" required><option value="" disabled selected>MM</option></select>
+            <select id="dobYear" class="d-year" aria-label="Year" required><option value="" disabled selected>YYYY</option></select>
+          </div>
+          <div style="font-size:0.78rem; color:var(--muted, #8892a4); margin:0 0 8px">You must be 18 or over to join.</div>
         </div>
         <label for="email">Email</label>
         <input
@@ -322,6 +331,20 @@
         .replace(/>/g,'&gt;').replace(/"/g,'&quot;');
     }
 
+    // Populate the DOB day / month / year selects (DD/MM/YYYY).
+    (function fillDob() {
+      const pad = n => String(n).padStart(2, '0');
+      const months = ['January','February','March','April','May','June','July','August','September','October','November','December'];
+      const day = document.getElementById('dobDay');
+      const mon = document.getElementById('dobMonth');
+      const yr = document.getElementById('dobYear');
+      if (!day || !mon || !yr) return;
+      for (let d = 1; d <= 31; d++) day.insertAdjacentHTML('beforeend', `<option value="${pad(d)}">${pad(d)}</option>`);
+      months.forEach((m, i) => mon.insertAdjacentHTML('beforeend', `<option value="${pad(i + 1)}">${pad(i + 1)} — ${m}</option>`));
+      const thisYear = new Date().getFullYear();
+      for (let y = thisYear; y >= thisYear - 100; y--) yr.insertAdjacentHTML('beforeend', `<option value="${y}">${y}</option>`);
+    })();
+
     // Prefill name + referral from a previous visit (only matters in join mode).
     try {
       const saved = JSON.parse(localStorage.getItem('fiqSignup') || '{}');
@@ -360,7 +383,11 @@
       const first_name = joining ? document.getElementById('firstName').value.trim() : '';
       const last_name = joining ? document.getElementById('lastName').value.trim() : '';
       const referral_source = joining ? document.getElementById('referral').value : '';
-      const dob = joining ? document.getElementById('dob').value : '';
+      // Compose DOB (YYYY-MM-DD) from the three selects for the backend.
+      const _dd = document.getElementById('dobDay').value;
+      const _mm = document.getElementById('dobMonth').value;
+      const _yyyy = document.getElementById('dobYear').value;
+      const dob = (joining && _dd && _mm && _yyyy) ? `${_yyyy}-${_mm}-${_dd}` : '';
 
       if (joining && (!first_name || !last_name || !referral_source)) {
         errEl.textContent = 'Please add your name and how you found us.';
