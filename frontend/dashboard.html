@@ -547,6 +547,7 @@
   }
 
   function fmtDateTime(iso) {
+    if (!iso) return '—';
     return new Date(iso + (iso.includes('Z') ? '' : 'Z')).toLocaleString('en-AU', {
       day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit',
       hour12: true, timeZone: 'Australia/Sydney'
