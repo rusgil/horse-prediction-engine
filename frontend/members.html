@@ -176,6 +176,34 @@
       table { font-size: 0.75rem; }
       th, td { padding: 8px 6px; }
     }
+    /* Customers table + detail modal */
+    #custTable tbody tr { cursor: pointer; }
+    #custTable tbody tr:hover { background: rgba(255,255,255,0.03); }
+    .ctype { display: inline-block; font-size: 0.68rem; font-weight: 700; letter-spacing: 0.03em;
+      padding: 2px 9px; border-radius: 999px; white-space: nowrap; }
+    .ctype.free   { background: rgba(120,130,150,0.16); color: var(--muted); }
+    .ctype.lapsed { background: rgba(239,68,68,0.14); color: #f2726f; }
+    .ctype.pass   { background: rgba(232,160,32,0.16); color: var(--gold, #e8a020); }
+    .ctype.sub    { background: rgba(34,197,94,0.16); color: var(--green, #22c55e); }
+    .cust-modal { position: fixed; inset: 0; z-index: 200; background: rgba(4,6,12,0.66);
+      display: flex; align-items: flex-start; justify-content: center; padding: 40px 16px; overflow: auto; }
+    .cust-modal-card { background: var(--card, #0e1220); border: 1px solid var(--edge, #1e2840);
+      border-radius: 16px; width: 100%; max-width: 720px; padding: 26px 26px 30px; position: relative; }
+    .cust-close { position: absolute; top: 12px; right: 14px; background: none; border: 0; color: var(--muted);
+      font-size: 1.6rem; line-height: 1; cursor: pointer; }
+    .cust-close:hover { color: var(--text); }
+    .cd-name { font-family: 'Barlow Condensed', sans-serif; font-weight: 800; font-size: 1.6rem; }
+    .cd-email { color: var(--muted); font-size: 0.9rem; overflow-wrap: anywhere; }
+    .cd-meta { display: flex; gap: 8px 18px; flex-wrap: wrap; margin: 12px 0 4px; font-size: 0.85rem; }
+    .cd-meta b { color: var(--text); }
+    .cd-sub-t { font-family: 'Barlow Condensed', sans-serif; font-weight: 800; text-transform: uppercase;
+      letter-spacing: 0.05em; font-size: 0.9rem; color: var(--muted); margin: 22px 0 8px; }
+    .cd-table { width: 100%; border-collapse: collapse; font-size: 0.82rem; }
+    .cd-table th { text-align: left; color: var(--muted); font-size: 0.66rem; text-transform: uppercase;
+      letter-spacing: 0.08em; padding: 0 10px 6px; }
+    .cd-table td { padding: 8px 10px; border-top: 1px solid var(--edge); }
+    .cd-empty { color: var(--muted); font-size: 0.85rem; padding: 4px 0; }
+    .cd-ok { color: var(--green, #22c55e); } .cd-no { color: #f2726f; }
   </style>
   <script defer src="/_vercel/insights/script.js"></script>
 </head>
@@ -191,6 +219,25 @@
 
     <div id="content" style="display:none">
       <div class="stats" id="statsGrid"></div>
+
+      <section>
+        <h2 style="display:flex; align-items:center; gap:12px; flex-wrap:wrap;">
+          Customers <span style="font-size:0.7rem; color:var(--muted); font-weight:400" id="custCount"></span>
+          <input id="custSearch" placeholder="Search email or name…"
+            style="margin-left:auto; background:#1a2035; border:1px solid var(--edge); border-radius:8px; color:var(--text); font-family:'Outfit',sans-serif; font-size:0.85rem; padding:8px 12px; outline:none; min-width:200px;" />
+        </h2>
+        <div style="overflow-x:auto">
+          <table id="custTable">
+            <thead>
+              <tr>
+                <th>Email</th><th>Name</th><th>Type</th><th>Access until</th>
+                <th>Purchases</th><th>Spent</th><th>Invites</th><th>Last login</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </section>
 
       <section>
         <h2 style="display:flex; align-items:center; gap:12px;">
@@ -283,6 +330,13 @@
 
   <div class="toast" id="toast"></div>
 
+  <div class="cust-modal" id="custModal" style="display:none">
+    <div class="cust-modal-card">
+      <button class="cust-close" id="custClose" aria-label="Close">&times;</button>
+      <div id="custDetail"></div>
+    </div>
+  </div>
+
   <script>
     const API = '';
 
@@ -295,7 +349,9 @@
     // the DB stores UTC, this is presentation only.
     function fmtDate(iso) {
       if (!iso) return '—';
-      try { return new Date(iso).toLocaleString('en-AU', {
+      let s = String(iso);
+      if (!/([zZ]|[+-]\d{2}:?\d{2})$/.test(s)) s += 'Z';  // backend sends naive UTC
+      try { return new Date(s).toLocaleString('en-AU', {
         timeZone: 'Australia/Sydney',
         day:'2-digit', month:'short', hour:'2-digit', minute:'2-digit',
       }); }
@@ -336,9 +392,89 @@
           location.href = '/login';
         });
         document.getElementById('content').style.display = 'block';
-        await Promise.all([loadStats(), loadUsers('recent'), loadWaitlist(), loadInvites()]);
+        setupCustomers();
+        await Promise.all([loadStats(), loadCustomers(), loadUsers('recent'), loadWaitlist(), loadInvites()]);
       } catch (e) {
         document.getElementById('unauth').style.display = 'block';
+      }
+    }
+
+    // ── Customers ────────────────────────────────────────────────────
+    let _customers = [];
+    const CTYPE_CLS = c => {
+      if (c === 'Free') return 'free';
+      if (c === 'Lapsed') return 'lapsed';
+      if (c === '5-Day Pass') return 'pass';
+      return 'sub'; // Monthly / Annual / Active
+    };
+    const money = (a, c) => (a == null || a === 0) ? '—' : ((c === 'AUD' ? 'A$' : (c ? c + ' ' : '$')) + Number(a).toFixed(2));
+    async function loadCustomers() {
+      const d = await api('/api/admin/customers');
+      _customers = d.customers || [];
+      document.getElementById('custCount').textContent = `(${_customers.length})`;
+      renderCustomers();
+    }
+    function renderCustomers() {
+      const q = (document.getElementById('custSearch').value || '').toLowerCase().trim();
+      const rows = _customers.filter(c =>
+        !q || (c.email || '').toLowerCase().includes(q) || (c.name || '').toLowerCase().includes(q));
+      const tb = document.querySelector('#custTable tbody');
+      tb.innerHTML = rows.map(c => `<tr data-uid="${c.id}">
+        <td class="mono">${esc(c.email)}</td>
+        <td>${esc(c.name || '—')}</td>
+        <td><span class="ctype ${CTYPE_CLS(c.account_type)}">${esc(c.account_type)}</span></td>
+        <td>${c.has_access ? fmtDate(c.access_until) : '—'}</td>
+        <td>${c.purchases || 0}</td>
+        <td>${money(c.total_spent, 'AUD')}</td>
+        <td>${c.invites_sent || 0}</td>
+        <td>${fmtDate(c.last_login)}</td>
+      </tr>`).join('') || '<tr><td colspan="8" style="color:var(--muted)">No customers.</td></tr>';
+      tb.querySelectorAll('tr[data-uid]').forEach(tr =>
+        tr.addEventListener('click', () => openCustomer(tr.dataset.uid)));
+    }
+    function setupCustomers() {
+      document.getElementById('custSearch').addEventListener('input', renderCustomers);
+      document.getElementById('custClose').addEventListener('click', closeCustomer);
+      document.getElementById('custModal').addEventListener('click', e => {
+        if (e.target.id === 'custModal') closeCustomer();
+      });
+    }
+    function closeCustomer() { document.getElementById('custModal').style.display = 'none'; }
+    async function openCustomer(uid) {
+      const box = document.getElementById('custDetail');
+      box.innerHTML = '<div class="cd-empty">Loading…</div>';
+      document.getElementById('custModal').style.display = 'flex';
+      try {
+        const c = await api('/api/admin/customers/' + uid);
+        const purchases = (c.purchases || []).length ? `<table class="cd-table">
+          <thead><tr><th>Date</th><th>Plan</th><th>Amount</th><th>Access to</th><th>Via</th></tr></thead>
+          <tbody>${c.purchases.map(p => `<tr><td>${fmtDate(p.date)}</td><td>${esc(p.plan)}</td><td>${money(p.amount, p.currency)}</td><td>${p.access_until ? fmtDate(p.access_until) : '—'}</td><td>${esc(p.provider || '')}</td></tr>`).join('')}</tbody></table>`
+          : '<div class="cd-empty">No purchases.</div>';
+        const emails = (c.emails || []).length ? `<table class="cd-table">
+          <thead><tr><th>Sent</th><th>Type</th><th>Subject</th><th>Status</th></tr></thead>
+          <tbody>${c.emails.map(e => `<tr><td>${fmtDate(e.sent_at)}</td><td>${esc(e.kind)}</td><td>${esc(e.subject || '')}</td><td class="${e.ok ? 'cd-ok' : 'cd-no'}">${e.ok ? 'sent' : 'failed'}</td></tr>`).join('')}</tbody></table>`
+          : '<div class="cd-empty">No emails sent.</div>';
+        const invites = (c.invites || []).length ? `<table class="cd-table">
+          <thead><tr><th>To</th><th>Created</th><th>Expires</th><th>Status</th></tr></thead>
+          <tbody>${c.invites.map(i => `<tr><td>${esc(i.to || 'open link')}</td><td>${fmtDate(i.created_at)}</td><td>${fmtDate(i.expires_at)}</td><td>${i.consumed ? 'consumed' : i.revoked ? 'revoked' : 'pending'}</td></tr>`).join('')}</tbody></table>`
+          : '<div class="cd-empty">No invites sent.</div>';
+        box.innerHTML = `
+          <div class="cd-name">${esc(c.name || c.email)}</div>
+          <div class="cd-email mono">${esc(c.email)}${c.mobile_number ? ' · ' + esc(c.mobile_number) : ''}</div>
+          <div class="cd-meta">
+            <span><b>Type:</b> ${esc(c.account_type)}</span>
+            <span><b>Member #:</b> ${c.member_number ?? '—'}</span>
+            <span><b>Joined:</b> ${fmtDate(c.created_at)}</span>
+            <span><b>Last login:</b> ${fmtDate(c.last_login)}</span>
+            <span><b>Total spent:</b> ${money(c.total_spent, 'AUD')}</span>
+            <span><b>Marketing:</b> ${c.marketing_opt_in ? 'opted in' : 'unsubscribed'}</span>
+            <span><b>Found us:</b> ${esc(c.referral_source || '—')}</span>
+          </div>
+          <div class="cd-sub-t">Purchase history</div>${purchases}
+          <div class="cd-sub-t">Emails sent</div>${emails}
+          <div class="cd-sub-t">Invites sent</div>${invites}`;
+      } catch (e) {
+        box.innerHTML = `<div class="cd-empty">Could not load — ${esc(e.message)}</div>`;
       }
     }
 

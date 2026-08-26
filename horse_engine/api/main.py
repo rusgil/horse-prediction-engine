@@ -5198,10 +5198,9 @@ def _account_type(active: bool, days, had_grants: bool) -> str:
 
 
 @app.get("/api/admin/customers")
-async def admin_customers(limit: int = 1000, x_cron_secret: Optional[str] = Header(None)):
+async def admin_customers(admin=Depends(_auth_current_admin), limit: int = 1000):
     """All accounts with account type + activity summary for the admin
     customer view (newest first)."""
-    _check_admin(x_cron_secret)
     from horse_engine.api.access import has_active_access
     out = []
     async with get_session() as s:
@@ -5240,10 +5239,9 @@ async def admin_customers(limit: int = 1000, x_cron_secret: Optional[str] = Head
 
 
 @app.get("/api/admin/customers/{user_id}")
-async def admin_customer_detail(user_id: int, x_cron_secret: Optional[str] = Header(None)):
+async def admin_customer_detail(user_id: int, admin=Depends(_auth_current_admin)):
     """Full detail for one customer: profile, purchase history, invites sent,
     and every email we've sent them."""
-    _check_admin(x_cron_secret)
     from horse_engine.api.access import has_active_access
     async with get_session() as s:
         u = (await s.execute(select(UserRow).where(UserRow.id == user_id).limit(1))).scalars().first()
