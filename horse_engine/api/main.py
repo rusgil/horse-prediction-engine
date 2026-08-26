@@ -88,6 +88,7 @@ from horse_engine.models.database import (
     InviteRow,
     WaitlistRow,
     AccessGrantRow,
+    EmailLogRow,
 )
 from horse_engine.analysis.nightly_review import (
     generate_review as _generate_nightly_review,
@@ -5183,6 +5184,165 @@ async def admin_membership_stats(admin=Depends(_auth_current_admin)):
         "waitlist_size": int(waitlist or 0),
         "total_users": int(total_users or 0),
     }
+
+
+_CUST_PLAN = {5: "5-Day Pass", 30: "Monthly", 365: "Annual"}
+
+
+def _account_type(active: bool, days, had_grants: bool) -> str:
+    if active and days:
+        return _CUST_PLAN.get(int(days), f"{int(days)}-day")
+    if active:
+        return "Active"
+    return "Lapsed" if had_grants else "Free"
+
+
+@app.get("/api/admin/customers")
+async def admin_customers(limit: int = 1000, x_cron_secret: Optional[str] = Header(None)):
+    """All accounts with account type + activity summary for the admin
+    customer view (newest first)."""
+    _check_admin(x_cron_secret)
+    from horse_engine.api.access import has_active_access
+    out = []
+    async with get_session() as s:
+        users = (await s.execute(
+            select(UserRow).order_by(UserRow.id.desc()).limit(limit)
+        )).scalars().all()
+        for u in users:
+            grants = (await s.execute(
+                select(AccessGrantRow).where(AccessGrantRow.user_id == u.id)
+                .order_by(AccessGrantRow.id.desc())
+            )).scalars().all()
+            latest_days = int(grants[0].days_granted) if grants else None
+            active = has_active_access(u)
+            last_login = (await s.execute(
+                select(func.max(SessionRow.last_seen_at)).where(SessionRow.user_id == u.id)
+            )).scalar()
+            inv_sent = (await s.execute(
+                select(func.count()).select_from(InviteRow).where(InviteRow.issued_by_user_id == u.id)
+            )).scalar() or 0
+            out.append({
+                "id": u.id, "email": u.email,
+                "name": " ".join(x for x in [u.first_name, u.last_name] if x) or None,
+                "member_number": u.member_number, "role": u.role,
+                "created_at": u.created_at.isoformat() if u.created_at else None,
+                "account_type": _account_type(active, latest_days, bool(grants)),
+                "has_access": active,
+                "access_until": u.access_until.isoformat() if getattr(u, "access_until", None) else None,
+                "purchases": len(grants),
+                "total_spent": round(sum((g.amount or 0) for g in grants), 2),
+                "invites_sent": int(inv_sent),
+                "last_login": last_login.isoformat() if last_login else None,
+                "referral_source": getattr(u, "referral_source", None),
+                "marketing_opt_in": bool(getattr(u, "marketing_opt_in", True)),
+            })
+    return {"customers": out, "count": len(out)}
+
+
+@app.get("/api/admin/customers/{user_id}")
+async def admin_customer_detail(user_id: int, x_cron_secret: Optional[str] = Header(None)):
+    """Full detail for one customer: profile, purchase history, invites sent,
+    and every email we've sent them."""
+    _check_admin(x_cron_secret)
+    from horse_engine.api.access import has_active_access
+    async with get_session() as s:
+        u = (await s.execute(select(UserRow).where(UserRow.id == user_id).limit(1))).scalars().first()
+        if u is None:
+            raise HTTPException(404, "customer not found")
+        grants = (await s.execute(
+            select(AccessGrantRow).where(AccessGrantRow.user_id == user_id)
+            .order_by(AccessGrantRow.id.desc())
+        )).scalars().all()
+        purchases = [{
+            "date": g.created_at.isoformat() if g.created_at else None,
+            "plan": _CUST_PLAN.get(int(g.days_granted or 0), f"{int(g.days_granted or 0)}-day"),
+            "amount": g.amount, "currency": g.currency, "provider": g.provider,
+            "txn": g.external_txn_id,
+            "access_until": g.access_until_after.isoformat() if g.access_until_after else None,
+        } for g in grants]
+        invites = (await s.execute(
+            select(InviteRow).where(InviteRow.issued_by_user_id == user_id)
+            .order_by(InviteRow.id.desc()).limit(100)
+        )).scalars().all()
+        inv_out = [{
+            "to": getattr(i, "issued_to_email", None),
+            "created_at": i.created_at.isoformat() if getattr(i, "created_at", None) else None,
+            "expires_at": i.expires_at.isoformat() if getattr(i, "expires_at", None) else None,
+            "consumed": bool(getattr(i, "consumed_at", None)),
+            "revoked": bool(getattr(i, "revoked_at", None)),
+        } for i in invites]
+        emails = (await s.execute(
+            select(EmailLogRow).where(EmailLogRow.email == u.email)
+            .order_by(EmailLogRow.id.desc()).limit(200)
+        )).scalars().all()
+        email_out = [{
+            "sent_at": e.sent_at.isoformat() if e.sent_at else None,
+            "kind": e.kind, "subject": e.subject, "ok": bool(e.ok),
+        } for e in emails]
+        last_login = (await s.execute(
+            select(func.max(SessionRow.last_seen_at)).where(SessionRow.user_id == user_id)
+        )).scalar()
+        latest_days = int(grants[0].days_granted) if grants else None
+        active = has_active_access(u)
+        return {
+            "id": u.id, "email": u.email,
+            "name": " ".join(x for x in [u.first_name, u.last_name] if x) or None,
+            "first_name": u.first_name, "last_name": u.last_name,
+            "member_number": u.member_number, "role": u.role, "founding": bool(u.founding),
+            "mobile_number": getattr(u, "mobile_number", None),
+            "marketing_opt_in": bool(getattr(u, "marketing_opt_in", True)),
+            "referral_source": getattr(u, "referral_source", None),
+            "created_at": u.created_at.isoformat() if u.created_at else None,
+            "account_type": _account_type(active, latest_days, bool(grants)),
+            "has_access": active,
+            "access_until": u.access_until.isoformat() if getattr(u, "access_until", None) else None,
+            "last_login": last_login.isoformat() if last_login else None,
+            "total_spent": round(sum((g.amount or 0) for g in grants), 2),
+            "purchases": purchases, "invites": inv_out, "emails": email_out,
+        }
+
+
+@app.post("/api/cron/expiry-reminders")
+async def cron_expiry_reminders(x_cron_secret: Optional[str] = Header(None)):
+    """Email 5-day-pass members whose pass expires within 24h a renewal
+    reminder (once per pass). Auth via x-cron-secret. Wire to the same cron
+    scheduler as the other jobs (hourly is fine)."""
+    if not settings.cron_secret or not secrets.compare_digest(x_cron_secret or "", settings.cron_secret):
+        raise HTTPException(status_code=401, detail="unauthorized")
+    from horse_engine.api.mailer import send_expiry_reminder
+    now = datetime.utcnow()
+    horizon = now + timedelta(hours=24)
+    plans_url = f"{settings.app_base_url.rstrip('/')}/plans"
+    sent = 0
+    checked = 0
+    async with get_session() as s:
+        users = (await s.execute(
+            select(UserRow)
+            .where(UserRow.access_until.isnot(None))
+            .where(UserRow.access_until > now)
+            .where(UserRow.access_until <= horizon)
+        )).scalars().all()
+        for u in users:
+            latest = (await s.execute(
+                select(AccessGrantRow).where(AccessGrantRow.user_id == u.id)
+                .order_by(AccessGrantRow.id.desc()).limit(1)
+            )).scalars().first()
+            if not latest or int(latest.days_granted or 0) != 5:
+                continue  # only 5-day passes
+            checked += 1
+            # Dedup: already reminded within this pass window?
+            window_start = u.access_until - timedelta(days=5)
+            already = (await s.execute(
+                select(func.count()).select_from(EmailLogRow)
+                .where(EmailLogRow.email == u.email)
+                .where(EmailLogRow.kind == "expiry_reminder")
+                .where(EmailLogRow.sent_at >= window_start)
+            )).scalar() or 0
+            if already:
+                continue
+            if await send_expiry_reminder(u.email, getattr(u, "first_name", None), u.access_until, plans_url):
+                sent += 1
+    return {"ok": True, "eligible_5day": checked, "reminders_sent": sent}
 
 
 @app.post("/api/admin/users/purge")

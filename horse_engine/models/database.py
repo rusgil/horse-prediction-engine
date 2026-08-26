@@ -840,6 +840,21 @@ class AccessGrantRow(Base):
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
 
 
+class EmailLogRow(Base):
+    """Every transactional email we send, for the admin customer view.
+    Keyed by recipient email (a user may not exist yet at send time, e.g.
+    a signup magic link). kind = magic_link | invite | expiry_reminder | …"""
+    __tablename__ = "email_log"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    email = Column(String, nullable=False, index=True)
+    kind = Column(String, nullable=False)
+    subject = Column(String, nullable=True)
+    ok = Column(Boolean, nullable=False, default=False)
+    provider_id = Column(String, nullable=True)   # Resend message id
+    sent_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+
+
 class RAVenueKeyCacheRow(Base):
     """Persistent cache of the (date, state, clean_venue) → RA key mapping.
 
