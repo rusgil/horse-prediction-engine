@@ -351,7 +351,9 @@
   .grid-wrap {
     background: var(--surface); border: 1px solid var(--line); border-radius: var(--radius);
     overflow-x: auto; box-shadow: var(--shadow);
+    scrollbar-width: none; -ms-overflow-style: none;
   }
+  .grid-wrap::-webkit-scrollbar { display: none; }
   table.race-grid { border-collapse: collapse; width: 100%; min-width: 740px; }
   .race-grid th, .race-grid td { padding: 0; }
   .race-grid thead th {
