@@ -5199,7 +5199,14 @@ async def admin_membership_stats(admin=Depends(_auth_current_admin)):
 _CUST_PLAN = {5: "5-Day Pass", 30: "Monthly", 365: "Annual"}
 
 
-def _account_type(active: bool, days, had_grants: bool) -> str:
+def _account_type(active: bool, days, had_grants: bool, role: Optional[str] = None) -> str:
+    # Staff roles get full access via the role bypass (no purchased pass).
+    # Label them plainly so "Active" isn't mistaken for a paid membership —
+    # this is why the admin view and the member account page can disagree.
+    if role == "admin":
+        return "Admin"
+    if role == "power_user":
+        return "Comp"
     if active and days:
         return _CUST_PLAN.get(int(days), f"{int(days)}-day")
     if active:
@@ -5248,7 +5255,7 @@ async def admin_customers(limit: int = 1000, x_cron_secret: Optional[str] = Head
                 "name": " ".join(x for x in [u.first_name, u.last_name] if x) or None,
                 "member_number": u.member_number, "role": u.role,
                 "created_at": u.created_at.isoformat() if u.created_at else None,
-                "account_type": _account_type(active, latest_days, bool(grants)),
+                "account_type": _account_type(active, latest_days, bool(grants), u.role),
                 "has_access": active,
                 "access_until": u.access_until.isoformat() if getattr(u, "access_until", None) else None,
                 "purchases": len(grants),
@@ -5316,7 +5323,7 @@ async def admin_customer_detail(user_id: int, x_cron_secret: Optional[str] = Hea
             "marketing_opt_in": bool(getattr(u, "marketing_opt_in", True)),
             "referral_source": getattr(u, "referral_source", None),
             "created_at": u.created_at.isoformat() if u.created_at else None,
-            "account_type": _account_type(active, latest_days, bool(grants)),
+            "account_type": _account_type(active, latest_days, bool(grants), u.role),
             "has_access": active,
             "access_until": u.access_until.isoformat() if getattr(u, "access_until", None) else None,
             "last_login": last_login.isoformat() if last_login else None,
