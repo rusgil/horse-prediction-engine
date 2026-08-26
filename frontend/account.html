@@ -859,29 +859,40 @@
         badge.className = 'mem-badge on'; badge.textContent = 'Active';
         planEl.textContent = planName(days);
         const ms = until - Date.now();
-        const d = Math.floor(ms / 86400000);
-        const h = Math.floor((ms % 86400000) / 3600000);
-        const expires = new Date(until).toLocaleString('en-AU', {
-          timeZone: 'Australia/Sydney', weekday: 'short', day: '2-digit', month: 'short',
-          hour: '2-digit', minute: '2-digit',
-        });
-        statusEl.innerHTML =
-          `<span class="big">${d} day${d === 1 ? '' : 's'}, ${h} hour${h === 1 ? '' : 's'}</span> remaining` +
-          `<div class="sub">Access until ${expires} (Sydney)</div>`;
-        // Progress bar fills LEFT→RIGHT as the pass is used up. On a short
-        // (5-day) pass the colour warns as expiry nears: light amber in the
-        // final ~2 days (day 4), light red on the last day (day 5).
-        if (days) {
-          const elapsed = Math.max(0, Math.min(1, 1 - ms / (days * 86400000)));
-          bar.style.display = '';
-          bar.firstElementChild.style.width = (elapsed * 100).toFixed(1) + '%';
-          const hoursLeft = ms / 3600000;
-          bar.classList.remove('warn', 'danger');
-          if (days <= 7) {
-            if (hoursLeft <= 24) bar.classList.add('danger');
-            else if (hoursLeft <= 48) bar.classList.add('warn');
-          }
-        } else { bar.style.display = 'none'; }
+        const isSub = days && days >= 30;   // monthly / annual — auto-renewing
+        if (isSub) {
+          // Subscriptions renew, so a countdown is misleading. Just show the
+          // next renewal date; no progress bar.
+          const renews = new Date(until).toLocaleString('en-AU', {
+            timeZone: 'Australia/Sydney', weekday: 'short', day: '2-digit', month: 'short', year: 'numeric',
+          });
+          statusEl.innerHTML = `<div class="sub">Renews on ${renews} (Sydney)</div>`;
+          bar.style.display = 'none';
+        } else {
+          // Short pass (e.g. 5-day) — countdown + progress bar.
+          const d = Math.floor(ms / 86400000);
+          const h = Math.floor((ms % 86400000) / 3600000);
+          const expires = new Date(until).toLocaleString('en-AU', {
+            timeZone: 'Australia/Sydney', weekday: 'short', day: '2-digit', month: 'short',
+            hour: '2-digit', minute: '2-digit',
+          });
+          statusEl.innerHTML =
+            `<span class="big">${d} day${d === 1 ? '' : 's'}, ${h} hour${h === 1 ? '' : 's'}</span> remaining` +
+            `<div class="sub">Access until ${expires} (Sydney)</div>`;
+          // Progress bar fills LEFT→RIGHT as the pass is used up: light amber in
+          // the final ~2 days (day 4), light red on the last day (day 5).
+          if (days) {
+            const elapsed = Math.max(0, Math.min(1, 1 - ms / (days * 86400000)));
+            bar.style.display = '';
+            bar.firstElementChild.style.width = (elapsed * 100).toFixed(1) + '%';
+            const hoursLeft = ms / 3600000;
+            bar.classList.remove('warn', 'danger');
+            if (days <= 7) {
+              if (hoursLeft <= 24) bar.classList.add('danger');
+              else if (hoursLeft <= 48) bar.classList.add('warn');
+            }
+          } else { bar.style.display = 'none'; }
+        }
         // Upgrade options (only offer longer plans than the current one).
         let btns = '';
         if (!days || days < 30) btns += '<a href="/plans">Upgrade to Monthly</a>';
