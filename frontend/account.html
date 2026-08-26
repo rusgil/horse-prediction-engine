@@ -706,19 +706,24 @@
     let currentUser = null;
 
     async function boot() {
+      // The 'sign in required' gate must key ONLY on the auth call. A
+      // downstream widget throwing must never resurrect the gate on top of
+      // an already-signed-in dashboard (that was the double-render bug).
       try {
         currentUser = await api('/api/auth/me');
-        document.getElementById('content').style.display = 'block';
-        renderProfile(currentUser);
-        fillPrefs(currentUser);
-        setupMenu();
-        setupPrefs();
-        setupSignout();
-        updateCapChip(currentUser.invites_remaining ?? 0);
-        await loadInvites();
       } catch (e) {
         document.getElementById('unauth').style.display = 'block';
+        return;
       }
+      document.getElementById('content').style.display = 'block';
+      const step = (label, fn) => { try { return fn(); } catch (e) { console.error('[account] ' + label, e); } };
+      step('renderProfile', () => renderProfile(currentUser));
+      step('fillPrefs', () => fillPrefs(currentUser));
+      step('setupMenu', () => setupMenu());
+      step('setupPrefs', () => setupPrefs());
+      step('setupSignout', () => setupSignout());
+      step('updateCapChip', () => updateCapChip(currentUser.invites_remaining ?? 0));
+      try { await loadInvites(); } catch (e) { console.error('[account] loadInvites', e); }
     }
 
     // ── Right-side menu: switch panels (deep-linkable via #hash) ──
