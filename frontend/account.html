@@ -559,7 +559,7 @@
 
       <div class="acct-panel" data-panel="invite" hidden>
       <section>
-        <h2>Invite a friend <span class="cap" id="cap-chip"></span></h2>
+        <h2>Invite a friend</h2>
         <p class="hint" style="margin-top:-4px; margin-bottom:18px">
           Invites expire after 30 days and can only be used once. Share
           with like minded people who you think will love this site.
@@ -913,7 +913,8 @@
     }
 
     function updateCapChip(remaining) {
-      document.getElementById('cap-chip').textContent = `${remaining} invites remaining`;
+      const el = document.getElementById('cap-chip');
+      if (el) el.textContent = `${remaining} invites remaining`;
     }
 
     async function loadInvites() {
