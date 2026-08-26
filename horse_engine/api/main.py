@@ -3385,6 +3385,14 @@ async def lifespan(app: FastAPI):
         _scheduled_morning_settle,
         CronTrigger(hour=8, minute=0, jitter=600, timezone="Australia/Sydney")
     )
+    # 5-day-pass expiry reminders — hourly, in-process (no external cron /
+    # network egress). Emails members whose pass expires within 24h, once
+    # per pass (deduped via email_log). Replaces the cloud CCR routine,
+    # which couldn't reach api.funkyiq.com from its sandbox.
+    scheduler.add_job(
+        _scheduled_expiry_reminders,
+        CronTrigger(minute=17, timezone="Australia/Sydney")
+    )
     # Calibration was running daily but docstring says "weekly". Daily
     # was burning CPU on a model whose drift signal moves on a week+
     # timescale anyway. Sundays at 2am only.
@@ -5317,13 +5325,10 @@ async def admin_customer_detail(user_id: int, x_cron_secret: Optional[str] = Hea
         }
 
 
-@app.post("/api/cron/expiry-reminders")
-async def cron_expiry_reminders(x_cron_secret: Optional[str] = Header(None)):
+async def _run_expiry_reminders() -> dict:
     """Email 5-day-pass members whose pass expires within 24h a renewal
-    reminder (once per pass). Auth via x-cron-secret. Wire to the same cron
-    scheduler as the other jobs (hourly is fine)."""
-    if not settings.cron_secret or not secrets.compare_digest(x_cron_secret or "", settings.cron_secret):
-        raise HTTPException(status_code=401, detail="unauthorized")
+    reminder (once per pass). Shared by the HTTP endpoint and the in-process
+    scheduler job so both hit identical logic."""
     from horse_engine.api.mailer import send_expiry_reminder
     now = datetime.utcnow()
     horizon = now + timedelta(hours=24)
@@ -5358,6 +5363,27 @@ async def cron_expiry_reminders(x_cron_secret: Optional[str] = Header(None)):
             if await send_expiry_reminder(u.email, getattr(u, "first_name", None), u.access_until, plans_url):
                 sent += 1
     return {"ok": True, "eligible_5day": checked, "reminders_sent": sent}
+
+
+@app.post("/api/cron/expiry-reminders")
+async def cron_expiry_reminders(x_cron_secret: Optional[str] = Header(None)):
+    """Manual/external trigger for the expiry-reminder sweep (auth via
+    x-cron-secret). The in-process scheduler also runs this hourly, so this
+    endpoint is now just a manual re-run / debug hook."""
+    if not settings.cron_secret or not secrets.compare_digest(x_cron_secret or "", settings.cron_secret):
+        raise HTTPException(status_code=401, detail="unauthorized")
+    return await _run_expiry_reminders()
+
+
+async def _scheduled_expiry_reminders():
+    """APScheduler wrapper — runs the expiry sweep in-process (no network
+    egress needed) and logs the outcome."""
+    try:
+        res = await _run_expiry_reminders()
+        log.info("[expiry-reminders] eligible_5day=%s reminders_sent=%s",
+                 res.get("eligible_5day"), res.get("reminders_sent"))
+    except Exception:
+        log.exception("[expiry-reminders] scheduled sweep failed")
 
 
 @app.post("/api/admin/users/purge")
