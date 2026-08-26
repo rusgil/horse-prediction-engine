@@ -544,10 +544,6 @@
             <div class="prof-name" id="p-name">—</div>
             <div class="prof-email mono" id="p-email">—</div>
           </div>
-          <div class="prof-member">
-            <div class="profile-label">Member #</div>
-            <div class="profile-value" id="p-mn">—</div>
-          </div>
         </div>
         <div class="prof-joined">
           <div class="profile-label">Joined</div>
@@ -907,7 +903,6 @@
       const av = document.getElementById('p-avatar');
       if (av) av.textContent = ((name || u.email || '?').trim()[0] || '?').toUpperCase();
       document.getElementById('p-email').textContent = u.email;
-      document.getElementById('p-mn').textContent = (u.member_number ?? '—');
       document.getElementById('p-joined').textContent = fmtDate(u.created_at);
       renderMembership(u);
     }
