@@ -325,6 +325,9 @@
     // Edge is subscription-tier (Monthly/Annual); Lounge/Hot Seat unlock with
     // any pass. Message + CTA adapt so a 5-day member sees the right thing.
     if (paywall.plan_required === 'subscription') {
+      // Show the full plan cards inline (like the pre-publish splash).
+      const up = plansUpsell(true);
+      if (up) return up;
       return `<div class="paywall-banner" data-unlock>
         <div class="pb-txt"><b>The Edge is a Monthly &amp; Annual feature.</b> You're seeing 1 free race.</div>
         <a class="unlock-btn" href="/plans">See Monthly &amp; Annual</a>
@@ -459,10 +462,12 @@
     }).join('') + '</div>';
   }
 
-  // Upsell for the pre-publish splash — embeds the plan cards inline. Hidden for
-  // subscribers. 5-day pass holders see only Monthly/Annual (upgrade pitch);
-  // non-members see all three.
-  function splashUpsell() {
+  // Inline plan-cards upsell — used on the pre-publish splash, the Edge
+  // subscription paywall, and the Playbook gate. Hidden for subscribers. A
+  // 5-day pass holder sees only Monthly/Annual (upgrade pitch); non-members
+  // see all three. `wide` lifts the width cap where there's no .today-gate
+  // ancestor to widen it (Edge/Playbook).
+  function plansUpsell(wide) {
     if (isSubscriber()) return '';
     const all = (_billing && _billing.plans) || [];
     if (!all.length) return '';
@@ -474,9 +479,10 @@
       ? `<div class="tg-upsell-t">Get more from your membership</div>
          <div class="tg-upsell-s">You're on a 5-day pass. Go Monthly or Annual to unlock <b>the Edge</b> and the daily <b>Playbook</b> — and save with annual.</div>`
       : `<div class="tg-upsell-t">🔓 Unlock every pick</div>
-         <div class="tg-upsell-s">Full form &amp; best odds the moment they publish — choose a plan below.</div>`;
-    return `<div class="tg-upsell">${head}${grid}</div>`;
+         <div class="tg-upsell-s">Choose a plan to unlock every pick, best odds, and the daily Playbook.</div>`;
+    return `<div class="tg-upsell${wide ? ' fp-wide' : ''}">${head}${grid}</div>`;
   }
+  function splashUpsell() { return plansUpsell(false); }
 
   // Swap the splash upsell in place once membership/billing resolve, so the
   // right plans show without waiting for the page's slow (60s) poll.
@@ -496,6 +502,6 @@
   window.PickCard = {
     render, dualStat, winPlace, resultBlock, esc, wallTime, countdown,
     lockedCard, paywallBanner, trophyBanner, configureBilling, openCheckout, openPricing, bindUnlock,
-    fetchJSON, isMember, isSubscriber, splashUpsell, plansGrid, refreshSplashUpsell, loadMembership,
+    fetchJSON, isMember, isSubscriber, splashUpsell, plansUpsell, plansGrid, refreshSplashUpsell, loadMembership,
   };
 })();

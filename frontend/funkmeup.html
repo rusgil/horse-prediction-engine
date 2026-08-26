@@ -7,6 +7,8 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <script src="/theme.js?v=8"></script>
+  <link rel="stylesheet" href="/pick-card.css?v=25">
+  <script src="/pick-card.js?v=25"></script>
   <title>Playbook · funkyiq</title>
   <meta name="description" content="Playbook turns FunkyIQ's Australian horse racing model into a daily playbook — win bets, place bets, doubles and quaddies selected from the highest-value picks across the day's meetings." />
   <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -30,6 +32,14 @@
       --text:          #e6e9f0;
       --text-dim:      #8a93a8;
       --text-muted:    #5c6478;
+      /* Aliases so the shared pick-card.css (plans grid) resolves here. */
+      --surface: var(--bg-card);
+      --surface-2: var(--bg-elevated);
+      --line: var(--border);
+      --text-2: var(--text-dim);
+      --text-3: var(--text-muted);
+      --mint: var(--green);
+      --radius: 12px;
     }
     * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
     html, body { margin: 0; padding: 0; }
@@ -704,8 +714,8 @@
   </div>
   <nav class="page-nav">
     <a href="/"           class="page-nav-btn lounge"><span class="nav-ico">🛋️</span><span class="nav-lab">Lounge</span></a>
-    <a href="/edge"       class="page-nav-btn edge"><span class="nav-ico">🎯</span><span class="nav-lab">Edge</span></a>
     <a href="/hotseat"    class="page-nav-btn hot"><span class="nav-ico">🔥</span><span class="nav-lab">Hot Seat</span></a>
+    <a href="/edge"       class="page-nav-btn edge"><span class="nav-ico">🎯</span><span class="nav-lab">Edge</span></a>
     <a href="/playbook" class="page-nav-btn funk active"><span class="nav-ico">📖</span><span class="nav-lab">Playbook</span></a>
     <span class="nav-spacer"></span>
     <a href="/account"    class="page-nav-btn about"><span class="nav-ico">👤</span><span class="nav-lab">Account</span></a>
@@ -1243,6 +1253,16 @@
   }
 
   // ── "Today" publish gate ──────────────────────────────────────────────────
+  // Billing config for the shared plans-grid upsell shown when Playbook is
+  // subscription-gated. Loaded once on page load.
+  (async () => {
+    try {
+      const r = await fetch(`${API}/api/config/public`);
+      if (r.ok && window.PickCard) window.PickCard.configureBilling((await r.json()).billing);
+    } catch (e) {}
+    if (window.PickCard && window.PickCard.bindUnlock) window.PickCard.bindUnlock();
+  })();
+
   // Hold today's plays behind a splash until the 8:30am enrichment has finished
   // AND it's >= 9:30am AEST. Yesterday/tomorrow are exempt.
   let TODAY_STATUS = null, _todayPoll = null;
@@ -1298,7 +1318,10 @@
       // Subscription-gated (free / 5-day pass) → upsell, no plays.
       if (data.gated) {
         window._funkData = data;
-        root.innerHTML = `
+        // Show the plan cards inline (same as Edge / the pre-publish splash).
+        let up = '';
+        try { up = window.PickCard && window.PickCard.plansUpsell ? window.PickCard.plansUpsell(true) : ''; } catch (e) {}
+        root.innerHTML = up || `
           <div class="pb-upsell">
             <div class="pb-lock">🔒</div>
             <h3>Playbook is a Monthly &amp; Annual feature</h3>
