@@ -9930,7 +9930,7 @@ async def funk_me_up_today(request: Request, date: Optional[str] = None):
         "bonus_exposure_dollars": bonus_exposure,
         "expected_profit_dollars": expected_profit,
         "actual_profit_dollars": actual_profit,
-        "disclaimer": "Estimates use TAB odds; Sportsbet prices vary. Verify boost % and Top 4 prices in the Sportsbet betslip before placing.",
+        "disclaimer": "Odds are approximate only — check your favourite sports vendor for actual odds.",
     }
 
 
