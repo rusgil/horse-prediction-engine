@@ -166,8 +166,8 @@
   background: color-mix(in srgb, var(--gold, #f5c842) 9%, transparent);
 }
 .trophy-label {
-  font-size: 0.72rem; font-weight: 800; letter-spacing: 0.05em; text-transform: uppercase;
-  color: var(--gold, #f5c842); padding: 4px 8px 6px;
+  font-size: 0.85rem; font-weight: 800; letter-spacing: 0.05em; text-transform: uppercase;
+  color: var(--gold, #f5c842); padding: 5px 8px 7px;
 }
 .trophy-label b { color: var(--text); }
 .trophy-wrap .jcard { margin-bottom: 0; }

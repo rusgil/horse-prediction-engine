@@ -411,6 +411,21 @@
 
     .note { font-size: 0.72rem; color: var(--text-dim); margin-top: 14px; line-height: 1.6; }
 
+    /* Sharp filter headline stat cards */
+    .sf-stats { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 6px; }
+    @media (max-width: 640px) { .sf-stats { grid-template-columns: 1fr; } }
+    .sf-card { background: var(--bg-card); border: 1px solid var(--border); border-radius: 14px; padding: 22px 20px; text-align: center; }
+    .sf-nums { display: flex; align-items: baseline; justify-content: center; gap: 14px; }
+    .sf-n { display: inline-flex; align-items: baseline; gap: 7px; }
+    .sf-n b { font-family: 'Barlow Condensed', sans-serif; font-weight: 900; font-size: 2.5rem; line-height: 1; }
+    .sf-n span { font-size: 0.8rem; color: var(--text-secondary); text-transform: uppercase; letter-spacing: 0.06em; }
+    .sf-n.win b { color: var(--green-bright); }
+    .sf-n.plc b { color: var(--gold-light); }
+    .sf-dot { color: var(--text-dim); font-size: 1.5rem; line-height: 1; }
+    .sf-cap { margin-top: 12px; font-size: 0.78rem; color: var(--text-secondary); letter-spacing: 0.02em; }
+    .sf-blurb { font-size: 0.92rem; color: var(--text-secondary); line-height: 1.65; margin-top: 18px; }
+    .sf-blurb b { color: var(--text-primary); font-weight: 700; }
+
     /* Unified brand strip — matches every other page. */
     .brand-bar {
       display: flex; align-items: center; justify-content: center;
@@ -581,6 +596,37 @@
       genuine edge over the market. Five surfaces, one engine — predictions, exotic
       hunting, live betting tools, and paper-trading sandbox all powered by the same
       win, place, and exotic models trained on historical Australian racing data.
+    </p>
+  </div>
+
+  <!-- Sharp filter headline stats — live-wired: flagship (500-race published)
+       + recent form (last 7 days, sharp picks only). Numbers match the engine
+       endpoints so nothing here can drift from the live track record. -->
+  <div class="section">
+    <div class="section-title">The Sharp Filter — Our Flagship Signal</div>
+    <div class="sf-stats">
+      <div class="sf-card">
+        <div class="sf-nums">
+          <span class="sf-n win"><b id="sf-flag-win">35%</b><span>win</span></span>
+          <span class="sf-dot">·</span>
+          <span class="sf-n plc"><b id="sf-flag-place">61%</b><span>place</span></span>
+        </div>
+        <div class="sf-cap">Sharp filter · flagship · <span id="sf-flag-races">500</span>-race track record</div>
+      </div>
+      <div class="sf-card">
+        <div class="sf-nums">
+          <span class="sf-n win"><b id="sf-rec-win">47%</b><span>win</span></span>
+          <span class="sf-dot">·</span>
+          <span class="sf-n plc"><b id="sf-rec-place">~77%</b><span>place</span></span>
+        </div>
+        <div class="sf-cap">recent form · last 7 days · <span id="sf-rec-races">81</span> races</div>
+      </div>
+    </div>
+    <p class="sf-blurb">
+      The Sharp filter is the flagship signal — its highest-conviction, clear-favourite picks hold a
+      <b id="sf-b-flagwin">35%</b> win / <b id="sf-b-flagplace">61%</b> place track record across
+      <b id="sf-b-flagraces">500</b> races, and have run even hotter lately
+      (~<b id="sf-b-recwin">47%</b> win / ~<b id="sf-b-recplace">77%</b> place over the last 7 days).
     </p>
   </div>
 
@@ -958,6 +1004,38 @@
         const qw = q('pl-window'); if (qw) qw.textContent = fmt(p.earliest_race_date) + ' – ' + fmt(p.latest_race_date);
       }
     } catch (e) { /* silent — HTML defaults stand */ }
+  })();
+
+  // Sharp filter headline stats — flagship (published 500-race) + recent form
+  // (last 7 days, sharp picks only). Both live so the numbers can't drift from
+  // the real track record. HTML defaults stand if a fetch fails.
+  (async function refreshSharpHeadline() {
+    const set = (id, txt) => { const el = document.getElementById(id); if (el) el.textContent = txt; };
+    try {
+      const r = await fetch(API + '/api/performance/tier-grade/published');
+      if (r.ok) {
+        const p = (await r.json()).published;
+        if (p) {
+          const w = Math.round(p.win_pct), pl = Math.round(p.place_pct), n = p.races;
+          set('sf-flag-win', w + '%'); set('sf-flag-place', pl + '%'); set('sf-flag-races', n.toLocaleString());
+          set('sf-b-flagwin', w + '%'); set('sf-b-flagplace', pl + '%'); set('sf-b-flagraces', n.toLocaleString());
+        }
+      }
+    } catch (e) {}
+    try {
+      const r = await fetch(API + '/api/performance?days=7&sharp=true');
+      if (r.ok) {
+        const d = await r.json();
+        const rows = d.summary || [];
+        let R = 0, W = 0, P = 0;
+        rows.forEach(x => { const rr = x.races || 0; R += rr; W += x.wins || 0; P += Math.round((x.place_rate || 0) * rr); });
+        if (R > 0) {
+          const w = Math.round(100 * W / R), pl = Math.round(100 * P / R);
+          set('sf-rec-win', w + '%'); set('sf-rec-place', '~' + pl + '%'); set('sf-rec-races', R.toLocaleString());
+          set('sf-b-recwin', w + '%'); set('sf-b-recplace', pl + '%');
+        }
+      }
+    } catch (e) {}
   })();
 
   // Top 5 venues by live top-pick win rate, from /api/venue-badges. Sample size
