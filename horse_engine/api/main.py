@@ -4274,6 +4274,7 @@ async def auth_request_code(request: Request, response: Response):
     first_name = (body.get("first_name") or "").strip()[:80] or None
     last_name = (body.get("last_name") or "").strip()[:80] or None
     referral_source = (body.get("referral_source") or "").strip()[:60] or None
+    dob_raw = (body.get("dob") or "").strip() or None
     if not email or "@" not in email or len(email) > 254:
         raise HTTPException(status_code=400, detail="Invalid email address")
     await _enforce_turnstile(request, turnstile_token)
@@ -4286,6 +4287,25 @@ async def auth_request_code(request: Request, response: Response):
         )).scalars().first()
     is_existing = row is not None
     intent = "login" if is_existing else "signup"
+
+    # Age gate — new signups must supply a valid DOB and be 18+. We enforce it
+    # HERE (before any magic link is issued) so an under-18 never gets a link.
+    # Existing users logging in are unaffected.
+    dob = None
+    if not is_existing:
+        from datetime import date as _date
+        if not dob_raw:
+            raise HTTPException(status_code=400, detail="Please enter your date of birth to create an account.")
+        try:
+            dob = _date.fromisoformat(dob_raw)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Please enter a valid date of birth.")
+        _today = _date.today()
+        age = _today.year - dob.year - ((_today.month, _today.day) < (dob.month, dob.day))
+        if dob > _today or age > 120:
+            raise HTTPException(status_code=400, detail="Please enter a valid date of birth.")
+        if age < 18:
+            raise HTTPException(status_code=403, detail="You must be 18 or over to use FunkyIQ.")
 
     # Invite gate — only enforced for new signups, and only while
     # settings.invite_only is on. Existing members can always log in.
@@ -4333,6 +4353,7 @@ async def auth_request_code(request: Request, response: Response):
     token = await _auth_issue_magic_link(
         email, intent=intent, invite_token_hash=invite_hash,
         first_name=first_name, last_name=last_name, referral_source=referral_source,
+        dob=dob,
     )
     # Route the click through the frontend host (Vercel) which proxies
     # /api/* to the Railway backend. This way the browser thinks the
@@ -4385,6 +4406,7 @@ async def auth_verify(t: str, request: Request):
         first_name=getattr(row, "first_name", None),
         last_name=getattr(row, "last_name", None),
         referral_source=getattr(row, "referral_source", None),
+        dob=getattr(row, "dob", None),
     )
 
     # Attribute invite lineage. Only fires for new users (existing users

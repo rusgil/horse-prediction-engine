@@ -69,6 +69,7 @@ async def issue_magic_link(
     first_name: Optional[str] = None,
     last_name: Optional[str] = None,
     referral_source: Optional[str] = None,
+    dob=None,
 ) -> str:
     """Create a magic-link row, return the RAW token (caller emails it
     inside a verify URL). Never stores the raw token — only the hash.
@@ -90,6 +91,7 @@ async def issue_magic_link(
             first_name=(first_name or None),
             last_name=(last_name or None),
             referral_source=(referral_source or None),
+            dob=dob,
             created_at=now,
             expires_at=now + MAGIC_LINK_TTL,
         ))
@@ -212,6 +214,7 @@ async def get_or_create_user(
     first_name: Optional[str] = None,
     last_name: Optional[str] = None,
     referral_source: Optional[str] = None,
+    dob=None,
 ) -> UserRow:
     """Return the user with this email, creating a fresh row if none
     exists. Called after magic-link verification — at which point we
@@ -245,6 +248,7 @@ async def get_or_create_user(
                 email=email_norm, role="member", member_number=num,
                 founding=(num <= 100), created_at=datetime.utcnow(),
                 first_name=fn, last_name=ln, referral_source=ref, name=display,
+                dob=dob,
             )
             session.add(row)
             try:

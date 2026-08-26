@@ -210,6 +210,9 @@
               <input type="text" id="lastName" name="lastName" placeholder="Doe" autocomplete="family-name" />
             </div>
           </div>
+          <label for="dob">Date of birth</label>
+          <input type="date" id="dob" name="dob" autocomplete="bday" />
+          <div style="font-size:0.78rem; color:var(--muted, #8892a4); margin:-4px 0 8px">You must be 18 or over to join.</div>
         </div>
         <label for="email">Email</label>
         <input
@@ -357,11 +360,34 @@
       const first_name = joining ? document.getElementById('firstName').value.trim() : '';
       const last_name = joining ? document.getElementById('lastName').value.trim() : '';
       const referral_source = joining ? document.getElementById('referral').value : '';
+      const dob = joining ? document.getElementById('dob').value : '';
 
       if (joining && (!first_name || !last_name || !referral_source)) {
         errEl.textContent = 'Please add your name and how you found us.';
         errEl.classList.add('show');
         return;
+      }
+      if (joining && !dob) {
+        errEl.textContent = 'Please enter your date of birth.';
+        errEl.classList.add('show');
+        return;
+      }
+      if (joining && dob) {
+        // Client-side 18+ check (the server enforces it too).
+        const d = new Date(dob), now = new Date();
+        let age = now.getFullYear() - d.getFullYear();
+        const m = now.getMonth() - d.getMonth();
+        if (m < 0 || (m === 0 && now.getDate() < d.getDate())) age--;
+        if (isNaN(d.getTime()) || d > now) {
+          errEl.textContent = 'Please enter a valid date of birth.';
+          errEl.classList.add('show');
+          return;
+        }
+        if (age < 18) {
+          errEl.textContent = 'You must be 18 or over to join FunkyIQ.';
+          errEl.classList.add('show');
+          return;
+        }
       }
 
       btn.disabled = true;
@@ -371,7 +397,7 @@
 
       try {
         const body = { email };
-        if (joining) { body.first_name = first_name; body.last_name = last_name; body.referral_source = referral_source; }
+        if (joining) { body.first_name = first_name; body.last_name = last_name; body.referral_source = referral_source; body.dob = dob; }
         if (_turnstileToken) body.turnstile_token = _turnstileToken;
         const res = await fetch(`${API}/api/auth/request-code`, {
           method: 'POST',

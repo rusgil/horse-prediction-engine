@@ -6,7 +6,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Optional
 
-from sqlalchemy import Column, Float, Integer, String, Text, Boolean, DateTime, Index, UniqueConstraint, select, text
+from sqlalchemy import Column, Float, Integer, String, Text, Boolean, DateTime, Date, Index, UniqueConstraint, select, text
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sessionmaker
 from sqlalchemy.orm import DeclarativeBase
 
@@ -659,6 +659,7 @@ class UserRow(Base):
     first_name = Column(String, nullable=True)
     last_name = Column(String, nullable=True)
     referral_source = Column(String, nullable=True)   # "How did you find us?"
+    dob = Column(Date, nullable=True)                 # date of birth (18+ gate at signup)
     # Personalised preferences (account page).
     mobile_number = Column(String, nullable=True)
     marketing_opt_in = Column(Boolean, nullable=False, default=True)
@@ -721,6 +722,7 @@ class MagicLinkRow(Base):
     first_name = Column(String, nullable=True)
     last_name = Column(String, nullable=True)
     referral_source = Column(String, nullable=True)
+    dob = Column(Date, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     expires_at = Column(DateTime, nullable=False, index=True)
     used_at = Column(DateTime, nullable=True)
@@ -1248,6 +1250,8 @@ async def init_db() -> None:
         "ALTER TABLE magic_links ADD COLUMN IF NOT EXISTS first_name TEXT",
         "ALTER TABLE magic_links ADD COLUMN IF NOT EXISTS last_name TEXT",
         "ALTER TABLE magic_links ADD COLUMN IF NOT EXISTS referral_source TEXT",
+        "ALTER TABLE users ADD COLUMN IF NOT EXISTS dob DATE",
+        "ALTER TABLE magic_links ADD COLUMN IF NOT EXISTS dob DATE",
         # One-shot backfill: give existing accounts a sequential member number
         # (earliest join = lowest number), continuing after the current max.
         # Idempotent — only touches rows still NULL, so it's a no-op once run.
