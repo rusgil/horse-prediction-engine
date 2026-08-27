@@ -3947,25 +3947,38 @@ def _race_is_past(d: dict) -> bool:
         return False
 
 
-def _apply_paywall(obj, teaser_id: "str | None") -> int:
-    """Walk the payload; redact every UPCOMING race whose race_id != teaser to a
-    locked stub. Past/settled races stay full (value spent, results public).
-    Returns the count locked. The single teaser stays full — the next upcoming
-    race during the day, or (once racing's done) the day's highest-paying
-    winning pick, chosen by _current_teaser_race_id()."""
+def _apply_paywall(obj, teaser_id: "str | None", lock_past: bool = False,
+                   seen: "dict | None" = None) -> int:
+    """Walk the payload; redact every locked race to a stub. Returns the count
+    locked. The single teaser stays full — the next upcoming race during the
+    day, or (once racing's done) the day's highest-paying winning pick, chosen
+    by _current_teaser_race_id().
+
+    Past/settled races are historical RESULTS: they stay full for logged-in
+    viewers (any account — member, lapsed 5-day pass, no active sub), but are
+    locked for anonymous visitors (lock_past=True) so history is members-only —
+    a logged-out visitor just gets the trophy as the hook.
+
+    `seen` (if given) is a flag dict; seen['upcoming'] is set True when the
+    payload contains at least one not-yet-jumped race, so the 'you're seeing 1
+    free race' banner only fires on a live/today view, never a history date
+    (where every race is already settled)."""
     if isinstance(obj, dict):
         rid = obj.get("race_id")
         if rid is not None:
+            past = _race_is_past(obj)
+            if not past and seen is not None:
+                seen["upcoming"] = True  # live/today view — the free teaser is in play
             if rid == teaser_id:
                 obj["is_teaser"] = True  # the free pick — card shows the confidence callout
                 return 0
-            if _race_is_past(obj):
-                return 0  # settled/historical — never locked
+            if past and not lock_past:
+                return 0  # settled/historical — visible to logged-in viewers
             _redact_race_dict(obj)
             return 1
-        return sum(_apply_paywall(v, teaser_id) for v in obj.values())
+        return sum(_apply_paywall(v, teaser_id, lock_past, seen) for v in obj.values())
     if isinstance(obj, list):
-        return sum(_apply_paywall(item, teaser_id) for item in obj)
+        return sum(_apply_paywall(item, teaser_id, lock_past, seen) for item in obj)
     return 0
 
 
@@ -4058,20 +4071,26 @@ async def _display_prob_cap(request, call_next):
         )
         if _gated:
             teaser_id = await _current_teaser_race_id()
-            _apply_paywall(data, teaser_id)
+            # Anonymous visitors don't get historical results — past races lock
+            # too, leaving just the trophy hook. Any logged-in account (even a
+            # lapsed pass / no active sub) keeps seeing settled results.
+            viewer = await _request_user(request)
+            is_logged_in = viewer is not None
+            seen = {"upcoming": False}
+            _apply_paywall(data, teaser_id, lock_past=not is_logged_in, seen=seen)
             if isinstance(data, dict):
                 # Trophy is a conversion hook for ANONYMOUS visitors only — a
                 # signed-in account (member or not) never sees it.
-                trophy = None if (await _request_user(request)) is not None else await _current_trophy()
+                trophy = None if is_logged_in else await _current_trophy()
                 # Always attach paywall for a gated non-member so the frontend
                 # has a reliable "this viewer is gated" signal (used to hide the
                 # 'No Sharp picks' empty-state, etc.). 'active' (→ "you're seeing
-                # 1 free race" banner) is only true when there IS a free upcoming
-                # pick to headline — driven by teaser existence so it's consistent
-                # across the meetings-list + venue-detail payloads. The trophy
-                # shows regardless, including end of day when nothing's free.
+                # 1 free race" banner) fires ONLY when the payload has an upcoming
+                # (not-yet-run) race — so today's live view shows it but a
+                # past/history date (all settled, no free pick) does not.
+                # The trophy shows regardless, including end of day.
                 data["paywall"] = {
-                    "active": teaser_id is not None,
+                    "active": seen["upcoming"],
                     "teaser_race_id": teaser_id,
                     "trophy": trophy,
                     # 'subscription' → this feature needs Monthly/Annual (Edge);
