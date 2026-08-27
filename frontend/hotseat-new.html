@@ -1790,7 +1790,7 @@
             return `<div class="pname ${nm ? '' : 'ghost'}"><span class="pn-t">${nm ? esc(nm) : (r.top_win_probability != null ? 'Tap for our pick' : 'No prediction yet')}</span>${!done ? placeChip(r) : ''}${od ? `<span class="pk-odds num"${odTag ? ' style="color:var(--blue)"' : ''}>$${od.toFixed(2)}${odTag}</span>` : ''}${winnerPlace ? `<span class="pk-odds num" style="color:var(--blue)">$${winnerPlace.toFixed(2)} place</span>` : ''}</div>`;
           })()}
           ${barsHtml(r.top_win_probability, r.top_place_probability)}
-          ${!done ? `<div class="spark-slot" id="spark-${r.race_id.replace(/[^a-z0-9]/gi, '-')}"></div>` : ''}
+          ${!done ? `<div class="spark-slot" id="spark-${r.race_id.replace(/[^a-z0-9]/gi, '-')}"><span class="spark-lbl" style="color:var(--text-3)">· odds ·</span></div>` : ''}
         </div>
         <div class="chips">
           ${r.is_sharp ? `<span class="chip sharp">🎯 SHARP</span>` : ''}
