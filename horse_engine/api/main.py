@@ -4014,6 +4014,10 @@ async def _request_is_subscriber(request) -> bool:
         user = await _request_user(request)
         if not has_active_access(user):
             return False
+        # Staff (admin/power_user) get subscriber-level access — including Edge
+        # and Playbook — without holding a paid monthly/annual plan.
+        if getattr(user, "role", None) in ("admin", "power_user"):
+            return True
         days = await _user_plan_days(user)
         return days is not None and days >= 30
     except Exception:
