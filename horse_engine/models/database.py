@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import json
+import logging
+import os
 import uuid
 from datetime import datetime, timezone
 from typing import Optional
@@ -28,6 +30,31 @@ def _make_engine():
 
 engine = _make_engine()
 SessionLocal = async_sessionmaker(engine, expire_on_commit=False)
+
+# ── Temporary diagnostic (2026-08-27) ──────────────────────────────────────
+# Identify the caller that keeps trying to UPDATE frozen post-jump history
+# win/rank (the history_write_guard_incidents loop). Gated by HISTORY_WRITE_DIAG
+# so it's off by default. When on, logs a Python stack for any UPDATE to
+# runner_prediction_history that touches win_probability/model_rank, so the next
+# occurrence names the leaking caller. REMOVE once the caller is fixed.
+if os.environ.get("HISTORY_WRITE_DIAG", "").strip().lower() in ("1", "true", "yes"):
+    import traceback as _hw_tb
+    from sqlalchemy import event as _hw_event
+    _hw_log = logging.getLogger("history_write_diag")
+
+    @_hw_event.listens_for(engine.sync_engine, "before_cursor_execute")
+    def _diag_history_writes(conn, cursor, statement, parameters, context, executemany):
+        try:
+            if statement.lstrip()[:6].lower() != "update":
+                return
+            low = statement.lower()
+            if "runner_prediction_history" in low and ("win_probability" in low or "model_rank" in low):
+                stack = "".join(_hw_tb.format_stack(limit=16)[:-1])
+                _hw_log.warning(
+                    "[history-write-diag] UPDATE win/rank on runner_prediction_history\nSTMT: %s\nCALLER:\n%s",
+                    statement[:300], stack)
+        except Exception:
+            pass
 
 
 class Base(DeclarativeBase):
