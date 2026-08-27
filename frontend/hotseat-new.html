@@ -1594,13 +1594,19 @@
         if (resp.ok) _sparkCache[key] = (await resp.json()).snapshots || [];
       } catch (e) {}
     }));
+    let injected = 0, noSlot = 0, noData = 0;
     up.forEach(r => {
       const horse = r.top_pick || (topPickOf(r.race_id) || {}).horse_name;
       const snaps = _sparkCache[`${r.race_id}||${horse}`];
-      if (!snaps || snaps.length < 2) return;
+      if (!snaps || snaps.length < 2) { noData++; return; }
       const slot = document.getElementById('spark-' + r.race_id.replace(/[^a-z0-9]/gi, '-'));
-      if (slot) slot.innerHTML = buildSparklineSvg(snaps);
+      if (!slot) { noSlot++; return; }
+      slot.innerHTML = buildSparklineSvg(snaps);
+      injected++;
     });
+    console.log('[spark] races=%d upcoming=%d injected=%d noSlot=%d noData=%d sampleSlot=%s',
+      (races || []).length, up.length, injected, noSlot, noData,
+      up[0] ? ('spark-' + up[0].race_id.replace(/[^a-z0-9]/gi, '-') + ' exists=' + !!document.getElementById('spark-' + up[0].race_id.replace(/[^a-z0-9]/gi, '-'))) : 'n/a');
   }
 
   function renderB() {
