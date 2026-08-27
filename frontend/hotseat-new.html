@@ -930,6 +930,10 @@
 
 
 <main>
+  <div id="sparkTest" style="max-width:640px;margin:12px auto;padding:10px 14px;border:1px dashed #f5c842;border-radius:10px;font-size:0.82rem;color:var(--text-2)">
+    <b style="color:#f5c842">SPARK TEST (temp)</b> — <span id="sparkTestOut">loading…</span>
+    <div id="sparkTestSvg" style="margin-top:6px"></div>
+  </div>
   <div class="view" id="viewA"><div class="loading"><div class="spin"></div>Loading meetings…</div></div>
   <div class="view" id="viewB"><div class="loading"><div class="spin"></div>Loading meetings…</div></div>
   <div class="view" id="viewC"><div class="loading"><div class="spin"></div>Loading meetings…</div></div>
@@ -2102,6 +2106,27 @@
   (async () => {
     try { const r = await fetch(`${API}/api/config/public`); if (r.ok) window.PickCard.configureBilling((await r.json()).billing); } catch (e) {}
     window.PickCard.bindUnlock();
+  })();
+
+  // TEMP: isolated sparkline test — fetch a known race's odds trend + render,
+  // independent of meetings/paywall/card render. Remove once diagnosed.
+  (async function sparkTest() {
+    const out = document.getElementById('sparkTestOut');
+    const svg = document.getElementById('sparkTestSvg');
+    if (!out) return;
+    const rid = '2026-08-27_northam_R3', horse = 'FLASH DANCER';
+    try {
+      const r = await fetch(`${API}/api/races/${encodeURIComponent(rid)}/odds-trend?horse=${encodeURIComponent(horse)}`);
+      if (!r.ok) { out.innerHTML = `<b style="color:#f2726f">fetch failed: HTTP ${r.status}</b>`; return; }
+      const snaps = (await r.json()).snapshots || [];
+      const o = snaps.map(s => s.win_odds).filter(Boolean);
+      const hasFn = typeof buildSparklineSvg === 'function';
+      out.innerHTML = `${horse}: <b>${snaps.length}</b> snapshots, odds <b>${o[0]}</b> → <b>${o[o.length - 1]}</b> · buildSparklineSvg=` +
+        (hasFn ? '<b style="color:#4ade80">OK</b>' : '<b style="color:#f2726f">MISSING</b>');
+      if (hasFn && svg) svg.innerHTML = buildSparklineSvg(snaps);
+    } catch (e) {
+      out.innerHTML = `<b style="color:#f2726f">ERROR:</b> ${e && e.message ? e.message : e}`;
+    }
   })();
 })();
 </script>
