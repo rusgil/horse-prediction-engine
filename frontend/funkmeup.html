@@ -53,20 +53,15 @@
     }
 
     /* Header */
+    /* Title + date-row headers are transparent (like the other pages) so the
+       page's aurora backdrop flows through — no opaque band / hard stop. */
     header {
-      position: sticky;
-      top: 0;
+      position: static;
       z-index: 10;
-      background: linear-gradient(180deg, #0a0d18 0%, rgba(10,13,24,0.92) 100%);
-      backdrop-filter: blur(12px);
-      -webkit-backdrop-filter: blur(12px);
-      border-bottom: 1px solid var(--border);
+      background: transparent;
+      border-bottom: none;
       padding: 14px 16px 12px;
       padding-top: calc(14px + env(safe-area-inset-top));
-    }
-    /* light mode: the sticky header's gradient is hardcoded dark — swap it */
-    :root[data-theme="light"] header {
-      background: linear-gradient(180deg, #eef1f5 0%, rgba(238,241,245,0.92) 100%);
     }
     .title-row {
       display: flex;
