@@ -31,41 +31,6 @@ def _make_engine():
 engine = _make_engine()
 SessionLocal = async_sessionmaker(engine, expire_on_commit=False)
 
-# ── Temporary diagnostic (2026-08-27) ──────────────────────────────────────
-# Identify the caller that keeps trying to UPDATE frozen post-jump history
-# win/rank (the history_write_guard_incidents loop). Gated by HISTORY_WRITE_DIAG
-# so it's off by default. When on, logs a Python stack for any UPDATE to
-# runner_prediction_history that touches win_probability/model_rank, so the next
-# occurrence names the leaking caller. REMOVE once the caller is fixed.
-if os.environ.get("HISTORY_WRITE_DIAG", "").strip().lower() in ("1", "true", "yes"):
-    import traceback as _hw_tb
-    from sqlalchemy import event as _hw_event, inspect as _hw_inspect
-    from sqlalchemy.orm import Session as _HwSession
-    _hw_log = logging.getLogger("history_write_diag")
-    _HW_COLS = {"win_probability", "place_probability", "model_rank",
-                "place_model_rank", "exotic_model_rank", "is_sharp"}
-
-    @_hw_event.listens_for(_HwSession, "before_flush")
-    def _diag_history_flush(session, flush_context, instances):
-        try:
-            for obj in session.dirty:
-                if type(obj).__name__ != "RunnerPredictionHistoryRow":
-                    continue
-                st = _hw_inspect(obj)
-                changed = {a.key for a in st.attrs if a.history.has_changes()}
-                if not (changed & _HW_COLS):
-                    continue
-                # Only the PROBLEM case: a jumped (frozen) row being mutated.
-                _j = sched_to_utc_naive(getattr(obj, "scheduled_time", None))
-                if _j is not None and datetime.utcnow() <= _j:
-                    continue  # pre-jump — legitimate rerank
-                stack = "".join(_hw_tb.format_stack(limit=25))
-                _hw_log.warning(
-                    "[history-write-diag] JUMPED-history mutation race=%s horse=%s changed=%s\nCALLER:\n%s",
-                    getattr(obj, "race_id", "?"), getattr(obj, "horse_name", "?"), sorted(changed), stack)
-        except Exception:
-            pass
-
 
 class Base(DeclarativeBase):
     pass
@@ -1390,23 +1355,42 @@ async def init_db() -> None:
     # to whatever they were before the gate refinement landed, so past
     # numbers stop shifting. Only runs once per row — once is_sharp is
     # set (True or False), it's never touched.
+    #
+    # POST-JUMP GUARD (2026-08-27): is_sharp is a write-once frozen field once a
+    # race jumps. A rank-1 row whose flag is still NULL AFTER the jump (e.g. a
+    # runner left holding model_rank=1 by a late scratch) can NEVER be
+    # backfilled — the write-once trigger reverts every attempt to NULL, so the
+    # same row is re-selected on EVERY startup and logs a fresh
+    # post_race_update_blocked incident (the history_guard_incidents spam loop
+    # on the ~5 stale races). Mirror the guarded admin endpoint
+    # (/api/admin/backfill-is-sharp) and touch only NOT-yet-jumped rows; the DB
+    # is the SQLite/Postgres split here, so `scheduled_time::timestamptz` (PG)
+    # falls back to a string compare on SQLite where the cast is a no-op. NULL
+    # scheduled_time is treated as not-jumped (pre-launch/legacy rows).
+    # Surfaces recompute Sharp at read-time from the frozen win-probs, so a NULL
+    # flag on a genuinely-jumped row is harmless.
+    _not_jumped = ("(scheduled_time IS NULL OR "
+                   "scheduled_time::timestamptz > (now() - interval '5 minutes'))")
     backfills = [
         # rank-1 with prob ≥ 0.30 → Sharp regardless of top-3 sum
-        """
+        f"""
         UPDATE runner_prediction_history
         SET is_sharp = TRUE
         WHERE model_rank = 1
           AND is_sharp IS NULL
           AND win_probability >= 0.30
+          AND {_not_jumped}
         """,
         # rank-1 with prob < 0.30 but race's top-3 sum ≥ 0.60 → Sharp
         # Compute top-3 sum per race using a correlated subquery that
         # works on both SQLite and Postgres (avoids window functions).
-        """
+        f"""
         UPDATE runner_prediction_history AS h
         SET is_sharp = TRUE
         WHERE h.model_rank = 1
           AND h.is_sharp IS NULL
+          AND (h.scheduled_time IS NULL OR
+               h.scheduled_time::timestamptz > (now() - interval '5 minutes'))
           AND (
             SELECT COALESCE(SUM(win_probability), 0)
             FROM runner_prediction_history
@@ -1417,10 +1401,11 @@ async def init_db() -> None:
         """,
         # Everything else on rank-1 → not Sharp. Sets explicit FALSE so
         # the IS NULL guard above doesn't re-run on every startup.
-        """
+        f"""
         UPDATE runner_prediction_history
         SET is_sharp = FALSE
         WHERE model_rank = 1 AND is_sharp IS NULL
+          AND {_not_jumped}
         """,
         # Non-rank-1 rows: leave is_sharp NULL (the Sharp gate only
         # applies to rank-1 picks per the definition).
