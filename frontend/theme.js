@@ -90,6 +90,13 @@
        The nav buttons keep their own surfaces for legibility. */
     'body .page-nav { background: transparent; backdrop-filter: none; -webkit-backdrop-filter: none; border-bottom: none; }',
     ':root[data-theme="light"] body .page-nav { background: transparent; border-bottom: none; }',
+    /* Mobile: the nav sits over scrolling content, so a transparent bar reads as
+       see-through. Give it a solid surface at mobile widths (desktop stays the
+       seamless transparent aurora look). */
+    '@media (max-width: 760px) {',
+    '  body .page-nav { background: var(--bg-base, var(--bg, #07090f)); }',
+    '  :root[data-theme="light"] body .page-nav { background: var(--bg-base, var(--bg, #f4f6fa)); }',
+    '}',
     ':root[data-theme="light"] .page-nav-btn { color: #5d6b80; background: rgba(23,33,47,0.04); border-color: rgba(23,33,47,0.12); }',
     ':root[data-theme="light"] .page-nav-btn:hover { background: rgba(23,33,47,0.08); color: #17212f; }',
     ':root[data-theme="light"] .page-nav-btn.edge.active   { background: rgba(13,148,80,0.12);  color: #0a7a41; border-color: rgba(13,148,80,0.4); }',
