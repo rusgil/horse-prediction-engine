@@ -77,8 +77,11 @@
        `html body` outranks the pages\' inline `body { background: var(--bg) }`
        regardless of style order, so the tint always shows; the solid --bg
        colour underneath is kept (we only set background-image). */
-    'html body { background-image: radial-gradient(1200px 620px at 8% -12%, rgba(124,92,255,0.22), transparent 56%), radial-gradient(1050px 560px at 102% -6%, rgba(56,132,255,0.16), transparent 52%), radial-gradient(1200px 780px at 90% 114%, rgba(236,72,153,0.15), transparent 58%); background-attachment: fixed; }',
-    ':root[data-theme="light"] body { background-image: radial-gradient(1200px 620px at 8% -12%, rgba(124,92,255,0.17), transparent 56%), radial-gradient(1050px 560px at 102% -6%, rgba(56,132,255,0.13), transparent 52%), radial-gradient(1200px 780px at 90% 114%, rgba(236,72,153,0.14), transparent 58%); background-attachment: fixed; }',
+    /* Fixed pseudo-element instead of background-attachment:fixed, which iOS
+       Safari renders once then drops (the "appears then disappears" bug).
+       z-index:-1 + pointer-events:none keeps it a non-interactive backdrop. */
+    'body::before { content: ""; position: fixed; inset: 0; z-index: -1; pointer-events: none; background-image: radial-gradient(1200px 640px at 6% -14%, rgba(124,92,255,0.30), transparent 56%), radial-gradient(1080px 580px at 104% -8%, rgba(56,132,255,0.22), transparent 52%), radial-gradient(1220px 820px at 92% 116%, rgba(236,72,153,0.20), transparent 58%); }',
+    ':root[data-theme="light"] body::before { background-image: radial-gradient(1200px 640px at 6% -14%, rgba(124,92,255,0.22), transparent 56%), radial-gradient(1080px 580px at 104% -8%, rgba(56,132,255,0.17), transparent 52%), radial-gradient(1220px 820px at 92% 116%, rgba(236,72,153,0.18), transparent 58%); }',
     /* top banner (.page-nav / .brand-bar use hardcoded dark colours) */
     ':root[data-theme="light"] .page-nav { background: rgba(255,255,255,0.92); border-bottom: 1px solid #d5dce5; }',
     ':root[data-theme="light"] .page-nav-btn { color: #5d6b80; background: rgba(23,33,47,0.04); border-color: rgba(23,33,47,0.12); }',
