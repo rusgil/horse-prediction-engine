@@ -1512,6 +1512,12 @@
     if (!sp.length && picks.length) return { picks, fallback: true };
     return { picks: sp, fallback: false };
   }
+  // The "recent winner" trophy is the conversion hook for logged-out visitors
+  // and must show in EVERY Edge state (splash, empty, history/results, feed) —
+  // not just the main pick list. Returns '' when there's no trophy (members).
+  function edgeTrophyHTML() {
+    return (E.paywall && E.paywall.trophy) ? window.PickCard.trophyBanner(E.paywall.trophy) : '';
+  }
   function renderFeed() {
     const el = document.getElementById('feed');
     _edgeBadgeSeen = new Set();
@@ -1525,7 +1531,7 @@
       }
       if (!todayGateReady()) {
         const ss = document.getElementById('statStrip'); if (ss) ss.innerHTML = '';
-        el.innerHTML = todaySplashHTML();
+        el.innerHTML = edgeTrophyHTML() + todaySplashHTML();
         startTodayPoll(renderFeed);
         return;
       }
@@ -1539,7 +1545,7 @@
     const m = applyMode(E.picks);
     const picks = m.picks;
     if (!picks.length) {
-      el.innerHTML = `<div class="empty"><div class="big">🔍</div>No high-confidence picks right now.<br>The model hasn't found races at ≥${E.threshold}% confidence — check back after the morning update.</div>`;
+      el.innerHTML = edgeTrophyHTML() + `<div class="empty"><div class="big">🔍</div>No high-confidence picks right now.<br>The model hasn't found races at ≥${E.threshold}% confidence — check back after the morning update.</div>`;
       return;
     }
     const byDate = {};
@@ -1580,20 +1586,21 @@
   function renderResults(el) {
     if (!E.resDate) E.resDate = aestToday(-1);
     const nav = '';  // date nav now lives in the controls bar (edgeDateBarHTML)
+    const trophy = edgeTrophyHTML();
     if (!E.resData || E.resData._date !== E.resDate) {
-      el.innerHTML = nav + '<div class="loading"><div class="spin"></div>Loading results…</div>';
+      el.innerHTML = trophy + nav + '<div class="loading"><div class="spin"></div>Loading results…</div>';
       bindResNav(el);
       const want = E.resDate;
       loadResultsDate(want)
         .then(() => { if (E.resDate === want && E.resData) { E.resData._date = want; renderResults(document.getElementById('feed')); } })
-        .catch(e => { if (E.resDate === want) { el.innerHTML = nav + `<div class="empty"><div class="big">⚠️</div>Could not load results — ${esc(e.message)}</div>`; bindResNav(el); } });
+        .catch(e => { if (E.resDate === want) { el.innerHTML = trophy + nav + `<div class="empty"><div class="big">⚠️</div>Could not load results — ${esc(e.message)}</div>`; bindResNav(el); } });
       return;
     }
     const m = applyMode(E.resData.picks || []);
     const picks = m.picks;
     const cards = picks.map(p => card(p, p)).join('')
       || `<div class="empty"><div class="big">🐎</div>No ${E.mode === 'sharp' ? 'Sharp ' : ''}picks recorded for this date.</div>`;
-    el.innerHTML = nav + (m.fallback && !E.paywall ? '<div class="banner-sharp"><b>🎯 No Sharp picks this day</b> — showing all picks.</div>' : '') + cards;
+    el.innerHTML = trophy + nav + (m.fallback && !E.paywall ? '<div class="banner-sharp"><b>🎯 No Sharp picks this day</b> — showing all picks.</div>' : '') + cards;
     renderControls();   // rebuild the date-bar + strip from the now-loaded data so both match
     bindResNav(el);
     bindCards(el);

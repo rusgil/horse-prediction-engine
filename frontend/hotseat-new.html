@@ -1444,6 +1444,12 @@
       + `<span class="tri-legs">${triNums}</span>${triPct}${vd}`
       + `<span class="tri-names">${triNames}</span>${ffPart}</div>`;
   }
+  // The "recent winner" trophy is the logged-out conversion hook and must show
+  // in EVERY Hot Seat state (splash, empty, grid, feed, rail) — not just the
+  // feed. Returns '' for members (no trophy attached).
+  function seatTrophyHTML() {
+    return (S.paywall && S.paywall.trophy) ? window.PickCard.trophyBanner(S.paywall.trophy) : '';
+  }
   function renderAll() {
     // Publish gate: hold TODAY behind a splash until ready. Past dates exempt.
     if (S.date >= aestToday(0)) {
@@ -1454,7 +1460,8 @@
       }
       if (!todayGateReady()) {
         const ds = document.getElementById('dayStrip'); if (ds) ds.innerHTML = '';
-        ['A', 'B', 'C'].forEach(v => { const e = document.getElementById('view' + v); if (e) e.innerHTML = todaySplashHTML(); });
+        const _tr = seatTrophyHTML();
+        ['A', 'B', 'C'].forEach(v => { const e = document.getElementById('view' + v); if (e) e.innerHTML = _tr + todaySplashHTML(); });
         startTodayPoll(renderAll); buildDateRow(); return;
       }
       stopTodayPoll();
@@ -1462,8 +1469,9 @@
     renderDayStrip(); try { renderA(); } catch (e) {} renderB(); try { renderC(); } catch (e) {} buildDateRow();
   }
   function renderEmptyAll() {
+    const _tr = seatTrophyHTML();
     ['A','B','C'].forEach(v => document.getElementById('view' + v).innerHTML =
-      `<div class="empty"><div class="big">🐎</div>No meetings loaded for ${esc(S.date)} yet.<br>Try another date — or check back after the morning update.</div>`);
+      _tr + `<div class="empty"><div class="big">🐎</div>No meetings loaded for ${esc(S.date)} yet.<br>Try another date — or check back after the morning update.</div>`);
   }
 
   /* ── View A: heat grid ── */
@@ -1543,7 +1551,7 @@
       el.innerHTML = `<div class="empty"><div class="big">🎯</div>No Sharp races today — switch to 'All picks' to see the full grid.</div>`;
       return;
     }
-    el.innerHTML = `<div class="grid-wrap"><table class="race-grid">
+    el.innerHTML = seatTrophyHTML() + `<div class="grid-wrap"><table class="race-grid">
       <thead><tr><th>Meeting</th>${head}</tr></thead><tbody>${rows}</tbody>
       ${colS.some(Boolean) ? `<tfoot><tr>
         <td class="mcell tally-lab">Wins / places</td>
@@ -1845,7 +1853,7 @@
       </div>`;
     }).join('');
 
-    el.innerHTML = `<div class="rail-layout">
+    el.innerHTML = seatTrophyHTML() + `<div class="rail-layout">
       <div class="rail">${railItems}</div>
       <div class="board">
         <div class="board-head">
