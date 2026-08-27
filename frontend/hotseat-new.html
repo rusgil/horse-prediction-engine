@@ -933,6 +933,7 @@
   <div id="sparkTest" style="max-width:640px;margin:12px auto;padding:10px 14px;border:1px dashed #f5c842;border-radius:10px;font-size:0.82rem;color:var(--text-2)">
     <b style="color:#f5c842">SPARK TEST (temp)</b> — <span id="sparkTestOut">loading…</span>
     <div id="sparkTestSvg" style="margin-top:6px"></div>
+    <div id="sparkTestCard" style="margin-top:6px;font-family:monospace;font-size:0.72rem">CARD PATH → waiting…</div>
   </div>
   <div class="view" id="viewA"><div class="loading"><div class="spin"></div>Loading meetings…</div></div>
   <div class="view" id="viewB"><div class="loading"><div class="spin"></div>Loading meetings…</div></div>
@@ -1608,9 +1609,10 @@
       slot.innerHTML = buildSparklineSvg(snaps);
       injected++;
     });
-    console.log('[spark] races=%d upcoming=%d injected=%d noSlot=%d noData=%d sampleSlot=%s',
-      (races || []).length, up.length, injected, noSlot, noData,
-      up[0] ? ('spark-' + up[0].race_id.replace(/[^a-z0-9]/gi, '-') + ' exists=' + !!document.getElementById('spark-' + up[0].race_id.replace(/[^a-z0-9]/gi, '-'))) : 'n/a');
+    const slotsInDom = document.querySelectorAll('.spark-slot').length;
+    window.__sparkStats = { races: (races || []).length, upcoming: up.length, injected, noSlot, noData, slotsInDom,
+      sample: up[0] ? up[0].race_id + ' top_pick=' + (up[0].top_pick || '?') : 'n/a' };
+    console.log('[spark]', JSON.stringify(window.__sparkStats));
   }
 
   function renderB() {
@@ -2127,6 +2129,15 @@
     } catch (e) {
       out.innerHTML = `<b style="color:#f2726f">ERROR:</b> ${e && e.message ? e.message : e}`;
     }
+    // Card-path stats: check every 3s once the feed has rendered.
+    setInterval(() => {
+      const s = window.__sparkStats;
+      const line = s
+        ? `CARD PATH → upcoming=${s.upcoming} injected=${s.injected} noSlot=${s.noSlot} noData=${s.noData} slotsInDom=${s.slotsInDom} · ${s.sample}`
+        : 'CARD PATH → fetchSparklines has NOT run yet (renderB not reached or threw before it)';
+      const el = document.getElementById('sparkTestCard');
+      if (el) el.textContent = line;
+    }, 3000);
   })();
 })();
 </script>
