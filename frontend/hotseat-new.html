@@ -1590,29 +1590,20 @@
       const horse = r.top_pick || (topPickOf(r.race_id) || {}).horse_name;
       return (!j || j > Date.now()) && horse;
     });
+    let added = false;
     await Promise.all(up.map(async r => {
       const horse = r.top_pick || (topPickOf(r.race_id) || {}).horse_name;
       const key = `${r.race_id}||${horse}`;
       if (_sparkCache[key]) return;
       try {
         const resp = await fetch(`${API}/api/races/${encodeURIComponent(r.race_id)}/odds-trend?horse=${encodeURIComponent(horse)}`);
-        if (resp.ok) _sparkCache[key] = (await resp.json()).snapshots || [];
+        if (resp.ok) { _sparkCache[key] = (await resp.json()).snapshots || []; added = true; }
       } catch (e) {}
     }));
-    let injected = 0, noSlot = 0, noData = 0;
-    up.forEach(r => {
-      const horse = r.top_pick || (topPickOf(r.race_id) || {}).horse_name;
-      const snaps = _sparkCache[`${r.race_id}||${horse}`];
-      if (!snaps || snaps.length < 2) { noData++; return; }
-      const slot = document.getElementById('spark-' + r.race_id.replace(/[^a-z0-9]/gi, '-'));
-      if (!slot) { noSlot++; return; }
-      slot.innerHTML = buildSparklineSvg(snaps);
-      injected++;
-    });
-    const slotsInDom = document.querySelectorAll('.spark-slot').length;
-    window.__sparkStats = { races: (races || []).length, upcoming: up.length, injected, noSlot, noData, slotsInDom,
-      sample: up[0] ? up[0].race_id + ' top_pick=' + (up[0].top_pick || '?') : 'n/a' };
-    console.log('[spark]', JSON.stringify(window.__sparkStats));
+    window.__sparkStats = { upcoming: up.length, added, cachedKeys: Object.keys(_sparkCache).length };
+    // Re-render ONCE so the cards pick up the now-cached sparklines inline
+    // (avoids the async-injection race where slots vanish before injection).
+    if (added) renderB();
   }
 
   function renderB() {
@@ -1796,7 +1787,13 @@
             return `<div class="pname ${nm ? '' : 'ghost'}"><span class="pn-t">${nm ? esc(nm) : (r.top_win_probability != null ? 'Tap for our pick' : 'No prediction yet')}</span>${!done ? placeChip(r) : ''}${od ? `<span class="pk-odds num"${odTag ? ' style="color:var(--blue)"' : ''}>$${od.toFixed(2)}${odTag}</span>` : ''}${winnerPlace ? `<span class="pk-odds num" style="color:var(--blue)">$${winnerPlace.toFixed(2)} place</span>` : ''}</div>`;
           })()}
           ${barsHtml(r.top_win_probability, r.top_place_probability)}
-          ${!done ? `<div class="spark-slot" id="spark-${r.race_id.replace(/[^a-z0-9]/gi, '-')}"><span class="spark-lbl" style="color:var(--text-3)">· odds ·</span></div>` : ''}
+          ${!done ? (() => {
+            const _h = r.top_pick || (topPickOf(r.race_id) || {}).horse_name;
+            const _s = _h ? _sparkCache[`${r.race_id}||${_h}`] : null;
+            const inner = (_s && _s.length >= 2) ? buildSparklineSvg(_s)
+              : '<span class="spark-lbl" style="color:var(--text-3)">· odds ·</span>';
+            return `<div class="spark-slot">${inner}</div>`;
+          })() : ''}
         </div>
         <div class="chips">
           ${r.is_sharp ? `<span class="chip sharp">🎯 SHARP</span>` : ''}
@@ -2133,8 +2130,8 @@
     setInterval(() => {
       const s = window.__sparkStats;
       const line = s
-        ? `CARD PATH → upcoming=${s.upcoming} injected=${s.injected} noSlot=${s.noSlot} noData=${s.noData} slotsInDom=${s.slotsInDom} · ${s.sample}`
-        : 'CARD PATH → fetchSparklines has NOT run yet (renderB not reached or threw before it)';
+        ? `CARD PATH → upcoming=${s.upcoming} added=${s.added} cachedKeys=${s.cachedKeys} · sparklines render inline from cache`
+        : 'CARD PATH → fetchSparklines has NOT run yet';
       const el = document.getElementById('sparkTestCard');
       if (el) el.textContent = line;
     }, 3000);
