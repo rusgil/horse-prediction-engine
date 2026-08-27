@@ -39,20 +39,30 @@ SessionLocal = async_sessionmaker(engine, expire_on_commit=False)
 # occurrence names the leaking caller. REMOVE once the caller is fixed.
 if os.environ.get("HISTORY_WRITE_DIAG", "").strip().lower() in ("1", "true", "yes"):
     import traceback as _hw_tb
-    from sqlalchemy import event as _hw_event
+    from sqlalchemy import event as _hw_event, inspect as _hw_inspect
+    from sqlalchemy.orm import Session as _HwSession
     _hw_log = logging.getLogger("history_write_diag")
+    _HW_COLS = {"win_probability", "place_probability", "model_rank",
+                "place_model_rank", "exotic_model_rank", "is_sharp"}
 
-    @_hw_event.listens_for(engine.sync_engine, "before_cursor_execute")
-    def _diag_history_writes(conn, cursor, statement, parameters, context, executemany):
+    @_hw_event.listens_for(_HwSession, "before_flush")
+    def _diag_history_flush(session, flush_context, instances):
         try:
-            if statement.lstrip()[:6].lower() != "update":
-                return
-            low = statement.lower()
-            if "runner_prediction_history" in low and ("win_probability" in low or "model_rank" in low):
-                stack = "".join(_hw_tb.format_stack(limit=16)[:-1])
+            for obj in session.dirty:
+                if type(obj).__name__ != "RunnerPredictionHistoryRow":
+                    continue
+                st = _hw_inspect(obj)
+                changed = {a.key for a in st.attrs if a.history.has_changes()}
+                if not (changed & _HW_COLS):
+                    continue
+                # Only the PROBLEM case: a jumped (frozen) row being mutated.
+                _j = sched_to_utc_naive(getattr(obj, "scheduled_time", None))
+                if _j is not None and datetime.utcnow() <= _j:
+                    continue  # pre-jump — legitimate rerank
+                stack = "".join(_hw_tb.format_stack(limit=25))
                 _hw_log.warning(
-                    "[history-write-diag] UPDATE win/rank on runner_prediction_history\nSTMT: %s\nCALLER:\n%s",
-                    statement[:300], stack)
+                    "[history-write-diag] JUMPED-history mutation race=%s horse=%s changed=%s\nCALLER:\n%s",
+                    getattr(obj, "race_id", "?"), getattr(obj, "horse_name", "?"), sorted(changed), stack)
         except Exception:
             pass
 
