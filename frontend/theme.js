@@ -88,8 +88,8 @@
        instead of reading as a separate opaque band. (backdrop-filter sampled
        the flat body bg, not the z-index:-1 aurora, so it never took the tint.)
        The nav buttons keep their own surfaces for legibility. */
-    'body .page-nav { background: transparent; backdrop-filter: none; -webkit-backdrop-filter: none; border-bottom: 1px solid rgba(255,255,255,0.06); }',
-    ':root[data-theme="light"] body .page-nav { background: transparent; border-bottom: 1px solid rgba(23,33,47,0.06); }',
+    'body .page-nav { background: transparent; backdrop-filter: none; -webkit-backdrop-filter: none; border-bottom: none; }',
+    ':root[data-theme="light"] body .page-nav { background: transparent; border-bottom: none; }',
     ':root[data-theme="light"] .page-nav-btn { color: #5d6b80; background: rgba(23,33,47,0.04); border-color: rgba(23,33,47,0.12); }',
     ':root[data-theme="light"] .page-nav-btn:hover { background: rgba(23,33,47,0.08); color: #17212f; }',
     ':root[data-theme="light"] .page-nav-btn.edge.active   { background: rgba(13,148,80,0.12);  color: #0a7a41; border-color: rgba(13,148,80,0.4); }',
