@@ -1585,19 +1585,23 @@
       const horse = r.top_pick || (topPickOf(r.race_id) || {}).horse_name;
       return (!j || j > Date.now()) && horse;
     });
-    let added = false;
     await Promise.all(up.map(async r => {
       const horse = r.top_pick || (topPickOf(r.race_id) || {}).horse_name;
       const key = `${r.race_id}||${horse}`;
       if (_sparkCache[key]) return;
       try {
         const resp = await fetch(`${API}/api/races/${encodeURIComponent(r.race_id)}/odds-trend?horse=${encodeURIComponent(horse)}`);
-        if (resp.ok) { _sparkCache[key] = (await resp.json()).snapshots || []; added = true; }
+        if (resp.ok) _sparkCache[key] = (await resp.json()).snapshots || [];
       } catch (e) {}
     }));
-    // Re-render ONCE so the cards pick up the now-cached sparklines inline
-    // (avoids the async-injection race where slots vanish before injection).
-    if (added) renderB();
+    // Inject into the shared PickCard's spark-slots (rendered when showSpark:true).
+    up.forEach(r => {
+      const horse = r.top_pick || (topPickOf(r.race_id) || {}).horse_name;
+      const snaps = _sparkCache[`${r.race_id}||${horse}`];
+      if (!snaps || snaps.length < 2) return;
+      const slot = document.getElementById('spark-' + r.race_id.replace(/[^a-z0-9]/gi, '-'));
+      if (slot) slot.innerHTML = buildSparklineSvg(snaps);
+    });
   }
 
   function renderB() {
@@ -1736,7 +1740,7 @@
       return window.PickCard.render(pick, {
         venueBadge: venueBadge,
         triStrip: () => triStrip(r),  // no inline field — clicking the card opens
-        showSpark: false,             // the drawer (openRace), same as the Lounge
+        showSpark: true,              // streaming odds sparkline (same as Edge)
       });
     };
     const _cardOLD = (r, settledCard) => {
