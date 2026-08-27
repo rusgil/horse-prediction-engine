@@ -216,10 +216,15 @@
             </div>
           </div>
           <label for="dobDay">Date of birth</label>
+          <!-- No `required` here: these selects live inside #joinName, which is
+               display:none during sign-in. A required+hidden control is not
+               focusable, so native validation aborts the submit event silently
+               (the "sign in does nothing on mobile" bug). DOB is validated in JS
+               for join mode instead (see the submit handler). -->
           <div class="dob-row">
-            <select id="dobDay" class="d-day" aria-label="Day" required><option value="" disabled selected>DD</option></select>
-            <select id="dobMonth" class="d-month" aria-label="Month" required><option value="" disabled selected>MM</option></select>
-            <select id="dobYear" class="d-year" aria-label="Year" required><option value="" disabled selected>YYYY</option></select>
+            <select id="dobDay" class="d-day" aria-label="Day"><option value="" disabled selected>DD</option></select>
+            <select id="dobMonth" class="d-month" aria-label="Month"><option value="" disabled selected>MM</option></select>
+            <select id="dobYear" class="d-year" aria-label="Year"><option value="" disabled selected>YYYY</option></select>
           </div>
           <div style="font-size:0.78rem; color:var(--muted, #8892a4); margin:0 0 8px">You must be 18 or over to join.</div>
         </div>

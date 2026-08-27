@@ -83,10 +83,13 @@
     'body::before { content: ""; position: fixed; inset: 0; z-index: -1; pointer-events: none; background-image: radial-gradient(1200px 640px at 6% -14%, rgba(124,92,255,0.30), transparent 56%), radial-gradient(1080px 580px at 104% -8%, rgba(56,132,255,0.22), transparent 52%), radial-gradient(1220px 820px at 92% 116%, rgba(236,72,153,0.20), transparent 58%); }',
     ':root[data-theme="light"] body::before { background-image: radial-gradient(1200px 640px at 6% -14%, rgba(124,92,255,0.22), transparent 56%), radial-gradient(1080px 580px at 104% -8%, rgba(56,132,255,0.17), transparent 52%), radial-gradient(1220px 820px at 92% 116%, rgba(236,72,153,0.18), transparent 58%); }',
     /* top banner (.page-nav / .brand-bar use hardcoded dark colours) */
-    /* Frosted, translucent menu bar so the aurora backdrop tints through it
-       (was a near-opaque flat band). backdrop-blur keeps it readable. */
-    'body .page-nav { background: rgba(14,18,32,0.42); backdrop-filter: blur(11px); -webkit-backdrop-filter: blur(11px); }',
-    ':root[data-theme="light"] body .page-nav { background: rgba(255,255,255,0.5); backdrop-filter: blur(11px); -webkit-backdrop-filter: blur(11px); border-bottom: 1px solid rgba(213,220,229,0.55); }',
+    /* Fully transparent menu bar so the page's aurora backdrop washes straight
+       through it — lines up with the brand strip above (also transparent)
+       instead of reading as a separate opaque band. (backdrop-filter sampled
+       the flat body bg, not the z-index:-1 aurora, so it never took the tint.)
+       The nav buttons keep their own surfaces for legibility. */
+    'body .page-nav { background: transparent; backdrop-filter: none; -webkit-backdrop-filter: none; border-bottom: 1px solid rgba(255,255,255,0.06); }',
+    ':root[data-theme="light"] body .page-nav { background: transparent; border-bottom: 1px solid rgba(23,33,47,0.06); }',
     ':root[data-theme="light"] .page-nav-btn { color: #5d6b80; background: rgba(23,33,47,0.04); border-color: rgba(23,33,47,0.12); }',
     ':root[data-theme="light"] .page-nav-btn:hover { background: rgba(23,33,47,0.08); color: #17212f; }',
     ':root[data-theme="light"] .page-nav-btn.edge.active   { background: rgba(13,148,80,0.12);  color: #0a7a41; border-color: rgba(13,148,80,0.4); }',
