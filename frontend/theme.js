@@ -73,6 +73,12 @@
     '  --strong-dim: rgba(176,42,119,0.10);',
     '  --shadow: 0 6px 18px rgba(23,33,47,0.08);',
     '}',
+    /* Modern brand aurora backdrop layered over each page\'s flat --bg.
+       `html body` outranks the pages\' inline `body { background: var(--bg) }`
+       regardless of style order, so the tint always shows; the solid --bg
+       colour underneath is kept (we only set background-image). */
+    'html body { background-image: radial-gradient(1200px 620px at 8% -12%, rgba(34,197,94,0.13), transparent 56%), radial-gradient(1050px 560px at 102% -6%, rgba(59,130,246,0.09), transparent 52%), radial-gradient(1200px 780px at 90% 114%, rgba(245,200,66,0.07), transparent 58%); background-attachment: fixed; }',
+    ':root[data-theme="light"] body { background-image: radial-gradient(1200px 620px at 8% -12%, rgba(34,197,94,0.12), transparent 56%), radial-gradient(1050px 560px at 102% -6%, rgba(59,130,246,0.07), transparent 52%), radial-gradient(1200px 780px at 90% 114%, rgba(232,160,32,0.13), transparent 58%); background-attachment: fixed; }',
     /* top banner (.page-nav / .brand-bar use hardcoded dark colours) */
     ':root[data-theme="light"] .page-nav { background: rgba(255,255,255,0.92); border-bottom: 1px solid #d5dce5; }',
     ':root[data-theme="light"] .page-nav-btn { color: #5d6b80; background: rgba(23,33,47,0.04); border-color: rgba(23,33,47,0.12); }',
