@@ -93,7 +93,7 @@
     ':root[data-theme="light"] .page-nav-btn.lounge.active { background: rgba(156,117,0,0.14);  color: #8a6a00; border-color: rgba(156,117,0,0.4); }',
     ':root[data-theme="light"] .page-nav-btn.about, :root[data-theme="light"] .page-nav-btn.admin { color: #8792a3; }',
     ':root[data-theme="light"] .page-nav-btn.about:hover, :root[data-theme="light"] .page-nav-btn.admin:hover { color: #45536a; }',
-    ':root[data-theme="light"] .brand-bar-logo { color: #8a6a00; }',
+    ':root[data-theme="light"] .brand-bar-logo { color: #c99a0c; }',
     ':root[data-theme="light"] .brand-bar-dot { background: #9c7500; }',
     ':root[data-theme="light"] .brand-bar-subtitle { color: #5d6b80; }',
     /* light mode: card borders read too thin on white — thicken + darken.
@@ -123,7 +123,7 @@
     'body .brand-bar-powered b { color: #f5c842; font-weight: 800; }',
     'body .brand-bar-powered:hover { border-color: rgba(245,200,66,0.4); background: rgba(245,200,66,0.08); }',
     ':root[data-theme="light"] body .brand-bar-powered { color: #5d6b80; background: rgba(23,33,47,0.04); border-color: rgba(23,33,47,0.15); }',
-    ':root[data-theme="light"] body .brand-bar-powered b { color: #9c7500; }',
+    ':root[data-theme="light"] body .brand-bar-powered b { color: #c99a0c; }',
     /* Mobile: stack the brand — "Horse Racing Intelligence" over the pill;
        and drop the Login / Join button onto its own line UNDER the toggle. */
     '@media (max-width: 560px) {',
