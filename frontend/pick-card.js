@@ -98,6 +98,49 @@
     return `<span class="chip place-play" tabindex="0" onclick="event.stopPropagation();this.classList.toggle('tip-open')" data-tip="${esc(tip)}">🅿️ PLACE ~${pp.paid_place_pct}% <span class="chip-i">ⓘ</span></span>`;
   }
 
+  // ── Streaming-odds sparkline (shared by every surface). render() emits an
+  // empty <div class="spark-slot" id="spark-<race>"> when ctx.showSpark is true;
+  // a surface then calls PickCard.fetchSparklines(picks) after rendering to fill
+  // them. `picks` items just need race_id + a horse (horse_name or top_pick).
+  const _sparkCache = {};   // race_id||horse -> snapshots
+  function buildSparklineSvg(snaps) {
+    if (!snaps || snaps.length < 2) return '';
+    const odds = snaps.map(s => s.win_odds).filter(Boolean);
+    if (odds.length < 2) return '';
+    const W = 84, H = 24, PAD = 3;
+    const minO = Math.min(...odds), maxO = Math.max(...odds), range = (maxO - minO) || 0.01;
+    const xs = odds.map((_, i) => PAD + (i / (odds.length - 1)) * (W - 2 * PAD));
+    const ys = odds.map(o => PAD + ((maxO - o) / range) * (H - 2 * PAD));
+    const pts = xs.map((x, i) => `${x.toFixed(1)},${ys[i].toFixed(1)}`).join(' ');
+    const first = odds[0], last = odds[odds.length - 1], diff = last - first;
+    const col = diff < -0.1 ? 'var(--mint)' : diff > 0.1 ? 'var(--red)' : 'var(--text-3)';
+    const lbl = diff < -0.1 ? '▼ firming' : diff > 0.1 ? '▲ drifting' : '— stable';
+    return `<div class="odds-spark" title="Odds: opened $${first.toFixed(2)} → now $${last.toFixed(2)}">
+      <svg width="${W}" height="${H}" viewBox="0 0 ${W} ${H}"><polyline points="${pts}" fill="none" stroke="${col}" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/><circle cx="${xs[xs.length-1].toFixed(1)}" cy="${ys[ys.length-1].toFixed(1)}" r="2.4" fill="${col}"/></svg>
+      <span class="spark-lbl" style="color:${col}">${lbl}</span></div>`;
+  }
+  const _sparkHorse = p => p.horse_name || p.top_pick || null;
+  async function fetchSparklines(picks) {
+    const up = (picks || []).filter(p => {
+      const j = p.scheduled_time ? new Date(p.scheduled_time).getTime() : null;
+      return (!j || j > Date.now()) && p.race_id && _sparkHorse(p);
+    });
+    await Promise.all(up.map(async p => {
+      const key = `${p.race_id}||${_sparkHorse(p)}`;
+      if (_sparkCache[key]) return;
+      try {
+        const r = await fetch(`/api/races/${encodeURIComponent(p.race_id)}/odds-trend?horse=${encodeURIComponent(_sparkHorse(p))}`);
+        if (r.ok) _sparkCache[key] = (await r.json()).snapshots || [];
+      } catch (e) {}
+    }));
+    up.forEach(p => {
+      const snaps = _sparkCache[`${p.race_id}||${_sparkHorse(p)}`];
+      if (!snaps || snaps.length < 2) return;
+      const slot = document.getElementById('spark-' + p.race_id.replace(/[^a-z0-9]/gi, '-'));
+      if (slot) slot.innerHTML = buildSparklineSvg(snaps);
+    });
+  }
+
   function render(pick, ctx) {
     ctx = ctx || {};
     const now = Date.now();
@@ -507,5 +550,6 @@
     render, dualStat, winPlace, resultBlock, esc, wallTime, countdown,
     lockedCard, paywallBanner, trophyBanner, configureBilling, openCheckout, openPricing, bindUnlock,
     fetchJSON, isMember, isSubscriber, isFiveDayHolder, splashUpsell, plansUpsell, plansGrid, refreshSplashUpsell, loadMembership,
+    fetchSparklines,
   };
 })();

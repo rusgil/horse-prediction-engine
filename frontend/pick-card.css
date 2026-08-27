@@ -324,3 +324,9 @@ td.cell.locked-cell:hover { filter: brightness(1.06); }
 }
 
 .tg-upsell.fp-wide { max-width: none; }
+
+/* ── Streaming-odds sparkline (shared; slot emitted by render when showSpark) ── */
+.spark-slot { display: flex; justify-content: flex-end; margin-top: 4px; min-height: 26px; }
+.odds-spark { display: flex; flex-direction: column; align-items: flex-end; gap: 1px; }
+.odds-spark svg { display: block; }
+.spark-lbl { font-size: 0.56rem; font-weight: 800; letter-spacing: 0.06em; text-transform: uppercase; white-space: nowrap; }
