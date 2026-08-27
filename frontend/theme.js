@@ -141,10 +141,10 @@
        and drop the Login / Join button onto its own line UNDER the toggle. */
     '@media (max-width: 560px) {',
     '  body .brand-bar { flex-direction: column; align-items: flex-start; gap: 6px; }',
-    '  .fiq-tr-top { flex-direction: column; align-items: stretch; row-gap: 6px; }',
-    '  .fiq-tr-top .fiq-acct { order: 0; align-self: flex-end; }',
-    '  .fiq-tr-top .fiq-theme-toggle { order: 1; }',
-    '  .fiq-tr-top .fiq-login { order: 2; justify-content: center; }',
+    '  .fiq-tr-top { flex-direction: column; align-items: flex-end; row-gap: 8px; }',
+    '  .fiq-tr-top .fiq-theme-toggle { order: 0; }',
+    '  .fiq-tr-top .fiq-acct { order: 1; align-self: flex-end; }',
+    '  .fiq-tr-top .fiq-login { order: 1; align-self: flex-end; }',
     '}',
     /* top-right cluster: About link sits to the LEFT of the theme toggle */
     '.fiq-topright {',
