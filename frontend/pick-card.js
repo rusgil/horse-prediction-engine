@@ -466,7 +466,7 @@
   // The 3-tier plans grid (same content as /plans), rendered from live billing.
   const _SPLASH_FEATS = {
     base: ['Full form for every pick, all meetings', 'Lounge, Hot Seat & Listings', 'Sharp filter & value plays'],
-    sub: ['<b>The Edge</b> — best picks, best odds', '<b>The Playbook</b> — daily betting plays', 'Cancel anytime'],
+    sub: ['<b>The Edge</b> — best picks, best odds', 'Every meeting, every race', 'Cancel anytime'],
     annual: ['<i>Exclusive NRL Predictions (70%+ accuracy, 2026)</i>'],
   };
   function _planPeriod(p) {
@@ -524,9 +524,9 @@
     if (!grid) return '';
     const head = hasPass
       ? `<div class="tg-upsell-t">Get more from your membership</div>
-         <div class="tg-upsell-s">You're on a 5-day pass. Go Monthly or Annual to unlock <b>the Edge</b> and the daily <b>Playbook</b> — and save with annual. Your <b>$9.90 pass credit</b> comes off your first payment.</div>`
+         <div class="tg-upsell-s">You're on a 5-day pass. Go Monthly or Annual to unlock <b>the Edge</b> — and save with annual. Your <b>$9.90 pass credit</b> comes off your first payment.</div>`
       : `<div class="tg-upsell-t">🔓 Unlock every pick</div>
-         <div class="tg-upsell-s">Choose a plan to unlock every pick, best odds, and the daily Playbook.</div>`;
+         <div class="tg-upsell-s">Choose a plan to unlock every pick, best odds, across every meeting.</div>`;
     return `<div class="tg-upsell${wide ? ' fp-wide' : ''}">${head}${grid}</div>`;
   }
   function splashUpsell() { return plansUpsell(false); }

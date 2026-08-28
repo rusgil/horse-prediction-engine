@@ -7,6 +7,12 @@
       ]
     }
   ],
+  "redirects": [
+    { "source": "/playbook", "destination": "/", "permanent": true },
+    { "source": "/funk-me-up", "destination": "/", "permanent": true },
+    { "source": "/funkmeup", "destination": "/", "permanent": true },
+    { "source": "/funkmeup.html", "destination": "/", "permanent": true }
+  ],
   "rewrites": [
     {
       "source": "/edge",
@@ -27,18 +33,6 @@
     {
       "source": "/lab-exotic",
       "destination": "/lab-exotic.html"
-    },
-    {
-      "source": "/playbook",
-      "destination": "/funkmeup.html"
-    },
-    {
-      "source": "/funk-me-up",
-      "destination": "/funkmeup.html"
-    },
-    {
-      "source": "/funkmeup",
-      "destination": "/funkmeup.html"
     },
     {
       "source": "/hotbook",
