@@ -554,6 +554,16 @@
     });
   }
 
+  // Same as fmtDateTime but includes the year — used for "Access until", where
+  // a subscription can run into next year and "5 Aug" alone is ambiguous.
+  function fmtDateTimeYr(iso) {
+    if (!iso) return '—';
+    return new Date(iso + (iso.includes('Z') ? '' : 'Z')).toLocaleString('en-AU', {
+      day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit',
+      hour12: true, timeZone: 'Australia/Sydney'
+    });
+  }
+
   function pct(v) { return (v * 100).toFixed(1) + '%'; }
 
   function switchTab(tab) {
@@ -620,8 +630,8 @@
         <th style="padding:6px 10px">Email</th><th>Name</th><th>Type</th><th>Access until</th><th>Buys</th><th>Spent</th><th>Invites</th><th>Last login</th></tr></thead>
       <tbody>${rows.map(c => `<tr style="border-top:1px solid var(--border);cursor:pointer" onclick="openCustomer(${c.id})">
         <td style="padding:8px 10px">${escHtml(c.email)}</td><td>${escHtml(c.name || '—')}</td><td>${_custChip(c.account_type)}</td>
-        <td>${c.has_access ? fmtDateTime(c.access_until) : '—'}</td><td>${c.purchases || 0}</td><td>${_custMoney(c.total_spent)}</td>
-        <td>${c.invites_sent || 0}</td><td>${c.last_login ? fmtDateTime(c.last_login) : '—'}</td></tr>`).join('') || '<tr><td colspan="8" style="padding:10px;color:var(--text-secondary)">No customers.</td></tr>'}</tbody></table></div>`;
+        <td>${c.has_access ? fmtDateTimeYr(c.access_until) : '—'}</td><td>${c.purchases || 0}</td><td>${_custMoney(c.total_spent)}</td>
+        <td>${c.invites_sent || 0}</td><td>${c.last_login ? fmtDateTimeYr(c.last_login) : '—'}</td></tr>`).join('') || '<tr><td colspan="8" style="padding:10px;color:var(--text-secondary)">No customers.</td></tr>'}</tbody></table></div>`;
   }
   async function openCustomer(uid) {
     const ov = document.createElement('div');
@@ -640,7 +650,7 @@
       const c = await res.json();
       const td = 'padding:6px 8px;border-top:1px solid var(--border)';
       const purchases = tbl(['Date', 'Plan', 'Amount', 'Access to', 'Via'], (c.purchases || []).map(p =>
-        `<tr><td style="${td}">${fmtDateTime(p.date)}</td><td style="${td}">${escHtml(p.plan)}</td><td style="${td}">${_custMoney(p.amount)}</td><td style="${td}">${p.access_until ? fmtDateTime(p.access_until) : '—'}</td><td style="${td}">${escHtml(p.provider || '')}</td></tr>`));
+        `<tr><td style="${td}">${fmtDateTime(p.date)}</td><td style="${td}">${escHtml(p.plan)}</td><td style="${td}">${_custMoney(p.amount)}</td><td style="${td}">${p.access_until ? fmtDateTimeYr(p.access_until) : '—'}</td><td style="${td}">${escHtml(p.provider || '')}</td></tr>`));
       const emails = tbl(['Sent', 'Type', 'Subject', 'Status'], (c.emails || []).map(e =>
         `<tr><td style="${td}">${fmtDateTime(e.sent_at)}</td><td style="${td}">${escHtml(e.kind)}</td><td style="${td}">${escHtml(e.subject || '')}</td><td style="${td};color:${e.ok ? '#22c55e' : '#f87171'}">${e.ok ? 'sent' : 'failed'}</td></tr>`));
       const invites = tbl(['To', 'Created', 'Expires', 'Status'], (c.invites || []).map(i =>
@@ -650,7 +660,7 @@
         <div style="color:var(--text-secondary);font-size:0.88rem">${escHtml(c.email)}${c.mobile_number ? ' · ' + escHtml(c.mobile_number) : ''}</div>
         <div style="display:flex;gap:8px 18px;flex-wrap:wrap;margin:12px 0;font-size:0.84rem">
           <span><b>Type:</b> ${escHtml(c.account_type)}</span><span><b>Member #:</b> ${c.member_number ?? '—'}</span>
-          <span><b>Joined:</b> ${fmtDateTime(c.created_at)}</span><span><b>Last login:</b> ${c.last_login ? fmtDateTime(c.last_login) : '—'}</span>
+          <span><b>Joined:</b> ${fmtDateTimeYr(c.created_at)}</span><span><b>Last login:</b> ${c.last_login ? fmtDateTimeYr(c.last_login) : '—'}</span>
           <span><b>Spent:</b> ${_custMoney(c.total_spent)}</span><span><b>Marketing:</b> ${c.marketing_opt_in ? 'opted in' : 'unsubscribed'}</span>
           <span><b>Found us:</b> ${escHtml(c.referral_source || '—')}</span></div>
         <div style="font-family:'Barlow Condensed',sans-serif;font-weight:800;text-transform:uppercase;letter-spacing:0.05em;color:var(--text-secondary);margin:18px 0 4px">Purchase history</div>${purchases}
