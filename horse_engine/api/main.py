@@ -3376,6 +3376,22 @@ async def lifespan(app: FastAPI):
     # check picks as soon as markets open. DB-only, so cost is negligible.
     scheduler.add_job(_warm_edge, CronTrigger(hour="7-21", minute="*/2", timezone="Australia/Sydney"))
 
+    # 24/7 keep-warm heartbeat (2026-08-29). The edge/lounge warmers only run
+    # 07:00-21:59, so outside those hours — and right after a redeploy or the
+    # Friday DB-maintenance restart — the connection pool goes cold and the first
+    # request (e.g. the admin dashboard's 7 parallel calls) can hang for a
+    # minute-plus while connections re-establish. A trivial SELECT 1 every 4 min
+    # keeps the pool + event loop warm so there's no cold first-hit. DB-only,
+    # negligible cost; wrapped so a transient failure never bubbles up.
+    async def _keep_warm():
+        try:
+            from sqlalchemy import text as _kw_text
+            async with get_session() as _kw_s:
+                await _kw_s.execute(_kw_text("SELECT 1"))
+        except Exception as e:
+            log.warning("[keep-warm] heartbeat failed: %s", e)
+    scheduler.add_job(_keep_warm, IntervalTrigger(minutes=4, jitter=30, timezone="Australia/Sydney"))
+
     # Lounge landing-page pre-warm. The /api/lounge/init endpoint bundles
     # ~60 discrete fetches worth of data into one payload. If nobody visits
     # for 3 min the cache goes stale; when the next user shows up they eat
