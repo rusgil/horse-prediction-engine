@@ -253,6 +253,96 @@ def _is_sharp_gate(
     return True
 
 
+# ── Sharp badge 2-hour lock (2026-08-28) ────────────────────────────────────
+# The Sharp badge is recomputed live from the model's win-probs, which chase the
+# streaming market right up to the jump — so a race flagged Sharp at 1pm could
+# lose the badge by 2:55pm, AFTER a punter has acted on it. Once a race is within
+# this lead of its start, we FREEZE the badge to the value it held at the 2h mark
+# (the first live snapshot inside the window) so it can no longer flip. Applies to
+# live/upcoming surfaces only — settled/historical classification is never touched.
+_SHARP_LOCK_LEAD = timedelta(hours=2)
+# The lock + its integrity check went live on this date; earlier dates are judged
+# under the old (live-recompute) behaviour, so the within-2h stability check only
+# applies to races on/after this — pre-lock flips aren't retroactive breaches.
+_SHARP_LOCK_FROM = "2026-08-28"
+
+
+async def _sharp_lock_2h(race_scheduled: "dict[str, datetime]") -> "dict[str, bool]":
+    """race_id -> the LOCKED rank-1 is_sharp, for every race whose start is within
+    _SHARP_LOCK_LEAD (or already past). The lock value is the rank-1 is_sharp of
+    the EARLIEST live, non-contaminated history snapshot recorded at/after
+    (start - 2h) — i.e. the Sharp read as the race crossed the 2h mark. Races with
+    no in-window snapshot yet are omitted, so the caller keeps the live value until
+    the first in-window snapshot lands (which then becomes the lock). Read-only.
+
+    `race_scheduled` maps race_id -> scheduled start as a UTC-naive datetime."""
+    now = datetime.utcnow()
+    want = {rid: st for rid, st in race_scheduled.items()
+            if st is not None and (st - now) <= _SHARP_LOCK_LEAD}
+    if not want:
+        return {}
+    try:
+        async with get_session() as s:
+            rows = (await s.execute(
+                select(RunnerPredictionHistoryRow.race_id,
+                       RunnerPredictionHistoryRow.is_sharp,
+                       RunnerPredictionHistoryRow.enriched_at)
+                .where(RunnerPredictionHistoryRow.race_id.in_(list(want.keys())))
+                .where(RunnerPredictionHistoryRow.model_rank == 1)
+                .where((RunnerPredictionHistoryRow.source == "live")
+                       | RunnerPredictionHistoryRow.source.is_(None))
+                .where(RunnerPredictionHistoryRow.is_sharp.isnot(None))
+                .where(RunnerPredictionHistoryRow.contaminated.is_(False)
+                       | RunnerPredictionHistoryRow.contaminated.is_(None))
+                .order_by(RunnerPredictionHistoryRow.enriched_at.asc())
+            )).all()
+    except Exception:
+        log.exception("sharp 2h-lock lookup failed; keeping live values")
+        return {}
+    locks: "dict[str, bool]" = {}
+    for rid, isharp, ea in rows:
+        if ea is None or rid in locks:
+            continue  # ascending → the FIRST in-window snapshot wins
+        if ea >= want[rid] - _SHARP_LOCK_LEAD:
+            locks[rid] = bool(isharp)
+    return locks
+
+
+def _collect_sharp_race_dicts(obj, out: list) -> None:
+    """Walk a JSON payload; collect every dict that carries a non-null is_sharp
+    plus a race_id + scheduled_time (the rank-1 / race-level pick dicts)."""
+    if isinstance(obj, dict):
+        if obj.get("race_id") and obj.get("is_sharp") is not None and obj.get("scheduled_time"):
+            out.append(obj)
+        for v in obj.values():
+            _collect_sharp_race_dicts(v, out)
+    elif isinstance(obj, list):
+        for it in obj:
+            _collect_sharp_race_dicts(it, out)
+
+
+async def _apply_sharp_2h_lock(data) -> None:
+    """Response pass: override the live-computed is_sharp with the 2h-locked value
+    for any race within the pre-race window, so the badge can't flip on a punter
+    mid-window. In place; safe no-op when nothing qualifies."""
+    dicts: list = []
+    _collect_sharp_race_dicts(data, dicts)
+    if not dicts:
+        return
+    sched: "dict[str, datetime]" = {}
+    for d in dicts:
+        st = sched_to_utc_naive(d.get("scheduled_time"))
+        if st is not None:
+            sched[d["race_id"]] = st
+    locks = await _sharp_lock_2h(sched)
+    if not locks:
+        return
+    for d in dicts:
+        rid = d.get("race_id")
+        if rid in locks:
+            d["is_sharp"] = locks[rid]
+
+
 def _check_admin(x_secret: Optional[str]) -> None:
     """Fail-closed admin auth: requires CRON_SECRET env var to be set."""
     if not settings.cron_secret:
@@ -3000,6 +3090,18 @@ async def _snapshot_prerace_predictions() -> int:
             )).scalar()
             if _mx:
                 _snap_max_race[_v] = int(_mx)
+    # 2h Sharp lock: once a race is within 2h of start, reuse the value frozen at
+    # the 2h mark so the FROZEN history stays constant through the pre-race window
+    # (matches what the live surfaces now display). Computed before the write
+    # session opens so DB sessions don't nest.
+    _snap_sched: "dict[str, datetime]" = {}
+    for _rid, _rns in races.items():
+        _act = [rr for rr in _rns if not rr.cancelled]
+        _r1 = min(_act, key=lambda rr: rr.model_rank or 99) if _act else None
+        _st = sched_to_utc_naive(getattr(_r1, "scheduled_time", None)) if _r1 else None
+        if _st is not None:
+            _snap_sched[_rid] = _st
+    _snap_locks = await _sharp_lock_2h(_snap_sched)
     async with get_session() as session:
         for race_id, runners in races.items():
             batch_id = str(_uuid.uuid4())  # shared across all runners in this enrichment batch
@@ -3033,6 +3135,10 @@ async def _snapshot_prerace_predictions() -> int:
                     is_metro=is_metro_venue(_svenue), race_number=_srn,
                     meeting_max_race=_smx, race_date=_parse_race_id(race_id)[0],
                 )
+            # 2h Sharp lock (see _sharp_lock_2h): once inside the window, freeze to
+            # the value set by the first in-window snapshot so history can't drift.
+            if race_id in _snap_locks:
+                race_is_sharp = _snap_locks[race_id]
             for r in runners:
                 try:
                     session.add(RunnerPredictionHistoryRow(
@@ -4060,6 +4166,11 @@ async def _display_prob_cap(request, call_next):
     try:
         data = json.loads(body)
         _cap_probs_in(data)
+        # Sharp 2h-lock: freeze the Sharp badge for races within 2h of start so it
+        # can't flip on a punter mid-window. Pick surfaces only (edge/meetings/
+        # lounge/hotseat); no-op when nothing is inside the window.
+        if path.startswith(_PAYWALL_PREFIXES):
+            await _apply_sharp_2h_lock(data)
         # Paywall: redact all-but-the-teaser race for non-members. Runs after
         # any endpoint-level cache (this is per-request), on the parsed JSON.
         # Edge is a subscription-tier feature (monthly/annual): a 5-day pass
@@ -7925,6 +8036,17 @@ async def _integrity_eod_check(target_date: Optional[str] = None):
                 .where(RunnerPredictionRow.race_id.like(f"{_like_safe(today)}_%"))
                 .where(RunnerPredictionRow.cancelled.is_(True))
             )).all()
+            # ALL rank-1 live snapshots (not just the latest) with is_sharp +
+            # timestamps — for the within-2h Sharp-stability check below.
+            sharp_snaps = (await session.execute(
+                select(RunnerPredictionHistoryRow.race_id, RunnerPredictionHistoryRow.is_sharp,
+                       RunnerPredictionHistoryRow.enriched_at, RunnerPredictionHistoryRow.scheduled_time)
+                .where(RunnerPredictionHistoryRow.race_id.like(f"{_like_safe(today)}_%"))
+                .where(RunnerPredictionHistoryRow.model_rank == 1)
+                .where((RunnerPredictionHistoryRow.source == "live") | RunnerPredictionHistoryRow.source.is_(None))
+                .where(RunnerPredictionHistoryRow.is_sharp.isnot(None))
+                .where(RunnerPredictionHistoryRow.contaminated.is_(False) | RunnerPredictionHistoryRow.contaminated.is_(None))
+            )).all()
         seen: set = set()
         hist_top: dict[str, dict] = {}      # race_id -> {rank: horse}
         hist_meta: dict[str, dict] = {}     # race_id -> {rank: (recorded_at, contaminated, sched)}
@@ -7941,6 +8063,20 @@ async def _integrity_eod_check(target_date: Optional[str] = None):
         scratched: dict[str, set] = {}
         for rid, hn in scr:
             scratched.setdefault(rid, set()).add(_normalize_horse(hn))
+        # Within-2h Sharp stability (2026-08-28): once a race is <=2h from start
+        # the badge is LOCKED, so ANY change in the rank-1 is_sharp across snapshots
+        # inside [start-2h, start] is an integrity breach. Changes earlier than 2h
+        # out are legitimate market-driven refinement and ignored. Only applies to
+        # races on/after the lock go-live date.
+        _sharp_win: dict[str, set] = {}
+        if today >= _SHARP_LOCK_FROM:
+            for rid, isharp, ea, sched in sharp_snaps:
+                st = sched_to_utc_naive(sched)
+                if st is None or ea is None:
+                    continue
+                if st - _SHARP_LOCK_LEAD <= ea <= st + timedelta(minutes=3):
+                    _sharp_win.setdefault(rid, set()).add(bool(isharp))
+        sharp_2h_breaches = sorted(rid for rid, vals in _sharp_win.items() if len(vals) > 1)
         checked = mismatches = 0
         async with get_session() as session:
             rows = (await session.execute(
@@ -8003,9 +8139,20 @@ async def _integrity_eod_check(target_date: Optional[str] = None):
                 checked += 1
                 if row.mismatch:
                     mismatches += 1
+            # Within-2h Sharp-flip breaches — the badge should be locked in the
+            # final 2h, so a change there is a real integrity breach to surface.
+            for _rid in sharp_2h_breaches:
+                from sqlalchemy import text as _text
+                await session.execute(_text(
+                    "INSERT INTO history_guard_incidents(race_id, horse_name, kind, detail) "
+                    "VALUES (:rid, :hn, 'sharp_changed_within_2h', :detail)"
+                ), {"rid": _rid, "hn": (hist_top.get(_rid, {}) or {}).get(1) or "?",
+                    "detail": f"Sharp flag changed within 2h of start (values: {sorted(_sharp_win.get(_rid, []))})"})
             await session.commit()
-        log.info("[integrity] EOD check %s: %d races checked, %d MISMATCH", today, checked, mismatches)
-        return {"date": today, "checked": checked, "mismatches": mismatches}
+        log.info("[integrity] EOD check %s: %d races checked, %d MISMATCH, %d within-2h Sharp flip(s)",
+                 today, checked, mismatches, len(sharp_2h_breaches))
+        return {"date": today, "checked": checked, "mismatches": mismatches,
+                "sharp_2h_flips": len(sharp_2h_breaches)}
     except Exception as e:
         log.exception("[integrity] EOD check failed: %s", e)
         return {"error": str(e)[:120]}
