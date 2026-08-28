@@ -30105,6 +30105,117 @@ async def performance_by_venue(days: int = Query(30, ge=1, le=90)):
     return {"days": days, "venues": venues}
 
 
+@app.get("/api/admin/analysis/day-diagnosis")
+async def admin_day_diagnosis(
+    dates: str = Query(..., description="comma-separated YYYY-MM-DD dates to pool"),
+    x_cron_secret: Optional[str] = Header(None),
+):
+    """Read-only: WHY was a given day (or set of days) bad for top-1 win%?
+    Pools the listed dates, joins each race's rank-1 live pick to its result, and
+    cuts win% by venue, going, field-size band, OUR pick's market rank, Sharp
+    flag, confidence band and metro/country — plus the full per-race list (our
+    pick vs the actual winner + SPs) so a pattern (one meeting, wet tracks, beaten
+    favourites, no market) is visible. Compare the cuts against the 30-day
+    baseline (niche-analysis / by-venue) to see what's ABNORMAL on the bad days."""
+    _check_admin(x_cron_secret)
+    from horse_engine.bets import is_metro_venue
+    from collections import Counter as _C
+    want = [d.strip() for d in dates.split(",") if d.strip()]
+    for d in want:
+        _validate_date(d)
+    async with get_session() as session:
+        hr_rows: list = []
+        for d in want:
+            rr = (await session.execute(
+                select(HistoricalResultRow).where(HistoricalResultRow.race_id.like(f"{_like_safe(d)}_%"))
+            )).scalars().all()
+            hr_rows.extend(rr)
+        if not hr_rows:
+            return {"dates": want, "races": 0, "note": "no settled results for these dates"}
+        race_ids = list({r.race_id for r in hr_rows})
+        preds = (await session.execute(
+            select(RunnerPredictionHistoryRow)
+            .where(RunnerPredictionHistoryRow.race_id.in_(race_ids))
+            .where(RunnerPredictionHistoryRow.model_rank == 1)
+            .where(RunnerPredictionHistoryRow.cancelled.is_(False) | RunnerPredictionHistoryRow.cancelled.is_(None))
+            .where((RunnerPredictionHistoryRow.source == "live") | RunnerPredictionHistoryRow.source.is_(None))
+            .order_by(RunnerPredictionHistoryRow.enriched_at.desc())
+        )).scalars().all()
+    top: dict = {}
+    for p in preds:
+        top.setdefault(p.race_id, p)   # latest live snapshot per race
+    starters = _C(r.race_id for r in hr_rows if r.position and 1 <= r.position < 100)
+    res_by_key = {(r.race_id, _normalize_horse(r.horse_name)): r for r in hr_rows}
+    winner_by_race = {r.race_id: r for r in hr_rows if r.position == 1}
+
+    def _field_band(nn):
+        if not nn:
+            return "?"
+        return "1-7" if nn <= 7 else "8-11" if nn <= 11 else "12+"
+    def _conf_band(wp):
+        wp = (wp or 0) * 100
+        return "<30" if wp < 30 else "30-36" if wp < 36 else "36-46" if wp < 46 else "46+"
+    def _going_band(tc):
+        t = (tc or "").lower()
+        for g in ("heavy", "soft", "good", "firm", "synth"):
+            if g in t:
+                return g
+        return t or "?"
+
+    cuts: dict = {k: {} for k in
+                  ("per_day", "venue", "going", "field", "our_mkt_rank", "sharp", "conf", "metro")}
+    races_out: list = []
+    n = wins = 0
+    for rid, pick in top.items():
+        result = res_by_key.get((rid, _normalize_horse(pick.horse_name)))
+        if not result:
+            continue
+        d, venue, rno = _parse_race_id(rid)
+        won = bool(result.winner)
+        n += 1
+        wins += 1 if won else 0
+        mr = pick.market_rank
+
+        def _bump(dim, key):
+            b = cuts[dim].setdefault(str(key), {"races": 0, "wins": 0})
+            b["races"] += 1
+            b["wins"] += 1 if won else 0
+        _bump("per_day", d)
+        _bump("venue", venue)
+        _bump("going", _going_band(pick.track_condition))
+        _bump("field", _field_band(pick.field_size))
+        _bump("our_mkt_rank", "fav(1)" if mr == 1 else "2nd" if mr == 2
+              else "3rd+" if (mr and mr >= 3) else "no-mkt")
+        _bump("sharp", "sharp" if pick.is_sharp else "non-sharp")
+        _bump("conf", _conf_band(pick.win_probability))
+        _bump("metro", "metro" if is_metro_venue(venue) else "country")
+        w = winner_by_race.get(rid)
+        races_out.append({
+            "date": d, "venue": venue, "race": rno,
+            "our_pick": pick.horse_name, "our_mkt_rank": mr,
+            "win_prob": round((pick.win_probability or 0) * 100, 1),
+            "sharp": bool(pick.is_sharp), "field": pick.field_size,
+            "going": pick.track_condition, "won": won,
+            "our_sp": round(float(result.starting_price), 2) if result.starting_price else None,
+            "winner": (w.horse_name if w else None),
+            "winner_sp": (round(float(w.starting_price), 2) if w and w.starting_price else None),
+        })
+
+    def _fmt(dim):
+        return sorted(
+            [{"bucket": k, "races": v["races"], "wins": v["wins"],
+              "win_pct": round(v["wins"] / v["races"] * 100, 1)} for k, v in cuts[dim].items()],
+            key=lambda x: -x["races"])
+    return {
+        "dates": want, "races": n, "wins": wins,
+        "win_pct": round(wins / n * 100, 1) if n else None,
+        "by_day": _fmt("per_day"), "by_venue": _fmt("venue"), "by_going": _fmt("going"),
+        "by_field": _fmt("field"), "by_our_market_rank": _fmt("our_mkt_rank"),
+        "by_sharp": _fmt("sharp"), "by_confidence": _fmt("conf"), "by_metro": _fmt("metro"),
+        "races_detail": sorted(races_out, key=lambda x: (x["date"], x["venue"], x["race"] or 0)),
+    }
+
+
 @app.get("/api/performance/premium")
 async def premium_performance(days: int = Query(30, ge=1, le=365), x_cron_secret: Optional[str] = Header(None)):
     """
