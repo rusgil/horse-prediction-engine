@@ -9,7 +9,7 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700;800&family=Barlow:wght@400;500;600;700;800&family=Outfit:wght@300;400;500;600&display=swap" rel="stylesheet">
 <script src="/sharp.js"></script>
-<script src="/pick-card.js?v=28"></script>
+<script src="/pick-card.js?v=29"></script>
 <style>
   /* ── Tokens ─────────────────────────────────────────────── */
   :root {
@@ -947,7 +947,7 @@
 
   .ff { font-variant-numeric: tabular-nums; letter-spacing: 0.14em; font-weight: 800; }
 </style>
-  <link rel="stylesheet" href="/pick-card.css?v=28">
+  <link rel="stylesheet" href="/pick-card.css?v=29">
   <script defer src="/_vercel/insights/script.js"></script>
 </head>
 <body>
@@ -1462,7 +1462,7 @@
         <div class="pk-horse">${esc(p.horse_name)}${streak}${!isPast ? placeChip(p) : ''}</div>
         <div class="pk-sub num">${[p.distance ? p.distance + 'm' : '', p.barrier ? 'B' + p.barrier : '', p.weight ? p.weight + 'kg' : ''].filter(Boolean).join(' · ')}${l10}</div>
         <div class="pk-sub">${p.jockey ? 'J: ' + esc(p.jockey) : ''}${p.trainer ? (p.jockey ? ' · ' : '') + 'T: ' + esc(p.trainer) : ''}</div>
-        <div class="pk-chips">${tierChip(p)}${isPremium(p) ? '<span class="chip prem">💎 PREMIUM</span>' : ''}${sharpOf(p) ? '<span class="chip sharp">🎯 SHARP</span>' : ''}${!isPast ? favChip(p) : ''}${!isPast ? exoticClearChips(p) : ''}${p.sportsbet_available === false ? '<span class="chip nosb">🚫 Not on Sportsbet</span>' : ''}</div>
+        <div class="pk-chips">${tierChip(p)}${isPremium(p) ? '<span class="chip prem">💎 PREMIUM</span>' : ''}${sharpOf(p) ? '<span class="chip sharp">🎯 SHARP</span>' : ''}${!isPast ? favChip(p) : ''}${!isPast ? exoticClearChips(p) : ''}${p.sportsbet_available === false ? '<span class="chip nosb">🚫 Limited fixed-odds</span>' : ''}</div>
       </div>
       <div class="right">
         ${barsHtml((p.model_pct || 0) / 100, p.place_probability != null ? p.place_probability / 100 : null)}

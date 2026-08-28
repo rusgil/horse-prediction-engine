@@ -7,8 +7,8 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <script src="/theme.js?v=22"></script>
-  <link rel="stylesheet" href="/pick-card.css?v=28">
-  <script src="/pick-card.js?v=28"></script>
+  <link rel="stylesheet" href="/pick-card.css?v=29">
+  <script src="/pick-card.js?v=29"></script>
   <title>Playbook · funkyiq</title>
   <meta name="description" content="Playbook turns FunkyIQ's Australian horse racing model into a daily playbook — win bets, place bets, doubles and quaddies selected from the highest-value picks across the day's meetings." />
   <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -889,13 +889,13 @@
     return best;
   }
 
-  // Action verb + product name + path to find on Sportsbet for each play.
+  // Action verb + product name + path to find at your bookmaker for each play.
   function buildAction(p) {
     if (p.kind === 'lock') {
       return {
         verb: 'PLACE THIS WIN BET',
         product: `Win on ${p.horse_name}`,
-        path: `Sportsbet → Racing → ${venueLabel(p.venue)} → R${p.race_number} → Win`,
+        path: `Your bookmaker → Racing → ${venueLabel(p.venue)} → R${p.race_number} → Win`,
         returnIf: `Returns ${fmtOdds(oddsFor(p))} for $1 if it wins`,
       };
     }
@@ -903,7 +903,7 @@
       return {
         verb: 'USE YOUR BONUS BET',
         product: `Bonus Bet on ${p.horse_name}`,
-        path: `Sportsbet → Racing → ${venueLabel(p.venue)} → R${p.race_number} → Win → use Bonus Bet`,
+        path: `Your bookmaker → Racing → ${venueLabel(p.venue)} → R${p.race_number} → Win → use Bonus Bet`,
         returnIf: `Returns ${fmtOdds(oddsFor(p))} for $1 profit if it wins (stake not returned)`,
       };
     }
@@ -911,7 +911,7 @@
       return {
         verb: 'BUILD THIS 4-LEG MULTI',
         product: `Racing Multi · 4 × Top 4`,
-        path: `Sportsbet → Multi Builder → tap Top 4 for each horse below → confirm +20% boost shows in betslip`,
+        path: `Your bookmaker → Multi builder → add each horse below to finish Top 4 → confirm 4 legs in betslip`,
         returnIf: `Returns ${fmtOdds(oddsFor(p))} for $1 if all 4 land`,
       };
     }
@@ -919,7 +919,7 @@
       return {
         verb: 'PLACE THIS QUADDIE BOX',
         product: `Quaddie · 2×2×2×2 box (${p.perms} combos)`,
-        path: `Sportsbet → Racing → ${venueLabel(p.venue)} → Quaddie → box the 2 horses per leg below`,
+        path: `Your bookmaker → Racing → ${venueLabel(p.venue)} → Quaddie → box the 2 horses per leg below`,
         returnIf: `Est. ${fmtOdds(oddsFor(p))} for $1 share of the pool if all 4 winners come from your picks`,
       };
     }
@@ -928,7 +928,7 @@
       return {
         verb: 'PLACE THIS TRIFECTA BOX',
         product: `Flexi Trifecta Box (3 horses · ${p.perms} perms)`,
-        path: `Sportsbet → Racing → ${venueLabel(p.venue)} → R${p.race_number} → Exotics → Trifecta → Box ${names}`,
+        path: `Your bookmaker → Racing → ${venueLabel(p.venue)} → R${p.race_number} → Exotics → Trifecta → Box ${names}`,
         returnIf: `Est. ${fmtOdds(oddsFor(p))} for $1 if any order of these 3 fills the trifecta`,
       };
     }
@@ -936,7 +936,7 @@
       return {
         verb: 'BUILD THIS PLACE MULTI',
         product: `2-leg Place Multi`,
-        path: `Sportsbet → Multi Builder → tap Place for each horse below → confirm 2 legs in betslip`,
+        path: `Your bookmaker → Multi builder → tap Place for each horse below → confirm 2 legs in betslip`,
         returnIf: `Returns ${fmtOdds(oddsFor(p))} for $1 if both horses place (top 3)`,
       };
     }
@@ -944,7 +944,7 @@
       return {
         verb: 'PLACE THIS COMBO DOUBLES',
         product: `6 doubles · combo multi`,
-        path: `Sportsbet → Multi Builder → add all 4 horses below (one per race) → set to "Combo Multi Doubles"`,
+        path: `Your bookmaker → Multi builder → add all 4 horses below (one per race) → set to combo / system doubles`,
         returnIf: `${((p.prob_at_least_2_wins || 0)*100).toFixed(1)}% chance of a paying double (any 2 of 4 legs win)`,
       };
     }
@@ -953,8 +953,8 @@
         ? `Straight · OR boxed (${p.boxed_perms} perms)`
         : `Quaddie · 1 horse × 4 legs`;
       const path = p.boxed_available
-        ? `Sportsbet → Racing → ${venueLabel(p.venue)} → Quaddie → pick rank-1 only (straight) OR rank-1 + rank-2 in every leg (boxed)`
-        : `Sportsbet → Racing → ${venueLabel(p.venue)} → Quaddie → pick the rank-1 horse for each leg below`;
+        ? `Your bookmaker → Racing → ${venueLabel(p.venue)} → Quaddie → pick rank-1 only (straight) OR rank-1 + rank-2 in every leg (boxed)`
+        : `Your bookmaker → Racing → ${venueLabel(p.venue)} → Quaddie → pick the rank-1 horse for each leg below`;
       const ret = p.boxed_available
         ? `Straight hit prob ${(p.model_hit_probability*100).toFixed(2)}% · boxed ${(p.boxed_hit_probability*100).toFixed(2)}%`
         : (p.raw_multi_odds
@@ -971,7 +971,7 @@
       return {
         verb: 'PLACE THIS PLACE BET',
         product: `Place on ${p.horse_name}`,
-        path: `Sportsbet → Racing → ${venueLabel(p.venue)} → R${p.race_number} → Place`,
+        path: `Your bookmaker → Racing → ${venueLabel(p.venue)} → R${p.race_number} → Place`,
         returnIf: `Returns ~${fmtOdds(oddsFor(p))} for $1 if it finishes top 3`,
       };
     }
@@ -982,7 +982,7 @@
       return {
         verb: 'PLACE THIS QUINELLA',
         product: `Quinella · ${p.horse_name} + ${p.partner_horse_name}`,
-        path: `Sportsbet → Racing → ${venueLabel(p.venue)} → R${p.race_number} → Exotics → Quinella → tap both horses`,
+        path: `Your bookmaker → Racing → ${venueLabel(p.venue)} → R${p.race_number} → Exotics → Quinella → tap both horses`,
         returnIf: ret,
       };
     }
@@ -1152,7 +1152,7 @@
     })() : '';
 
     // Prescriptive action block — tells the user EXACTLY what bet to
-    // place, where to find it on Sportsbet, and what the return looks like.
+    // place, where to find it at your bookmaker, and what the return looks like.
     const actionHtml = action ? `
       <div class="action-block">
         <div class="action-head">

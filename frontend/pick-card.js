@@ -199,7 +199,7 @@
           // the name on narrow/mobile-portrait via .pk-split's media query.
           return `<div class="pk-split"><div class="pk-id">${idEl}</div><div class="pk-meta">${metaEl}</div></div>`;
         })()}
-        <div class="pk-chips">${tierChip(pick)}${!isPast && pick.is_premium ? '<span class="chip prem">💎 PREMIUM</span>' : ''}${pick.is_sharp ? '<span class="chip sharp">🎯 SHARP</span>' : ''}${!isPast ? favChip(pick) : ''}${!isPast ? exoticChips(pick) : ''}${pick.sportsbet_available === false ? '<span class="chip nosb">🚫 Not on Sportsbet</span>' : ''}</div>
+        <div class="pk-chips">${tierChip(pick)}${!isPast && pick.is_premium ? '<span class="chip prem">💎 PREMIUM</span>' : ''}${pick.is_sharp ? '<span class="chip sharp">🎯 SHARP</span>' : ''}${!isPast ? favChip(pick) : ''}${!isPast ? exoticChips(pick) : ''}${pick.sportsbet_available === false ? '<span class="chip nosb">🚫 Limited fixed-odds</span>' : ''}</div>
       </div>
       <div class="right">
         ${timeTop}
