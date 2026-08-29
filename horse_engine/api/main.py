@@ -716,14 +716,20 @@ def _compute_steam_from_snapshots(snaps: list) -> dict:
     odds_t60 = _closest(60) if any(s.minutes_to_jump >= 50 for s in pre) else None
     odds_open = pre[-1].win_odds  # highest minutes_to_jump = earliest/opening snapshot
 
-    steam_60 = round(odds_t60 - odds_t5, 2) if odds_t60 else 0.0   # +ve = shortened
-    steam_30 = round(odds_t30 - odds_t5, 2) if odds_t30 else 0.0
-    late_money = round(odds_t15 - odds_t5, 2) if odds_t15 else 0.0
+    # Clamp the raw dollar-diff steam features to the range of genuine moves. A
+    # thin/erratic market (junk opening snapshot on a $9 import) can otherwise
+    # produce a huge steam value that blows up the model's linear score (TOUSSAINT,
+    # Kembla R6 2026-08-29). Bounded here AND at the model input (build_feature_vector).
+    def _c(v, lo, hi):
+        return max(lo, min(hi, v))
+    steam_60 = _c(round(odds_t60 - odds_t5, 2), -3.0, 3.0) if odds_t60 else 0.0   # +ve = shortened
+    steam_30 = _c(round(odds_t30 - odds_t5, 2), -3.0, 3.0) if odds_t30 else 0.0
+    late_money = _c(round(odds_t15 - odds_t5, 2), -3.0, 3.0) if odds_t15 else 0.0
     drift_flag = 1.0 if (odds_t5 - odds_open) > 1.5 else 0.0       # drifted out $1.50+
 
     span = pre[-1].minutes_to_jump - pre[0].minutes_to_jump
     if span > 0 and odds_t60:
-        odds_velocity = round((odds_t60 - odds_t5) / span, 4)
+        odds_velocity = _c(round((odds_t60 - odds_t5) / span, 4), -0.75, 0.75)
     else:
         odds_velocity = 0.0
 

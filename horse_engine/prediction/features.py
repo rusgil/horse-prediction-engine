@@ -248,6 +248,20 @@ def build_feature_vector(er: EnrichedRunner) -> list[float]:
     def sigmoid(x: float) -> float:
         return 1.0 / (1.0 + math.exp(-x))
 
+    def _clip(v, lo, hi) -> float:
+        # The steam features are RAW dollar differences (e.g. odds_t30 - odds_t5),
+        # NOT normalised like every other feature. A thin/erratic market (a $9 NZ
+        # import whose opening snapshot was ~$50) produces a huge steam value that,
+        # at the model's steam weights (0.4-0.6), explodes the linear score and the
+        # softmax hands that horse ~80%+ while flooring the field (TOUSSAINT, Kembla
+        # R6 2026-08-29). Clamp to the range of genuine moves so steam can only
+        # NUDGE, never dominate. Normal steam (<$3) is untouched; only the
+        # out-of-distribution tail — the blowup cause — is bounded.
+        try:
+            return max(lo, min(hi, float(v)))
+        except (TypeError, ValueError):
+            return 0.0
+
     # Days since last run: 14–28 days = optimal (0.0), very long/short = worse
     days = er.days_since_last_run
     if days < 0:
@@ -333,9 +347,9 @@ def build_feature_vector(er: EnrichedRunner) -> list[float]:
         er.market_implied_prob,
         max(0.0, 1.0 - min(er.avg_beaten_margin_last5 / 10.0, 1.0)),  # avg_beaten_margin_norm: higher = closer up
         er.jockey_distance_rate / 100.0,
-        er.steam_60,
-        er.steam_30,
-        er.drift_flag,
-        er.odds_velocity,
-        er.late_money,
+        _clip(er.steam_60, -3.0, 3.0),
+        _clip(er.steam_30, -3.0, 3.0),
+        er.drift_flag,                        # already 0/1
+        _clip(er.odds_velocity, -0.75, 0.75),
+        _clip(er.late_money, -3.0, 3.0),
     ]
