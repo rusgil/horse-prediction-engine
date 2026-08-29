@@ -343,6 +343,117 @@ async def _apply_sharp_2h_lock(data) -> None:
             d["is_sharp"] = locks[rid]
 
 
+# ── Prediction sanity guard (2026-08-29) ────────────────────────────────────
+# A rank-1 pick can blow up when a bad/default feature value (e.g. a first-start
+# import with no history) makes the model's raw score explode; softmax then hands
+# that horse ~80-90% and floors the rest of the field at a uniform ~2%. The tell
+# is an EXTREME model prob the MARKET strongly disagrees with (a genuine 45%+ pick
+# is a short-priced market favourite, not a $9 fifth-pick — TOUSSAINT, Kembla R6
+# 2026-08-29: model 82% vs market-implied 11%, 35x rank-2). Caught here so a
+# glitch can never headline as a HOT/Sharp near-certainty; the 09:25 sweep records
+# each catch for review. All percentages are on the 0-100 scale.
+def _prediction_blowup_reason(model_pct, market_implied_pct, rank2_pct):
+    mp = model_pct or 0
+    mi, r2 = market_implied_pct, rank2_pct
+    if mp >= 45 and isinstance(mi, (int, float)) and mi > 0 and mp >= 2.5 * mi and mi < 25:
+        return f"model {mp:.0f}% vs market-implied {mi:.0f}% ({mp / mi:.1f}x market)"
+    if mp >= 40 and isinstance(r2, (int, float)) and r2 > 0 and (mp / r2) >= 8:
+        return f"field floored — rank-1 {mp:.0f}% is {mp / r2:.0f}x rank-2 ({r2:.1f}%)"
+    if mp >= 85 and not (isinstance(mi, (int, float)) and mi >= 40):
+        return f"implausibly high model prob {mp:.0f}% with no market support"
+    return None
+
+
+def _apply_sanity_guard(data) -> int:
+    """Response pass: demote any rank-1 pick that trips _prediction_blowup_reason —
+    defer its win% to the market-implied value and strip the Sharp/HOT/value flags
+    so a glitch never headlines. In place; returns the count suppressed."""
+    picks: list = []
+    def _walk(o):
+        if isinstance(o, dict):
+            if o.get("race_id") and isinstance(o.get("model_pct"), (int, float)):
+                picks.append(o)
+            for v in o.values():
+                _walk(v)
+        elif isinstance(o, list):
+            for it in o:
+                _walk(it)
+    _walk(data)
+    n = 0
+    for d in picks:
+        reason = _prediction_blowup_reason(d.get("model_pct"), d.get("market_implied_pct"), d.get("rank2_pct"))
+        if not reason:
+            continue
+        n += 1
+        implied = d.get("market_implied_pct")
+        if not (isinstance(implied, (int, float)) and implied > 0):
+            odds = d.get("best_available_odds") or d.get("sp")
+            implied = (100.0 / odds) if isinstance(odds, (int, float)) and odds > 1 else 20.0
+        implied = round(min(implied, d.get("model_pct") or implied), 1)
+        d["model_pct"] = implied
+        for k in ("win_probability", "win_pct", "top_win_probability"):
+            if isinstance(d.get(k), (int, float)):
+                d[k] = round(implied / 100.0, 4) if d[k] <= 1.0 else implied
+        d["is_sharp"] = False
+        for k in ("hot_pick", "value_bet", "two_funk", "flyer", "is_premium"):
+            if k in d:
+                d[k] = False
+        for k in ("confidence_tier", "tier", "hedge", "place_play", "trifecta"):
+            if k in d:
+                d[k] = None
+        d["sanity_suppressed"] = reason
+    return n
+
+
+async def _sanity_sweep(record: bool = True) -> list:
+    """Scan today's rank-1 predictions for blowups (the read-time guard suppresses
+    DISPLAY; this is the daily audit/alert record). Returns the flagged list and,
+    when record=True, writes each to history_guard_incidents."""
+    today = _today_aest().isoformat()
+    flagged: list = []
+    async with get_session() as s:
+        rows = (await s.execute(
+            select(RunnerPredictionRow)
+            .where(RunnerPredictionRow.race_id.like(f"{_like_safe(today)}_%"))
+            .where(RunnerPredictionRow.cancelled.is_(False) | RunnerPredictionRow.cancelled.is_(None))
+        )).scalars().all()
+    by_race: dict = {}
+    for r in rows:
+        by_race.setdefault(r.race_id, []).append(r)
+    for rid, rs in by_race.items():
+        active = sorted(rs, key=lambda x: x.model_rank or 99)
+        if len(active) < 2:
+            continue
+        r1, r2 = active[0], active[1]
+        mp = (r1.win_probability or 0) * 100
+        r2p = (r2.win_probability or 0) * 100
+        odds = r1.best_available_odds
+        mi = (100.0 / odds) if odds and odds > 1 else None
+        reason = _prediction_blowup_reason(mp, mi, r2p)
+        if reason:
+            flagged.append({"race_id": rid, "horse": r1.horse_name, "model_pct": round(mp, 1),
+                            "market_rank": r1.market_rank, "odds": odds, "reason": reason})
+    if record and flagged:
+        from sqlalchemy import text as _t
+        async with get_session() as s:
+            for f in flagged:
+                await s.execute(_t(
+                    "INSERT INTO history_guard_incidents(race_id, horse_name, kind, detail) "
+                    "VALUES (:rid, :hn, 'prediction_blowup', :det)"),
+                    {"rid": f["race_id"], "hn": f["horse"], "det": f["reason"]})
+            await s.commit()
+    log.warning("[sanity-sweep] %s: %d blowup(s)%s", today, len(flagged),
+                (": " + ", ".join(f"{x['horse']} {x['model_pct']}%" for x in flagged)) if flagged else "")
+    return flagged
+
+
+async def _scheduled_sanity_sweep():
+    try:
+        await _sanity_sweep(record=True)
+    except Exception as e:
+        log.exception("[sanity-sweep] scheduled run failed: %s", e)
+
+
 def _check_admin(x_secret: Optional[str]) -> None:
     """Fail-closed admin auth: requires CRON_SECRET env var to be set."""
     if not settings.cron_secret:
@@ -3392,6 +3503,13 @@ async def lifespan(app: FastAPI):
             log.warning("[keep-warm] heartbeat failed: %s", e)
     scheduler.add_job(_keep_warm, IntervalTrigger(minutes=4, jitter=30, timezone="Australia/Sydney"))
 
+    # 09:25 AEST prediction sanity sweep (2026-08-29) — runs just BEFORE the 09:30
+    # publish so a normalization/bad-feature blowup (e.g. TOUSSAINT: model 82% on a
+    # $9 fifth-pick) is caught and recorded before it reaches users. The read-time
+    # guard (_apply_sanity_guard) already demotes blowups on every request; this
+    # logs each catch to history_guard_incidents for the daily review record.
+    scheduler.add_job(_scheduled_sanity_sweep, CronTrigger(hour=9, minute=25, timezone="Australia/Sydney"))
+
     # Lounge landing-page pre-warm. The /api/lounge/init endpoint bundles
     # ~60 discrete fetches worth of data into one payload. If nobody visits
     # for 3 min the cache goes stale; when the next user shows up they eat
@@ -4187,6 +4305,10 @@ async def _display_prob_cap(request, call_next):
         # lounge/hotseat); no-op when nothing is inside the window.
         if path.startswith(_PAYWALL_PREFIXES):
             await _apply_sharp_2h_lock(data)
+        # Sanity guard: demote any rank-1 prediction blowup (extreme model prob the
+        # market strongly disagrees with) so a glitch never headlines as HOT/Sharp.
+        if path.startswith(_PROB_CAP_PREFIXES):
+            _apply_sanity_guard(data)
         # Paywall: redact all-but-the-teaser race for non-members. Runs after
         # any endpoint-level cache (this is per-request), on the parsed JSON.
         # Edge is a subscription-tier feature (monthly/annual): a 5-day pass
@@ -30103,6 +30225,17 @@ async def performance_by_venue(days: int = Query(30, ge=1, le=90)):
     ], key=lambda x: x["win_rate"], reverse=True)
 
     return {"days": days, "venues": venues}
+
+
+@app.get("/api/admin/sanity-sweep")
+async def admin_sanity_sweep(
+    record: bool = Query(False, description="also write incidents to history_guard_incidents"),
+    x_cron_secret: Optional[str] = Header(None),
+):
+    """Run today's prediction sanity sweep on demand (blowup detector). Same check
+    the 09:25 scheduled sweep runs. record=false = dry run (view only)."""
+    _check_admin(x_cron_secret)
+    return {"flagged": await _sanity_sweep(record=record)}
 
 
 @app.get("/api/admin/analysis/day-diagnosis")
