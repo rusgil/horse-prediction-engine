@@ -352,11 +352,13 @@ async def _apply_sharp_2h_lock(data) -> None:
 # 2026-08-29: model 82% vs market-implied 11%, 35x rank-2). Caught here so a
 # glitch can never headline as a HOT/Sharp near-certainty; the 09:25 sweep records
 # each catch for review. All percentages are on the 0-100 scale.
-def _prediction_blowup_reason(model_pct, market_implied_pct, rank2_pct):
+def _prediction_blowup_reason(model_pct, market_implied_pct, rank2_pct, market_rank=None):
     mp = model_pct or 0
     mi, r2 = market_implied_pct, rank2_pct
     if mp >= 45 and isinstance(mi, (int, float)) and mi > 0 and mp >= 2.5 * mi and mi < 25:
         return f"model {mp:.0f}% vs market-implied {mi:.0f}% ({mp / mi:.1f}x market)"
+    if mp >= 45 and isinstance(market_rank, (int, float)) and market_rank >= 4:
+        return f"model {mp:.0f}% but market ranks it #{int(market_rank)}"
     if mp >= 40 and isinstance(r2, (int, float)) and r2 > 0 and (mp / r2) >= 8:
         return f"field floored — rank-1 {mp:.0f}% is {mp / r2:.0f}x rank-2 ({r2:.1f}%)"
     if mp >= 85 and not (isinstance(mi, (int, float)) and mi >= 40):
@@ -369,9 +371,10 @@ def _apply_sanity_guard(data) -> int:
     defer its win% to the market-implied value and strip the Sharp/HOT/value flags
     so a glitch never headlines. In place; returns the count suppressed."""
     picks: list = []
+    _prob_keys = ("model_pct", "win_probability", "top_win_probability", "win_pct")
     def _walk(o):
         if isinstance(o, dict):
-            if o.get("race_id") and isinstance(o.get("model_pct"), (int, float)):
+            if o.get("race_id") and any(isinstance(o.get(k), (int, float)) for k in _prob_keys):
                 picks.append(o)
             for v in o.values():
                 _walk(v)
@@ -381,20 +384,33 @@ def _apply_sanity_guard(data) -> int:
     _walk(data)
     n = 0
     for d in picks:
-        reason = _prediction_blowup_reason(d.get("model_pct"), d.get("market_implied_pct"), d.get("rank2_pct"))
+        # Model prob as a percent, from whichever field this surface uses.
+        mp = d.get("model_pct")
+        if not isinstance(mp, (int, float)):
+            for k in ("win_probability", "top_win_probability", "win_pct"):
+                v = d.get(k)
+                if isinstance(v, (int, float)):
+                    mp = v * 100 if v <= 1.0 else v
+                    break
+        if not isinstance(mp, (int, float)):
+            continue
+        odds = d.get("best_available_odds") or d.get("sp") or d.get("odds")
+        mi = d.get("market_implied_pct")
+        if not (isinstance(mi, (int, float)) and mi > 0) and isinstance(odds, (int, float)) and odds > 1:
+            mi = 100.0 / odds
+        reason = _prediction_blowup_reason(mp, mi, d.get("rank2_pct"), d.get("market_rank"))
         if not reason:
             continue
         n += 1
-        implied = d.get("market_implied_pct")
-        if not (isinstance(implied, (int, float)) and implied > 0):
-            odds = d.get("best_available_odds") or d.get("sp")
-            implied = (100.0 / odds) if isinstance(odds, (int, float)) and odds > 1 else 20.0
-        implied = round(min(implied, d.get("model_pct") or implied), 1)
-        d["model_pct"] = implied
+        implied = mi if (isinstance(mi, (int, float)) and mi > 0) else 20.0
+        implied = round(min(implied, mp), 1)
+        if isinstance(d.get("model_pct"), (int, float)):
+            d["model_pct"] = implied
         for k in ("win_probability", "win_pct", "top_win_probability"):
             if isinstance(d.get(k), (int, float)):
                 d[k] = round(implied / 100.0, 4) if d[k] <= 1.0 else implied
-        d["is_sharp"] = False
+        if "is_sharp" in d:
+            d["is_sharp"] = False
         for k in ("hot_pick", "value_bet", "two_funk", "flyer", "is_premium"):
             if k in d:
                 d[k] = False
@@ -429,7 +445,7 @@ async def _sanity_sweep(record: bool = True) -> list:
         r2p = (r2.win_probability or 0) * 100
         odds = r1.best_available_odds
         mi = (100.0 / odds) if odds and odds > 1 else None
-        reason = _prediction_blowup_reason(mp, mi, r2p)
+        reason = _prediction_blowup_reason(mp, mi, r2p, r1.market_rank)
         if reason:
             flagged.append({"race_id": rid, "horse": r1.horse_name, "model_pct": round(mp, 1),
                             "market_rank": r1.market_rank, "odds": odds, "reason": reason})
