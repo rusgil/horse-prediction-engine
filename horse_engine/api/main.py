@@ -374,7 +374,10 @@ def _apply_sanity_guard(data) -> int:
     _prob_keys = ("model_pct", "win_probability", "top_win_probability", "win_pct")
     def _walk(o):
         if isinstance(o, dict):
-            if o.get("race_id") and any(isinstance(o.get(k), (int, float)) for k in _prob_keys):
+            # Any runner/pick-shaped dict — Edge picks carry race_id, but per-runner
+            # dicts in the /api/races field list only carry horse_name.
+            if (o.get("race_id") or o.get("horse_name")) and \
+                    any(isinstance(o.get(k), (int, float)) for k in _prob_keys):
                 picks.append(o)
             for v in o.values():
                 _walk(v)
