@@ -121,6 +121,14 @@
 .chip.tri  { background: rgba(205,127,50,0.16); color: #d9955a; flex-shrink: 0; }
 .chip.ff   { background: rgba(142,169,255,0.16); color: #8ea9ff; flex-shrink: 0; }
 
+/* ── Open-race demotion — wide-open field, no strong win pick ──────────── */
+.chip.openrace { background: var(--surface-2); color: var(--text-2); border: 1px dashed var(--line); font-weight: 700; flex-shrink: 0; }
+.pcard.open-race { border-color: var(--line); }
+.pcard.open-race .pk-horse { color: var(--text-2); }               /* not a confident headline */
+.pcard.open-race .dual-stat-row.open { opacity: 0.72; }            /* mute the stat block */
+.pcard.open-race .dual-stat-row.open .ds-num { color: var(--text-2); font-weight: 800; }
+.open-note { font-size: 0.66rem; color: var(--text-3); line-height: 1.35; margin-top: 4px; text-align: center; }
+
 /* ── Freemium paywall (Stage 3) ──────────────────────────────────────── */
 .jcard.pcard.locked {
   cursor: pointer;

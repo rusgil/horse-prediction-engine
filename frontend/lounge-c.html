@@ -885,8 +885,8 @@
 
   .ff { font-variant-numeric: tabular-nums; letter-spacing: 0.14em; font-weight: 800; }
 </style>
-  <link rel="stylesheet" href="/pick-card.css?v=30">
-  <script src="/pick-card.js?v=30"></script>
+  <link rel="stylesheet" href="/pick-card.css?v=31">
+  <script src="/pick-card.js?v=31"></script>
   <script defer src="/_vercel/insights/script.js"></script>
 </head>
 <body>
@@ -1597,7 +1597,9 @@
         </div>
         <div class="chips">
           ${r.is_sharp ? `<span class="chip sharp">🎯 SHARP</span>` : ''}
-          ${tier ? `<span class="chip ${tier.cls}">${tier.label}</span>` : ''}
+          ${window.PickCard.isOpenRace({ win_probability: r.top_win_probability, is_sharp: r.is_sharp })
+            ? `<span class="chip openrace">⚖️ OPEN RACE</span>`
+            : (tier ? `<span class="chip ${tier.cls}">${tier.label}</span>` : '')}
         </div>
       </div>`;
     };

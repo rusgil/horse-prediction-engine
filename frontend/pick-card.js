@@ -46,13 +46,36 @@
 
   // 3-stat prediction bar (old-edge style): win prediction / place prediction /
   // model accuracy at this level. accuracy is optional (omit → 2 stats).
-  function dualStat(win_pct, place_pct, accuracy) {
+  // ── Open-race demotion ──────────────────────────────────────────────────
+  // A wide-open field has no strong win pick: the model's top pick sits below
+  // this win% AND the race isn't Sharp. In these races the win pick is a
+  // coin-flip (historically ~18%) and the PLACE % is high mostly because the
+  // field is big — which reads as a "safe" bet and gives false confidence.
+  // So we demote the card: no confidence/fav chips, muted stats, honest caveat.
+  var OPEN_RACE_WIN_MAX = 25;
+  function _pickWinPct(pick) {
+    if (pick == null) return null;
+    if (pick.win_pct != null) return pick.win_pct;
+    if (pick.model_pct != null) return pick.model_pct;
+    const p = pick.win_probability != null ? pick.win_probability
+      : (pick.top_win_probability != null ? pick.top_win_probability : null);
+    if (p == null) return null;
+    return p <= 1 ? p * 100 : p;
+  }
+  function isOpenRace(pick) {
+    if (!pick || pick.is_sharp) return false;
+    const w = _pickWinPct(pick);
+    return w != null && w < OPEN_RACE_WIN_MAX;
+  }
+
+  function dualStat(win_pct, place_pct, accuracy, open) {
     if (win_pct == null) return '';
     const f = v => (+Number(v).toFixed(1));
-    let out = `<div class="ds"><span class="ds-num num ${win_pct >= 30 ? 'v-win' : ''}">${f(win_pct)}%</span><span class="ds-lbl">win prediction</span></div>`;
-    if (place_pct != null) out += `<div class="ds-sep"></div><div class="ds"><span class="ds-num num ${place_pct >= 50 ? 'v-plc' : ''}">${f(place_pct)}%</span><span class="ds-lbl">place prediction</span></div>`;
+    let out = `<div class="ds"><span class="ds-num num ${(!open && win_pct >= 30) ? 'v-win' : ''}">${f(win_pct)}%</span><span class="ds-lbl">win prediction</span></div>`;
+    if (place_pct != null) out += `<div class="ds-sep"></div><div class="ds"><span class="ds-num num ${(!open && place_pct >= 50) ? 'v-plc' : ''}">${f(place_pct)}%</span><span class="ds-lbl">place prediction</span></div>`;
     if (accuracy != null) out += `<div class="ds-sep"></div><div class="ds"><span class="ds-num num v-acc">${f(accuracy)}%</span><span class="ds-lbl">model accuracy at this level</span></div>`;
-    return `<div class="dual-stat-row">${out}</div>`;
+    const note = open ? `<div class="open-note">⚖️ Open race — no strong win pick. A big field lifts the place % (it isn't a strong edge).</div>` : '';
+    return `<div class="dual-stat-row${open ? ' open' : ''}">${out}</div>${note}`;
   }
 
   // Compact 2-up WIN/PLACE for drawer runner rows — side by side, big and bold.
@@ -188,7 +211,8 @@
     const timeTop = isPast
       ? `<div class="when-top num">${wallTime(pick.scheduled_time)}</div>`
       : `<div class="when-top">${cd.label ? `<span class="cd ${cd.urg || ''}">${cd.label}</span> ` : ''}<span class="num">${wallTime(pick.scheduled_time)}</span></div>`;
-    return `<div class="jcard pcard ${outcome} ${!isPast && pick.confidence_tier === 'hot' ? 'hot' : ''} ${!isPast && pick.is_premium ? 'prem' : ''}" style="${dim}" data-open="${esc(pick.race_id)}" data-horse="${esc(pick.horse_name)}">
+    const openRace = !isPast && isOpenRace(pick);
+    return `<div class="jcard pcard ${outcome} ${openRace ? 'open-race' : ''} ${!isPast && !openRace && pick.confidence_tier === 'hot' ? 'hot' : ''} ${!isPast && !openRace && pick.is_premium ? 'prem' : ''}" style="${dim}" data-open="${esc(pick.race_id)}" data-horse="${esc(pick.horse_name)}">
       <div class="mid">
         ${(() => {
           const idEl = `<div class="pk-venue">${esc(pick.venue)} <b>R${pick.race_number}</b>${badge}</div>`
@@ -199,7 +223,7 @@
           // the name on narrow/mobile-portrait via .pk-split's media query.
           return `<div class="pk-split"><div class="pk-id">${idEl}</div><div class="pk-meta">${metaEl}</div></div>`;
         })()}
-        <div class="pk-chips">${tierChip(pick)}${!isPast && pick.is_premium ? '<span class="chip prem">💎 PREMIUM</span>' : ''}${pick.is_sharp ? '<span class="chip sharp">🎯 SHARP</span>' : ''}${!isPast ? favChip(pick) : ''}${!isPast ? exoticChips(pick) : ''}${pick.sportsbet_available === false ? '<span class="chip nosb">🚫 Limited fixed-odds</span>' : ''}</div>
+        <div class="pk-chips">${openRace ? '<span class="chip openrace">⚖️ OPEN RACE</span>' : `${tierChip(pick)}${!isPast && pick.is_premium ? '<span class="chip prem">💎 PREMIUM</span>' : ''}${pick.is_sharp ? '<span class="chip sharp">🎯 SHARP</span>' : ''}${!isPast ? favChip(pick) : ''}${!isPast ? exoticChips(pick) : ''}`}${pick.sportsbet_available === false ? '<span class="chip nosb">🚫 Limited fixed-odds</span>' : ''}</div>
       </div>
       <div class="right">
         ${timeTop}
@@ -207,7 +231,7 @@
         ${settledRes && res.winner && res.place_odds ? `<div class="odds-pill"><b class="num" style="font-size:1rem;color:var(--blue)">$${(+res.place_odds).toFixed(2)}</b>place</div>` : ''}
         ${!isPast && ctx.showSpark ? `<div class="spark-slot" id="spark-${pick.race_id.replace(/[^a-z0-9]/gi, '-')}"></div>` : ''}
       </div>
-      ${dualStat(pick.win_pct, pick.place_pct, pick.accuracy != null ? pick.accuracy : calibratedRate(pick.win_pct))}
+      ${dualStat(pick.win_pct, pick.place_pct, pick.accuracy != null ? pick.accuracy : calibratedRate(pick.win_pct), openRace)}
       ${pick.is_teaser ? confidenceCallout(pick) : ''}
       ${!isPast && ctx.footer ? (ctx.footer(pick) || '') : ''}${verdict}${tri}
     </div>`;
@@ -550,6 +574,6 @@
     render, dualStat, winPlace, resultBlock, esc, wallTime, countdown,
     lockedCard, paywallBanner, trophyBanner, configureBilling, openCheckout, openPricing, bindUnlock,
     fetchJSON, isMember, isSubscriber, isFiveDayHolder, splashUpsell, plansUpsell, plansGrid, refreshSplashUpsell, loadMembership,
-    fetchSparklines,
+    fetchSparklines, isOpenRace,
   };
 })();
