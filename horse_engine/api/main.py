@@ -30374,6 +30374,76 @@ async def admin_day_diagnosis(
     }
 
 
+@app.get("/api/admin/analysis/open-race-backtest")
+async def open_race_backtest(
+    days: int = Query(90, ge=14, le=365),
+    x_cron_secret: Optional[str] = Header(None),
+):
+    """Back-test the open-race threshold: for rank-1 live picks over N days, report
+    WIN% and paid-PLACE% by fine confidence band, plus a threshold sweep showing —
+    for each cut — the OPEN bucket (below cut, non-Sharp) vs what the KEPT set looks
+    like after excluding it. The 'kept' win/place is the headline you'd advertise if
+    low-confidence races were dropped from the overall stats."""
+    _check_admin(x_cron_secret)
+    cutoff = (date.today() - timedelta(days=days)).isoformat()
+    async with get_session() as session:
+        hr_rows = (await session.execute(
+            select(HistoricalResultRow).where(HistoricalResultRow.race_id >= cutoff)
+        )).scalars().all()
+        if not hr_rows:
+            return {"days": days, "total_rank1": 0}
+        race_ids = list({r.race_id for r in hr_rows})
+        preds = (await session.execute(
+            select(RunnerPredictionHistoryRow)
+            .where(RunnerPredictionHistoryRow.race_id.in_(race_ids))
+            .where(RunnerPredictionHistoryRow.model_rank == 1)
+            .where(RunnerPredictionHistoryRow.win_probability.isnot(None))
+            .where(RunnerPredictionHistoryRow.cancelled.is_(False) | RunnerPredictionHistoryRow.cancelled.is_(None))
+            .where((RunnerPredictionHistoryRow.source == "live") | RunnerPredictionHistoryRow.source.is_(None))
+            .order_by(RunnerPredictionHistoryRow.enriched_at.desc())
+        )).scalars().all()
+    top: dict = {}
+    for p in preds:
+        top.setdefault(p.race_id, p)
+    from collections import Counter as _C
+    starters = _C(r.race_id for r in hr_rows if r.position and 1 <= r.position < 100)
+    res_by_key = {(r.race_id, _normalize_horse(r.horse_name)): r for r in hr_rows}
+    rows: list = []
+    for rid, p in top.items():
+        res = res_by_key.get((rid, _normalize_horse(p.horse_name)))
+        if not res:
+            continue
+        rows.append({
+            "wp": (p.win_probability or 0) * 100,
+            "won": bool(res.winner),
+            "placed": bool(_is_paid_place(res.position, starters.get(rid))),
+            "sharp": bool(p.is_sharp),
+        })
+    n = len(rows)
+    if not n:
+        return {"days": days, "total_rank1": 0}
+
+    def agg(sub):
+        if not sub:
+            return {"n": 0, "cov_pct": 0.0, "win_pct": None, "place_pct": None}
+        return {"n": len(sub), "cov_pct": round(100 * len(sub) / n, 1),
+                "win_pct": round(100 * sum(r["won"] for r in sub) / len(sub), 1),
+                "place_pct": round(100 * sum(r["placed"] for r in sub) / len(sub), 1)}
+
+    sweep = {}
+    for t in (18, 20, 22, 25, 28, 30):
+        openb = [r for r in rows if r["wp"] < t and not r["sharp"]]
+        kept = [r for r in rows if not (r["wp"] < t and not r["sharp"])]
+        sweep[str(t)] = {"excluded_open": agg(openb), "kept": agg(kept)}
+    bands = [("<18", 0, 18), ("18-20", 18, 20), ("20-22", 20, 22), ("22-25", 22, 25),
+             ("25-28", 25, 28), ("28-30", 28, 30), ("30-35", 30, 35), ("35+", 35, 999)]
+    return {
+        "days": days, "total_rank1": n, "overall": agg(rows),
+        "by_band": {lbl: agg([r for r in rows if lo <= r["wp"] < hi]) for lbl, lo, hi in bands},
+        "by_threshold": sweep,
+    }
+
+
 @app.get("/api/performance/premium")
 async def premium_performance(days: int = Query(30, ge=1, le=365), x_cron_secret: Optional[str] = Header(None)):
     """
