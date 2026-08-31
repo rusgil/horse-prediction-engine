@@ -402,8 +402,8 @@
      figures stay readable underneath; fades on hover. Not clickable (toasts). */
   .cell.coinflip { cursor: pointer; position: relative; }
   .cell.coinflip::after { content: ""; position: absolute; inset: 3px; border-radius: 5px;
-    background: rgba(128,130,142,0.34); pointer-events: none; transition: background 0.12s; }
-  .cell.coinflip:hover::after { background: rgba(128,130,142,0.10); }
+    background: rgba(128,130,142,0.16); pointer-events: none; transition: background 0.12s; }
+  .cell.coinflip:hover::after { background: rgba(128,130,142,0.05); }
   .coin-toast { position: fixed; left: 50%; bottom: 32px; transform: translateX(-50%) translateY(10px);
     background: var(--surface-2, #1a2130); color: var(--text, #e8ecf4); border: 1px solid var(--line, #232c3d);
     border-radius: 999px; padding: 9px 16px; font-size: 0.82rem; font-weight: 600;
@@ -1529,8 +1529,8 @@
         const tier = tierOf(r.top_win_probability, isOffGoing(r.track_condition));
         const cls = [
           done ? 'done' : '',
-          done ? resCls(r) : '',
-          !done && tier ? tier.heat : '',
+          (!_coin && done) ? resCls(r) : '',
+          (!_coin && !done && tier) ? tier.heat : '',
           _coin ? 'coinflip' : '',
         ].join(' ');
         // History cells keep their pre-race confidence label beside the result
@@ -1550,9 +1550,9 @@
         const _overlay = (r.top_win_probability != null && _impl != null) ? (r.top_win_probability - _impl) : null;
         const _valueBet = _overlay != null && _overlay >= 0.05 && r.top_pick_odds >= 3;
         const _marks = (r.is_sharp ? '🎯' : '') + (_clearFav ? '👑' : (_tossUp ? '⚖️' : '')) + (_clearQuin ? '🥈' : '') + (_clearTri ? '🥉' : '') + (_clearFour ? '🎖️' : '') + (_valueBet ? '💎' : '');
-        const sub = done
+        const sub = _coin ? '&nbsp;' : (done
           ? resultMark(r) + (tierWord ? `<span class="cell-tier ${tier.dot}">${tierWord}</span>` : '')
-          : (_marks || '&nbsp;');
+          : (_marks || '&nbsp;'));
         return `<td class="cell ${cls}" ${_coin ? '' : `data-open="${esc(r.race_id)}"`} title="${_coin ? 'Open race — no strong pick' : esc(m.venue) + ' R' + r.race_number}">
           <div class="in"><div class="t num">${wallTime(r.scheduled_time)}</div><div class="sub">${sub}</div></div></td>`;
       }).join('');

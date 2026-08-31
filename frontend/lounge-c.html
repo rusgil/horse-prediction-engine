@@ -418,8 +418,8 @@
      figures stay readable underneath; fades on hover. Not clickable (toasts). */
   .cell.coinflip { cursor: pointer; position: relative; }
   .cell.coinflip::after { content: ""; position: absolute; inset: 3px; border-radius: 5px;
-    background: rgba(128,130,142,0.34); pointer-events: none; transition: background 0.12s; }
-  .cell.coinflip:hover::after { background: rgba(128,130,142,0.10); }
+    background: rgba(128,130,142,0.16); pointer-events: none; transition: background 0.12s; }
+  .cell.coinflip:hover::after { background: rgba(128,130,142,0.05); }
   .brace.coinflip .coin-fill-row { height: 16px; width: 65%; border-radius: 5px; background: rgba(128,130,142,0.20); border: 1px solid rgba(128,130,142,0.45); }
   .coin-toast { position: fixed; left: 50%; bottom: 32px; transform: translateX(-50%) translateY(10px);
     background: var(--surface-2, #1a2130); color: var(--text, #e8ecf4); border: 1px solid var(--line, #232c3d);
@@ -1472,8 +1472,8 @@
         const tier = tierOf(r.top_win_probability, isOffGoing(r.track_condition));
         const cls = [
           done ? 'done' : '',
-          done ? resCls(r) : '',
-          !done && tier ? tier.heat : '',
+          (!_coin && done) ? resCls(r) : '',
+          (!_coin && !done && tier) ? tier.heat : '',
           _coin ? 'coinflip' : '',
         ].join(' ');
         // History cells keep their pre-race confidence label beside the result
@@ -1515,7 +1515,7 @@
           + (r.is_sharp ? ' · Sharp' : '') + (clearFav ? ' · Clear fav' : (tossUp ? ' · Toss-up' : ''))
           + (clearQuin ? ' · Clear quinella' : '') + (clearTri ? ' · Clear trifecta' : '') + (clearFour ? ' · Clear first-4' : '');
         return `<td class="cell ${cls} ${valueBet && !done ? 'val-bet' : ''}" ${_coin ? '' : `data-open="${esc(r.race_id)}"`} title="${_coin ? 'Open race — no strong pick' : esc(tip)}${valueBet ? ' · 💎 value (odds beat our %)' : ''}">
-          <div class="in"><div class="t num">${wallTime(r.scheduled_time)}</div>${wpo}${labelHtml}${outcome}</div></td>`;
+          <div class="in"><div class="t num">${wallTime(r.scheduled_time)}</div>${wpo}${_coin ? '' : labelHtml + outcome}</div></td>`;
       }).join('');
       return `<tr>
         <td class="mcell">
