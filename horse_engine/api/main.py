@@ -28382,6 +28382,7 @@ _OVERALL_STATS_MIN_WIN = 0.20
 async def performance_summary(
     days: int = Query(5, ge=1, le=365),
     sharp: bool = Query(False),
+    edge: bool = Query(False, description="Edge tier — top pick ≥29.5% (the refinement step between Selected and Sharp)"),
     segment: Optional[str] = Query(None, description="metro | country — filter to that venue segment"),
 ):
     """
@@ -28397,7 +28398,7 @@ async def performance_summary(
     pure past-date windows. The Lounge fires this on every page load so
     caching takes the cold response from ~5s to ~5ms.
     """
-    cache_key = (int(days), bool(sharp), (segment or "").lower())
+    cache_key = (int(days), bool(sharp), bool(edge), (segment or "").lower())
     # Today is always in the window since we look back N days from today,
     # so the TTL is the "today" tier. (If you ever add an explicit
     # `end_date` param, branch the TTL on whether end_date >= today.)
@@ -28498,13 +28499,14 @@ async def performance_summary(
 
             top_picks = {rid: p for rid, p in top_picks.items() if _recompute_sharp(p)}
 
-        # Overall-stats confidence floor (2026-08-31): the default (non-Sharp)
-        # overall win rate excludes low-confidence open races (rank-1 < 20%). These
-        # are coin-flips the products don't tip; counting them dragged the headline.
-        # Sharp mode already filtered above and never contains a <20% pick.
+        # Confidence floor (2026-08-31): the tiers are a refinement funnel —
+        # Selected (default, rank-1 ≥20%, excludes open coin-flips) → Edge
+        # (≥29.5%) → Sharp (its own gate, applied above). Sharp mode never
+        # contains a <20% pick, so it's left untouched here.
         if not sharp:
+            _floor = 0.295 if edge else _OVERALL_STATS_MIN_WIN
             top_picks = {rid: p for rid, p in top_picks.items()
-                         if (p.win_probability or 0) >= _OVERALL_STATS_MIN_WIN}
+                         if (p.win_probability or 0) >= _floor}
 
         # Segment filter (metro/country) — additive; None keeps every race. Lets
         # the reporting separate metro from country so a country-only day (which
