@@ -28504,9 +28504,22 @@ async def performance_summary(
         # (≥29.5%) → Sharp (its own gate, applied above). Sharp mode never
         # contains a <20% pick, so it's left untouched here.
         if not sharp:
-            _floor = 0.295 if edge else _OVERALL_STATS_MIN_WIN
-            top_picks = {rid: p for rid, p in top_picks.items()
-                         if (p.win_probability or 0) >= _floor}
+            if edge:
+                top_picks = {rid: p for rid, p in top_picks.items()
+                             if (p.win_probability or 0) >= 0.295}
+            else:
+                # Selected floor (<20% excluded) — EXCEPT at badged (gold/silver/
+                # bronze) venues, where the model under-rates but still wins (<20%
+                # picks there hit ~26%, OOS-confirmed). Keep those in the stat.
+                from horse_engine.models.database import VenueBadgeRow
+                _badged = set((await session.execute(
+                    select(VenueBadgeRow.venue)
+                    .where(VenueBadgeRow.badge.isnot(None))
+                    .where(VenueBadgeRow.badge != "avoid")
+                )).scalars().all())
+                top_picks = {rid: p for rid, p in top_picks.items()
+                             if (p.win_probability or 0) >= _OVERALL_STATS_MIN_WIN
+                             or (p.venue in _badged)}
 
         # Segment filter (metro/country) — additive; None keeps every race. Lets
         # the reporting separate metro from country so a country-only day (which

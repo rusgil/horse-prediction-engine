@@ -62,17 +62,38 @@
     if (p == null) return null;
     return p <= 1 ? p * 100 : p;
   }
+  // Badged (gold/silver/bronze) venues are an EXCEPTION to the low-confidence
+  // rules: the model under-rates them but still wins (<20% picks there hit ~26%,
+  // OOS-confirmed), so we neither hide nor demote their races. Loaded once from
+  // /api/venue-badges; until it resolves the set is empty (no exceptions yet).
+  var _badgedVenues = null, _badgesLoading = null;
+  function _normVenue(s) { return (s == null ? '' : String(s)).toLowerCase().replace(/[^a-z0-9]/g, ''); }
+  function loadVenueBadges() {
+    if (_badgedVenues) return Promise.resolve(_badgedVenues);
+    if (_badgesLoading) return _badgesLoading;
+    _badgesLoading = fetch('/api/venue-badges').then(r => r.ok ? r.json() : null).then(d => {
+      const s = new Set(), b = d && d.badges;
+      if (b) for (const k in b) { if (b[k] && b[k].badge && b[k].badge !== 'avoid') s.add(_normVenue(k)); }
+      _badgedVenues = s; return s;
+    }).catch(() => { _badgedVenues = new Set(); return _badgedVenues; });
+    return _badgesLoading;
+  }
+  function _venueBadged(pick) {
+    if (!_badgedVenues || !pick) return false;
+    return _badgedVenues.has(_normVenue(pick.venue)) || _badgedVenues.has(_normVenue(pick.venue_code))
+      || _badgedVenues.has(_normVenue(pick._venue));
+  }
   function isOpenRace(pick) {
-    if (!pick || pick.is_sharp) return false;
+    if (!pick || pick.is_sharp || _venueBadged(pick)) return false;
     const w = _pickWinPct(pick);
     return w != null && w < OPEN_RACE_WIN_MAX;
   }
   // Below this the top pick is a coin-flip we don't stand behind — HIDDEN from
   // the pick feeds entirely (matches the overall-stats <20% floor). The 20-25%
-  // band still shows, demoted (isOpenRace). Sharp is never hidden.
+  // band still shows, demoted (isOpenRace). Sharp + badged venues never hidden.
   var HIDE_RACE_WIN_MAX = 20;
   function isHiddenRace(pick) {
-    if (!pick || pick.is_sharp) return false;
+    if (!pick || pick.is_sharp || _venueBadged(pick)) return false;
     const w = _pickWinPct(pick);
     return w != null && w < HIDE_RACE_WIN_MAX;
   }
@@ -583,6 +604,7 @@
     render, dualStat, winPlace, resultBlock, esc, wallTime, countdown,
     lockedCard, paywallBanner, trophyBanner, configureBilling, openCheckout, openPricing, bindUnlock,
     fetchJSON, isMember, isSubscriber, isFiveDayHolder, splashUpsell, plansUpsell, plansGrid, refreshSplashUpsell, loadMembership,
-    fetchSparklines, isOpenRace, isHiddenRace,
+    fetchSparklines, isOpenRace, isHiddenRace, loadVenueBadges,
   };
+  loadVenueBadges();   // warm the badged-venue set early so exceptions apply on first render
 })();

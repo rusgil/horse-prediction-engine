@@ -901,8 +901,8 @@
 
   .ff { font-variant-numeric: tabular-nums; letter-spacing: 0.14em; font-weight: 800; }
 </style>
-  <link rel="stylesheet" href="/pick-card.css?v=32">
-  <script src="/pick-card.js?v=32"></script>
+  <link rel="stylesheet" href="/pick-card.css?v=33">
+  <script src="/pick-card.js?v=33"></script>
   <script defer src="/_vercel/insights/script.js"></script>
 </head>
 <body>
@@ -1466,7 +1466,7 @@
         const done = isSettled(r);
         // Sub-20% coin-flip: a plain light-grey box — no result computed or shown
         // (we don't stand behind it). Clickable only to toast the reason.
-        if (window.PickCard.isHiddenRace({ win_probability: r.top_win_probability, is_sharp: r.is_sharp }))
+        if (window.PickCard.isHiddenRace({ win_probability: r.top_win_probability, is_sharp: r.is_sharp, venue: r._venue || r.venue || (typeof m !== "undefined" && m ? m.venue : null) }))
           return `<td class="cell coinflip" title="Open race — no strong pick"><div class="in coin-fill"></div></td>`;
         const tier = tierOf(r.top_win_probability, isOffGoing(r.track_condition));
         const cls = [
@@ -1549,7 +1549,7 @@
     if (!S.meetings.length) return;
     let races = allRaces().sort((a, b) => (epochOf(a.scheduled_time) ?? 9e15) - (epochOf(b.scheduled_time) ?? 9e15));
     // Hide the sub-20% coin-flips we don't stand behind (matches the stats floor).
-    races = races.filter(r => !window.PickCard.isHiddenRace({ win_probability: r.top_win_probability, is_sharp: r.is_sharp }));
+    races = races.filter(r => !window.PickCard.isHiddenRace({ win_probability: r.top_win_probability, is_sharp: r.is_sharp, venue: r._venue || r.venue || (typeof m !== "undefined" && m ? m.venue : null) }));
     const chips = `<div class="venue-chips">
       <button class="vchip ${S.feedVenue === 'all' ? 'on' : ''}" data-fv="all">All meetings</button>
       ${S.meetings.map(m => `<button class="vchip ${S.feedVenue === vcOf(m) ? 'on' : ''}" data-fv="${esc(vcOf(m))}">${esc(m.venue)}</button>`).join('')}
@@ -1619,7 +1619,7 @@
         </div>
         <div class="chips">
           ${r.is_sharp ? `<span class="chip sharp">🎯 SHARP</span>` : ''}
-          ${window.PickCard.isOpenRace({ win_probability: r.top_win_probability, is_sharp: r.is_sharp })
+          ${window.PickCard.isOpenRace({ win_probability: r.top_win_probability, is_sharp: r.is_sharp, venue: r._venue || r.venue || (typeof m !== "undefined" && m ? m.venue : null) })
             ? `<span class="chip openrace">⚖️ OPEN RACE</span>`
             : (tier ? `<span class="chip ${tier.cls}">${tier.label}</span>` : '')}
         </div>
@@ -1684,7 +1684,7 @@
       const cd = countdown(r.scheduled_time);
       const done = isSettled(r);
       // Sub-20% coin-flip — no pick, no result fetched: a plain light-grey box.
-      const _coin = window.PickCard.isHiddenRace({ win_probability: r.top_win_probability, is_sharp: r.is_sharp });
+      const _coin = window.PickCard.isHiddenRace({ win_probability: r.top_win_probability, is_sharp: r.is_sharp, venue: r._venue || r.venue || (typeof m !== "undefined" && m ? m.venue : null) });
       if (_coin) {
         return `<div class="brace coinflip" title="Open race — no strong pick">
           <div class="rn">R${r.race_number}</div>

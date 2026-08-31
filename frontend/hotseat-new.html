@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
   <script src="/theme.js?v=22"></script>
-  <script src="/pick-card.js?v=32"></script>
+  <script src="/pick-card.js?v=33"></script>
 <meta name="robots" content="noindex">
 <title>FunkyIQ — Hot Seat</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -899,7 +899,7 @@
 
   .ff { font-variant-numeric: tabular-nums; letter-spacing: 0.14em; font-weight: 800; }
 </style>
-  <link rel="stylesheet" href="/pick-card.css?v=32">
+  <link rel="stylesheet" href="/pick-card.css?v=33">
   <script defer src="/_vercel/insights/script.js"></script>
 </head>
 <body>
@@ -1523,7 +1523,7 @@
         const done = isSettled(r);
         // Sub-20% coin-flip: a plain light-grey box — no result computed or shown
         // (we don't stand behind it). Clickable only to toast the reason.
-        if (window.PickCard.isHiddenRace({ win_probability: r.top_win_probability, is_sharp: r.is_sharp }))
+        if (window.PickCard.isHiddenRace({ win_probability: r.top_win_probability, is_sharp: r.is_sharp, venue: r._venue || r.venue || (typeof m !== "undefined" && m ? m.venue : null) }))
           return `<td class="cell coinflip" title="Open race — no strong pick"><div class="in coin-fill"></div></td>`;
         const tier = tierOf(r.top_win_probability, isOffGoing(r.track_condition));
         const cls = [
@@ -1589,7 +1589,7 @@
     if (!S.meetings.length) return;
     let races = allRaces().sort((a, b) => (epochOf(a.scheduled_time) ?? 9e15) - (epochOf(b.scheduled_time) ?? 9e15));
     // Hide the sub-20% coin-flips we don't stand behind (matches the stats floor).
-    races = races.filter(r => !window.PickCard.isHiddenRace({ win_probability: r.top_win_probability, is_sharp: r.is_sharp }));
+    races = races.filter(r => !window.PickCard.isHiddenRace({ win_probability: r.top_win_probability, is_sharp: r.is_sharp, venue: r._venue || r.venue || (typeof m !== "undefined" && m ? m.venue : null) }));
     const chips = `<div class="venue-chips">
       <button class="vchip ${S.feedVenue === 'all' ? 'on' : ''}" data-fv="all">All meetings</button>
       ${S.meetings.map(m => `<button class="vchip ${S.feedVenue === vcOf(m) ? 'on' : ''}" data-fv="${esc(vcOf(m))}">${esc(m.venue)}</button>`).join('')}
