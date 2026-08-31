@@ -79,9 +79,13 @@
   /* ── Header ─────────────────────────────────────────────── */
   header {
     position: sticky; top: 0; z-index: 40;
-    background: color-mix(in srgb, var(--bg) 86%, transparent);
+    /* Transparent + frosted so the page aurora flows through (was an 86%-opaque
+       block that interrupted the background where the date filter sits). The
+       blur keeps content legible when it scrolls under the sticky bar. */
+    background: transparent;
     backdrop-filter: blur(12px);
-    border-bottom: 1px solid var(--line);
+    -webkit-backdrop-filter: blur(12px);
+    border-bottom: none;
   }
   .hd-row {
     max-width: 1220px; margin: 0 auto; padding: 10px 16px;
