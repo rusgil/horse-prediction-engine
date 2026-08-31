@@ -28367,6 +28367,16 @@ _PERF_CACHE_TTL_TODAY = 60        # 1 min — today's data still moves
 _PERF_CACHE_TTL_PAST = 30 * 60    # 30 min — past dates are stable
 _PERF_CACHE_MAX_ENTRIES = 16
 
+# Overall-stats confidence floor (2026-08-31). The published overall win rate
+# excludes low-confidence "open" races — rank-1 win prob < 20% — which the model
+# rates as coin-flips (~19% win over 90d, ~half the raw card) and which the
+# products don't tip anyway (Edge floors at 29.5%/Sharp). Counting them dragged
+# the headline to ~22% general / 25.6% raw; excluding lifts it to ~27-32% on the
+# races we actually stand behind. Sharp mode is untouched — no Sharp race is ever
+# <20% (its gate needs rank1≥30% OR top3≥60%, impossible below 20%). See
+# [[open_race_demotion]] / open-race-backtest for the numbers.
+_OVERALL_STATS_MIN_WIN = 0.20
+
 
 @app.get("/api/performance")
 async def performance_summary(
@@ -28487,6 +28497,14 @@ async def performance_summary(
                 )
 
             top_picks = {rid: p for rid, p in top_picks.items() if _recompute_sharp(p)}
+
+        # Overall-stats confidence floor (2026-08-31): the default (non-Sharp)
+        # overall win rate excludes low-confidence open races (rank-1 < 20%). These
+        # are coin-flips the products don't tip; counting them dragged the headline.
+        # Sharp mode already filtered above and never contains a <20% pick.
+        if not sharp:
+            top_picks = {rid: p for rid, p in top_picks.items()
+                         if (p.win_probability or 0) >= _OVERALL_STATS_MIN_WIN}
 
         # Segment filter (metro/country) — additive; None keeps every race. Lets
         # the reporting separate metro from country so a country-only day (which
