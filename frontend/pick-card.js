@@ -67,6 +67,15 @@
     const w = _pickWinPct(pick);
     return w != null && w < OPEN_RACE_WIN_MAX;
   }
+  // Below this the top pick is a coin-flip we don't stand behind — HIDDEN from
+  // the pick feeds entirely (matches the overall-stats <20% floor). The 20-25%
+  // band still shows, demoted (isOpenRace). Sharp is never hidden.
+  var HIDE_RACE_WIN_MAX = 20;
+  function isHiddenRace(pick) {
+    if (!pick || pick.is_sharp) return false;
+    const w = _pickWinPct(pick);
+    return w != null && w < HIDE_RACE_WIN_MAX;
+  }
 
   function dualStat(win_pct, place_pct, accuracy, open) {
     if (win_pct == null) return '';
@@ -574,6 +583,6 @@
     render, dualStat, winPlace, resultBlock, esc, wallTime, countdown,
     lockedCard, paywallBanner, trophyBanner, configureBilling, openCheckout, openPricing, bindUnlock,
     fetchJSON, isMember, isSubscriber, isFiveDayHolder, splashUpsell, plansUpsell, plansGrid, refreshSplashUpsell, loadMembership,
-    fetchSparklines, isOpenRace,
+    fetchSparklines, isOpenRace, isHiddenRace,
   };
 })();
