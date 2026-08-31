@@ -414,6 +414,10 @@
   .cell .cout .res.miss  { color: var(--red); }
   .cell.blank { cursor: default; }
   .cell.blank:hover { filter: none; }
+  /* Sub-20% coin-flip races — faded so they read as "not a pick we stand behind"
+     (they're hidden from the Race Feed; the grid keeps them, greyed). */
+  .cell.coinflip .in { opacity: 0.32; }
+  .cell.coinflip:hover .in { opacity: 0.55; }
   .heat-legend {
     display: flex; gap: 14px; flex-wrap: wrap; align-items: center;
     font-size: 0.7rem; color: var(--text-3); margin-top: 10px; padding: 0 2px;
@@ -1450,10 +1454,14 @@
         }
         const done = isSettled(r);
         const tier = tierOf(r.top_win_probability, isOffGoing(r.track_condition));
+        // Sub-20% coin-flips (hidden from the feed) show faded on the grid so
+        // they're identifiable as races we don't stand behind.
+        const _coin = window.PickCard.isHiddenRace({ win_probability: r.top_win_probability, is_sharp: r.is_sharp });
         const cls = [
           done ? 'done' : '',
           done ? resCls(r) : '',
           !done && tier ? tier.heat : '',
+          _coin ? 'coinflip' : '',
         ].join(' ');
         // History cells keep their pre-race confidence label beside the result
         const tierWord = tier ? tier.label.replace(/[^A-Za-z]/g, '') : '';
