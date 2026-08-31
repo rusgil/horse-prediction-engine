@@ -30477,6 +30477,85 @@ async def open_race_backtest(
     }
 
 
+@app.get("/api/admin/benter-blend-backtest")
+async def benter_blend_backtest(
+    days: int = Query(180, ge=30, le=365),
+    x_cron_secret: Optional[str] = Header(None),
+):
+    """Crucible sweep of the Benter blend weights (win_prob = model^α · market^β).
+    Uses the stored per-runner win_prob_raw (pre-blend model prob) + best_available_odds
+    (market) to rebuild the field's blend at any (α,β) and measure top-1 win rate.
+    Reports model-alone, market-alone, the current live (0.21/0.79), a grid, and an
+    OUT-OF-SAMPLE check: the grid's best (α,β) fit on the first half, scored on the
+    second. Read-only. Higher β = more market weight."""
+    _check_admin(x_cron_secret)
+    import math
+    cutoff = (_today_aest() - timedelta(days=int(days))).isoformat()
+    async with get_session() as session:
+        rows = (await session.execute(
+            select(RunnerPredictionHistoryRow.race_id, RunnerPredictionHistoryRow.horse_name,
+                   RunnerPredictionHistoryRow.win_prob_raw, RunnerPredictionHistoryRow.best_available_odds,
+                   RunnerPredictionHistoryRow.enriched_at)
+            .where(RunnerPredictionHistoryRow.race_id >= f"{cutoff}_")
+            .where(RunnerPredictionHistoryRow.cancelled.is_(False) | RunnerPredictionHistoryRow.cancelled.is_(None))
+            .where((RunnerPredictionHistoryRow.source == "live") | RunnerPredictionHistoryRow.source.is_(None))
+            .order_by(RunnerPredictionHistoryRow.enriched_at.desc())
+        )).fetchall()
+        winners = {rid: _normalize_horse(hn) for rid, hn in (await session.execute(
+            select(HistoricalResultRow.race_id, HistoricalResultRow.horse_name)
+            .where(HistoricalResultRow.race_id >= f"{cutoff}_")
+            .where(HistoricalResultRow.position == 1)
+        )).fetchall()}
+    seen: set = set()
+    byrace: dict = {}
+    for rid, hn, raw, odds, ea in rows:
+        k = (rid, _normalize_horse(hn))
+        if k in seen:
+            continue
+        seen.add(k)
+        byrace.setdefault(rid, []).append((_normalize_horse(hn), raw, odds))
+    # keep races with a winner AND full model+market coverage (every runner has raw + odds)
+    races = []
+    for rid, runs in byrace.items():
+        if rid not in winners:
+            continue
+        if any(r[1] is None or not r[2] or r[2] <= 1 for r in runs):
+            continue
+        races.append((rid[:10], runs, winners[rid]))
+    races.sort(key=lambda x: x[0])
+
+    def topwin(subset, a, b):
+        n = w = 0
+        for _d, runs, win in subset:
+            best, bs = None, None
+            for hn, raw, odds in runs:
+                s = a * math.log(max(raw, 1e-4)) + b * math.log(max(1.0 / odds, 1e-4))
+                if bs is None or s > bs:
+                    bs, best = s, hn
+            n += 1
+            w += 1 if best == win else 0
+        return {"n": n, "win_pct": round(100 * w / n, 1) if n else None}
+
+    grid_pairs = [(1.0, 0.0), (0.6, 0.4), (0.5, 0.5), (0.4, 0.6), (0.3, 0.7),
+                  (0.25, 0.75), (0.21, 0.79), (0.14, 0.53), (0.14, 0.86),
+                  (0.1, 0.9), (0.05, 0.95), (0.0, 1.0)]
+    grid = {f"a={a},b={b}": topwin(races, a, b) for a, b in grid_pairs}
+    # OOS: fit best pair on first half, score on second half
+    mid = len(races) // 2
+    first, second = races[:mid], races[mid:]
+    best_pair, best_first = None, -1
+    for a, b in grid_pairs:
+        r = topwin(first, a, b)["win_pct"] or -1
+        if r > best_first:
+            best_first, best_pair = r, (a, b)
+    oos = {"best_pair_on_first_half": {"alpha": best_pair[0], "beta": best_pair[1], "first_half_win_pct": best_first},
+           "scored_on_second_half": topwin(second, *best_pair),
+           "current_live_second_half": topwin(second, 0.21, 0.79),
+           "model_alone_second_half": topwin(second, 1.0, 0.0),
+           "market_alone_second_half": topwin(second, 0.0, 1.0)}
+    return {"days": days, "races_scored": len(races), "grid_full_window": grid, "oos": oos}
+
+
 @app.get("/api/performance/premium")
 async def premium_performance(days: int = Query(30, ge=1, le=365), x_cron_secret: Optional[str] = Header(None)):
     """
