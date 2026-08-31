@@ -599,6 +599,50 @@
     </p>
   </div>
 
+  <!-- Refinement funnel — Selected → Edge → Sharp, live-wired (last 90 days).
+       Reframes the product: we rate every race, then refine to the bets we
+       stand behind. Win rate rises as the filter tightens. -->
+  <style>
+    .funnel { display: flex; align-items: stretch; gap: 8px; flex-wrap: wrap; margin-top: 4px; }
+    .fn-step { flex: 1; min-width: 130px; background: var(--bg-elevated); border: 1px solid var(--border);
+      border-radius: var(--radius); padding: 16px 12px; text-align: center; }
+    .fn-step.best { border-color: var(--purple-mid); background: var(--purple-dim); }
+    .fn-win { font-family: 'Barlow Condensed', sans-serif; line-height: 1; }
+    .fn-win b { font-size: 2.1rem; font-weight: 900; color: var(--text-primary); }
+    .fn-step.best .fn-win b { color: var(--purple-bright); }
+    .fn-win span { display: block; font-size: 0.62rem; text-transform: uppercase; letter-spacing: 0.08em; color: var(--text-dim); margin-top: 2px; }
+    .fn-lbl { font-weight: 700; font-size: 0.9rem; color: var(--text-primary); margin-top: 8px; }
+    .fn-sub { font-size: 0.72rem; color: var(--text-secondary); margin-top: 3px; }
+    .fn-arrow { display: flex; align-items: center; color: var(--text-dim); font-size: 1.3rem; }
+    @media (max-width: 620px) { .fn-arrow { display: none; } .fn-step { min-width: 30%; } }
+  </style>
+  <div class="section">
+    <div class="section-title">From Every Race → The Bets We Stand Behind</div>
+    <p class="note" style="margin-top:-4px">
+      We rate every race, then refine. Each step drops the wide-open coin-flips and keeps the picks the
+      model actually backs — so the win rate climbs as the filter tightens. Live, last 90 days.
+    </p>
+    <div class="funnel">
+      <div class="fn-step">
+        <div class="fn-win"><b id="fn-sel-win">32%</b><span>win</span></div>
+        <div class="fn-lbl">Selected races</div>
+        <div class="fn-sub">top pick ≥ 20% · <span id="fn-sel-n">—</span> races</div>
+      </div>
+      <div class="fn-arrow">→</div>
+      <div class="fn-step">
+        <div class="fn-win"><b id="fn-edge-win">37%</b><span>win</span></div>
+        <div class="fn-lbl">The Edge</div>
+        <div class="fn-sub">best value · <span id="fn-edge-n">—</span> races</div>
+      </div>
+      <div class="fn-arrow">→</div>
+      <div class="fn-step best">
+        <div class="fn-win"><b id="fn-sharp-win">41%</b><span>win</span></div>
+        <div class="fn-lbl">The Sharp Filter</div>
+        <div class="fn-sub">flagship · <span id="fn-sharp-n">—</span> races</div>
+      </div>
+    </div>
+  </div>
+
   <!-- Sharp filter headline stats — live-wired: flagship (500-race published)
        + recent form (last 7 days, sharp picks only). Numbers match the engine
        endpoints so nothing here can drift from the live track record. -->
@@ -986,6 +1030,28 @@
         const qw = q('pl-window'); if (qw) qw.textContent = fmt(p.earliest_race_date) + ' – ' + fmt(p.latest_race_date);
       }
     } catch (e) { /* silent — HTML defaults stand */ }
+  })();
+
+  // Refinement funnel — Selected → Edge → Sharp win rates, live from the engine
+  // (last 90 days) so they can't drift. Aggregates wins/races from each tier's
+  // per-day summary. HTML defaults stand if a fetch fails.
+  (async function refreshFunnel() {
+    const set = (id, txt) => { const el = document.getElementById(id); if (el) el.textContent = txt; };
+    const winFor = async (q) => {
+      try {
+        const r = await fetch(API + '/api/performance?days=90' + q);
+        if (!r.ok) return null;
+        const rows = (await r.json()).summary || [];
+        let R = 0, W = 0;
+        rows.forEach(x => { R += x.races || 0; W += x.wins || 0; });
+        return R > 0 ? { win: Math.round(100 * W / R), n: R } : null;
+      } catch (e) { return null; }
+    };
+    const tiers = [['fn-sel', ''], ['fn-edge', '&edge=true'], ['fn-sharp', '&sharp=true']];
+    for (const [pfx, q] of tiers) {
+      const t = await winFor(q);
+      if (t) { set(pfx + '-win', t.win + '%'); set(pfx + '-n', t.n.toLocaleString()); }
+    }
   })();
 
   // Sharp filter headline stats — flagship (published 500-race) + recent form
