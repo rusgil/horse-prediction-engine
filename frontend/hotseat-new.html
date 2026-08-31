@@ -400,6 +400,7 @@
   .cell.blank:hover { filter: none; }
   /* Sub-20% coin-flip races — faded so they read as "not a pick we stand behind"
      (they're hidden from the Race Feed; the grid keeps them, greyed). */
+  .cell.coinflip { cursor: default; }
   .cell.coinflip .in { opacity: 0.32; }
   .cell.coinflip:hover .in { opacity: 0.55; }
   .heat-legend {
@@ -1544,7 +1545,8 @@
         const sub = done
           ? resultMark(r) + (tierWord ? `<span class="cell-tier ${tier.dot}">${tierWord}</span>` : '')
           : (_marks || '&nbsp;');
-        return `<td class="cell ${cls}" data-open="${esc(r.race_id)}" title="${esc(m.venue)} R${r.race_number}">
+        // Coin-flip (<20%) cells aren't clickable — no prediction to stand behind.
+        return `<td class="cell ${cls}" ${_coin ? '' : `data-open="${esc(r.race_id)}"`} title="${_coin ? 'Open race — no strong pick' : esc(m.venue) + ' R' + r.race_number}">
           <div class="in"><div class="t num">${wallTime(r.scheduled_time)}</div><div class="sub">${sub}</div></div></td>`;
       }).join('');
       return `<tr>

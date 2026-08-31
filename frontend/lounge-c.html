@@ -416,6 +416,7 @@
   .cell.blank:hover { filter: none; }
   /* Sub-20% coin-flip races — faded so they read as "not a pick we stand behind"
      (they're hidden from the Race Feed; the grid keeps them, greyed). */
+  .cell.coinflip { cursor: default; }
   .cell.coinflip .in { opacity: 0.32; }
   .cell.coinflip:hover .in { opacity: 0.55; }
   .heat-legend {
@@ -588,6 +589,9 @@
   .brace .mid { grid-area: sub; align-self: start; }
   .brace .right { grid-area: right; }
   .brace:last-child { border-bottom: none; }
+  /* Sub-20% coin-flip listing — greyed, not clickable, no pick revealed. */
+  .brace.coinflip { cursor: default; opacity: 0.5; }
+  .brace.coinflip:hover { background: transparent; }
   .brace:hover { background: var(--surface-2); }
   .brace .rn { font-family: 'Barlow Condensed'; font-weight: 800; font-size: 1rem; color: var(--text-3); }
   .brace .rt { font-size: 0.8rem; font-weight: 700; }
@@ -1501,7 +1505,8 @@
         const tip = `${m.venue} R${r.race_number} · win ${win ?? '?'}% / place ${plc ?? '?'}%${od ? ' · ' + od : ''}`
           + (r.is_sharp ? ' · Sharp' : '') + (clearFav ? ' · Clear fav' : (tossUp ? ' · Toss-up' : ''))
           + (clearQuin ? ' · Clear quinella' : '') + (clearTri ? ' · Clear trifecta' : '') + (clearFour ? ' · Clear first-4' : '');
-        return `<td class="cell ${cls} ${valueBet && !done ? 'val-bet' : ''}" data-open="${esc(r.race_id)}" title="${esc(tip)}${valueBet ? ' · 💎 value (odds beat our %)' : ''}">
+        // Coin-flip (<20%) cells aren't clickable — no prediction to stand behind.
+        return `<td class="cell ${cls} ${valueBet && !done ? 'val-bet' : ''}" ${_coin ? '' : `data-open="${esc(r.race_id)}"`} title="${_coin ? 'Open race — no strong pick' : esc(tip)}${valueBet ? ' · 💎 value (odds beat our %)' : ''}">
           <div class="in"><div class="t num">${wallTime(r.scheduled_time)}</div>${wpo}${labelHtml}${outcome}</div></td>`;
       }).join('');
       return `<tr>
@@ -1672,6 +1677,16 @@
     const raceRows = races.map(r => {
       const cd = countdown(r.scheduled_time);
       const done = isSettled(r);
+      // Sub-20% coin-flip — no pick to reveal: greyed, no name, not clickable.
+      const _coin = window.PickCard.isHiddenRace({ win_probability: r.top_win_probability, is_sharp: r.is_sharp });
+      if (_coin) {
+        return `<div class="brace coinflip">
+          <div class="rn">R${r.race_number}</div>
+          <div class="rt num">${wallTime(r.scheduled_time)}</div>
+          <div class="pkrow"><div class="pk"><span class="pk-name" style="color:var(--text-3)">⚖️ Open race — no strong pick</span></div></div>
+          <div class="mid"><div class="sub num">${r.distance ? r.distance + 'm' : ''}${r.field_size ? ' · ' + r.field_size + ' runners' : ''}</div></div>
+        </div>`;
+      }
       const off = isOffGoing(r.track_condition);
       const tier = tierOf(r.top_win_probability, off);
       const tp = topPickOf(r.race_id);
