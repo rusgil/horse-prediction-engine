@@ -1527,7 +1527,7 @@
         const _coin = window.PickCard.isHiddenRace({ win_probability: r.top_win_probability, is_sharp: r.is_sharp, venue: r._venue || r.venue || (typeof m !== "undefined" && m ? m.venue : null) });
         const tier = tierOf(r.top_win_probability, isOffGoing(r.track_condition));
         const cls = [
-          (!_coin && done) ? 'done' : '',
+          done ? 'done' : '',
           (!_coin && done) ? resCls(r) : '',
           (!_coin && !done && tier) ? tier.heat : '',
           _coin ? 'coinflip' : '',
