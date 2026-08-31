@@ -1305,7 +1305,7 @@
     if (E.paywall) E.mode = 'all';   // non-members can't filter — force off
     el.innerHTML = `<div class="row">${edgeDateBarHTML()}</div>
       <div class="row">
-        ${E.paywall ? '' : seg([['all', 'All picks'], ['sharp', '🎯 Sharp only']], E.mode, 'md')}
+        ${E.paywall ? '' : seg([['all', 'All picks'], ['sharp', '🎯 Sharp'], ['hot', '🔥 HOT'], ['high', '⚡ HIGH'], ['strong', 'STRONG']], E.mode, 'md')}
         ${E.view === 'up' ? seg([['best', 'Best pick'], ['next', 'Next race']], E.sort, 'st') : ''}
       </div>`;
     el.querySelectorAll('[data-pt]').forEach(b => b.onclick = () => { E.parent = b.dataset.pt; renderControls(); renderFeed(); });
@@ -1507,10 +1507,23 @@
 
   /* ── feeds ── */
   function applyMode(picks) {
-    if (E.mode !== 'sharp') return { picks, fallback: false };
-    const sp = picks.filter(sharpOf);
-    if (!sp.length && picks.length) return { picks, fallback: true };
-    return { picks: sp, fallback: false };
+    if (E.mode === 'all' || !E.mode) return { picks, fallback: false };
+    if (E.mode === 'sharp') {
+      const sp = picks.filter(sharpOf);
+      if (!sp.length && picks.length) return { picks, fallback: true };
+      return { picks: sp, fallback: false };
+    }
+    // Confidence-tier filters (hot ≥46% · high 36-46% · strong 30-36%) — match
+    // the badge via tierOf so the filter shows exactly the 🔥/⚡/STRONG picks.
+    // No fallback-to-all: an empty tier shows the empty state, not every pick.
+    if (E.mode === 'hot' || E.mode === 'high' || E.mode === 'strong') {
+      const t = picks.filter(p => {
+        const tr = tierOf((p.model_pct || 0) / 100, p.going_offtrack);
+        return tr && tr.dot === E.mode;
+      });
+      return { picks: t, fallback: false };
+    }
+    return { picks, fallback: false };
   }
   // The "recent winner" trophy is the conversion hook for logged-out visitors
   // and must show in EVERY Edge state (splash, empty, history/results, feed) —
