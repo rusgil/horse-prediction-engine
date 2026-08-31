@@ -414,11 +414,12 @@
   .cell .cout .res.miss  { color: var(--red); }
   .cell.blank { cursor: default; }
   .cell.blank:hover { filter: none; }
-  /* Sub-20% coin-flip races — a plain light-grey box (no result shown); we don't
-     stand behind them (also hidden from the Race Feed). Click toasts the reason. */
-  .cell.coinflip { cursor: pointer; }
-  .cell.coinflip .in.coin-fill { min-height: 30px; border-radius: 5px; background: rgba(128,130,142,0.20); border: 1px solid rgba(128,130,142,0.5); }
-  .cell.coinflip:hover .in.coin-fill { background: rgba(128,130,142,0.32); }
+  /* Sub-20% coin-flip races — a light-grey overlay dims the cell while the
+     figures stay readable underneath; fades on hover. Not clickable (toasts). */
+  .cell.coinflip { cursor: pointer; position: relative; }
+  .cell.coinflip::after { content: ""; position: absolute; inset: 3px; border-radius: 5px;
+    background: rgba(128,130,142,0.34); pointer-events: none; transition: background 0.12s; }
+  .cell.coinflip:hover::after { background: rgba(128,130,142,0.10); }
   .brace.coinflip .coin-fill-row { height: 16px; width: 65%; border-radius: 5px; background: rgba(128,130,142,0.20); border: 1px solid rgba(128,130,142,0.45); }
   .coin-toast { position: fixed; left: 50%; bottom: 32px; transform: translateX(-50%) translateY(10px);
     background: var(--surface-2, #1a2130); color: var(--text, #e8ecf4); border: 1px solid var(--line, #232c3d);
@@ -1464,15 +1465,16 @@
           if (r.model_placed === true) colP[i]++;
         }
         const done = isSettled(r);
-        // Sub-20% coin-flip: a plain light-grey box — no result computed or shown
-        // (we don't stand behind it). Clickable only to toast the reason.
-        if (window.PickCard.isHiddenRace({ win_probability: r.top_win_probability, is_sharp: r.is_sharp, venue: r._venue || r.venue || (typeof m !== "undefined" && m ? m.venue : null) }))
-          return `<td class="cell coinflip" title="Open race — no strong pick"><div class="in coin-fill"></div></td>`;
+        // Sub-20% coin-flip: render normally but flag 'coinflip' — a grey overlay
+        // (CSS ::after) dims it while the figures stay readable underneath. Not
+        // clickable (no data-open); click toasts the reason.
+        const _coin = window.PickCard.isHiddenRace({ win_probability: r.top_win_probability, is_sharp: r.is_sharp, venue: r._venue || r.venue || (typeof m !== "undefined" && m ? m.venue : null) });
         const tier = tierOf(r.top_win_probability, isOffGoing(r.track_condition));
         const cls = [
           done ? 'done' : '',
           done ? resCls(r) : '',
           !done && tier ? tier.heat : '',
+          _coin ? 'coinflip' : '',
         ].join(' ');
         // History cells keep their pre-race confidence label beside the result
         const tierWord = tier ? tier.label.replace(/[^A-Za-z]/g, '') : '';
@@ -1512,7 +1514,7 @@
         const tip = `${m.venue} R${r.race_number} · win ${win ?? '?'}% / place ${plc ?? '?'}%${od ? ' · ' + od : ''}`
           + (r.is_sharp ? ' · Sharp' : '') + (clearFav ? ' · Clear fav' : (tossUp ? ' · Toss-up' : ''))
           + (clearQuin ? ' · Clear quinella' : '') + (clearTri ? ' · Clear trifecta' : '') + (clearFour ? ' · Clear first-4' : '');
-        return `<td class="cell ${cls} ${valueBet && !done ? 'val-bet' : ''}" data-open="${esc(r.race_id)}" title="${esc(tip)}${valueBet ? ' · 💎 value (odds beat our %)' : ''}">
+        return `<td class="cell ${cls} ${valueBet && !done ? 'val-bet' : ''}" ${_coin ? '' : `data-open="${esc(r.race_id)}"`} title="${_coin ? 'Open race — no strong pick' : esc(tip)}${valueBet ? ' · 💎 value (odds beat our %)' : ''}">
           <div class="in"><div class="t num">${wallTime(r.scheduled_time)}</div>${wpo}${labelHtml}${outcome}</div></td>`;
       }).join('');
       return `<tr>
