@@ -416,9 +416,15 @@
   .cell.blank:hover { filter: none; }
   /* Sub-20% coin-flip races — faded so they read as "not a pick we stand behind"
      (they're hidden from the Race Feed; the grid keeps them, greyed). */
-  .cell.coinflip { cursor: default; }
+  .cell.coinflip { cursor: pointer; }
   .cell.coinflip .in { opacity: 0.32; }
   .cell.coinflip:hover .in { opacity: 0.55; }
+  .coin-toast { position: fixed; left: 50%; bottom: 32px; transform: translateX(-50%) translateY(10px);
+    background: var(--surface-2, #1a2130); color: var(--text, #e8ecf4); border: 1px solid var(--line, #232c3d);
+    border-radius: 999px; padding: 9px 16px; font-size: 0.82rem; font-weight: 600;
+    box-shadow: 0 6px 24px rgba(0,0,0,0.4); opacity: 0; pointer-events: none;
+    transition: opacity 0.18s, transform 0.18s; z-index: 9999; }
+  .coin-toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
   .heat-legend {
     display: flex; gap: 14px; flex-wrap: wrap; align-items: center;
     font-size: 0.7rem; color: var(--text-3); margin-top: 10px; padding: 0 2px;
@@ -1792,6 +1798,18 @@
   function bindOpen(root) {
     root.querySelectorAll('[data-open]').forEach(n => n.onclick = n.onclick || (() => openRace(n.dataset.open)));
   }
+  // Coin-flip (<20%) heat-map cells have no prediction to open — tell the user
+  // rather than opening an empty drawer. Delegated so it survives re-renders.
+  function coinToast() {
+    let t = document.getElementById('_coinToast');
+    if (!t) { t = document.createElement('div'); t.id = '_coinToast'; t.className = 'coin-toast'; document.body.appendChild(t); }
+    t.textContent = '⚖️ Open race — no strong pick here';
+    t.classList.add('show');
+    clearTimeout(t._h); t._h = setTimeout(() => t.classList.remove('show'), 2200);
+  }
+  document.addEventListener('click', e => {
+    if (e.target.closest && e.target.closest('.cell.coinflip')) coinToast();
+  });
   function closeDrawer() { drawer.classList.remove('open'); ovl.classList.remove('open'); }
   document.getElementById('dwClose').onclick = closeDrawer;
   ovl.onclick = closeDrawer;
