@@ -1882,7 +1882,7 @@
       : '';
     const dwFlyers = new Set(flyerRunners(r).map(x => x.tab_number));
     const flyF = r.flyer;
-    const dwFlyerNote = (flyF && dwFlyers.size && !isSettled(r)) ? `<div class="flyer-note">🎲 <b>FLYER</b> (🎲 tagged below) — In late country ${flyF.min_field}+ fields, $${flyF.odds_min}–${flyF.odds_max} odds win ~${flyF.win_pct}% / place ~${flyF.place_pct}% — still <b>${flyF.roi_pct}% ROI</b> long-run, so it loses over time. Fun money only.</div>` : '';
+    const dwFlyerNote = (flyF && dwFlyers.size && !isSettled(r)) ? `<div class="flyer-note">🎲 <b>FLYER</b> (🎲 tagged below) — In late country ${flyF.min_field}+ fields, $${flyF.odds_min}–${flyF.odds_max} odds win ~${flyF.win_pct}% / place ~${flyF.place_pct}% based on our model</div>` : '';
     body.innerHTML = offNote + settledNote + dwFlyerNote + resultHtml + top.map((x, i) => {
       const isVal = (x.overlay || 0) > 0.05 && (x.best_available_odds || 0) >= 3;
       const isFlyer = !isSettled(r) && dwFlyers.has(x.tab_number);
