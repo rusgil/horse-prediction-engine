@@ -119,6 +119,11 @@
   .vmeta{margin-top:10px; padding-top:9px; border-top:1px solid var(--border-soft);
     font-family:var(--mono); font-size:.67rem; letter-spacing:.02em; color:var(--tx-dim);
     font-variant-numeric:tabular-nums}
+  .vlink{display:inline-flex; align-items:center; gap:5px; margin-top:9px;
+    font-family:var(--mono); font-size:.72rem; font-weight:600; letter-spacing:.02em;
+    color:var(--violet-lt); text-decoration:none; border:1px solid rgba(168,85,247,.36);
+    border-radius:999px; padding:4px 11px; transition:background .15s, border-color .15s}
+  .vlink:hover{background:var(--violet-dim); border-color:var(--violet-lt)}
   .vmeta b{color:var(--tx-2); font-weight:600}
 
   /* ── sections ── */
@@ -334,12 +339,14 @@
           <div class="vstat win"><span class="big">47%</span><span class="lbl">win</span><span class="sep">·</span><span class="big">~77%</span><span class="lbl">place</span><span class="vstat-tag">recent form · last 7 days · 81 races</span></div>
           <div class="vd">The <b style="color:var(--violet-lt)">Sharp filter</b> is the flagship signal — its highest-conviction, clear-favourite picks hold a <b><span data-heal="win">34%</span> win / <span data-heal="place">59%</span> place</b> track record across 500 races, and have run even hotter lately (<b>~47% win / ~77% place</b> over the last 7 days). The quantitative engine profiled throughout this dossier.</div>
           <div class="vmeta"><b>~43k</b> LOC · <b>~2M</b> records · 229 endpoints</div>
+          <a class="vlink" href="https://myhorse.tips" target="_blank" rel="noopener">myhorse.tips ↗</a>
         </div></div>
         <div class="vert"><span class="ve">🏉</span><div>
           <div class="vt">NRL Tipping</div>
           <div class="vstat nrl"><span class="big">74%</span><span class="lbl">tips correct</span></div>
           <div class="vd">Live match prediction from a production data pipeline — plus AI media-sentiment on every team.</div>
           <div class="vmeta"><b>~14k</b> LOC · <b>18</b> endpoints · React frontend</div>
+          <a class="vlink" href="https://mynrl.tips" target="_blank" rel="noopener">mynrl.tips ↗</a>
         </div></div>
         <div class="vert"><span class="ve">✈️</span><div>
           <div class="vt">FunkySeats</div>
