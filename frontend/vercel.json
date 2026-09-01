@@ -15,6 +15,14 @@
   ],
   "rewrites": [
     {
+      "source": "/welcome",
+      "destination": "/splash.html"
+    },
+    {
+      "source": "/splash",
+      "destination": "/splash.html"
+    },
+    {
       "source": "/edge",
       "destination": "/edge-new.html"
     },

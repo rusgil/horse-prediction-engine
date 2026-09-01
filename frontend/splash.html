@@ -1,0 +1,437 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>FunkyIQ — AI Horse Racing Predictions</title>
+  <meta name="description" content="AI-powered Australian horse racing predictions. FunkyIQ rates every runner in every race — form, pedigree, market moves and value — then flags the highest-conviction picks. Start with one free race a day." />
+  <link rel="canonical" href="https://myhorse.tips/welcome" />
+  <meta name="theme-color" content="#07090f" />
+  <meta property="og:type" content="website" />
+  <meta property="og:title" content="FunkyIQ — AI Horse Racing Predictions" />
+  <meta property="og:description" content="AI predictions for every Australian meeting. Our Sharp filter runs a 38% win / 64% place audited record. Start with one free race a day." />
+  <meta property="og:site_name" content="FunkyIQ" />
+  <meta property="og:locale" content="en_AU" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@500;600;700;800;900&family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --bg: #07090f; --card: #0e1220; --card-2: #121830; --border: #1e2840;
+      --text: #f0f4ff; --text-2: #aeb8d4; --text-3: #6b7699;
+      --green: #22c55e; --green-ink: #062b13; --amber: #e8a020; --blue: #5b9dff;
+      --purple: #7c5cff; --pink: #ec4899; --hot: #fb923c;
+      --radius: 16px;
+    }
+    html { scroll-behavior: smooth; }
+    body {
+      font-family: 'Outfit', system-ui, sans-serif; background: var(--bg); color: var(--text);
+      min-height: 100vh; -webkit-font-smoothing: antialiased; line-height: 1.5;
+      overflow-x: hidden;
+    }
+    /* Brand aurora — same three-glow signature as the app. */
+    body::before {
+      content: ""; position: fixed; inset: 0; z-index: -1; pointer-events: none;
+      background-image:
+        radial-gradient(1200px 640px at 6% -14%, rgba(124,92,255,0.28), transparent 56%),
+        radial-gradient(1080px 580px at 104% -8%, rgba(56,132,255,0.20), transparent 52%),
+        radial-gradient(1220px 820px at 92% 116%, rgba(236,72,153,0.18), transparent 58%);
+    }
+    a { color: inherit; text-decoration: none; }
+    .wrap { max-width: 1060px; margin: 0 auto; padding: 0 20px; }
+    .num { font-variant-numeric: tabular-nums; }
+
+    /* ── Top bar ── */
+    .topbar { position: sticky; top: 0; z-index: 20; backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+      background: linear-gradient(180deg, rgba(7,9,15,0.82), rgba(7,9,15,0.4)); border-bottom: 1px solid rgba(30,40,64,0.6); }
+    .topbar .row { display: flex; align-items: center; gap: 16px; height: 62px; }
+    .brand { display: flex; align-items: center; gap: 9px; font-family: 'Barlow Condensed', sans-serif;
+      font-weight: 900; font-size: 1.35rem; letter-spacing: 0.09em; text-transform: uppercase; }
+    .brand .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--green);
+      box-shadow: 0 0 12px var(--green); }
+    .brand b { color: var(--text); } .brand span { color: var(--green); }
+    .top-spacer { flex: 1; }
+    .top-link { color: var(--text-2); font-weight: 500; font-size: 0.92rem; padding: 8px 6px; }
+    .top-link:hover { color: var(--text); }
+    .btn {
+      font-family: 'Barlow Condensed', sans-serif; font-weight: 800; letter-spacing: 0.04em; text-transform: uppercase;
+      border: 1px solid var(--border); border-radius: 999px; padding: 9px 18px; cursor: pointer;
+      background: var(--card-2); color: var(--text); font-size: 0.95rem; white-space: nowrap;
+      transition: transform 0.08s ease, filter 0.15s ease, background 0.15s ease; display: inline-flex; align-items: center; gap: 7px;
+    }
+    .btn:hover { transform: translateY(-1px); }
+    .btn.primary { background: var(--green); color: var(--green-ink); border-color: var(--green); }
+    .btn.primary:hover { filter: brightness(1.08); }
+    .btn.lg { font-size: 1.12rem; padding: 13px 26px; }
+    .btn.ghost:hover { background: var(--bg-hover, rgba(255,255,255,0.04)); }
+
+    /* ── Hero ── */
+    .hero { text-align: center; padding: 66px 0 26px; }
+    .eyebrow { display: inline-flex; align-items: center; gap: 8px; font-size: 0.72rem; font-weight: 700;
+      letter-spacing: 0.16em; text-transform: uppercase; color: var(--text-3);
+      border: 1px solid var(--border); border-radius: 999px; padding: 6px 14px; margin-bottom: 22px; }
+    .eyebrow .pulse { width: 7px; height: 7px; border-radius: 50%; background: var(--green); box-shadow: 0 0 9px var(--green);
+      animation: pulse 2.4s ease-in-out infinite; }
+    @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.35; } }
+    @media (prefers-reduced-motion: reduce) { .eyebrow .pulse { animation: none; } }
+    .hero h1 { font-family: 'Barlow Condensed', sans-serif; font-weight: 900; line-height: 0.98;
+      font-size: clamp(2.6rem, 7vw, 4.6rem); letter-spacing: 0.005em; text-wrap: balance; }
+    .hero h1 .grad { background: linear-gradient(100deg, var(--green) 10%, var(--blue) 55%, var(--purple) 95%);
+      -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; }
+    .hero p.lede { color: var(--text-2); font-size: clamp(1rem, 2.4vw, 1.22rem); max-width: 60ch; margin: 20px auto 0; }
+    .hero .cta-row { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; margin-top: 30px; }
+    .hero .fineprint { color: var(--text-3); font-size: 0.82rem; margin-top: 16px; }
+
+    /* ── Live stat strip ── */
+    .stats { display: grid; grid-template-columns: repeat(5, 1fr); gap: 1px; margin: 40px 0 6px;
+      background: var(--border); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; }
+    .stat { background: var(--card); padding: 20px 12px; text-align: center; }
+    .stat b { display: block; font-family: 'Barlow Condensed', sans-serif; font-weight: 900; font-size: 2rem; line-height: 1;
+      color: var(--text); }
+    .stat.g b { color: var(--green); } .stat.b b { color: var(--blue); } .stat.a b { color: var(--amber); }
+    .stat span { display: block; font-size: 0.68rem; text-transform: uppercase; letter-spacing: 0.07em;
+      color: var(--text-3); margin-top: 8px; }
+    .stats-note { text-align: center; color: var(--text-3); font-size: 0.76rem; margin-top: 12px; }
+    @media (max-width: 720px) {
+      .stats { grid-template-columns: repeat(2, 1fr); }
+      .stat:last-child { grid-column: 1 / -1; }
+    }
+
+    /* ── Section scaffolding ── */
+    section { padding: 56px 0; }
+    .sec-head { text-align: center; max-width: 60ch; margin: 0 auto 36px; }
+    .sec-kicker { font-size: 0.74rem; font-weight: 700; letter-spacing: 0.16em; text-transform: uppercase; color: var(--green); }
+    .sec-head h2 { font-family: 'Barlow Condensed', sans-serif; font-weight: 800; font-size: clamp(1.8rem, 4.4vw, 2.7rem);
+      line-height: 1.05; margin-top: 8px; text-wrap: balance; }
+    .sec-head p { color: var(--text-2); margin-top: 12px; font-size: 1.02rem; }
+
+    /* ── How it works ── */
+    .steps { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+    .step { background: var(--card); border: 1px solid var(--border); border-radius: var(--radius); padding: 26px 22px; position: relative; }
+    .step .n { font-family: 'Barlow Condensed', sans-serif; font-weight: 900; font-size: 0.95rem; letter-spacing: 0.08em;
+      color: var(--green-ink); background: var(--green); width: 30px; height: 30px; border-radius: 8px;
+      display: flex; align-items: center; justify-content: center; }
+    .step h3 { font-family: 'Barlow Condensed', sans-serif; font-weight: 800; font-size: 1.3rem; margin: 16px 0 8px; }
+    .step p { color: var(--text-2); font-size: 0.92rem; }
+    @media (max-width: 760px) { .steps { grid-template-columns: 1fr; } }
+
+    /* ── Features grid ── */
+    .feats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+    .feat { background: linear-gradient(180deg, var(--card-2), var(--card)); border: 1px solid var(--border);
+      border-radius: var(--radius); padding: 24px 22px; transition: border-color 0.15s, transform 0.1s; }
+    .feat:hover { border-color: var(--accent, var(--green)); transform: translateY(-2px); }
+    .feat .ico { font-size: 1.5rem; }
+    .feat h3 { font-family: 'Barlow Condensed', sans-serif; font-weight: 800; font-size: 1.28rem; margin: 12px 0 7px; }
+    .feat h3 .tag { font-family: 'Outfit'; font-size: 0.6rem; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase;
+      vertical-align: middle; margin-left: 7px; padding: 2px 7px; border-radius: 999px; border: 1px solid var(--accent, var(--green));
+      color: var(--accent, var(--green)); }
+    .feat p { color: var(--text-2); font-size: 0.9rem; }
+    .feat.edge { --accent: var(--green); } .feat.sharp { --accent: var(--blue); }
+    .feat.hot { --accent: var(--hot); } .feat.lounge { --accent: var(--amber); }
+    .feat.value { --accent: var(--pink); } .feat.odds { --accent: var(--purple); }
+    @media (max-width: 760px) { .feats { grid-template-columns: 1fr; } }
+
+    /* ── Proof band ── */
+    .proof { background: linear-gradient(120deg, rgba(34,197,94,0.10), rgba(91,157,255,0.08) 60%, rgba(124,92,255,0.10));
+      border: 1px solid var(--border); border-radius: 22px; padding: 34px 26px; text-align: center; }
+    .proof .plabel { font-size: 0.74rem; font-weight: 700; letter-spacing: 0.14em; text-transform: uppercase; color: var(--text-3); }
+    .proof .prow { display: flex; justify-content: center; align-items: baseline; gap: 26px 44px; flex-wrap: wrap; margin-top: 16px; }
+    .proof .pstat b { font-family: 'Barlow Condensed', sans-serif; font-weight: 900; font-size: 2.8rem; line-height: 1; }
+    .proof .pstat.g b { color: var(--green); } .proof .pstat.b b { color: var(--blue); } .proof .pstat.a b { color: var(--amber); }
+    .proof .pstat span { display: block; font-size: 0.74rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--text-3); margin-top: 6px; }
+    .proof .psub { color: var(--text-3); font-size: 0.82rem; margin-top: 18px; }
+
+    /* ── Pricing ── */
+    .tiers { display: grid; grid-template-columns: repeat(3, 1fr); gap: 18px; align-items: stretch; }
+    @media (max-width: 780px) { .tiers { grid-template-columns: 1fr; max-width: 420px; margin: 0 auto; } }
+    .tier { position: relative; background: var(--card); border: 1px solid var(--border); border-radius: 18px;
+      padding: 26px 22px; display: flex; flex-direction: column; gap: 3px; }
+    .tier.best { border-color: var(--green); background: linear-gradient(180deg, rgba(34,197,94,0.08), var(--card) 60%);
+      box-shadow: 0 8px 40px rgba(0,0,0,0.5); }
+    .tier-badge { position: absolute; top: -11px; left: 50%; transform: translateX(-50%); background: var(--green);
+      color: var(--green-ink); font-weight: 800; font-size: 0.66rem; letter-spacing: 0.08em; text-transform: uppercase;
+      padding: 4px 12px; border-radius: 999px; white-space: nowrap; }
+    .tier-label { font-family: 'Barlow Condensed', sans-serif; font-weight: 800; font-size: 1.15rem; text-transform: uppercase;
+      letter-spacing: 0.05em; color: var(--text-2); }
+    .tier-price { font-family: 'Barlow Condensed', sans-serif; font-weight: 900; font-size: 2.5rem; line-height: 1;
+      margin: 6px 0 2px; }
+    .tier-price small { font-size: 0.86rem; font-weight: 600; color: var(--text-3); margin-left: 4px; }
+    .tier-note { color: var(--text-3); font-size: 0.82rem; min-height: 1.1em; }
+    .tier-save { display: inline-flex; align-items: baseline; gap: 7px; margin: 6px 0 2px; font-size: 0.82rem; color: var(--text-2); flex-wrap: wrap; }
+    .tier-save .was { color: var(--text-3); text-decoration: line-through; }
+    .tier-save .off { background: var(--amber); color: #2a1a00; font-weight: 800; font-size: 0.7rem; letter-spacing: 0.04em;
+      padding: 2px 8px; border-radius: 999px; text-transform: uppercase; }
+    .tier-feats { list-style: none; margin: 16px 0 20px; display: flex; flex-direction: column; gap: 9px; }
+    .tier-feats li { font-size: 0.9rem; color: var(--text-2); display: flex; gap: 9px; align-items: flex-start; }
+    .tier-feats li::before { content: '✓'; color: var(--green); font-weight: 800; }
+    .tier-feats b { font-weight: 600; color: var(--text); }
+    .tier .cta { margin-top: auto; width: 100%; border: 0; border-radius: 12px; padding: 13px; cursor: pointer;
+      font-family: 'Barlow Condensed', sans-serif; font-weight: 800; font-size: 1.05rem; letter-spacing: 0.04em;
+      text-transform: uppercase; background: var(--card-2); color: var(--text); border: 1px solid var(--border);
+      transition: transform 0.08s ease, filter 0.15s ease; }
+    .tier.best .cta { background: var(--green); color: var(--green-ink); border-color: var(--green); }
+    .tier .cta:hover { transform: translateY(-1px); filter: brightness(1.05); }
+
+    /* ── Final CTA ── */
+    .final { text-align: center; }
+    .final h2 { font-family: 'Barlow Condensed', sans-serif; font-weight: 900; font-size: clamp(2rem, 5vw, 3.1rem); line-height: 1.02; text-wrap: balance; }
+    .final p { color: var(--text-2); margin: 14px auto 26px; max-width: 52ch; }
+
+    /* ── Footer ── */
+    footer { border-top: 1px solid var(--border); margin-top: 20px; padding: 30px 20px 46px; text-align: center;
+      color: var(--text-3); font-size: 0.82rem; }
+    footer .flinks { margin-top: 8px; display: flex; gap: 8px; justify-content: center; flex-wrap: wrap; }
+    footer .flinks a:hover { color: var(--text-2); }
+    footer .disc { max-width: 62ch; margin: 16px auto 0; font-size: 0.74rem; line-height: 1.5; color: var(--text-3); opacity: 0.85; }
+  </style>
+</head>
+<body>
+  <!-- ── Top bar ── -->
+  <div class="topbar">
+    <div class="wrap row">
+      <a class="brand" href="/welcome"><span class="dot"></span><b>Funky</b><span>IQ</span></a>
+      <span class="top-spacer"></span>
+      <a class="top-link" href="/about">How it works</a>
+      <a class="top-link" href="/plans">Plans</a>
+      <a class="top-link" href="/login">Sign in</a>
+      <a class="btn primary" href="/lounge-c.html">See today's picks</a>
+    </div>
+  </div>
+
+  <!-- ── Hero ── -->
+  <header class="hero wrap">
+    <div class="eyebrow"><span class="pulse"></span> AI racing intelligence · every Australian meeting</div>
+    <h1>The winners are in the data.<br><span class="grad">We find them for you.</span></h1>
+    <p class="lede">FunkyIQ rates every runner in every race — form, pedigree, jockey &amp; trainer, track
+      conditions and live market moves — then flags the picks it actually backs. Start with one free race a day.</p>
+    <div class="cta-row">
+      <a class="btn primary lg" href="/lounge-c.html">See today's picks →</a>
+      <a class="btn ghost lg" href="/plans">View plans</a>
+    </div>
+    <div class="fineprint">No card required to browse today's free race.</div>
+
+    <!-- Live stat strip (filled from the engine; sensible fallbacks in the markup) -->
+    <div class="stats" id="stats">
+      <div class="stat g"><b id="st-win">38%</b><span>Sharp win rate</span></div>
+      <div class="stat b"><b id="st-place">64%</b><span>Sharp place rate</span></div>
+      <div class="stat a"><b id="st-sp">$2.41</b><span>Avg winning price</span></div>
+      <div class="stat"><b id="st-races">500</b><span>Audited races</span></div>
+      <div class="stat"><b id="st-analysed">2,388</b><span>Races rated / 90 days</span></div>
+    </div>
+    <div class="stats-note" id="stats-note">Sharp filter track record · audited, published, updates weekly.</div>
+  </header>
+
+  <!-- ── How it works ── -->
+  <section class="wrap">
+    <div class="sec-head">
+      <div class="sec-kicker">How it works</div>
+      <h2>Tens of thousands of data points. One clear pick.</h2>
+      <p>The model does the grind so you don't have to — every race, every meeting, updated right up to the jump.</p>
+    </div>
+    <div class="steps">
+      <div class="step">
+        <div class="n">1</div>
+        <h3>We rate every runner</h3>
+        <p>A 25-feature model reads form, class, pedigree, jockey &amp; trainer strike rates, barrier, going and the live
+          market for every horse in every Australian race.</p>
+      </div>
+      <div class="step">
+        <div class="n">2</div>
+        <h3>The Sharp filter flags conviction</h3>
+        <p>Only the highest-conviction picks earn a Sharp badge — a 38% win / 64% place record across 500 audited races.
+          Coin-flip races are set aside, not dressed up.</p>
+      </div>
+      <div class="step">
+        <div class="n">3</div>
+        <h3>You get the edge</h3>
+        <p>See picks across the Lounge, Hot Seat and the Edge — with best available odds, value plays and odds-movement,
+          so you're on before the price shortens.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── Features ── -->
+  <section class="wrap">
+    <div class="sec-head">
+      <div class="sec-kicker">What you get</div>
+      <h2>Everything for race day, in one place</h2>
+    </div>
+    <div class="feats">
+      <div class="feat edge">
+        <div class="ico">🎯</div>
+        <h3>The Edge <span class="tag">Members</span></h3>
+        <p>Our best picks at the best available odds, ranked and ready — the sharpest view of the day's card.</p>
+      </div>
+      <div class="feat sharp">
+        <div class="ico">📈</div>
+        <h3>The Sharp Filter</h3>
+        <p>Our flagship signal. Only the highest-conviction runners qualify — the picks the model genuinely stands behind.</p>
+      </div>
+      <div class="feat hot">
+        <div class="ico">🔥</div>
+        <h3>Hot Seat</h3>
+        <p>The next race, front and centre — our top three, the full field and the countdown to jump.</p>
+      </div>
+      <div class="feat lounge">
+        <div class="ico">🛋️</div>
+        <h3>The Lounge</h3>
+        <p>A live heat map and full listings across every meeting — scan the whole day at a glance.</p>
+      </div>
+      <div class="feat value">
+        <div class="ico">💎</div>
+        <h3>Value plays</h3>
+        <p>Where our probability beats the market price, we flag the overlay — the bets with an edge on the book.</p>
+      </div>
+      <div class="feat odds">
+        <div class="ico">⚡</div>
+        <h3>Live odds movement</h3>
+        <p>Streaming price and market signals on every pick, so you can see the money move and act before it shortens.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── Proof band ── -->
+  <section class="wrap">
+    <div class="proof">
+      <div class="plabel">🎯 Sharp filter — audited track record</div>
+      <div class="prow">
+        <div class="pstat g"><b id="pf-win">38.4%</b><span>Win rate</span></div>
+        <div class="pstat b"><b id="pf-place">64.2%</b><span>Place rate</span></div>
+        <div class="pstat a"><b id="pf-sp">$2.41</b><span>Avg winner</span></div>
+        <div class="pstat"><b id="pf-races">500</b><span>Races</span></div>
+      </div>
+      <div class="psub" id="pf-sub">Published, audited record — top Sharp pick per race. Updated weekly. Past results are not a guarantee of future outcomes.</div>
+    </div>
+  </section>
+
+  <!-- ── Pricing ── -->
+  <section class="wrap" id="plans">
+    <div class="sec-head">
+      <div class="sec-kicker">Pricing</div>
+      <h2>Start free. Upgrade when you're ready.</h2>
+      <p>One free race every day — no card. Unlock every pick, every meeting with a pass or membership.</p>
+    </div>
+    <div class="tiers" id="tiers">
+      <!-- Static fallback; replaced live from /api/config/public -->
+      <div class="tier">
+        <div class="tier-label">5-Day Pass</div>
+        <div class="tier-price">A$9.90</div>
+        <div class="tier-note">5-day pass · one-off</div>
+        <ul class="tier-feats">
+          <li>Every pick, all meetings, 5 days</li>
+          <li>Lounge, Hot Seat &amp; Listings</li>
+          <li>Sharp filter &amp; value plays</li>
+        </ul>
+        <a class="cta" href="/plans">Get the pass</a>
+      </div>
+      <div class="tier">
+        <div class="tier-label">Monthly</div>
+        <div class="tier-price">A$39<small>/month</small></div>
+        <div class="tier-note">billed monthly</div>
+        <ul class="tier-feats">
+          <li>Everything in the pass</li>
+          <li><b>The Edge</b> — best picks, best odds</li>
+          <li>Cancel anytime</li>
+        </ul>
+        <a class="cta" href="/plans">Go Monthly</a>
+      </div>
+      <div class="tier best">
+        <span class="tier-badge">Best value</span>
+        <div class="tier-label">Annual</div>
+        <div class="tier-price">A$279<small>/year</small></div>
+        <div class="tier-save"><span class="was">A$468/yr</span><span class="off">Save 40%</span></div>
+        <div class="tier-note">billed yearly</div>
+        <ul class="tier-feats">
+          <li>Everything in Monthly</li>
+          <li><b>The Edge</b>, all season</li>
+          <li>Best price — save 40%</li>
+        </ul>
+        <a class="cta" href="/plans">Go Annual</a>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── Final CTA ── -->
+  <section class="wrap final">
+    <h2>Today's card is live.</h2>
+    <p>See what the model likes right now — your first race is free.</p>
+    <a class="btn primary lg" href="/lounge-c.html">See today's picks →</a>
+  </section>
+
+  <!-- ── Footer ── -->
+  <footer>
+    © 2026 FunkyIQ. AI-assisted predictions for Australian thoroughbred racing.
+    <div class="flinks">
+      <a href="/about">About</a><span style="opacity:.4">•</span>
+      <a href="/plans">Plans</a><span style="opacity:.4">•</span>
+      <a href="/privacy">Privacy</a><span style="opacity:.4">•</span>
+      <a href="/subscription-agreement">Subscription Agreement</a>
+    </div>
+    <div class="disc">FunkyIQ provides information and predictions for entertainment. Nothing here is betting or
+      financial advice. Past performance is not a guarantee of future results. Gamble responsibly — think of the
+      odds. If gambling is a problem for you, call Gambling Help on 1800 858 858 (Australia). 18+.</div>
+  </footer>
+
+  <script>
+    // Live wiring — pull the real numbers so nothing on the page can drift from
+    // the engine. Every fetch is optional: the HTML defaults stand if it fails.
+    (function () {
+      var set = function (id, txt) { var el = document.getElementById(id); if (el && txt != null) el.textContent = txt; };
+      var sym = function (c) { return c === 'AUD' ? 'A$' : c === 'USD' ? 'US$' : c === 'EUR' ? '€' : (c || '') + ' '; };
+
+      // Sharp flagship (audited, published) → hero strip + proof band.
+      fetch('/api/performance/tier-grade/published').then(function (r) { return r.ok ? r.json() : null; }).then(function (d) {
+        var p = d && d.published; if (!p) return;
+        var w = Math.round(p.win_pct), pl = Math.round(p.place_pct);
+        set('st-win', w + '%'); set('st-place', pl + '%');
+        set('pf-win', p.win_pct.toFixed(1) + '%'); set('pf-place', p.place_pct.toFixed(1) + '%');
+        if (p.mean_winning_sp) { var sp = '$' + Number(p.mean_winning_sp).toFixed(2); set('st-sp', sp); set('pf-sp', sp); }
+        if (p.races) { var n = Number(p.races).toLocaleString(); set('st-races', n); set('pf-races', n); }
+      }).catch(function () {});
+
+      // Races rated over the last 90 days → "analysed" counter.
+      fetch('/api/performance?days=90').then(function (r) { return r.ok ? r.json() : null; }).then(function (d) {
+        var rows = (d && d.summary) || []; var R = 0;
+        rows.forEach(function (x) { R += x.races || 0; });
+        if (R > 0) set('st-analysed', R.toLocaleString());
+      }).catch(function () {});
+
+      // Live plans → pricing tiers, so the page can never quote a stale price.
+      fetch('/api/config/public').then(function (r) { return r.ok ? r.json() : null; }).then(function (d) {
+        var b = d && d.billing; var plans = b && b.plans; if (!plans || !plans.length) return;
+        var cur = b.currency || 'AUD';
+        var monthly = plans.find(function (p) { return p.mode === 'subscription' && p.days >= 28 && p.days < 360; });
+        var FEATS = {
+          pass: ['Every pick, all meetings', 'Lounge, Hot Seat &amp; Listings', 'Sharp filter &amp; value plays'],
+          sub: ['Everything in the pass', '<b>The Edge</b> — best picks, best odds', 'Cancel anytime'],
+          annual: ['Everything in Monthly', '<b>The Edge</b>, all season', 'Best price']
+        };
+        var period = function (p) { return p.mode === 'subscription' ? (p.days >= 360 ? '/year' : p.days >= 28 ? '/month' : '/' + p.days + ' days') : ''; };
+        var note = function (p) { return p.mode === 'subscription' ? (p.days >= 360 ? 'billed yearly' : 'billed monthly') : (p.days + '-day pass · one-off'); };
+        var cta = function (p) { return p.mode === 'subscription' ? (p.days >= 360 ? 'Go Annual' : 'Go Monthly') : 'Get the pass'; };
+        var html = plans.map(function (p, i) {
+          var best = p.mode === 'subscription' && p.days >= 360;
+          var isAnnual = best;
+          var feats = (p.mode === 'subscription' ? (isAnnual ? FEATS.annual : FEATS.sub) : FEATS.pass);
+          var save = '';
+          if (isAnnual && monthly) {
+            var yr = Number(monthly.amount) * 12; var pct = Math.round((1 - Number(p.amount) / yr) * 100);
+            if (pct > 0) save = '<div class="tier-save"><span class="was">' + sym(cur) + yr.toFixed(0) + '/yr</span><span class="off">Save ' + pct + '%</span></div>';
+          }
+          return '<div class="tier' + (best ? ' best' : '') + '">'
+            + (best ? '<span class="tier-badge">Best value</span>' : '')
+            + '<div class="tier-label">' + (p.label || p.key) + '</div>'
+            + '<div class="tier-price">' + sym(cur) + Number(p.amount).toFixed(2).replace(/\.00$/, '') + (period(p) ? '<small>' + period(p) + '</small>' : '') + '</div>'
+            + save
+            + '<div class="tier-note">' + note(p) + '</div>'
+            + '<ul class="tier-feats">' + feats.map(function (f) { return '<li>' + f + '</li>'; }).join('') + '</ul>'
+            + '<a class="cta" href="/plans">' + cta(p) + '</a>'
+            + '</div>';
+        }).join('');
+        var el = document.getElementById('tiers'); if (el) el.innerHTML = html;
+      }).catch(function () {});
+    })();
+  </script>
+</body>
+</html>
