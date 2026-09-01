@@ -397,7 +397,7 @@
   .cell .sub .cell-tier.high   { color: var(--blue); }
   .cell .sub .cell-tier.strong { color: var(--strong); }
   .cell.blank { cursor: default; }
-  .cell.blank:hover { filter: none; }
+  .cell.blank:hover, .cell.coinflip:hover { filter: none; }
   /* Sub-20% coin-flip races — a light-grey overlay dims the cell while the
      figures stay readable underneath; fades on hover. Not clickable (toasts). */
   .cell.coinflip { cursor: pointer; position: relative; }
