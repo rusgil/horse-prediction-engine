@@ -3,14 +3,14 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>FunkyIQ — AI Horse Racing Predictions</title>
-  <meta name="description" content="AI-powered Australian horse racing predictions. FunkyIQ rates every runner in every race — form, pedigree, market moves and value — then flags the highest-conviction picks. Start with one free race a day." />
+  <title>MyHorse.Tips — AI Horse Racing Predictions</title>
+  <meta name="description" content="AI-powered Australian horse racing predictions. MyHorse.Tips rates every runner in every race — form, pedigree, market moves and value — then flags the highest-conviction picks." />
   <link rel="canonical" href="https://myhorse.tips/welcome" />
   <meta name="theme-color" content="#07090f" />
   <meta property="og:type" content="website" />
-  <meta property="og:title" content="FunkyIQ — AI Horse Racing Predictions" />
-  <meta property="og:description" content="AI predictions for every Australian meeting. Our Sharp filter runs a 38% win / 64% place audited record. Start with one free race a day." />
-  <meta property="og:site_name" content="FunkyIQ" />
+  <meta property="og:title" content="MyHorse.Tips — AI Horse Racing Predictions" />
+  <meta property="og:description" content="AI predictions for every Australian meeting. Our Sharp filter runs a 38% win / 64% place audited record." />
+  <meta property="og:site_name" content="MyHorse.Tips" />
   <meta property="og:locale" content="en_AU" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -190,7 +190,7 @@
   <!-- ── Top bar ── -->
   <div class="topbar">
     <div class="wrap row">
-      <a class="brand" href="/welcome"><span class="dot"></span><b>Funky</b><span>IQ</span></a>
+      <a class="brand" href="/welcome"><span class="dot"></span><b>MyHorse</b><span>.Tips</span></a>
       <span class="top-spacer"></span>
       <a class="top-link" href="/about">How it works</a>
       <a class="top-link" href="/plans">Plans</a>
@@ -203,23 +203,23 @@
   <header class="hero wrap">
     <div class="eyebrow"><span class="pulse"></span> AI racing intelligence · every Australian meeting</div>
     <h1>The winners are in the data.<br><span class="grad">We find them for you.</span></h1>
-    <p class="lede">FunkyIQ rates every runner in every race — form, pedigree, jockey &amp; trainer, track
-      conditions and live market moves — then flags the picks it actually backs. Start with one free race a day.</p>
+    <p class="lede">MyHorse.Tips rates every runner in every race — form, pedigree, jockey &amp; trainer, track
+      conditions and live market moves — then flags the picks it actually backs.</p>
     <div class="cta-row">
       <a class="btn primary lg" href="/lounge-c.html">See today's picks →</a>
       <a class="btn ghost lg" href="/plans">View plans</a>
     </div>
     <div class="fineprint">No card required to browse today's free race.</div>
 
-    <!-- Live stat strip (filled from the engine; sensible fallbacks in the markup) -->
+    <!-- Live stat strip — rolling last 7 days (filled from the engine; fallbacks in markup) -->
     <div class="stats" id="stats">
-      <div class="stat g"><b id="st-win">38%</b><span>Sharp win rate</span></div>
-      <div class="stat b"><b id="st-place">64%</b><span>Sharp place rate</span></div>
-      <div class="stat a"><b id="st-sp">$2.41</b><span>Avg winning price</span></div>
-      <div class="stat"><b id="st-races">500</b><span>Audited races</span></div>
-      <div class="stat"><b id="st-analysed">2,388</b><span>Races rated / 90 days</span></div>
+      <div class="stat"><b id="st-rated">234</b><span>Races rated · 7d</span></div>
+      <div class="stat"><b id="st-toppick">38%</b><span>Top pick win · 7d</span></div>
+      <div class="stat g"><b id="st-swin">52%</b><span>Sharp win rate · 7d</span></div>
+      <div class="stat b"><b id="st-splace">74%</b><span>Sharp place rate · 7d</span></div>
+      <div class="stat a"><b id="st-swinners">35</b><span>Sharp winners · 7d</span></div>
     </div>
-    <div class="stats-note" id="stats-note">Sharp filter track record · audited, published, updates weekly.</div>
+    <div class="stats-note" id="stats-note">Live · rolling last 7 days, across every Australian meeting.</div>
   </header>
 
   <!-- ── How it works ── -->
@@ -258,25 +258,27 @@
       <h2>Everything for race day, in one place</h2>
     </div>
     <div class="feats">
-      <div class="feat edge">
-        <div class="ico">🎯</div>
-        <h3>The Edge <span class="tag">Members</span></h3>
-        <p>Our best picks at the best available odds, ranked and ready — the sharpest view of the day's card.</p>
-      </div>
-      <div class="feat sharp">
-        <div class="ico">📈</div>
-        <h3>The Sharp Filter</h3>
-        <p>Our flagship signal. Only the highest-conviction runners qualify — the picks the model genuinely stands behind.</p>
+      <!-- Row 1: the three surfaces -->
+      <div class="feat lounge">
+        <div class="ico">🛋️</div>
+        <h3>The Lounge</h3>
+        <p>A live heat map and full listings across every meeting — scan the whole day at a glance.</p>
       </div>
       <div class="feat hot">
         <div class="ico">🔥</div>
         <h3>Hot Seat</h3>
         <p>The next race, front and centre — our top three, the full field and the countdown to jump.</p>
       </div>
-      <div class="feat lounge">
-        <div class="ico">🛋️</div>
-        <h3>The Lounge</h3>
-        <p>A live heat map and full listings across every meeting — scan the whole day at a glance.</p>
+      <div class="feat edge">
+        <div class="ico">🎯</div>
+        <h3>The Edge <span class="tag">Members</span></h3>
+        <p>Our best picks at the best available odds, ranked and ready — the sharpest view of the day's card.</p>
+      </div>
+      <!-- Row 2: the signals -->
+      <div class="feat sharp">
+        <div class="ico">📈</div>
+        <h3>The Sharp Filter</h3>
+        <p>Our flagship signal. Only the highest-conviction runners qualify — the picks the model genuinely stands behind.</p>
       </div>
       <div class="feat value">
         <div class="ico">💎</div>
@@ -361,14 +363,14 @@
 
   <!-- ── Footer ── -->
   <footer>
-    © 2026 FunkyIQ. AI-assisted predictions for Australian thoroughbred racing.
+    © 2026 MyHorse.Tips. AI-assisted predictions for Australian thoroughbred racing.
     <div class="flinks">
       <a href="/about">About</a><span style="opacity:.4">•</span>
       <a href="/plans">Plans</a><span style="opacity:.4">•</span>
       <a href="/privacy">Privacy</a><span style="opacity:.4">•</span>
       <a href="/subscription-agreement">Subscription Agreement</a>
     </div>
-    <div class="disc">FunkyIQ provides information and predictions for entertainment. Nothing here is betting or
+    <div class="disc">MyHorse.Tips provides information and predictions for entertainment. Nothing here is betting or
       financial advice. Past performance is not a guarantee of future results. Gamble responsibly — think of the
       odds. If gambling is a problem for you, call Gambling Help on 1800 858 858 (Australia). 18+.</div>
   </footer>
@@ -380,21 +382,29 @@
       var set = function (id, txt) { var el = document.getElementById(id); if (el && txt != null) el.textContent = txt; };
       var sym = function (c) { return c === 'AUD' ? 'A$' : c === 'USD' ? 'US$' : c === 'EUR' ? '€' : (c || '') + ' '; };
 
-      // Sharp flagship (audited, published) → hero strip + proof band.
+      // Sharp flagship (audited, published) → proof band only (long-run anchor).
       fetch('/api/performance/tier-grade/published').then(function (r) { return r.ok ? r.json() : null; }).then(function (d) {
         var p = d && d.published; if (!p) return;
-        var w = Math.round(p.win_pct), pl = Math.round(p.place_pct);
-        set('st-win', w + '%'); set('st-place', pl + '%');
         set('pf-win', p.win_pct.toFixed(1) + '%'); set('pf-place', p.place_pct.toFixed(1) + '%');
-        if (p.mean_winning_sp) { var sp = '$' + Number(p.mean_winning_sp).toFixed(2); set('st-sp', sp); set('pf-sp', sp); }
-        if (p.races) { var n = Number(p.races).toLocaleString(); set('st-races', n); set('pf-races', n); }
+        if (p.mean_winning_sp) set('pf-sp', '$' + Number(p.mean_winning_sp).toFixed(2));
+        if (p.races) set('pf-races', Number(p.races).toLocaleString());
       }).catch(function () {});
 
-      // Races rated over the last 90 days → "analysed" counter.
-      fetch('/api/performance?days=90').then(function (r) { return r.ok ? r.json() : null; }).then(function (d) {
-        var rows = (d && d.summary) || []; var R = 0;
-        rows.forEach(function (x) { R += x.races || 0; });
-        if (R > 0) set('st-analysed', R.toLocaleString());
+      // Hero strip — rolling last 7 days. Sharp cut: win / place / winners.
+      fetch('/api/performance?days=7&sharp=true').then(function (r) { return r.ok ? r.json() : null; }).then(function (d) {
+        if (!d) return;
+        if (d.overall_win_rate != null) set('st-swin', Math.round(d.overall_win_rate * 100) + '%');
+        var rows = d.summary || [], R = 0, W = 0, P = 0;
+        rows.forEach(function (x) { var rr = x.races || 0; R += rr; W += x.wins || 0; P += Math.round((x.place_rate || 0) * rr); });
+        if (R > 0) set('st-splace', Math.round(100 * P / R) + '%');
+        if (W > 0 || R > 0) set('st-swinners', W.toLocaleString());
+      }).catch(function () {});
+
+      // Hero strip — rolling last 7 days. All-picks cut: races rated + top-pick win.
+      fetch('/api/performance?days=7').then(function (r) { return r.ok ? r.json() : null; }).then(function (d) {
+        if (!d) return;
+        if (d.overall_races != null) set('st-rated', Number(d.overall_races).toLocaleString());
+        if (d.overall_win_rate != null) set('st-toppick', Math.round(d.overall_win_rate * 100) + '%');
       }).catch(function () {});
 
       // Live plans → pricing tiers, so the page can never quote a stale price.
