@@ -1645,7 +1645,7 @@
           <td class="r num">${x.best_available_odds > 1 ? '$' + (+x.best_available_odds).toFixed(2) : '—'}</td>
         </tr>`).join('');
       const f = r.flyer;
-      const flyerNote = (f && flyers.size) ? `<div class="flyer-note">🎲 <b>FLYER</b> (🎲 below) — In late country ${f.min_field}+ fields, $${f.odds_min}–${f.odds_max} shots win ~${f.win_pct}% / place ~${f.place_pct}% — still <b>${f.roi_pct}% ROI</b> long-run, so it loses over time. Only for a bit of fun with money you can lose.</div>` : '';
+      const flyerNote = (f && flyers.size) ? `<div class="flyer-note">🎲 <b>FLYER</b> (🎲 below) — In late country ${f.min_field}+ fields, $${f.odds_min}–${f.odds_max} odds win ~${f.win_pct}% / place ~${f.place_pct}% — still <b>${f.roi_pct}% ROI</b> long-run, so it loses over time. Only for a bit of fun with money you can lose.</div>` : '';
       return `<div class="field-toggle">Hide full field ▴</div>${flyerNote}
         <table class="field-table">
           <thead><tr><th class="r">#</th><th class="l">Horse</th><th class="r">Win</th><th class="r">Place</th><th class="r">Odds</th></tr></thead>
@@ -2063,7 +2063,7 @@
       : '';
     const dwFlyers = new Set(flyerRunners(r).map(x => x.tab_number));
     const f = r.flyer;
-    const dwFlyerNote = (f && dwFlyers.size && !isSettled(r)) ? `<div class="flyer-note">🎲 <b>FLYER</b> (🎲 tagged below) — In late country ${f.min_field}+ fields, $${f.odds_min}–${f.odds_max} shots win ~${f.win_pct}% / place ~${f.place_pct}% — still <b>${f.roi_pct}% ROI</b> long-run, so it loses over time. Fun money only.</div>` : '';
+    const dwFlyerNote = (f && dwFlyers.size && !isSettled(r)) ? `<div class="flyer-note">🎲 <b>FLYER</b> (🎲 tagged below) — In late country ${f.min_field}+ fields, $${f.odds_min}–${f.odds_max} odds win ~${f.win_pct}% / place ~${f.place_pct}% — still <b>${f.roi_pct}% ROI</b> long-run, so it loses over time. Fun money only.</div>` : '';
     body.innerHTML = offNote + settledNote + dwFlyerNote + resultHtml + top.map((x, i) => {
       const isVal = (x.overlay || 0) > 0.05 && (x.best_available_odds || 0) >= 3;
       const isFlyer = !isSettled(r) && dwFlyers.has(x.tab_number);
