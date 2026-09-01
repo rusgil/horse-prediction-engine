@@ -901,7 +901,7 @@
 
   .ff { font-variant-numeric: tabular-nums; letter-spacing: 0.14em; font-weight: 800; }
 </style>
-  <link rel="stylesheet" href="/pick-card.css?v=33">
+  <link rel="stylesheet" href="/pick-card.css?v=34">
   <script src="/pick-card.js?v=34"></script>
   <script defer src="/_vercel/insights/script.js"></script>
 </head>
@@ -1640,11 +1640,19 @@
     const el = document.getElementById('viewC');
     if (!S.meetings.length) return;
     if (S.paywall) {   // Listings (full field cards) is members-only
+      // Already signed in (expired pass or none) → "choose a plan", not "sign
+      // up". The trophy race still shows above the gate as the proof/hook.
+      const _li = window.PickCard.isLoggedIn && window.PickCard.isLoggedIn();
+      const _exp = window.PickCard.isExpired && window.PickCard.isExpired();
+      const _cta = _li ? (_exp ? 'Renew your pass' : 'Choose a plan') : 'Sign up to unlock';
+      const _lead = _exp
+        ? '<b>Your pass has expired.</b><br>Renew to unlock every pick and full race card, all meetings.'
+        : '<b>Listings are members only.</b><br>Unlock every pick and full race card, all meetings.';
       el.innerHTML = (S.paywall.trophy ? window.PickCard.trophyBanner(S.paywall.trophy) : '')
         + `<div class="empty" data-unlock style="cursor:pointer">
              <div class="big">🔒</div>
-             <b>Listings are members only.</b><br>Unlock every pick and full race card, all meetings.
-             <div style="margin-top:14px"><button class="unlock-btn" data-unlock>Sign up to unlock</button></div>
+             ${_lead}
+             <div style="margin-top:14px"><button class="unlock-btn" data-unlock>${_cta}</button></div>
            </div>`;
       return;
     }

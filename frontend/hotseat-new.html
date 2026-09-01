@@ -899,7 +899,7 @@
 
   .ff { font-variant-numeric: tabular-nums; letter-spacing: 0.14em; font-weight: 800; }
 </style>
-  <link rel="stylesheet" href="/pick-card.css?v=33">
+  <link rel="stylesheet" href="/pick-card.css?v=34">
   <script defer src="/_vercel/insights/script.js"></script>
 </head>
 <body>
@@ -1589,8 +1589,15 @@
     const el = document.getElementById('viewB');
     if (!S.meetings.length) return;
     let races = allRaces().sort((a, b) => (epochOf(a.scheduled_time) ?? 9e15) - (epochOf(b.scheduled_time) ?? 9e15));
-    // Hide the sub-20% coin-flips we don't stand behind (matches the stats floor).
-    races = races.filter(r => !window.PickCard.isHiddenRace({ win_probability: r.top_win_probability, is_sharp: r.is_sharp, venue: r._venue || r.venue || (typeof m !== "undefined" && m ? m.venue : null) }));
+    // The Hot Seat feed + "NEXT UP" hero are our curated best picks — open
+    // races (<25% top pick, a coin-flip) must NEVER appear here, unlike the
+    // heat grid which just demotes them. Keep the free teaser + locked stubs
+    // (server-chosen / redacted) so the paywall promise still holds.
+    races = races.filter(r => {
+      if (r.locked || r.is_teaser) return true;
+      const pk = { win_probability: r.top_win_probability, is_sharp: r.is_sharp, venue: r._venue || r.venue };
+      return !window.PickCard.isHiddenRace(pk) && !window.PickCard.isOpenRace(pk);
+    });
     const chips = `<div class="venue-chips">
       <button class="vchip ${S.feedVenue === 'all' ? 'on' : ''}" data-fv="all">All meetings</button>
       ${S.meetings.map(m => `<button class="vchip ${S.feedVenue === vcOf(m) ? 'on' : ''}" data-fv="${esc(vcOf(m))}">${esc(m.venue)}</button>`).join('')}

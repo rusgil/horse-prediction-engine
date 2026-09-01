@@ -948,7 +948,7 @@
 
   .ff { font-variant-numeric: tabular-nums; letter-spacing: 0.14em; font-weight: 800; }
 </style>
-  <link rel="stylesheet" href="/pick-card.css?v=33">
+  <link rel="stylesheet" href="/pick-card.css?v=34">
   <script defer src="/_vercel/insights/script.js"></script>
 </head>
 <body>
@@ -1170,7 +1170,8 @@
     parent: 'wins', view: 'up',   // default to today's live picks
     resDate: null,
     sort: localStorage.getItem('edgeSortNew') || 'best',
-    mode: localStorage.getItem('edgeModeNew') || 'sharp',
+    // Only 'all' / 'sharp' remain — retire any persisted hot/high/strong.
+    mode: (m => (m === 'all' || m === 'sharp') ? m : 'sharp')(localStorage.getItem('edgeModeNew')),
     picks: null, generatedAt: null, threshold: 25,
     resultsMap: {}, resData: null, exotics: null, tr: null,
     perfByDate: {},
@@ -1305,7 +1306,7 @@
     if (E.paywall) E.mode = 'all';   // non-members can't filter — force off
     el.innerHTML = `<div class="row">${edgeDateBarHTML()}</div>
       <div class="row">
-        ${E.paywall ? '' : seg([['all', 'All picks'], ['sharp', '🎯 Sharp'], ['hot', '🔥 HOT'], ['high', '⚡ HIGH'], ['strong', 'STRONG']], E.mode, 'md')}
+        ${E.paywall ? '' : seg([['all', 'All picks'], ['sharp', '🎯 Sharp']], E.mode, 'md')}
         ${E.view === 'up' ? seg([['best', 'Best pick'], ['next', 'Next race']], E.sort, 'st') : ''}
       </div>`;
     el.querySelectorAll('[data-pt]').forEach(b => b.onclick = () => { E.parent = b.dataset.pt; renderControls(); renderFeed(); });

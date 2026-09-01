@@ -4353,9 +4353,12 @@ async def _display_prob_cap(request, call_next):
             seen = {"upcoming": False}
             _apply_paywall(data, teaser_id, lock_past=not is_logged_in, seen=seen)
             if isinstance(data, dict):
-                # Trophy is a conversion hook for ANONYMOUS visitors only — a
-                # signed-in account (member or not) never sees it.
-                trophy = None if is_logged_in else await _current_trophy()
+                # Trophy is the conversion/renewal hook for anyone WITHOUT an
+                # active pass — anonymous visitors and signed-in accounts whose
+                # pass has lapsed alike. Members with access never see it (they
+                # don't need the pitch); a 5-day holder gated only on the Edge
+                # keeps their pass, so no trophy there either.
+                trophy = None if await _request_has_access(request) else await _current_trophy()
                 # Always attach paywall for a gated non-member so the frontend
                 # has a reliable "this viewer is gated" signal (used to hide the
                 # 'No Sharp picks' empty-state, etc.). 'active' (→ "you're seeing

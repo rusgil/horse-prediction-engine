@@ -451,10 +451,15 @@
     if (!t || !t.horse_name) return '';
     const sp = t.sp != null ? '$' + Number(t.sp).toFixed(2) : '';
     const when = _shortDate(t.race_date);
+    // Already signed in (pass lapsed or none) → they don't "sign up", they buy
+    // a plan. Logged out → the sign-up hook. CTA opens the same plan chooser.
+    const cta = isLoggedIn()
+      ? (isExpired() ? 'Renew your pass' : 'Choose a plan')
+      : `Sign up — ${_money()} / ${_days()} days`;
     return `<div class="trophy-wrap" data-unlock>
       <div class="trophy-label">🏆 Recent winner — our top pick won at <b>${sp}</b>${when ? ' · ' + esc(when) : ''}</div>
       ${render(t, { trophy: true })}
-      <button class="unlock-btn trophy-cta" data-unlock>Sign up — ${_money()} / ${_days()} days</button>
+      <button class="unlock-btn trophy-cta" data-unlock>${cta}</button>
     </div>`;
   }
 
@@ -506,20 +511,56 @@
   async function loadMembership() {
     try {
       const r = await fetch('/api/auth/me', { credentials: 'include' });
-      if (r.ok) { const u = await r.json(); _access = { has: !!u.has_access, days: u.plan_days }; }
-      else { _access = { has: false, days: null }; }
-    } catch (e) { _access = { has: false, days: null }; }
+      if (r.ok) {
+        const u = await r.json();
+        // Signed in but pass lapsed: has_access is false yet access_until is a
+        // past date (they held a pass before). Drives the "expired" banner/CTAs.
+        const until = u.access_until ? new Date(u.access_until) : null;
+        const expired = !u.has_access && !!until && until.getTime() < Date.now();
+        _access = { logged_in: true, has: !!u.has_access, days: u.plan_days, until: u.access_until || null, expired: expired };
+      }
+      else { _access = { logged_in: false, has: false, days: null, until: null, expired: false }; }
+    } catch (e) { _access = { logged_in: false, has: false, days: null, until: null, expired: false }; }
     refreshSplashUpsell();
+    renderExpiredBanner();
   }
   loadMembership();
   // Catch splashes that render after membership/billing already resolved.
-  setTimeout(refreshSplashUpsell, 1500);
-  setTimeout(refreshSplashUpsell, 3500);
+  setTimeout(function () { refreshSplashUpsell(); renderExpiredBanner(); }, 1500);
+  setTimeout(function () { refreshSplashUpsell(); renderExpiredBanner(); }, 3500);
   function isMember() { return !!(_access && _access.has); }
   function isSubscriber() { return !!(_access && _access.has && _access.days != null && _access.days >= 30); }
   // Active 5-day pass → eligible for the $9.90 credit on upgrade (mirrors the
   // backend _user_has_active_5day gate). Drives the in-app credit hint.
   function isFiveDayHolder() { return !!(_access && _access.has && _access.days === 5); }
+  function isLoggedIn() { return !!(_access && _access.logged_in); }
+  // Signed in, previously held a pass, now lapsed. Null while /auth/me is in flight.
+  function isExpired() { return !!(_access && _access.expired); }
+
+  // A slim top-of-page banner for a signed-in member whose pass has expired:
+  // "your pass expired" + a plan chooser CTA. Injected once, above the page
+  // content, on any page that includes pick-card.js. Idempotent — safe to call
+  // repeatedly (membership resolves async, splashes re-render).
+  function renderExpiredBanner() {
+    var existing = document.getElementById('pc-expired-banner');
+    if (!isExpired()) { if (existing) existing.remove(); return; }
+    if (existing) return;
+    var when = _access && _access.until ? _shortDate((_access.until || '').slice(0, 10)) : '';
+    var el = document.createElement('div');
+    el.id = 'pc-expired-banner';
+    el.className = 'expired-banner';
+    el.setAttribute('data-unlock', '');
+    el.innerHTML = '<span class="eb-ico">⏳</span>'
+      + '<span class="eb-txt"><b>Your pass has expired' + (when ? ' (' + esc(when) + ')' : '') + '.</b> '
+      + 'Renew to unlock every pick again.</span>'
+      + '<button class="eb-cta" data-unlock>Choose a plan</button>';
+    // Top of the main content flow, below the page nav/header — visible on
+    // every page (they all wrap content in <main>).
+    var main = document.querySelector('main');
+    if (main) main.insertBefore(el, main.firstChild);
+    else document.body.insertBefore(el, document.body.firstChild);
+    bindUnlock();
+  }
 
   // The 3-tier plans grid (same content as /plans), rendered from live billing.
   const _SPLASH_FEATS = {
@@ -607,7 +648,7 @@
   window.PickCard = {
     render, dualStat, winPlace, resultBlock, esc, wallTime, countdown,
     lockedCard, paywallBanner, trophyBanner, configureBilling, openCheckout, openPricing, bindUnlock,
-    fetchJSON, isMember, isSubscriber, isFiveDayHolder, splashUpsell, plansUpsell, plansGrid, refreshSplashUpsell, loadMembership,
+    fetchJSON, isMember, isSubscriber, isFiveDayHolder, isLoggedIn, isExpired, renderExpiredBanner, splashUpsell, plansUpsell, plansGrid, refreshSplashUpsell, loadMembership,
     fetchSparklines, isOpenRace, isHiddenRace, loadVenueBadges,
   };
   loadVenueBadges();   // warm the badged-venue set early so exceptions apply on first render
