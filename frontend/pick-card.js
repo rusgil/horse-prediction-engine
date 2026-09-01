@@ -570,7 +570,7 @@
   const _SPLASH_FEATS = {
     base: ['Full form for every pick, all meetings', 'Lounge, Hot Seat & Listings', 'Sharp filter & value plays'],
     sub: ['<b>The Edge</b> — best picks, best odds', 'Every meeting, every race', 'Cancel anytime'],
-    annual: ['<i>Exclusive NRL Predictions (70%+ accuracy, 2026)</i>'],
+    annual: [],
   };
   function _planPeriod(p) {
     if (p.mode === 'subscription') return p.days >= 360 ? '/year' : p.days >= 28 ? '/month' : '/' + p.days + ' days';
