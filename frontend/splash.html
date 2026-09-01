@@ -209,17 +209,6 @@
       <a class="btn primary lg" href="/lounge-c.html">See today's picks →</a>
       <a class="btn ghost lg" href="/plans">View plans</a>
     </div>
-    <div class="fineprint">No card required to browse today's free race.</div>
-
-    <!-- Live stat strip — rolling last 7 days (filled from the engine; fallbacks in markup) -->
-    <div class="stats" id="stats">
-      <div class="stat"><b id="st-rated">234</b><span>Races rated · 7d</span></div>
-      <div class="stat"><b id="st-toppick">38%</b><span>Top pick win · 7d</span></div>
-      <div class="stat g"><b id="st-swin">52%</b><span>Sharp win rate · 7d</span></div>
-      <div class="stat b"><b id="st-splace">74%</b><span>Sharp place rate · 7d</span></div>
-      <div class="stat a"><b id="st-swinners">35</b><span>Sharp winners · 7d</span></div>
-    </div>
-    <div class="stats-note" id="stats-note">Live · rolling last 7 days, across every Australian meeting.</div>
   </header>
 
 
@@ -358,23 +347,6 @@
         set('pf-win', p.win_pct.toFixed(1) + '%'); set('pf-place', p.place_pct.toFixed(1) + '%');
         if (p.mean_winning_sp) set('pf-sp', '$' + Number(p.mean_winning_sp).toFixed(2));
         if (p.races) set('pf-races', Number(p.races).toLocaleString());
-      }).catch(function () {});
-
-      // Hero strip — rolling last 7 days. Sharp cut: win / place / winners.
-      fetch('/api/performance?days=7&sharp=true').then(function (r) { return r.ok ? r.json() : null; }).then(function (d) {
-        if (!d) return;
-        if (d.overall_win_rate != null) set('st-swin', Math.round(d.overall_win_rate * 100) + '%');
-        var rows = d.summary || [], R = 0, W = 0, P = 0;
-        rows.forEach(function (x) { var rr = x.races || 0; R += rr; W += x.wins || 0; P += Math.round((x.place_rate || 0) * rr); });
-        if (R > 0) set('st-splace', Math.round(100 * P / R) + '%');
-        if (W > 0 || R > 0) set('st-swinners', W.toLocaleString());
-      }).catch(function () {});
-
-      // Hero strip — rolling last 7 days. All-picks cut: races rated + top-pick win.
-      fetch('/api/performance?days=7').then(function (r) { return r.ok ? r.json() : null; }).then(function (d) {
-        if (!d) return;
-        if (d.overall_races != null) set('st-rated', Number(d.overall_races).toLocaleString());
-        if (d.overall_win_rate != null) set('st-toppick', Math.round(d.overall_win_rate * 100) + '%');
       }).catch(function () {});
 
       // Live plans → pricing tiers, so the page can never quote a stale price.
