@@ -1368,6 +1368,9 @@
   function hsVisibleStats() {
     let races = allRaces();
     if (S.sharpOnly) races = races.filter(r => r.is_sharp === true);
+    // Exclude sub-20% coin-flips — greyed on the grid (no green tile) and out of
+    // stats, so they can't add a phantom win to the day summary.
+    races = races.filter(r => !window.PickCard.isHiddenRace({ win_probability: r.top_win_probability, is_sharp: r.is_sharp, venue: r._venue || r.venue }));
     const settled = races.filter(isSettled);
     if (!settled.length) return null;
     const wins = settled.filter(r => r.model_correct === true).length;
@@ -1515,16 +1518,18 @@
         const r = races?.[i];
         if (!r) return `<td class="cell blank"></td>`;
         if (S.sharpOnly && r.is_sharp !== true) return `<td class="cell blank"></td>`;
-        if (isSettled(r)) {
-          colS[i]++;
-          if (r.model_correct === true) colW[i]++;
-          if (r.model_placed === true) colP[i]++;
-        }
         const done = isSettled(r);
         // Sub-20% coin-flip: render the cell normally but flag it 'coinflip' — a
         // grey overlay (CSS ::after) dims it while the figures stay readable
         // underneath. Not clickable (no data-open); click toasts the reason.
         const _coin = window.PickCard.isHiddenRace({ win_probability: r.top_win_probability, is_sharp: r.is_sharp, venue: r._venue || r.venue || (typeof m !== "undefined" && m ? m.venue : null) });
+        // Only tally non-coin-flip races so the column totals match the coloured
+        // tiles (coin-flips are greyed and never show a green win).
+        if (done && !_coin) {
+          colS[i]++;
+          if (r.model_correct === true) colW[i]++;
+          if (r.model_placed === true) colP[i]++;
+        }
         const tier = tierOf(r.top_win_probability, isOffGoing(r.track_condition));
         const cls = [
           done ? 'done' : '',

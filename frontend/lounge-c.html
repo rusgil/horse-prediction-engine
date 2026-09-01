@@ -1351,6 +1351,9 @@
     // Sharp filter) so the strip always matches the visible cells.
     let races = allRaces();
     if (S.sharpOnly) races = races.filter(r => r.is_sharp === true);
+    // Exclude sub-20% coin-flips — they're greyed on the grid (no green tile) and
+    // excluded from stats, so they must not add a phantom win to the day summary.
+    races = races.filter(r => !window.PickCard.isHiddenRace({ win_probability: r.top_win_probability, is_sharp: r.is_sharp, venue: r._venue || r.venue }));
     const settled = races.filter(isSettled);
     const el = document.getElementById('dayStrip');
     const wins = settled.filter(r => r.model_correct === true).length;
@@ -1458,16 +1461,18 @@
         if (!r) return `<td class="cell blank"></td>`;
         if (r.locked) return `<td class="cell locked-cell ${r.locked_heat || ''}" data-unlock title="Members only — unlock to see this pick"><span class="lk-val"></span></td>`;
         if (S.sharpOnly && r.is_sharp !== true) return `<td class="cell blank"></td>`;
-        if (isSettled(r)) {
-          colS[i]++;
-          if (r.model_correct === true) colW[i]++;
-          if (r.model_placed === true) colP[i]++;
-        }
         const done = isSettled(r);
         // Sub-20% coin-flip: render normally but flag 'coinflip' — a grey overlay
         // (CSS ::after) dims it while the figures stay readable underneath. Not
         // clickable (no data-open); click toasts the reason.
         const _coin = window.PickCard.isHiddenRace({ win_probability: r.top_win_probability, is_sharp: r.is_sharp, venue: r._venue || r.venue || (typeof m !== "undefined" && m ? m.venue : null) });
+        // Only tally non-coin-flip races so the column totals match the coloured
+        // tiles (coin-flips are greyed and never show a green win).
+        if (done && !_coin) {
+          colS[i]++;
+          if (r.model_correct === true) colW[i]++;
+          if (r.model_placed === true) colP[i]++;
+        }
         const tier = tierOf(r.top_win_probability, isOffGoing(r.track_condition));
         const cls = [
           done ? 'done' : '',
