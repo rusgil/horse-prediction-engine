@@ -551,8 +551,8 @@
     el.className = 'expired-banner';
     el.setAttribute('data-unlock', '');
     el.innerHTML = '<span class="eb-ico">⏳</span>'
-      + '<span class="eb-txt"><b>Your pass has expired' + (when ? ' (' + esc(when) + ')' : '') + '.</b> '
-      + 'Renew to unlock every pick again.</span>'
+      + '<span class="eb-txt"><b>Your pass has expired' + (when ? ' (' + esc(when) + ')' : '') + '. '
+      + 'Renew to unlock every pick again.</b></span>'
       + '<button class="eb-cta" data-unlock>Choose a plan</button>';
     // Placement: a page whose filters live INSIDE <main> (e.g. the Edge) marks
     // the element the banner should sit above with [data-expired-before], so the
