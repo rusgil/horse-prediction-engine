@@ -1,0 +1,799 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="FunkyIQ — a solo-built multi-vertical quantitative prediction platform. Technical systems dossier.">
+<meta name="robots" content="noindex">
+<meta name="color-scheme" content="dark">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>&#127943;</text></svg>">
+<style>html,body{margin:0;padding:0}img{max-width:100%;display:block}</style>
+<title>FunkyIQ — Systems Dossier</title>
+<!--
+  Deliberate single-theme design: a dark "quant terminal / tote board" world.
+  This is the product's own brand ground (near-black navy + racing gold), so
+  the page commits to dark rather than shipping a washed-out light variant.
+  All figures are harvested from the live repo — nothing invented.
+-->
+<style>
+  :root{
+    --bg:#07090f; --bg-2:#0a0d16; --card:#0e1220; --elev:#161c30;
+    --border:#1e2840; --border-soft:#151b2e;
+    --gold:#e8a020; --gold-lt:#f5b83a; --gold-dim:rgba(232,160,32,.12);
+    --green:#22c55e; --green-lt:#4ade80; --green-dim:rgba(34,197,94,.12);
+    --violet:#a855f7; --violet-lt:#c084fc; --violet-dim:rgba(168,85,247,.13);
+    --blue:#3b82f6; --blue-lt:#60a5fa; --blue-dim:rgba(59,130,246,.13);
+    --red:#ef4444;
+    --tx:#eef2ff; --tx-2:#93a2c8; --tx-dim:#5a6a8f;
+    --mono:ui-monospace,"SF Mono",SFMono-Regular,Menlo,Consolas,monospace;
+    --sans:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    --r:14px; --r-sm:9px; --maxw:1120px;
+  }
+  *,*::before,*::after{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{
+    margin:0; background:var(--bg); color:var(--tx);
+    font-family:var(--sans); line-height:1.55;
+    -webkit-font-smoothing:antialiased; text-rendering:optimizeLegibility;
+    overflow-x:hidden;
+    background-image:
+      radial-gradient(ellipse 70% 45% at 50% -8%, rgba(232,160,32,.10), transparent 70%),
+      radial-gradient(ellipse 50% 40% at 92% 12%, rgba(168,85,247,.08), transparent 70%),
+      radial-gradient(ellipse 55% 45% at 4% 88%, rgba(34,197,94,.06), transparent 70%);
+    background-attachment:fixed;
+  }
+  .wrap{max-width:var(--maxw); margin:0 auto; padding:0 24px}
+  ::selection{background:var(--gold);color:#0a0d16}
+
+  /* ── type scale ── */
+  .eyebrow{font-family:var(--mono); font-size:.72rem; letter-spacing:.34em;
+    text-transform:uppercase; color:var(--gold); font-weight:600}
+  h1{font-size:clamp(2.9rem,8vw,5.6rem); line-height:.95; margin:0;
+    font-weight:800; letter-spacing:-.03em; text-wrap:balance}
+  h2{font-size:clamp(1.5rem,3.4vw,2.05rem); font-weight:800; letter-spacing:-.02em;
+    margin:0; text-wrap:balance}
+  h3{font-size:1.06rem; font-weight:700; letter-spacing:-.01em; margin:0}
+  .lede{font-size:clamp(1.05rem,2.3vw,1.32rem); color:var(--tx-2); max-width:60ch;
+    line-height:1.5; margin:0}
+  .num{font-family:var(--mono); font-variant-numeric:tabular-nums; font-weight:600}
+  .muted{color:var(--tx-2)} .dim{color:var(--tx-dim)}
+
+  /* ── hero ── */
+  header{padding:clamp(64px,12vh,140px) 0 40px; position:relative}
+  .badge-row{display:flex; gap:10px; flex-wrap:wrap; margin-bottom:26px}
+  .pill{font-family:var(--mono); font-size:.7rem; letter-spacing:.08em; text-transform:uppercase;
+    padding:5px 11px; border-radius:100px; border:1px solid var(--border);
+    color:var(--tx-2); background:rgba(255,255,255,.015)}
+  h1 .fq{background:linear-gradient(100deg,var(--gold-lt),var(--gold) 55%,#b9791a);
+    -webkit-background-clip:text; background-clip:text; -webkit-text-fill-color:transparent}
+  h1 .iq{color:var(--tx)}
+  .hero-sub{margin:24px 0 0; font-size:clamp(1.1rem,2.6vw,1.5rem); color:var(--tx);
+    font-weight:500; max-width:24ch; line-height:1.25}
+  .hero-lede{margin:22px 0 0}
+
+  /* ── metric ticker ── */
+  .ticker{margin-top:52px; border-top:1px solid var(--border); border-bottom:1px solid var(--border);
+    display:grid; grid-template-columns:repeat(8,1fr);
+    background:linear-gradient(180deg,rgba(255,255,255,.012),transparent)}
+  .metric{padding:22px 16px; border-right:1px solid var(--border-soft); position:relative}
+  .metric:last-child{border-right:none}
+  .metric .v{font-family:var(--mono); font-variant-numeric:tabular-nums;
+    font-size:clamp(1.5rem,3.6vw,2.3rem); font-weight:700; color:var(--gold-lt); letter-spacing:-.02em}
+  .metric .l{font-size:.74rem; color:var(--tx-2); margin-top:5px; line-height:1.3}
+  @media(max-width:1000px) and (min-width:761px){.ticker{grid-template-columns:repeat(4,1fr)}
+    .metric{border-bottom:1px solid var(--border-soft)}
+    .metric:nth-child(4n){border-right:none}}
+  @media(max-width:760px){.ticker{grid-template-columns:repeat(2,1fr)}
+    .metric{border-bottom:1px solid var(--border-soft)}
+    .metric:nth-child(2n){border-right:none}}
+  .ticker-note{font-family:var(--mono); font-size:.68rem; color:var(--tx-dim);
+    letter-spacing:.04em; margin:12px 0 0; text-align:right}
+
+  /* ── verticals band ── */
+  .verticals{margin-top:40px}
+  .vert-cap{font-family:var(--mono); font-size:.68rem; letter-spacing:.2em; text-transform:uppercase;
+    color:var(--gold); margin-bottom:16px}
+  .vert-grid{display:grid; grid-template-columns:repeat(3,1fr); gap:14px}
+  @media(max-width:760px){.vert-grid{grid-template-columns:1fr}}
+  .vert{display:flex; gap:13px; align-items:flex-start; padding:18px 20px;
+    border:1px solid var(--border); border-radius:var(--r-sm);
+    background:linear-gradient(165deg,var(--card),var(--bg-2))}
+  .vert .ve{font-size:1.55rem; line-height:1; flex:none}
+  .vert .vt{font-weight:700; font-size:1rem}
+  .vert .vt .flag{font-family:var(--mono); font-size:.6rem; letter-spacing:.12em; text-transform:uppercase;
+    color:var(--gold-lt); border:1px solid var(--gold-dim); background:var(--gold-dim);
+    padding:2px 6px; border-radius:5px; margin-left:8px; vertical-align:middle}
+  .vert .vd{font-size:.82rem; color:var(--tx-2); margin-top:8px; line-height:1.5}
+  .vstat{display:flex; align-items:baseline; flex-wrap:wrap; gap:6px; margin-top:9px;
+    font-family:var(--mono); font-variant-numeric:tabular-nums}
+  .vstat .big{font-size:1.35rem; font-weight:700; letter-spacing:-.02em}
+  .vstat .lbl{font-size:.66rem; letter-spacing:.06em; text-transform:uppercase; color:var(--tx-dim)}
+  .vstat.win .big{color:var(--green-lt)}
+  .vstat.nrl .big{color:#f472b6}
+  .vstat.sharp .big{color:var(--violet-lt)}
+  .vstat .sep{color:var(--tx-dim); font-size:1.1rem; margin:0 2px}
+  .vstat-tag{font-family:var(--mono); font-size:.6rem; letter-spacing:.08em; text-transform:uppercase;
+    color:var(--tx-dim); align-self:center; margin-left:6px}
+  .vphase{display:inline-block; margin-top:9px; font-family:var(--mono); font-size:.66rem;
+    letter-spacing:.06em; color:var(--tx-dim); border:1px solid var(--border); border-radius:5px; padding:3px 8px}
+  .vmeta{margin-top:10px; padding-top:9px; border-top:1px solid var(--border-soft);
+    font-family:var(--mono); font-size:.67rem; letter-spacing:.02em; color:var(--tx-dim);
+    font-variant-numeric:tabular-nums}
+  .vmeta b{color:var(--tx-2); font-weight:600}
+
+  /* ── sections ── */
+  section{padding:clamp(56px,9vh,96px) 0}
+  .sec-head{display:flex; align-items:baseline; gap:16px; margin-bottom:8px; flex-wrap:wrap}
+  .sec-idx{font-family:var(--mono); color:var(--gold); font-size:.8rem; font-weight:600}
+  .sec-tag{margin:14px 0 40px; color:var(--tx-2); max-width:64ch; font-size:1.05rem}
+
+  /* capability grid */
+  .grid{display:grid; grid-template-columns:repeat(2,1fr); gap:18px}
+  @media(max-width:820px){.grid{grid-template-columns:1fr}}
+  .cap{background:linear-gradient(165deg,var(--card),var(--bg-2));
+    border:1px solid var(--border); border-radius:var(--r); padding:26px 26px 24px;
+    position:relative; overflow:hidden; transition:transform .3s cubic-bezier(.2,.7,.2,1),border-color .3s}
+  .cap::before{content:""; position:absolute; inset:0 auto 0 0; width:3px;
+    background:var(--accent,var(--gold)); opacity:.85}
+  .cap:hover{transform:translateY(-4px); border-color:var(--acc-b,rgba(232,160,32,.4))}
+  .cap-top{display:flex; align-items:center; gap:12px; margin-bottom:14px}
+  .cap-ico{width:38px; height:38px; border-radius:10px; display:grid; place-items:center;
+    font-size:1.15rem; background:var(--accent-dim,var(--gold-dim)); flex:none}
+  .cap h3 .k{display:block; font-family:var(--mono); font-size:.66rem; letter-spacing:.2em;
+    text-transform:uppercase; color:var(--accent,var(--gold)); margin-bottom:2px; font-weight:600}
+  .cap p{margin:0 0 15px; color:var(--tx-2); font-size:.93rem; line-height:1.55}
+  .chips{display:flex; flex-wrap:wrap; gap:7px}
+  .chip{font-family:var(--mono); font-size:.71rem; padding:4px 9px; border-radius:6px;
+    background:rgba(255,255,255,.03); border:1px solid var(--border); color:var(--tx-2)}
+  .chip b{color:var(--tx); font-weight:600}
+  .proc{font-family:var(--mono); font-size:.72rem; color:var(--tx-2); margin:0 0 14px;
+    padding:9px 12px; border:1px dashed var(--border); border-radius:8px;
+    background:rgba(255,255,255,.014); letter-spacing:.02em; line-height:1.8}
+  .proc .ar{color:var(--violet-lt); margin:0 5px}
+  .proc .sl{color:var(--tx-dim); margin:0 5px}
+  .proc .ok{color:var(--green-lt)} .proc .no{color:#f87171}
+  /* accent variants */
+  .cap.gold{--accent:var(--gold);--accent-dim:var(--gold-dim);--acc-b:rgba(232,160,32,.4)}
+  .cap.violet{--accent:var(--violet-lt);--accent-dim:var(--violet-dim);--acc-b:rgba(168,85,247,.42)}
+  .cap.green{--accent:var(--green-lt);--accent-dim:var(--green-dim);--acc-b:rgba(34,197,94,.42)}
+  .cap.blue{--accent:var(--blue-lt);--accent-dim:var(--blue-dim);--acc-b:rgba(59,130,246,.42)}
+  .cap.red{--accent:#f87171;--accent-dim:rgba(239,68,68,.13);--acc-b:rgba(239,68,68,.42)}
+
+  /* ── architecture pipeline ── */
+  .arch{border:1px solid var(--border); border-radius:var(--r);
+    background:linear-gradient(180deg,rgba(255,255,255,.015),transparent);
+    padding:30px 24px; overflow-x:auto}
+  .flow{display:flex; align-items:stretch; gap:0; min-width:820px}
+  .stage{flex:1; display:flex; flex-direction:column; gap:8px; padding:0 6px; position:relative}
+  .stage:not(:last-child)::after{content:"→"; position:absolute; right:-9px; top:50%;
+    transform:translateY(-50%); color:var(--gold); font-size:1.1rem; z-index:2}
+  .node{background:var(--elev); border:1px solid var(--border); border-radius:10px;
+    padding:11px 12px; text-align:center}
+  .node .nt{font-size:.82rem; font-weight:700; color:var(--tx)}
+  .node .ns{font-family:var(--mono); font-size:.66rem; color:var(--tx-2); margin-top:3px; line-height:1.35}
+  .stage-label{font-family:var(--mono); font-size:.64rem; letter-spacing:.16em; text-transform:uppercase;
+    color:var(--tx-dim); text-align:center; margin-bottom:2px}
+  .rail{display:flex; gap:12px; margin-top:16px; min-width:820px}
+  .rail-item{flex:1; border:1px dashed var(--border); border-radius:10px; padding:12px 14px;
+    background:rgba(255,255,255,.012)}
+  .rail-item .ri-k{font-family:var(--mono); font-size:.64rem; letter-spacing:.14em; text-transform:uppercase; font-weight:600}
+  .rail-item .ri-d{font-size:.82rem; color:var(--tx-2); margin-top:4px}
+  .rail-agents .ri-k{color:var(--violet-lt)} .rail-agents{border-color:rgba(168,85,247,.32)}
+  .rail-guard .ri-k{color:var(--green-lt)} .rail-guard{border-color:rgba(34,197,94,.3)}
+
+  /* ── HA table ── */
+  .ha-wrap{overflow-x:auto; border:1px solid var(--border); border-radius:var(--r)}
+  table{border-collapse:collapse; width:100%; min-width:680px; font-size:.9rem}
+  thead th{font-family:var(--mono); font-size:.68rem; letter-spacing:.12em; text-transform:uppercase;
+    color:var(--gold); text-align:left; padding:15px 18px; background:rgba(232,160,32,.05);
+    border-bottom:1px solid var(--border); font-weight:600}
+  tbody td{padding:14px 18px; border-bottom:1px solid var(--border-soft); vertical-align:top; color:var(--tx-2)}
+  tbody tr:last-child td{border-bottom:none}
+  tbody td:first-child{color:var(--tx); font-weight:600}
+  .lift{font-family:var(--mono); font-size:.72rem; padding:3px 9px; border-radius:5px; white-space:nowrap; font-weight:600}
+  .lift.done{background:var(--green-dim); color:var(--green-lt); border:1px solid rgba(34,197,94,.3)}
+  .lift.low{background:var(--gold-dim); color:var(--gold-lt); border:1px solid rgba(232,160,32,.3)}
+  .lift.med{background:var(--blue-dim); color:var(--blue-lt); border:1px solid rgba(59,130,246,.3)}
+  .ha-note{margin:22px 0 0; color:var(--tx-2); font-size:.98rem; max-width:70ch}
+  .ha-note b{color:var(--tx)}
+
+  /* ── cyber agents duo ── */
+  .duo{display:grid; grid-template-columns:1fr 1fr; gap:18px}
+  @media(max-width:760px){.duo{grid-template-columns:1fr}}
+  .agent{border-radius:var(--r); padding:26px; border:1px solid var(--border); position:relative; overflow:hidden}
+  .agent.evil{background:linear-gradient(160deg,rgba(239,68,68,.07),var(--card))}
+  .agent.thor{background:linear-gradient(160deg,rgba(59,130,246,.08),var(--card))}
+  .agent.nightwatch{background:linear-gradient(160deg,rgba(232,160,32,.08),var(--card))}
+  .agent.gov{background:linear-gradient(160deg,rgba(34,197,94,.08),var(--card))}
+  .agent .ah{display:flex; align-items:center; gap:12px; margin-bottom:12px}
+  .agent .ah .emo{font-size:1.7rem}
+  .agent .ah .an{font-weight:800; font-size:1.2rem}
+  .agent .ah .ar{font-family:var(--mono); font-size:.66rem; letter-spacing:.14em; text-transform:uppercase}
+  .agent.evil .ar{color:#f87171} .agent.thor .ar{color:var(--blue-lt)}
+  .agent.nightwatch .ar{color:var(--gold-lt)} .agent.gov .ar{color:var(--green-lt)}
+  .agent.social{background:linear-gradient(160deg,rgba(236,72,153,.09),var(--card))}
+  .agent.social .ar{color:#f472b6}
+  .agent.social .an .stat-inline{font-family:var(--mono); font-size:.66rem; letter-spacing:.1em;
+    color:#f9a8d4; background:rgba(236,72,153,.14); border:1px solid rgba(236,72,153,.32);
+    padding:2px 8px; border-radius:6px; margin-left:10px; vertical-align:middle; font-weight:600}
+  .social-body{display:grid; grid-template-columns:1.1fr 1fr; gap:20px 30px; align-items:start}
+  @media(max-width:720px){.social-body{grid-template-columns:1fr}}
+  .social-body ul{margin:0}
+  .source-chips{display:flex; flex-wrap:wrap; gap:7px; margin-top:12px}
+  .source-chips .sc{font-family:var(--mono); font-size:.71rem; padding:4px 10px; border-radius:6px;
+    background:rgba(236,72,153,.08); border:1px solid rgba(236,72,153,.28); color:#f9a8d4}
+  .fleet-label{font-family:var(--mono); font-size:.68rem; letter-spacing:.2em; text-transform:uppercase;
+    color:var(--tx-dim); margin:0 0 14px; display:flex; align-items:center; gap:12px}
+  .fleet-label::after{content:""; flex:1; height:1px; background:var(--border)}
+  .fleet-label.two{margin-top:34px}
+  .safemode{margin-top:14px; border:1px solid rgba(239,68,68,.35); background:rgba(239,68,68,.07);
+    border-radius:9px; padding:12px 14px; font-size:.85rem; color:var(--tx-2)}
+  .safemode b{color:#f87171}
+  .agent p{margin:0 0 14px; color:var(--tx-2); font-size:.92rem}
+  .agent ul{margin:0; padding-left:18px; color:var(--tx-2); font-size:.86rem; line-height:1.7}
+  .agent li b{color:var(--tx)}
+  .loop{text-align:center; font-family:var(--mono); font-size:.8rem; color:var(--tx-2);
+    margin-top:20px; padding:14px; border:1px dashed var(--border); border-radius:10px}
+  .loop b{color:var(--violet-lt)}
+  .agent.lab{background:linear-gradient(160deg,rgba(20,184,166,.09),var(--card))}
+  .agent.lab .ar{color:#2dd4bf}
+  .roadmap-tag{font-family:var(--mono); font-size:.62rem; letter-spacing:.13em; text-transform:uppercase;
+    color:#2dd4bf; border:1px solid rgba(20,184,166,.38); background:rgba(20,184,166,.1);
+    padding:3px 9px; border-radius:100px; margin-left:12px; vertical-align:middle; white-space:nowrap}
+  .lab-loop{text-align:center; font-family:var(--mono); font-size:.8rem; color:var(--tx-2);
+    margin-top:18px; padding:14px; border:1px dashed rgba(20,184,166,.35); border-radius:10px;
+    background:rgba(20,184,166,.04)}
+  .lab-loop b{color:#2dd4bf}
+  .kill-note{margin:22px 0 0; padding:16px 18px; border-left:3px solid var(--green);
+    background:var(--green-dim); border-radius:0 10px 10px 0; color:var(--tx-2); font-size:.92rem}
+  .kill-note b{color:var(--tx)}
+
+  /* ── competencies ── */
+  .comp{display:grid; grid-template-columns:repeat(3,1fr); gap:14px}
+  @media(max-width:760px){.comp{grid-template-columns:1fr}}
+  .comp-i{border:1px solid var(--border); border-radius:var(--r-sm); padding:18px 20px;
+    background:var(--card)}
+  .comp-i .ct{font-weight:700; font-size:.98rem; margin-bottom:4px}
+  .comp-i .cd{font-size:.83rem; color:var(--tx-2)}
+
+  /* ── principles ── */
+  .principles{border-top:1px solid var(--border)}
+  .principle{display:grid; grid-template-columns:66px 1fr; gap:22px; padding:24px 0;
+    border-bottom:1px solid var(--border-soft); align-items:baseline}
+  .principle .pn{font-family:var(--mono); font-size:1.15rem; font-weight:700; color:var(--gold);
+    font-variant-numeric:tabular-nums}
+  .principle .pt{font-size:1.18rem; font-weight:700; letter-spacing:-.01em; margin-bottom:6px; text-wrap:balance}
+  .principle .pd{color:var(--tx-2); font-size:.96rem; line-height:1.55; max-width:62ch}
+  @media(max-width:600px){.principle{grid-template-columns:42px 1fr; gap:14px; padding:20px 0}
+    .principle .pt{font-size:1.05rem}}
+  .ai-banner{margin:40px 0 0; padding:34px 24px; text-align:center;
+    border:1px solid var(--gold-mid); border-radius:var(--r);
+    background:linear-gradient(180deg, rgba(232,160,32,.09), rgba(232,160,32,.02));
+    box-shadow:inset 0 0 60px rgba(232,160,32,.05)}
+  .ai-banner .lbl{font-family:var(--mono); font-size:.7rem; letter-spacing:.34em;
+    text-transform:uppercase; color:var(--gold); display:block; margin-bottom:12px}
+  .ai-banner .txt{font-size:clamp(1.5rem,4.4vw,2.6rem); font-weight:800; letter-spacing:-.02em;
+    line-height:1.05; text-wrap:balance;
+    background:linear-gradient(100deg,var(--gold-lt),var(--gold) 55%,#b9791a);
+    -webkit-background-clip:text; background-clip:text; -webkit-text-fill-color:transparent}
+
+  footer{padding:60px 0 80px; border-top:1px solid var(--border); margin-top:40px}
+  .foot-line{font-family:var(--mono); font-size:.78rem; color:var(--tx-dim); letter-spacing:.05em}
+  .foot-line b{color:var(--gold)}
+
+  /* reveal */
+  .reveal{opacity:0; transform:translateY(22px); transition:opacity .7s ease, transform .7s cubic-bezier(.2,.7,.2,1)}
+  .reveal.in{opacity:1; transform:none}
+  @media(prefers-reduced-motion:reduce){
+    .reveal{opacity:1!important; transform:none!important; transition:none}
+    html{scroll-behavior:auto}
+    .cap:hover{transform:none}
+  }
+</style>
+  <script defer src="/_vercel/insights/script.js"></script>
+</head>
+<body>
+
+
+<div class="wrap">
+
+  <header>
+    <div class="badge-row reveal">
+      <span class="pill">Systems Dossier</span>
+      <span class="pill">Solo-built · Production</span>
+    </div>
+    <div class="eyebrow reveal">Multi-Domain Prediction Intelligence</div>
+    <h1 class="reveal" style="margin-top:14px"><span class="fq">Funky</span><span class="iq">IQ</span></h1>
+    <p class="hero-sub reveal">An autonomous, self-monitoring prediction platform.</p>
+    <p class="lede hero-lede reveal">
+      FunkyIQ spans three verticals — <b style="color:var(--tx)">horse racing, NRL and frequent-flyer award seats</b>.
+      This dossier profiles the flagship: a full-stack quantitative engine that ingests live data from nine sources,
+      prices every outcome with a calibrated model ensemble, serves it through a 229-endpoint API,
+      and <b style="color:var(--tx)">runs, recalibrates, watches and defends itself</b> with a fleet of scheduled AI agents —
+      end-to-end, single-handed.
+    </p>
+
+    <div class="ticker reveal">
+      <div class="metric"><div class="v"><span data-count="58000" data-suffix="">0</span></div><div class="l">lines of code</div></div>
+      <div class="metric"><div class="v"><span data-count="250" data-suffix="">0</span></div><div class="l">REST API endpoints</div></div>
+      <div class="metric"><div class="v"><span data-count="33" data-suffix="">0</span></div><div class="l">Postgres tables</div></div>
+      <div class="metric"><div class="v"><span data-count="41" data-suffix="">0</span></div><div class="l">engineered features</div></div>
+      <div class="metric"><div class="v"><span data-count="29" data-suffix="">0</span></div><div class="l">autonomous jobs</div></div>
+      <div class="metric"><div class="v"><span data-count="7" data-suffix="">0</span></div><div class="l">AI agents</div></div>
+      <div class="metric"><div class="v">~<span data-count="30" data-suffix="M">0</span></div><div class="l">data points · and climbing</div></div>
+      <div class="metric"><div class="v"><span data-count="140" data-suffix="×">0</span></div><div class="l">DB query speedup</div></div>
+    </div>
+    <p class="ticker-note reveal">features · jobs profile the flagship horse-racing engine — code, endpoints &amp; ~30M data points (≈2M records) span all three verticals</p>
+
+    <div class="verticals reveal">
+      <div class="vert-cap">One platform · three verticals</div>
+      <div class="vert-grid">
+        <div class="vert"><span class="ve">🏇</span><div>
+          <div class="vt">Horse Racing<span class="flag">Flagship</span></div>
+          <div class="vstat sharp"><span class="big" data-heal="win">34%</span><span class="lbl">win</span><span class="sep">·</span><span class="big" data-heal="place">59%</span><span class="lbl">place</span><span class="vstat-tag">Sharp filter · flagship · 500-race track record</span></div>
+          <div class="vstat win"><span class="big">47%</span><span class="lbl">win</span><span class="sep">·</span><span class="big">~77%</span><span class="lbl">place</span><span class="vstat-tag">recent form · last 7 days · 81 races</span></div>
+          <div class="vd">The <b style="color:var(--violet-lt)">Sharp filter</b> is the flagship signal — its highest-conviction, clear-favourite picks hold a <b><span data-heal="win">34%</span> win / <span data-heal="place">59%</span> place</b> track record across 500 races, and have run even hotter lately (<b>~47% win / ~77% place</b> over the last 7 days). The quantitative engine profiled throughout this dossier.</div>
+          <div class="vmeta"><b>~43k</b> LOC · <b>~2M</b> records · 229 endpoints</div>
+        </div></div>
+        <div class="vert"><span class="ve">🏉</span><div>
+          <div class="vt">NRL Tipping</div>
+          <div class="vstat nrl"><span class="big">74%</span><span class="lbl">tips correct</span></div>
+          <div class="vd">Live match prediction from a production data pipeline — plus AI media-sentiment on every team.</div>
+          <div class="vmeta"><b>~14k</b> LOC · <b>18</b> endpoints · React frontend</div>
+        </div></div>
+        <div class="vert"><span class="ve">✈️</span><div>
+          <div class="vt">FunkySeats</div>
+          <div class="vphase">Phase 1 · archive building</div>
+          <div class="vd">Frequent-flyer award-seat availability.</div>
+          <div class="vmeta"><b>~1.3k</b> LOC · <b>3</b> endpoints · archive accruing</div>
+        </div></div>
+      </div>
+    </div>
+  </header>
+
+  <!-- ── CAPABILITIES ── -->
+  <section id="stack">
+    <div class="sec-head reveal"><span class="sec-idx">01</span><h2>The technical stack</h2></div>
+    <p class="sec-tag reveal">Six engineering disciplines, one codebase — each one a competency in its own right.</p>
+
+    <div class="grid">
+      <div class="cap violet reveal">
+        <div class="cap-top"><div class="cap-ico">🤖</div>
+          <h3><span class="k">Agentic AI</span>Autonomous operations</h3></div>
+        <p>The platform doesn't just run — it operates itself. In-process schedulers and scheduled cloud AI agents handle enrichment, pre-warming, snapshotting, calibration and retraining, then verify their own fixes. Research agents feed an <b style="color:var(--tx)">automated product backlog</b>: every item is hypothesised, built, tested and proven out-of-sample — then <b style="color:var(--tx)">auto-deployed to production when it clears the guardrails</b> — with a human one-click promote/reject available as the override.</p>
+        <div class="proc reveal">hypothesise <span class="ar">→</span> build <span class="ar">→</span> test <span class="ar">→</span> prove <span class="ar">→</span> <b class="ok">✓ promote</b> <span class="sl">/</span> <b class="no">✗ reject</b></div>
+        <div class="chips">
+          <span class="chip"><b>29</b> cron jobs</span>
+          <span class="chip">APScheduler</span>
+          <span class="chip">scheduled cloud agents</span>
+          <span class="chip"><b>automated product backlog</b></span>
+          <span class="chip">one-click promote / reject</span>
+          <span class="chip">refine→backtest→release gate</span>
+          <span class="chip">guardrailed auto-promotion</span>
+        </div>
+      </div>
+
+      <div class="cap gold reveal">
+        <div class="cap-top"><div class="cap-ico">📈</div>
+          <h3><span class="k">Predictive Models</span>Win, place &amp; exotic models</h3></div>
+        <p>Separate win, place and exotic models over 41 engineered features distilled from 60+ per-runner signals — form, class, pedigree and live market microstructure — <b style="color:var(--tx)">14M+ feature values computed across 347k prediction records</b>. A Benter-style market+model blend, Harville / Plackett–Luce joint probabilities for exotics, walk-forward backtesting and sample-size-gated calibration.</p>
+        <div class="chips">
+          <span class="chip"><b>41</b> features</span>
+          <span class="chip"><b>13.6M</b> feature values</span>
+          <span class="chip">win · place · exotic</span>
+          <span class="chip">Benter blend</span>
+          <span class="chip">Harville / Plackett–Luce</span>
+          <span class="chip">isotonic calibration</span>
+          <span class="chip">multi-window backtesting</span>
+          <span class="chip">candidate vs incumbent</span>
+          <span class="chip">walk-forward, no test-on-train</span>
+        </div>
+      </div>
+
+      <div class="cap blue reveal">
+        <div class="cap-top"><div class="cap-ico">🗄️</div>
+          <h3><span class="k">Data Engineering</span>Multi-source ingestion</h3></div>
+        <p>Nine client adapters reconcile racing cards, tote &amp; bookmaker odds and weather into a 60-table schema — with upstream-site awareness and persistent caches that keep sourcing responsible and well inside every provider's rate limits. The schema is tuned for speed: proper keys and 131 targeted indexes took hot queries from <b style="color:var(--tx)">~700 ms to ~5 ms — a ~140× speedup</b>.</p>
+        <div class="chips">
+          <span class="chip"><b>9</b> adapters</span>
+          <span class="chip">official racing data</span>
+          <span class="chip">bookmaker odds</span>
+          <span class="chip">composite odds</span>
+          <span class="chip"><b>700ms → 5ms</b></span>
+          <span class="chip"><b>131</b> indexes</span>
+          <span class="chip">resilient / auto-healing ingestion</span>
+        </div>
+      </div>
+
+      <div class="cap red reveal">
+        <div class="cap-top"><div class="cap-ico">🛡️</div>
+          <h3><span class="k">Security &amp; Integrity</span>Integrity guardrails</h3></div>
+        <p>Write-once prediction history with a tamper guard and an incidents ledger; continuous integrity capture that <b style="color:var(--tx)">auto-heals</b> detected issues — duplicate results, scratch mismatches, upstream gaps; <b style="color:var(--tx)">built-in agentic-AI guardrails for continuous data-integrity and trust protection</b>; and secret hardening — auto-generated API docs, per-purpose token migration, open-proxy sentinel.</p>
+        <div class="chips">
+          <span class="chip">write-once history</span>
+          <span class="chip">tamper guard + incidents ledger</span>
+          <span class="chip"><b>auto-healing</b></span>
+          <span class="chip"><b>guardrails</b></span>
+          <span class="chip">integrity baseline/EOD</span>
+          <span class="chip">secret hygiene</span>
+        </div>
+      </div>
+
+      <div class="cap green reveal">
+        <div class="cap-top"><div class="cap-ico">⚙️</div>
+          <h3><span class="k">API &amp; Backend</span>Async FastAPI</h3></div>
+        <p>A 229-endpoint FastAPI service — 179 of them admin/ops operations — on fully async SQLAlchemy 2.0 and asyncpg, typed end-to-end with Pydantic v2, with response middleware enforcing cross-cutting rules on every current and future route.</p>
+        <div class="chips">
+          <span class="chip"><b>229</b> endpoints</span>
+          <span class="chip"><b>179</b> admin ops</span>
+          <span class="chip">FastAPI</span>
+          <span class="chip">Python query (SQLAlchemy / asyncpg)</span>
+          <span class="chip">Python data validation (Pydantic v2)</span>
+          <span class="chip">OpenAPI</span>
+        </div>
+      </div>
+
+      <div class="cap gold reveal">
+        <div class="cap-top"><div class="cap-ico">☁️</div>
+          <h3><span class="k">Infra &amp; CI/CD</span>Infrastructure as code</h3></div>
+        <p>Backend on Railway (managed Postgres), three globally-edged frontends on Vercel, a Terraform-managed reverse-proxy tier on its own cloud host with Caddy/TLS — all wired under a self-registered domain, with DNS routing the API host and a subdomain per product. Static UI served from a global edge CDN. Push-to-deploy continuous delivery with pre-deploy compile &amp; lint gates. Config-driven and stateless throughout.</p>
+        <div class="chips">
+          <span class="chip">Railway · Vercel · Hetzner</span>
+          <span class="chip">domain + DNS</span>
+          <span class="chip"><b>2</b> Terraform modules</span>
+          <span class="chip">Caddy / auto-TLS</span>
+          <span class="chip">edge CDN cache</span>
+          <span class="chip">TTL response cache</span>
+          <span class="chip">per-caller rate limit</span>
+          <span class="chip">push-to-deploy</span>
+          <span class="chip">env-driven config</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── ARCHITECTURE ── -->
+  <section id="arch">
+    <div class="sec-head reveal"><span class="sec-idx">02</span><h2>How it fits together</h2></div>
+    <p class="sec-tag reveal">Live data flows left-to-right into predictions and out to users. Two rails run continuously alongside it — an autonomous agent loop above, an integrity guard below.</p>
+
+    <div class="arch reveal">
+      <div class="flow">
+        <div class="stage">
+          <div class="stage-label">Sources</div>
+          <div class="node"><div class="nt">9 feeds</div><div class="ns">racing cards · odds<br>weather</div></div>
+        </div>
+        <div class="stage">
+          <div class="stage-label">Ingress</div>
+          <div class="node"><div class="nt">Resilient ingress</div><div class="ns">Terraform-managed</div></div>
+        </div>
+        <div class="stage">
+          <div class="stage-label">Process</div>
+          <div class="node"><div class="nt">Enrich + features</div><div class="ns">41-feature pipeline<br>composite odds</div></div>
+        </div>
+        <div class="stage">
+          <div class="stage-label">State</div>
+          <div class="node"><div class="nt">Postgres</div><div class="ns">33 tables<br>write-once history</div></div>
+        </div>
+        <div class="stage">
+          <div class="stage-label">Model</div>
+          <div class="node"><div class="nt">Ensemble</div><div class="ns">win·place·exotic<br>Benter + calibration</div></div>
+        </div>
+        <div class="stage">
+          <div class="stage-label">Serve</div>
+          <div class="node"><div class="nt">FastAPI</div><div class="ns">229 endpoints</div></div>
+        </div>
+        <div class="stage">
+          <div class="stage-label">Edge</div>
+          <div class="node"><div class="nt">3 frontends</div><div class="ns">Vercel global CDN</div></div>
+        </div>
+      </div>
+      <div class="rail rail-agents-wrap" style="min-width:820px">
+        <div class="rail-item rail-agents"><div class="ri-k">▲ Agent loop</div><div class="ri-d">29 scheduled jobs + cloud AI agents: enrich, pre-warm, snapshot, calibrate, retrain, self-verify.</div></div>
+        <div class="rail-item rail-guard"><div class="ri-k">▼ Integrity guard</div><div class="ri-d">Continuous baseline/EOD capture, tamper detection, incidents ledger — watching every write.</div></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── AGENT FLEET ── -->
+  <section id="agents">
+    <div class="sec-head reveal"><span class="sec-idx">03</span><h2>The agent fleet</h2></div>
+    <p class="sec-tag reveal">Seven autonomous agents keep the platform sharp, honest and safe — every night, with no human in the loop. Operations, continuous model improvement and security review — each with its own named specialist.</p>
+
+    <div class="fleet-label reveal">Research · the self-driving loop <span class="roadmap-tag">In design · shipping next</span></div>
+    <div class="duo">
+      <div class="agent lab reveal">
+        <div class="ah"><span class="emo">⚗️</span><div><div class="an">The Alchemist</div><div class="ar">Hypothesis · generator</div></div></div>
+        <p>Reads the data, the misses and the market for patterns worth chasing, and frames each as a <b style="color:var(--tx)">falsifiable, testable hypothesis</b> — the raw ore the Labs exist to refine.</p>
+        <ul>
+          <li><b>Mines:</b> losing patterns, market disagreements, untested feature interactions.</li>
+          <li><b>Frames:</b> a precise hypothesis with a measurable success bar.</li>
+          <li><b>Queues:</b> hands it to the Crucible with the exact test to run.</li>
+        </ul>
+      </div>
+      <div class="agent lab reveal">
+        <div class="ah"><span class="emo">🔥</span><div><div class="an">The Crucible</div><div class="ar">Hypothesis · solver</div></div></div>
+        <p>Takes each hypothesis and <b style="color:var(--tx)">burns it down</b> — building the out-of-sample backtest, running it against real history, and returning a hard verdict: ship it, or reject it.</p>
+        <ul>
+          <li><b>Builds:</b> the walk-forward, no-leak experiment for the claim.</li>
+          <li><b>Tests:</b> against thousands of settled results — adversarially, trying to falsify.</li>
+          <li><b>Verdicts:</b> survivors go to the release gate; the rest are logged and rejected.</li>
+        </ul>
+      </div>
+    </div>
+    <div class="lab-loop reveal">The Alchemist dreams up an edge &nbsp;→&nbsp; The Crucible tries to destroy it &nbsp;→&nbsp; only what survives ships &nbsp;↺&nbsp; research that runs itself</div>
+
+    <div class="fleet-label two reveal">Operations · keeping the model sharp &amp; honest</div>
+    <div class="duo">
+      <div class="agent nightwatch reveal">
+        <div class="ah"><span class="emo">🌙</span><div><div class="an">Night Watch</div><div class="ar">Model Ops · nightly → morning</div></div></div>
+        <p>While the tracks sleep, Night Watch re-grades the models against the day's real results, recalibrates them out-of-sample, and lands a <b style="color:var(--tx)">morning report of exactly how much the model improved overnight</b>.</p>
+        <ul>
+          <li><b>Nightly backtest:</b> every model re-scored on fresh settled results — walk-forward, clipped at the holdout boundary so it's never test-on-train.</li>
+          <li><b>Recalibration:</b> weight &amp; probability calibration sweeps refit on the new evidence.</li>
+          <li><b>Multi-model comparison:</b> candidate models trained over different lookback windows, their outputs raced against the incumbent out-of-sample — only the strongest is put forward.</li>
+          <li><b>Weekly review:</b> generates the weekly performance review and seeds follow-up tasks; a daily resolver works the queue.</li>
+          <li><b>Morning report:</b> before/after win &amp; place delta — the night's improvement, in your inbox.</li>
+          <li><b>Guardrail:</b> the strongest candidate auto-promotes to production each week — the gate is <b style="color:var(--tx)">backtest-beats-incumbent + drift detection + auto-rollback</b>, not a human click.</li>
+        </ul>
+      </div>
+
+      <div class="agent gov reveal">
+        <div class="ah"><span class="emo">🏛️</span><div><div class="an">The Governor</div><div class="ar">Integrity &amp; Safety · continuous</div></div></div>
+        <p>The Governor watches every write for the truth to slip — scanning for integrity incidents (<b style="color:var(--tx)">duplicate results, mismatches, post-race rewrites, upstream data gaps</b>) and reporting them. And when it's serious enough, it pulls the handbrake.</p>
+        <ul>
+          <li><b>Incident scan:</b> duplicate finishing positions, result mismatches, silent post-race rewrites, upstream feed gaps.</li>
+          <li><b>Full integrity reporting:</b> 5-minute baseline capture through the day + a nightly end-of-day reconciliation, logged to an incidents ledger.</li>
+          <li><b>Immutable history:</b> predictions are write-once behind a tamper guard — confirms the guard held.</li>
+        </ul>
+        <div class="safemode"><b>⛔ Circuit breaker:</b> on a major event — a degraded prediction distribution or contaminated data snapshot — the Governor raises a site-wide safe-mode splash, <b>filters the bad data out of every response, and effectively takes the site offline</b> until health returns, then clears itself automatically once the backlog drains.</div>
+      </div>
+    </div>
+
+    <div class="fleet-label two reveal">Signal · reading the room</div>
+    <div class="agent social reveal">
+      <div class="ah"><span class="emo">🗞️</span><div><div class="an">The Socialite<span class="stat-inline">NRL · 74% tips</span></div><div class="ar">Media &amp; Sentiment · match week</div></div></div>
+      <div class="social-body">
+        <div>
+          <p>The stat sheet never tells you a captain rolled an ankle at Thursday's captain's run, or that a locker room's in open revolt. The Socialite does. For every NRL side, it reads the room — then hands the match model a <b style="color:var(--tx)">sentiment signal the box score can't see</b>.</p>
+          <div class="source-chips">
+            <span class="sc">fan forums</span>
+            <span class="sc">news wires</span>
+            <span class="sc">official club news</span>
+            <span class="sc">per team · rolling 5 days</span>
+          </div>
+        </div>
+        <ul>
+          <li><b>Scans:</b> fresh threads, news articles and official club news for all 17 clubs.</li>
+          <li><b>LLM read:</b> an AI pass distils the noise into a structured team-sentiment score — injuries, morale, momentum, drama.</li>
+          <li><b>Feeds the model:</b> sentiment joins form, weather and rosters as a live prediction input.</li>
+          <li><b>Edge:</b> catches the intangibles — a late scratching whisper, a side on a heater — before the market does.</li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="fleet-label two reveal">Security · the purple team</div>
+    <div class="duo">
+      <div class="agent evil reveal">
+        <div class="ah"><span class="emo">🦹</span><div><div class="an">Dr Evil</div><div class="ar">Red Team · continual scan · always learning</div></div></div>
+        <p>Thinks like an attacker against FunkyIQ's own surface, confirms each weakness with the lightest possible proof, and files ranked threat reports — then <b style="color:var(--tx)">stops</b>. It finds holes and threatens loudly; it never detonates.</p>
+        <ul>
+          <li><b>Continual vulnerability scanning:</b> every night sweeps the whole surface fresh — nothing is assumed still-safe because it passed yesterday.</li>
+          <li><b>Always learning:</b> pulls the latest security advisories (CVE/NVD, CISA KEV and GHSA) and cross-checks them against the live dependency versions — new threats become new checks automatically.</li>
+          <li><b>Static review:</b> traces SQL injection to its source, and hunts remote code execution and unsafe deserialization, server-side request forgery (SSRF), cross-site scripting (XSS) and leaked secrets — each confirmed class becomes a permanent regression check.</li>
+          <li><b>Probes:</b> tests against the OWASP Top 10 for web and APIs — the industry-standard checklists of the most critical security risks — read-only, rate-limited, with a single harmless proof per finding.</li>
+          <li><b>Guardrails:</b> allowlisted scope, ≤30 req/min, halt-on-critical, secrets masked.</li>
+        </ul>
+      </div>
+
+      <div class="agent thor reveal">
+        <div class="ah"><span class="emo">⚡</span><div><div class="an">Thor</div><div class="ar">Blue Team · continuous</div></div></div>
+        <p>The guardian. It detects real attacks, watches data integrity and availability, verifies Dr Evil's findings and drives each to closure — doing the safe, reversible defence itself and <b style="color:var(--tx)">proposing</b> the risky stuff.</p>
+        <ul>
+          <li><b>Real-time log &amp; anomaly detection:</b> streams access and error logs live, flagging anomalies as they happen — auth-failure spikes, unusual admin-route hits, traffic that breaks the baseline.</li>
+          <li><b>Watch:</b> integrity violations, secret leaks, bandwidth headroom, cert expiry.</li>
+          <li><b>Repair:</b> triage findings, re-test fixes, harden config, close the loop.</li>
+          <li><b>Respond:</b> run known recovery playbooks — safe steps auto, risky steps proposed.</li>
+          <li><b>Least privilege:</b> read-mostly, every write narrow, reversible and logged.</li>
+        </ul>
+      </div>
+    </div>
+    <div class="loop reveal">Dr Evil proves the door <i>can</i> be forced &nbsp;→&nbsp; <b>security findings store</b> &nbsp;→&nbsp; Thor mends the lock &amp; sounds the horn &nbsp;↺&nbsp; the purple loop</div>
+  </section>
+
+  <!-- ── LABS ── -->
+  <section id="labs">
+    <div class="sec-head reveal"><span class="sec-idx">04</span><h2>Labs · continuous research</h2></div>
+    <p class="sec-tag reveal">A working model is never finished. The Labs are where agentic AI is applied to every edge being hypothesised, tested against real outcomes, and either shipped or rejected — with the discipline to reject far more than ships.</p>
+
+    <div class="grid">
+      <div class="cap blue reveal">
+        <div class="cap-top"><div class="cap-ico">🔬</div>
+          <h3><span class="k">Live experiments</span>The lab bench</h3></div>
+        <p>A dedicated research surface where strategy ideas run as tracked, live experiments — including a full exotic-betting simulator that stakes candidate bets, counts down to the jump, and settles them against the real dividend.</p>
+        <div class="chips"><span class="chip">tracked experiments</span><span class="chip">live simulation</span><span class="chip">real-dividend settlement</span></div>
+      </div>
+
+      <div class="cap gold reveal">
+        <div class="cap-top"><div class="cap-ico">📐</div>
+          <h3><span class="k">Rigorous method</span>Test to destruction</h3></div>
+        <p>Every hypothesis is measured walk-forward and strictly out-of-sample against thousands of settled results and real exotic dividends — never test-on-train. A candidate only reaches production through refine → backtest → release.</p>
+        <div class="chips"><span class="chip">walk-forward</span><span class="chip">out-of-sample</span><span class="chip">refine → backtest → release</span></div>
+      </div>
+    </div>
+
+    <div class="kill-note reveal"><b>The discipline is in the rejection.</b> Collateral-form Elo, exotic-spread structures, blind-shrinkage — all hypothesised, fully backtested, and <b>rejected</b> when the out-of-sample lift wasn't there. Intellectual honesty over hype: most good-sounding edges are noise, and the Labs are built to prove it.</div>
+
+    <div class="lab-loop reveal">This loop runs itself — <b>The Alchemist</b> dreams up an edge, <b>The Crucible</b> tries to destroy it, and only what survives ships. Meet them both in the agent fleet above. <span class="roadmap-tag">In design · shipping next</span></div>
+  </section>
+
+  <!-- ── UI / INTERFACE ── -->
+  <section id="ui">
+    <div class="sec-head reveal"><span class="sec-idx">05</span><h2>The interface</h2></div>
+    <p class="sec-tag reveal">Modern UI with adaptive design for any device. Static HTML/CSS/JS served from the edge, responsive by design.</p>
+
+    <div class="grid">
+      <div class="cap gold reveal">
+        <div class="cap-top"><div class="cap-ico">📱</div>
+          <h3><span class="k">Responsive &amp; adaptive</span>Phone → desktop</h3></div>
+        <p>Mobile-first, fluid layouts. The same screen reflows cleanly from a phone in the hand at the track to a widescreen at the desk.</p>
+        <div class="chips">
+          <span class="chip"><b>adaptive &amp; responsive</b></span>
+          <span class="chip">mobile-first</span>
+          <span class="chip">adaptive breakpoints</span>
+        </div>
+      </div>
+      <div class="cap violet reveal">
+        <div class="cap-top"><div class="cap-ico">🎨</div>
+          <h3><span class="k">Design system &amp; craft</span>Considered, not generic</h3></div>
+        <p>A cohesive premium visual language — <b style="color:var(--tx)">light or dark, the user's choice</b>. Live-updating pick cards, RAG heatmaps, countdown-to-jump timers, performance charts and a tabbed, filterable admin dashboard.</p>
+        <div class="chips">
+          <span class="chip"><b>light &amp; dark</b> · user's choice</span>
+          <span class="chip">live cards · heatmaps · charts</span>
+          <span class="chip">accessible focus states</span>
+          <span class="chip">zero-framework, edge-fast</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── GLOBAL HA ── -->
+  <section id="ha">
+    <div class="sec-head reveal"><span class="sec-idx">06</span><h2>Scaling it worldwide</h2></div>
+    <p class="sec-tag reveal">Because the system is stateless, config-driven and already infrastructure-as-code, going globally highly-available is a <b style="color:var(--tx)">replication exercise, not a rewrite</b>. Here's the honest tier-by-tier path.</p>
+
+    <div class="ha-wrap reveal">
+      <table>
+        <thead><tr><th>Tier</th><th>Today</th><th>Path to global HA</th><th>Lift</th></tr></thead>
+        <tbody>
+          <tr><td>Frontends</td><td>3 domains on Vercel's edge CDN</td><td>Already replicated to every edge PoP worldwide</td><td><span class="lift done">✓ done</span></td></tr>
+          <tr><td>API service</td><td>Stateless FastAPI container</td><td>Multi-region replicas behind geo-DNS / anycast</td><td><span class="lift low">low</span></td></tr>
+          <tr><td>Database</td><td>Managed Postgres, single primary</td><td>Managed read-replicas + regional failover</td><td><span class="lift med">low–med</span></td></tr>
+          <tr><td>Data proxy</td><td>Terraform module, one region</td><td><span class="num">terraform apply</span> per region — module is already parameterised</td><td><span class="lift low">low</span></td></tr>
+          <tr><td>Orchestration</td><td>In-process scheduler</td><td>Leader-elected / external scheduler across nodes</td><td><span class="lift med">med</span></td></tr>
+          <tr><td>Config &amp; secrets</td><td>Env-driven</td><td>Drops into any region unchanged</td><td><span class="lift done">✓ ready</span></td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="ha-note reveal">The hard part of global HA — <b>statelessness, IaC and clean config boundaries</b> — is already done. The frontends are global today; every backend tier is a well-understood managed-service replication step, not application surgery. The same Terraform that stood up one proxy region stands up the next.</p>
+  </section>
+
+  <!-- ── COMPETENCIES ── -->
+  <section id="skills">
+    <div class="sec-head reveal"><span class="sec-idx">07</span><h2>Principles</h2></div>
+    <p class="sec-tag reveal">How this platform gets built — and how I work.</p>
+    <div class="principles">
+      <div class="principle reveal"><div class="pn">01</div><div>
+        <div class="pt">Integrity by design</div>
+        <div class="pd">Integrity is guaranteed at the data layer — write-once history, auto-healing guardrails — not hoped for.</div>
+      </div></div>
+      <div class="principle reveal"><div class="pn">02</div><div>
+        <div class="pt">Guarded autonomy</div>
+        <div class="pd">Machines discover, validate, operate and promote themselves — the guardrails (backtest-beats-incumbent, drift detection, auto-rollback) are the gate, not a human click.</div>
+      </div></div>
+      <div class="principle reveal"><div class="pn">03</div><div>
+        <div class="pt">Prove it out-of-sample</div>
+        <div class="pd">Every claim is walk-forward tested against real outcomes. Reject more than you ship.</div>
+      </div></div>
+      <div class="principle reveal"><div class="pn">04</div><div>
+        <div class="pt">AI-First ModelOps</div>
+        <div class="pd">The model is perpetually retrained and recalibrated with automated drift detection — the strongest candidate auto-promoted to production each week, guardrailed by auto-rollback on live regression.</div>
+      </div></div>
+      <div class="principle reveal"><div class="pn">05</div><div>
+        <div class="pt">Own the whole stack <span style="font-weight:400;color:var(--tx-2)">(Full-Stack Engineering)</span></div>
+        <div class="pd">From DNS, proxies and infra through to the data, models and UX design. Version-controlled code with automated deployment featuring AI-driven issue-detection and auto-healing capabilities.</div>
+      </div></div>
+    </div>
+  </section>
+
+  <!-- ── COMPETENCIES ── -->
+  <section id="skills-2">
+    <div class="sec-head reveal"><span class="sec-idx">08</span><h2>What this demonstrates</h2></div>
+    <p class="sec-tag reveal">One platform, spanning the full modern-engineering spectrum.</p>
+    <div class="comp">
+      <div class="comp-i reveal"><div class="ct">Quantitative ML</div><div class="cd">Feature engineering, ensembling, probability calibration, walk-forward validation.</div></div>
+      <div class="comp-i reveal"><div class="ct">Agentic AI</div><div class="cd">Orchestrating autonomous agents that operate, verify and defend a production system.</div></div>
+      <div class="comp-i reveal"><div class="ct">Backend / API</div><div class="cd">Large async FastAPI service, typed, middleware-driven, 229 endpoints.</div></div>
+      <div class="comp-i reveal"><div class="ct">Frontend / UX</div><div class="cd">Responsive, adaptive, zero-framework UIs — data-dense, theme-aware, mobile → desktop.</div></div>
+      <div class="comp-i reveal"><div class="ct">Data engineering</div><div class="cd">Multi-source ingestion, reconciliation, resilient scraping, 60-table schema.</div></div>
+      <div class="comp-i reveal"><div class="ct">Security</div><div class="cd">Red/blue automation, integrity guarantees, secret hygiene, threat modelling.</div></div>
+      <div class="comp-i reveal"><div class="ct">DevOps / IaC</div><div class="cd">Terraform, multi-cloud, push-to-deploy CD, cloud-native, HA-ready architecture.</div></div>
+    </div>
+  </section>
+
+  <footer>
+    <div class="ai-banner reveal" style="margin:0 0 34px">
+      <span class="lbl">The common denominator</span>
+      <span class="txt">AI-Native Driven Architecture</span>
+    </div>
+    <div class="foot-line"><b>FunkyIQ</b> — designed, built, operated and defended solo. &nbsp;·&nbsp; ~58k LOC · 250 endpoints · ~30M data points — across three verticals.</div>
+  </footer>
+
+</div>
+
+<script>
+(function(){
+  var reduce = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  // reveal on scroll
+  var revs = [].slice.call(document.querySelectorAll('.reveal'));
+  if(reduce || !('IntersectionObserver' in window)){
+    revs.forEach(function(e){e.classList.add('in')});
+  } else {
+    var io = new IntersectionObserver(function(en){
+      en.forEach(function(x){ if(x.isIntersecting){ x.target.classList.add('in'); io.unobserve(x.target);} });
+    },{threshold:.12, rootMargin:'0px 0px -40px 0px'});
+    revs.forEach(function(e){io.observe(e)});
+  }
+
+  // count-up on the hero metrics
+  function run(el){
+    var target = +el.getAttribute('data-count');
+    var suffix = el.getAttribute('data-suffix')||'';
+    var dp = +(el.getAttribute('data-dp')||0);
+    function fmt(n){ return n.toLocaleString('en-US',{minimumFractionDigits:dp,maximumFractionDigits:dp}); }
+    if(reduce){ el.textContent = fmt(target)+suffix; return; }
+    var dur = 1400, t0 = null;
+    function step(ts){
+      if(!t0) t0 = ts;
+      var p = Math.min((ts-t0)/dur, 1);
+      var e = 1-Math.pow(1-p,3); // easeOutCubic
+      var val = dp ? (target*e) : Math.round(target*e);
+      el.textContent = fmt(val)+suffix;
+      if(p<1) requestAnimationFrame(step);
+    }
+    requestAnimationFrame(step);
+  }
+  var counted = false;
+  var ticker = document.querySelector('.ticker');
+  function fire(){ if(counted) return; counted = true;
+    [].slice.call(document.querySelectorAll('[data-count]')).forEach(run); }
+  if(reduce || !('IntersectionObserver' in window)){ fire(); }
+  else if(ticker){
+    var io2 = new IntersectionObserver(function(en){
+      en.forEach(function(x){ if(x.isIntersecting){ fire(); io2.disconnect(); } });
+    },{threshold:.4});
+    io2.observe(ticker);
+  } else { fire(); }
+})();
+</script>
+
+<script>
+  // Self-heal the Sharp track-record numbers from the single canonical source
+  // (/api/performance/tier-grade/published) so the hardcoded values can't drift.
+  // Fails silent — the static numbers stand if the fetch fails.
+  (function () {
+    function setTxt(sel, val) { document.querySelectorAll(sel).forEach(function (el) { el.textContent = val; }); }
+    fetch('https://api.funkyiq.com/api/performance/tier-grade/published')
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (d) {
+        var p = d && d.published; if (!p) return;
+        if (p.win_pct != null) setTxt('[data-heal="win"]', Math.round(p.win_pct) + '%');
+        if (p.place_pct != null) setTxt('[data-heal="place"]', Math.round(p.place_pct) + '%');
+      })
+      .catch(function () {});
+  })();
+</script>
+
+</body>
+</html>

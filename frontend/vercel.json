@@ -19,6 +19,10 @@
       "destination": "/splash.html"
     },
     {
+      "source": "/showcase",
+      "destination": "/showcase.html"
+    },
+    {
       "source": "/splash",
       "destination": "/splash.html"
     },
