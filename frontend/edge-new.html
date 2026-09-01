@@ -9,7 +9,7 @@
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700;800&family=Barlow:wght@400;500;600;700;800&family=Outfit:wght@300;400;500;600&display=swap" rel="stylesheet">
 <script src="/sharp.js"></script>
-<script src="/pick-card.js?v=34"></script>
+<script src="/pick-card.js?v=35"></script>
 <style>
   /* ── Tokens ─────────────────────────────────────────────── */
   :root {
@@ -948,7 +948,7 @@
 
   .ff { font-variant-numeric: tabular-nums; letter-spacing: 0.14em; font-weight: 800; }
 </style>
-  <link rel="stylesheet" href="/pick-card.css?v=34">
+  <link rel="stylesheet" href="/pick-card.css?v=35">
   <script defer src="/_vercel/insights/script.js"></script>
 </head>
 <body>
@@ -976,7 +976,7 @@
 <main class="wrap">
   <div class="ctl-rows" id="ctlRows"></div>
   <div class="stat-strip" id="statStrip"></div>
-  <div id="feed"><div class="loading"><div class="spin"></div>Loading picks…</div></div>
+  <div id="feed" data-expired-before><div class="loading"><div class="spin"></div>Loading picks…</div></div>
 </main>
 
 <aside class="drawer" id="drawer" aria-label="Race predictions">
@@ -1307,7 +1307,7 @@
     el.innerHTML = `<div class="row">${edgeDateBarHTML()}</div>
       <div class="row">
         ${E.paywall ? '' : seg([['all', 'All picks'], ['sharp', '🎯 Sharp']], E.mode, 'md')}
-        ${E.view === 'up' ? seg([['best', 'Best pick'], ['next', 'Next race']], E.sort, 'st') : ''}
+        ${(!E.paywall && E.view === 'up') ? seg([['best', 'Best pick'], ['next', 'Next race']], E.sort, 'st') : ''}
       </div>`;
     el.querySelectorAll('[data-pt]').forEach(b => b.onclick = () => { E.parent = b.dataset.pt; renderControls(); renderFeed(); });
     el.querySelectorAll('[data-vw]').forEach(b => b.onclick = () => { E.view = b.dataset.vw; renderControls(); renderFeed(); });

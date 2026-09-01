@@ -554,10 +554,14 @@
       + '<span class="eb-txt"><b>Your pass has expired' + (when ? ' (' + esc(when) + ')' : '') + '.</b> '
       + 'Renew to unlock every pick again.</span>'
       + '<button class="eb-cta" data-unlock>Choose a plan</button>';
-    // Top of the main content flow, below the page nav/header — visible on
-    // every page (they all wrap content in <main>).
+    // Placement: a page whose filters live INSIDE <main> (e.g. the Edge) marks
+    // the element the banner should sit above with [data-expired-before], so the
+    // banner lands under the controls. Otherwise it goes at the top of <main>
+    // (Lounge/Hot Seat keep their filters above <main>, so that's already right).
+    var before = document.querySelector('[data-expired-before]');
     var main = document.querySelector('main');
-    if (main) main.insertBefore(el, main.firstChild);
+    if (before && before.parentNode) before.parentNode.insertBefore(el, before);
+    else if (main) main.insertBefore(el, main.firstChild);
     else document.body.insertBefore(el, document.body.firstChild);
     bindUnlock();
   }
