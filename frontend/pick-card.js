@@ -86,7 +86,9 @@
   function isOpenRace(pick) {
     if (!pick || pick.is_sharp || _venueBadged(pick)) return false;
     const w = _pickWinPct(pick);
-    return w != null && w < OPEN_RACE_WIN_MAX;
+    // Compare the ROUNDED value the card displays — so a pick shown as "25%"
+    // (true 24.5-25.4%) is never treated as below 25 (matches "<25 not <=25").
+    return w != null && Math.round(w) < OPEN_RACE_WIN_MAX;
   }
   // Below this the top pick is a coin-flip we don't stand behind — HIDDEN from
   // the pick feeds entirely (matches the overall-stats <20% floor). The 20-25%
@@ -95,7 +97,9 @@
   function isHiddenRace(pick) {
     if (!pick || pick.is_sharp || _venueBadged(pick)) return false;
     const w = _pickWinPct(pick);
-    return w != null && w < HIDE_RACE_WIN_MAX;
+    // Compare the ROUNDED value the card displays — a pick shown as "20%"
+    // (true 19.5-20.4%) is NOT below 20 ("<20 not <=20").
+    return w != null && Math.round(w) < HIDE_RACE_WIN_MAX;
   }
 
   function dualStat(win_pct, place_pct, accuracy, open) {

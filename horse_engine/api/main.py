@@ -28375,7 +28375,10 @@ _PERF_CACHE_MAX_ENTRIES = 16
 # races we actually stand behind. Sharp mode is untouched — no Sharp race is ever
 # <20% (its gate needs rank1≥30% OR top3≥60%, impossible below 20%). See
 # [[open_race_demotion]] / open-race-backtest for the numbers.
-_OVERALL_STATS_MIN_WIN = 0.20
+# 0.195 not 0.20: the card rounds win% for display (19.5% -> "20%"), and the
+# rule is "<20 not <=20", so anything that DISPLAYS as 20%+ must count. Keeps
+# display, hide-grid and stats consistent on the rounded number the user sees.
+_OVERALL_STATS_MIN_WIN = 0.195
 
 
 @app.get("/api/performance")
