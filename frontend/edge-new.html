@@ -1269,21 +1269,27 @@
   // date-selector label and the stat strip are computed once and can never
   // disagree. Returns null when there is nothing settled to show.
   function edgeVisibleStats() {
-    let settled, w, pl;
+    let settled, w, pl, ret = 0;
+    // Flat $1 win bet on every pick shown: a winner returns its SP (stake incl.),
+    // a loser returns 0. `ret` sums the winners' SP; staked = number of picks.
+    const spOf = o => { const v = Number(o); return (v && v > 1) ? v : 0; };
     if (E.view === 'res') {
       if (!E.resData || E.resData._date !== E.resDate) return null;
       const picks = applyMode(E.resData.picks || []).picks;
       settled = picks.filter(p => !p.scratched && !p.no_result);
       w = settled.filter(p => p.winner).length;
       pl = settled.filter(p => p.placed && !p.winner).length;
+      settled.forEach(p => { if (p.winner) ret += spOf(p.sp || p.odds || p.top_pick_odds); });
     } else {
       const picks = applyMode(E.picks || []).picks;
       settled = picks.filter(p => { const r = E.resultsMap[p.race_id]; return r && !r.scratched && !r.no_result && (r.winner === true || r.placed === true || r.position != null); });
       w = settled.filter(p => E.resultsMap[p.race_id].winner).length;
       pl = settled.filter(p => { const r = E.resultsMap[p.race_id]; return r.placed && !r.winner; }).length;
+      settled.forEach(p => { const r = E.resultsMap[p.race_id]; if (r.winner) ret += spOf(r.sp || r.odds); });
     }
     if (!settled.length) return null;
-    return { settled: settled.length, w, pl };
+    const staked = settled.length;
+    return { settled: staked, w, pl, staked, returned: ret, profit: ret - staked };
   }
   function renderStats() {
     const el = document.getElementById('statStrip');
@@ -1292,12 +1298,20 @@
     if (!s) { el.innerHTML = ''; return; }
     const wPct = Math.round(s.w / s.settled * 100);
     const plcPct = Math.round((s.w + s.pl) / s.settled * 100);
+    const pos = s.profit >= 0;
+    const roi = s.staked ? Math.round(s.profit / s.staked * 100) : 0;
+    const plCol = pos ? 'var(--mint)' : 'var(--red, #ef4444)';
     el.innerHTML = `
       <div class="ds-stat"><b class="num">${s.settled}</b> settled</div>
       <div class="ds-divider"></div>
       <div class="ds-stat"><b class="num" style="color:var(--mint)">${s.w}</b> picks won <span class="num">(${wPct}%)</span></div>
       <div class="ds-divider"></div>
-      <div class="ds-stat"><b class="num" style="color:var(--amber)">${s.pl}</b> more placed <span class="num">(${plcPct}% placed incl. wins)</span></div>`;
+      <div class="ds-stat"><b class="num" style="color:var(--amber)">${s.pl}</b> more placed <span class="num">(${plcPct}% placed incl. wins)</span></div>
+      <div class="ds-divider"></div>
+      <div class="ds-stat" title="Flat $1 win bet on every pick shown, settled at starting price (SP)">
+        <b class="num" style="color:${plCol}">${pos ? '+' : '−'}$${Math.abs(s.profit).toFixed(2)}</b>
+        <span class="num">on $1 each · staked $${s.staked} → returned $${s.returned.toFixed(2)} · <b style="color:${plCol}">${pos ? '+' : ''}${roi}% ROI</b></span>
+      </div>`;
   }
   function renderControls() {
     const el = document.getElementById('ctlRows');
