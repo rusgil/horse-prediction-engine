@@ -87,13 +87,14 @@ write_files:
       WantedBy=multi-user.target
 
   # Caddyfile - TLS-fronted reverse proxy to 127.0.0.1:8000.
-  # TLS is Caddy's INTERNAL self-signed CA (`tls internal`) — NOT Let's Encrypt.
-  # LE cert issuance was rate-limiting every rotation (recycled sslip.io
-  # hostnames hit the 5-duplicate-certs/week cap), leaving new boxes with no
-  # cert and Caddy unable to serve HTTPS. The Railway->proxy hop is internal and
-  # authenticated by X-Proxy-Secret, so a public CA buys nothing; the app's RA
-  # client trusts this self-signed cert via verify=False for the proxy host.
-  # Transport stays TLS-encrypted; rotations no longer depend on Let's Encrypt.
+  # TLS is a STATIC self-signed cert (generated in runcmd below), NOT Let's
+  # Encrypt (LE rate-limited on sslip.io rotations) and NOT `tls internal`.
+  # `tls internal`'s on-demand leaf minting broke on 2026-09-06 — the handshake
+  # died with an "internal error" so the backend couldn't reach the proxy at
+  # all (silent, since the healthcheck only probed the app on :8000). A static
+  # cert Caddy just serves has no such moving parts. The Railway->proxy hop is
+  # internal + X-Proxy-Secret authed, and the RA client uses verify=False for
+  # the proxy host, so a public CA / matching SAN buys nothing.
   - path: /etc/caddy/Caddyfile
     permissions: "0644"
     content: |
@@ -103,7 +104,7 @@ write_files:
               not path /proxy/* /health
           }
           respond @notproxy 404
-          tls internal
+          tls /etc/caddy/proxy.crt /etc/caddy/proxy.key
           encode gzip
           log {
               output file /var/log/caddy/access.log {
@@ -125,6 +126,15 @@ write_files:
       if [[ "$CODE" != "200" && "$CODE" != "404" ]]; then
           echo "$(date -u -Iseconds) health failed (code=$CODE) - restarting ra-proxy" >> /var/log/ra-proxy-healthcheck.log
           systemctl restart ra-proxy
+      fi
+      # Also probe the HTTPS FRONT (Caddy) with the real SNI — the backend reaches
+      # us over HTTPS, so a broken TLS front is a total outage even when the app is
+      # up. 2026-09-06: tls internal's leaf minting broke here and went unnoticed
+      # because this check only tested :8000. Restart caddy if the front is down.
+      HCODE=$(curl -sk -o /dev/null -w '%%{http_code}' -m 5 --resolve ${proxy_hostname}:443:127.0.0.1 https://${proxy_hostname}/health || echo 000)
+      if [[ "$HCODE" != "200" ]]; then
+          echo "$(date -u -Iseconds) HTTPS front failed (code=$HCODE) - restarting caddy" >> /var/log/ra-proxy-healthcheck.log
+          systemctl restart caddy
       fi
 
   - path: /etc/systemd/system/ra-proxy-healthcheck.service
@@ -159,6 +169,19 @@ runcmd:
     curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' | tee /etc/apt/sources.list.d/caddy-stable.list
     apt-get update
     DEBIAN_FRONTEND=noninteractive apt-get install -y -o Dpkg::Options::="--force-confold" caddy
+
+  # Static self-signed cert for the HTTPS front (see Caddyfile note). Generated
+  # once at boot; Caddy just serves it — no on-demand internal-CA minting to
+  # break. verify=False on the backend means the SAN/CA don't need to be public.
+  - |
+    if [ ! -f /etc/caddy/proxy.crt ]; then
+      openssl req -x509 -newkey rsa:2048 -nodes \
+        -keyout /etc/caddy/proxy.key -out /etc/caddy/proxy.crt -days 3650 \
+        -subj "/CN=${proxy_hostname}" \
+        -addext "subjectAltName=DNS:${proxy_hostname}"
+      chown caddy:caddy /etc/caddy/proxy.crt /etc/caddy/proxy.key
+      chmod 640 /etc/caddy/proxy.crt /etc/caddy/proxy.key
+    fi
 
   # Python venv + deps
   - python3 -m venv /opt/ra-proxy/venv
