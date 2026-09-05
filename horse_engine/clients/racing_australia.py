@@ -54,6 +54,16 @@ if _RA_PROXY_ACTIVE:
 # within _CYCLE_WINDOW_S do we trip the breaker (sustained pool-wide block).
 _ROTATE_RETRIES = 3
 _ROTATE_BACKOFFS = [5.0, 15.0, 30.0]   # len must be >= _ROTATE_RETRIES
+
+# Empty-calendar rotate-retry (2026-09-05). A soft-block is a 200 with NO
+# meeting links — it raises no error, so the 403/503 retry paths never fire and
+# we'd cache a phantom "no meetings today". The webshare pool gives a fresh exit
+# IP per connection, so on an EMPTY parse we re-fetch a few times: a residential-
+# IP wobble clears on a clean IP, while a genuinely empty racing day stays empty
+# across all rotations. Capped to protect the (small) residential bandwidth; a
+# non-empty first hit costs nothing. Tunable via env (0 disables).
+_EMPTY_ROTATE_RETRIES = int(os.environ.get("RA_CAL_EMPTY_ROTATE_RETRIES", "2") or "2")
+_EMPTY_ROTATE_BACKOFFS = [3.0, 8.0, 15.0]
 _TRIP_AFTER_CYCLES = 3
 _CYCLE_WINDOW_S = 3600                  # 1 hour
 
@@ -1281,85 +1291,96 @@ class RacingAustraliaClient:
             # whole day's enrichment for that state. Three attempts: 2s, 5s,
             # 15s waits. Other status codes (e.g. 403 trip the breaker, 404
             # is a real "no such page") aren't retried.
-            html = None
-            for attempt, wait in enumerate((2, 5, 15), start=1):
-                try:
-                    html = await self._get(f"{_BASE}/Calendar.aspx?State={state}")
-                    break
-                except httpx.HTTPStatusError as e:
-                    sc = e.response.status_code if e.response is not None else None
-                    if sc == 503 and attempt < 3:
-                        log.warning(
-                            "Calendar 503 for %s (attempt %d/3) — sleeping %ds then retrying",
-                            state, attempt, wait,
-                        )
-                        await asyncio.sleep(wait)
-                        continue
-                    log.warning("Calendar fetch failed for %s: %s", state, e)
-                    # Cache the failure for 5 minutes so we don't death-spiral
-                    # the proxy when it's returning 503 (cap hit). Empty list
-                    # is a valid 'no meetings today' so we serve that until
-                    # the cap window rolls.
-                    self._calendar_cache[cache_key] = (datetime.utcnow() - timedelta(seconds=3300), [])
-                    return []
-                except Exception as e:
-                    log.warning("Calendar fetch failed for %s: %s", state, e)
-                    self._calendar_cache[cache_key] = (datetime.utcnow() - timedelta(seconds=3300), [])
-                    return []
-            if html is None:
-                # Exhausted retries on 503
-                log.warning("Calendar fetch failed for %s after 3 attempts (503)", state)
-                self._calendar_cache[cache_key] = (datetime.utcnow() - timedelta(seconds=3300), [])
-                return []
-
-            soup = BeautifulSoup(html, "html.parser")
+            # Fetch + parse, with a rotate-retry when the parse comes back EMPTY
+            # (probable soft-block). Each outer pass opens a fresh connection →
+            # new residential exit IP, so a wobble clears; a real empty day stays
+            # empty across all passes. Non-empty first pass breaks immediately.
             meetings = []
-            from urllib.parse import unquote
-            all_meeting_links = soup.find_all("a", href=re.compile(r"(Acceptances|Results\.aspx)"))
-            for link in all_meeting_links:
-                href = link.get("href", "")
-                m = re.search(r"Key=([^&\"]+)", href)
-                if not m:
-                    continue
-                ra_key = unquote(m.group(1))
-                if not ra_key.startswith(ra_date):
-                    continue
-                parts = ra_key.split(",", 2)
-                if len(parts) < 3:
-                    continue
-                raw_venue = parts[2]
-                if re.search(r"\b(Trial|Trail|Trials|TRL|Jumpout|Jump\s*Out)\b", raw_venue, re.IGNORECASE):
-                    continue
-                venue = _clean_venue(raw_venue)
-                slug = _make_slug(raw_venue, race_date)
-                self._slug_to_key[slug] = ra_key
-                self._slug_to_key[f"{race_date}:{state}:{venue}"] = ra_key
-                meetings.append({
-                    "id": ra_key,
-                    "name": venue,
-                    "slug": slug,
-                    "venue": venue,
-                    "state": state,
-                    "rail_position": "",
-                    "date": race_date,
-                })
+            all_meeting_links = []
+            for _rot in range(1 + _EMPTY_ROTATE_RETRIES):
+                html = None
+                for attempt, wait in enumerate((2, 5, 15), start=1):
+                    try:
+                        html = await self._get(f"{_BASE}/Calendar.aspx?State={state}")
+                        break
+                    except httpx.HTTPStatusError as e:
+                        sc = e.response.status_code if e.response is not None else None
+                        if sc == 503 and attempt < 3:
+                            log.warning(
+                                "Calendar 503 for %s (attempt %d/3) — sleeping %ds then retrying",
+                                state, attempt, wait,
+                            )
+                            await asyncio.sleep(wait)
+                            continue
+                        log.warning("Calendar fetch failed for %s: %s", state, e)
+                        # Cache the failure for 5 minutes so we don't death-spiral
+                        # the proxy when it's returning 503 (cap hit). Empty list
+                        # is a valid 'no meetings today' so we serve that until
+                        # the cap window rolls.
+                        self._calendar_cache[cache_key] = (datetime.utcnow() - timedelta(seconds=3300), [])
+                        return []
+                    except Exception as e:
+                        log.warning("Calendar fetch failed for %s: %s", state, e)
+                        self._calendar_cache[cache_key] = (datetime.utcnow() - timedelta(seconds=3300), [])
+                        return []
+                if html is None:
+                    # Exhausted retries on 503
+                    log.warning("Calendar fetch failed for %s after 3 attempts (503)", state)
+                    self._calendar_cache[cache_key] = (datetime.utcnow() - timedelta(seconds=3300), [])
+                    return []
 
-            # Soft-block guard (2026-07-25): a genuine RA calendar page always
-            # carries meeting links for the surrounding week. Zero links at all
-            # means we got a 200 WAF/interstitial page, NOT an empty racing day
-            # — do NOT cache that as a legit empty for 6h. That is exactly what
-            # blanked the whole Saturday card: during a brief residential-proxy
-            # wobble the non-Darwin states each returned a 200 with no links,
-            # parsed to [], and cached empty for 6h, so the running process
-            # served "only Darwin" and never re-fetched. Short-TTL it (5 min,
-            # matching the failure path) so the next enrich re-fetches with a
-            # fresh IP, and skip the DB persist. An empty page that DOES carry
-            # links for other dates is a real no-racing day → cache normally.
-            if not meetings and not all_meeting_links:
+                soup = BeautifulSoup(html, "html.parser")
+                meetings = []
+                from urllib.parse import unquote
+                all_meeting_links = soup.find_all("a", href=re.compile(r"(Acceptances|Results\.aspx)"))
+                for link in all_meeting_links:
+                    href = link.get("href", "")
+                    m = re.search(r"Key=([^&\"]+)", href)
+                    if not m:
+                        continue
+                    ra_key = unquote(m.group(1))
+                    if not ra_key.startswith(ra_date):
+                        continue
+                    parts = ra_key.split(",", 2)
+                    if len(parts) < 3:
+                        continue
+                    raw_venue = parts[2]
+                    if re.search(r"\b(Trial|Trail|Trials|TRL|Jumpout|Jump\s*Out)\b", raw_venue, re.IGNORECASE):
+                        continue
+                    venue = _clean_venue(raw_venue)
+                    slug = _make_slug(raw_venue, race_date)
+                    self._slug_to_key[slug] = ra_key
+                    self._slug_to_key[f"{race_date}:{state}:{venue}"] = ra_key
+                    meetings.append({
+                        "id": ra_key,
+                        "name": venue,
+                        "slug": slug,
+                        "venue": venue,
+                        "state": state,
+                        "rail_position": "",
+                        "date": race_date,
+                    })
+
+                if meetings:
+                    break
+                # Empty parse — probable soft-block. Rotate to a fresh exit IP and
+                # retry (unless we've exhausted the cap).
+                if _rot < _EMPTY_ROTATE_RETRIES:
+                    log.warning(
+                        "Calendar for %s parsed EMPTY (soft-block?) — rotate-retry "
+                        "%d/%d with a fresh IP", cache_key, _rot + 1, _EMPTY_ROTATE_RETRIES,
+                    )
+                    await asyncio.sleep(_EMPTY_ROTATE_BACKOFFS[min(_rot, len(_EMPTY_ROTATE_BACKOFFS) - 1)])
+
+            # Still empty after all rotations. Never trust an empty for the full
+            # 6h — a genuine no-race state re-checks cheaply, and a persistent
+            # soft-block keeps re-trying with fresh IPs. Short-TTL (5 min) and
+            # never persist (an empty is never written to DB anyway).
+            if not meetings:
                 log.warning(
-                    "Calendar for %s returned 200 with zero meeting links "
-                    "(soft-block?) — caching empty for 5 min only, not persisting",
-                    cache_key,
+                    "Calendar for %s still EMPTY after %d rotation(s) (links_on_page=%d) "
+                    "— caching empty 5 min only, not persisting",
+                    cache_key, 1 + _EMPTY_ROTATE_RETRIES, len(all_meeting_links),
                 )
                 self._calendar_cache[cache_key] = (datetime.utcnow() - timedelta(seconds=3300), [])
                 return []
