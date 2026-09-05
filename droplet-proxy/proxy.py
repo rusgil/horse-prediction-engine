@@ -120,6 +120,27 @@ _daily_window_start = 0.0  # set on first request
 # Track RA 403s through the proxy. If RA blocks us, this jumps and the
 # CRITICAL log lines surface in journalctl -u ra-proxy.
 _recent_403_count = 0
+# Track soft-blocks: a 200 with an empty/decoy Calendar page (WAF silent block).
+# These carry no 403, so without detection the exit IP never rotates.
+_recent_softblock_count = 0
+
+
+def _looks_soft_blocked(path: str, resp) -> bool:
+    """True if this is a Calendar 200 that carries NO meeting links — i.e. a
+    silent WAF soft-block, not a genuine empty racing day. A real RA calendar
+    page always lists Acceptances/Results links for the surrounding week (even
+    when today is empty), so 'zero links' can only mean a decoy/interstitial."""
+    if resp is None or resp.status_code != 200:
+        return False
+    if "Calendar.aspx" not in path:
+        return False
+    try:
+        body = resp.content or b""
+    except Exception:
+        return False
+    if len(body) < 200:                       # a real calendar is tens of KB
+        return True
+    return (b"Acceptances" not in body) and (b"Results.aspx" not in body)
 
 app = FastAPI(title="ra-proxy")
 
@@ -167,6 +188,7 @@ async def cap_status(request: Request):
         "window_age_seconds": window_age_s,
         "window_remaining_seconds": max(0.0, 86400 - window_age_s) if _daily_window_start else 0.0,
         "recent_403_count": _recent_403_count,
+        "recent_softblock_count": _recent_softblock_count,
     }
 
 
@@ -175,12 +197,13 @@ async def reset_cap(request: Request):
     """Zero the rolling-24h counter without restarting the service.
     For the rare case where a legit workload bumps the cap and we
     need to keep going. Gated by x-proxy-secret."""
-    global _daily_count, _daily_window_start, _recent_403_count
+    global _daily_count, _daily_window_start, _recent_403_count, _recent_softblock_count
     if request.headers.get("x-proxy-secret", "") != PROXY_SECRET:
         raise HTTPException(status_code=403, detail="Forbidden")
     prev_count = _daily_count
     _daily_count = 0
     _recent_403_count = 0
+    _recent_softblock_count = 0
     _daily_window_start = time.monotonic()
     import logging as _l
     _l.getLogger("ra-proxy").warning(
@@ -189,11 +212,25 @@ async def reset_cap(request: Request):
     return {"reset": True, "previous_count": prev_count, "daily_cap": _DAILY_CAP}
 
 
+@app.post("/admin/rotate")
+async def admin_rotate(request: Request):
+    """Force a residential exit-IP rotation on demand — drops the sticky
+    session so the next RA request opens a fresh connection (new webshare exit).
+    Use when the current IP is soft-blocked but hasn't 403'd. Gated by
+    x-proxy-secret."""
+    if request.headers.get("x-proxy-secret", "") != PROXY_SECRET:
+        raise HTTPException(status_code=403, detail="Forbidden")
+    await _rotate_session()
+    import logging as _l
+    _l.getLogger("ra-proxy").warning("residential session rotated via /admin/rotate")
+    return {"rotated": True}
+
+
 @app.get("/proxy/{path:path}")
 async def proxy(path: str, request: Request):
     """Forward GET to {UPSTREAM_BASE}/{path}?{query} and return upstream
     body + status verbatim. Caller must send X-Proxy-Secret."""
-    global _last_request_at, _daily_count, _daily_window_start, _recent_403_count
+    global _last_request_at, _daily_count, _daily_window_start, _recent_403_count, _recent_softblock_count
 
     # Auth - fail closed.
     secret = request.headers.get("x-proxy-secret", "")
@@ -258,6 +295,17 @@ async def proxy(path: str, request: Request):
                 continue
             if resp.status_code == 403:
                 # This exit IP just got blocked — rotate to a new one and retry.
+                continue
+            if _looks_soft_blocked(path, resp):
+                # Silent block: a 200 with no meeting links on a Calendar page.
+                # Treat exactly like a 403 — rotate to a fresh exit IP and retry,
+                # otherwise we'd forward a phantom "no meetings" that the backend
+                # caches as an empty racing day (the partial-card incident).
+                _recent_softblock_count += 1
+                _log.warning(
+                    "soft-block (200, no meeting links) on %s — rotating IP (attempt %d/%d)",
+                    upstream_url[:120], attempt, _STICKY_ROTATE_RETRIES,
+                )
                 continue
             break                                          # non-403 → done
         _last_request_at = time.monotonic()
