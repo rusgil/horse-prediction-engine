@@ -5137,15 +5137,24 @@ async def public_config():
 # ── Admin: paid-access test/comp grant (provider-agnostic) ───────────────
 
 @app.post("/api/admin/access/grant")
-async def admin_access_grant(request: Request, admin=Depends(_auth_current_admin)):
+async def admin_access_grant(
+    request: Request,
+    x_cron_secret: Optional[str] = Header(None),
+    fiq_session: Optional[str] = Cookie(default=None, alias="fiq_session"),
+):
     """TEST / COMP grant of paid access — no Paddle needed. Lets us exercise
     the paywall end-to-end before billing is wired.
+
+    Admin auth via EITHER the browser admin session OR the x-cron-secret header
+    (same dual pattern as /api/admin/customers), so comps can be issued from the
+    dashboard as well as a logged-in admin.
 
     Body: { "email": "...", "days"?: int }. Creates the user if absent,
     extends access_until by `days` (default = the standard pass length) via
     the same access.grant_access() the real webhook will call, and ledgers
     an 'admin' grant. Each call uses a timestamped txn id so repeats stack.
     """
+    await _check_admin_dual(x_cron_secret, fiq_session)
     body = await request.json() if request.headers.get("content-type", "").startswith("application/json") else {}
     email = (body.get("email") or "").strip().lower()
     if not email:
