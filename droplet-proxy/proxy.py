@@ -80,7 +80,7 @@ _UA_STRING = (
 # request. On a 403 (that IP just got blocked) we DROP the session to force a
 # fresh connection → a new residential IP, then retry. Rotate only on failure.
 _STICKY_ROTATE_RETRIES = int(os.environ.get("RA_PROXY_ROTATE_RETRIES", "4"))
-_STICKY_ROTATE_BACKOFF = 3.0   # seconds between IP rotations
+_STICKY_ROTATE_BACKOFF = 1.0   # faster rotation to fit the backend calendar timeout
 _sticky_session: Optional[AsyncSession] = None
 
 

@@ -1138,14 +1138,13 @@ class RacingAustraliaClient:
             )
 
     async def _get(self, url: str) -> str:
-        # 35s (was 20s): the Hetzner→RA path runs a steady ~21s per fetch
-        # (2026-07-23 — likely RA soft-throttling the datacenter IP with a
-        # fixed delay). At 20s every fetch timed out just short of success,
-        # tripped the breaker (which now trips on timeout), and starved the
-        # overnight result-seeding crons. 35s lets a slow-but-working fetch
-        # COMPLETE while a genuine tarpit (no response) still trips the
-        # breaker. Root fix is a faster proxy / the commercial feed.
-        return await self._request(url, timeout=35.0)
+        # 60s (was 35s): on a soft-block the proxy now rotates its exit IP a few
+        # times WITHIN one request to escape a flagged IP (2026-09-06). Each
+        # rotation adds a few seconds, so a state that soft-blocks a couple of
+        # IPs before landing a clean one can take ~40s. 35s cut those off mid-
+        # rotation, dropping whole states (QLD/WA) from the card. 60s lets the
+        # rotation complete while a genuine tarpit still trips the breaker.
+        return await self._request(url, timeout=60.0)
 
     async def _get_form(self, url: str) -> str:
         # Form pages are inner pages — supply a Referer so the traffic looks
