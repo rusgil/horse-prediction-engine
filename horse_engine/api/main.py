@@ -17044,12 +17044,26 @@ async def admin_bust_meetings_cache(
     # Also drop the persistent DB cache row — the in-memory pop alone left the
     # stale venue list served for up to the DB TTL (2026-07-24).
     from sqlalchemy import delete as sa_delete
+    cal_db_rows = 0
     async with get_session() as session:
         await session.execute(
             sa_delete(ResponseCacheRow).where(ResponseCacheRow.cache_key == f"meetings:{race_date}")
         )
+        # AND the per-state RA calendar rows — the in-memory + response caches
+        # sit in front of these, so a partial/stale per-state row (e.g. NSW cached
+        # with only 1 of 2 meetings during an outage) keeps getting re-served for
+        # up to the 6h DB TTL even after a bust, hiding real meetings (2026-09-06).
+        try:
+            from horse_engine.models.database import RaCalendarCacheRow
+            res = await session.execute(
+                sa_delete(RaCalendarCacheRow).where(RaCalendarCacheRow.race_date == race_date)
+            )
+            cal_db_rows = getattr(res, "rowcount", 0) or 0
+        except Exception as e:
+            log.warning("[bust] RA calendar DB row delete failed for %s: %s", race_date, e)
         await session.commit()
-    return {"ok": True, "date": race_date, "calendar_cache_purged": cal_purged}
+    return {"ok": True, "date": race_date, "calendar_cache_purged": cal_purged,
+            "db_calendar_rows_deleted": cal_db_rows}
 
 
 @app.get("/api/admin/cancelled-today")
