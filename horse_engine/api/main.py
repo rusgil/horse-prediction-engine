@@ -932,8 +932,11 @@ async def _cancel_abandoned_meetings(
             _invalidate_meeting_caches(today, venue_code)
 
 
-async def _scheduled_enrich():
-    """Run by APScheduler — enrich today + next 2 days, then seed today's results."""
+async def _scheduled_enrich(is_initial: bool = False):
+    """Run by APScheduler — enrich today + next 2 days, then seed today's results.
+
+    is_initial=True (the 8:30 morning run) appends a data-quality gate that
+    confirms RA's meeting load matches Sportsbet, emailing support on a mismatch."""
     log.info("[scheduler] Running scheduled enrichment")
     try:
         client = get_tab_client()
@@ -979,6 +982,24 @@ async def _scheduled_enrich():
         global _MORNING_ENRICH_DONE_DATE
         _MORNING_ENRICH_DONE_DATE = _today_aest().isoformat()
         log.info("[scheduler] Enrichment complete")
+        # Data-quality gate (initial 8:30 run only): confirm the number of
+        # meetings RA loaded matches Sportsbet. A mismatch means RA discovery
+        # missed a meeting SB books (usually a proxy soft-block) — email support
+        # immediately so it's caught before the day starts. The 9:45 reconcile
+        # then self-heals it.
+        if is_initial:
+            try:
+                dq = await _dq_ra_vs_sb(today, client)
+                if dq and not dq["match"]:
+                    log.warning("[dq] initial RA meeting load mismatch with SB for %s: %s",
+                                today, dq["missing_from_ra"])
+                    await _email_ra_sb_mismatch(dq)
+                elif dq:
+                    log.info("[dq] RA load matches SB for %s (%d meetings)", today, dq["sb_count"])
+                else:
+                    log.info("[dq] RA-vs-SB check skipped for %s (SB unavailable)", today)
+            except Exception as e:
+                log.warning("[dq] RA-vs-SB check failed for %s: %s", today, e)
     except Exception as e:
         log.exception("[scheduler] Enrichment failed: %s", e)
 
@@ -1166,6 +1187,76 @@ async def _scheduled_meeting_reconcile():
     else:
         log.warning("[reconcile] %s NOT ok — missing: %s", race_date, report.get("missing_after"))
     await _email_reconcile_report(report)
+
+
+async def _dq_ra_vs_sb(race_date: str, client) -> Optional[dict]:
+    """Data-quality check for the initial (8:30) enrich: did RA's meeting load
+    discover every meeting Sportsbet books for the date? Returns a report dict,
+    or None when the SB schedule is unavailable (can't compare — fail-open).
+
+    The blocklist (picnic/bush tracks corporate books don't carry, e.g. Cairns)
+    is excluded from BOTH sides so it never triggers a false mismatch."""
+    from horse_engine.clients.sportsbet_schedule import (
+        get_sportsbet_au_meetings, venue_on_sportsbet, _norm,
+    )
+    sb = await get_sportsbet_au_meetings(race_date)
+    if not sb:
+        return None
+    ra = await client.get_meetings(race_date) or []
+    blk_norm = frozenset(_norm(vc) for vc in _SKIP_ENRICHMENT_VENUES) - {""}
+    # RA venues (normalised), excluding blocklisted picnic/bush tracks.
+    ra_norm: set[str] = set()
+    for m in ra:
+        vc = _vc_from_meeting(m, race_date)
+        if _should_skip_venue(vc):
+            continue
+        n = _norm(m.get("venue") or m.get("name") or "")
+        if n:
+            ra_norm.add(n)
+    ra_frozen = frozenset(ra_norm)
+    # SB meetings we would actually enrich (drop any blocklisted SB entry).
+    sb_relevant = [s for s in sb if not venue_on_sportsbet(s, blk_norm)]
+    # SB meetings the RA load did NOT find — the "initial load mismatch".
+    missing_from_ra = sorted(s for s in sb_relevant if not venue_on_sportsbet(s, ra_frozen))
+    return {
+        "date": race_date,
+        "sb_count": len(sb_relevant),
+        "ra_count": len(ra_frozen),
+        "missing_from_ra": missing_from_ra,
+        "match": len(missing_from_ra) == 0,
+    }
+
+
+async def _email_ra_sb_mismatch(dq: dict) -> bool:
+    """Email support when the 8:30 RA load doesn't match Sportsbet. Headline is
+    the exact phrase 'initial RA meeting load mismatch with SB'."""
+    from horse_engine.api.mailer import send_ops_report
+    date = dq.get("date", "?")
+    missing = dq.get("missing_from_ra") or []
+    lead = "initial RA meeting load mismatch with SB"
+    subj = f"[MyHorse.Tips] {lead} — {date}"
+    miss_list = "".join(f"<li style='padding:2px 0'>{m}</li>" for m in missing)
+    html = f"""
+    <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;max-width:560px;margin:0 auto;padding:28px 24px;color:#111;">
+      <div style="background:#fef2f2;color:#b91c1c;padding:14px 18px;border-radius:10px;font-weight:700;font-size:16px;margin-bottom:20px">⚠️ {lead}</div>
+      <p style="font-size:14px;color:#333;line-height:1.6">The 8:30am enrichment finished, but Racing Australia's meeting load does not match Sportsbet for <b>{date}</b>.</p>
+      <table style="border-collapse:collapse;font-size:14px;margin:6px 0">
+        <tr><td style="padding:5px 12px;color:#555">Sportsbet meetings</td><td style="padding:5px 12px;font-weight:600">{dq.get('sb_count')}</td></tr>
+        <tr><td style="padding:5px 12px;color:#555">RA meetings loaded</td><td style="padding:5px 12px;font-weight:600">{dq.get('ra_count')}</td></tr>
+      </table>
+      <p style="margin:16px 0 6px;font-weight:700;color:#b91c1c">On Sportsbet but missing from the RA load:</p>
+      <ul style="margin:0;padding-left:20px;color:#b91c1c">{miss_list or '<li>(none listed)</li>'}</ul>
+      <p style="font-size:13px;color:#666;margin-top:12px;line-height:1.6">The 9:45am reconcile will attempt to self-heal these (bust calendar cache + re-enrich). If they persist, check the RA proxy for soft-blocks.</p>
+      <p style="font-size:12px;color:#999;margin-top:24px;padding-top:16px;border-top:1px solid #eee">Automated 8:30 data-quality check · MyHorse.Tips ops</p>
+    </div>
+    """
+    text = (f"{lead} — {date}\n\n"
+            f"Sportsbet meetings: {dq.get('sb_count')}\n"
+            f"RA meetings loaded: {dq.get('ra_count')}\n\n"
+            f"On Sportsbet but missing from the RA load:\n"
+            + ("\n".join(f"  - {m}" for m in missing) or "  (none listed)"))
+    to = settings.support_email or settings.first_admin_email
+    return await send_ops_report(to, subj, html, text)
 
 
 async def _scheduled_pre_race_enrich():
@@ -3657,7 +3748,7 @@ async def lifespan(app: FastAPI):
     # The 13:00 enrich is dropped — it was mid-racing and the per-15-min
     # pre-race-enrich-and-scratch cron already keeps individual race
     # data fresh as their jump windows open.
-    scheduler.add_job(_scheduled_enrich, CronTrigger(hour=8,  minute=30, jitter=600, timezone="Australia/Sydney"))
+    scheduler.add_job(_scheduled_enrich, CronTrigger(hour=8,  minute=30, jitter=600, timezone="Australia/Sydney"), kwargs={"is_initial": True})
     scheduler.add_job(_scheduled_enrich, CronTrigger(hour=10, minute=30, jitter=600, timezone="Australia/Sydney"))
     # 11:30 AEST safety-net tick — recovers from days when the 8:30 + 10:30
     # runs were partially eaten by RA 503s. _enrich_date is idempotent
@@ -17276,6 +17367,27 @@ async def admin_reconcile_meetings(
     if email:
         report["emailed"] = await _email_reconcile_report(report)
     return report
+
+
+@app.post("/api/admin/meetings/dq-check")
+async def admin_dq_check(
+    race_date: Optional[str] = None,
+    email: bool = False,
+    x_cron_secret: Optional[str] = Header(None),
+):
+    """Manually run the 8:30 data-quality gate (RA meeting load vs Sportsbet count).
+    `email=true` sends the 'initial RA meeting load mismatch with SB' report if they
+    don't match — mirrors exactly what the 8:30 initial enrich now does. Returns the
+    DQ report (or {sb_unavailable:true} when the SB schedule can't be fetched)."""
+    _check_admin(x_cron_secret)
+    rd = race_date or _today_aest().isoformat()
+    _validate_date(rd)
+    dq = await _dq_ra_vs_sb(rd, get_tab_client())
+    if dq is None:
+        return {"date": rd, "sb_unavailable": True, "match": None}
+    if email and not dq["match"]:
+        dq["emailed"] = await _email_ra_sb_mismatch(dq)
+    return dq
 
 
 @app.get("/api/admin/cancelled-today")
