@@ -6,6 +6,12 @@ class Settings(BaseSettings):
 
     anthropic_api_key: str = ""
     cron_secret: str = ""
+    # Human admin-dashboard password (dashboard.html / labs-gate.js "Admin secret"
+    # field). Kept SEPARATE from cron_secret so the password a person types is a
+    # different string from the machine cron/API token. _check_admin accepts
+    # either. Set via the ADMIN_SECRET env var; falls back to cron_secret when
+    # unset so existing single-secret setups keep working.
+    admin_secret: str = ""
     database_url: str = "sqlite+aiosqlite:///./horse_predictions.db"  # overridden by DATABASE_URL env var on Railway
 
     tab_base_url: str = "https://api.tab.com.au/v1/tab-info-service"

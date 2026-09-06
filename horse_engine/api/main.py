@@ -474,10 +474,20 @@ async def _scheduled_sanity_sweep():
 
 
 def _check_admin(x_secret: Optional[str]) -> None:
-    """Fail-closed admin auth: requires CRON_SECRET env var to be set."""
-    if not settings.cron_secret:
+    """Fail-closed admin auth. Accepts the x-cron-secret header matching EITHER
+    CRON_SECRET (the machine cron/API token) OR ADMIN_SECRET (the human admin
+    dashboard password) — kept as two distinct values so the password a person
+    types is never the same string as the automated token. ADMIN_SECRET falls
+    back to CRON_SECRET when unset (single-secret compatibility)."""
+    cron = settings.cron_secret or ""
+    admin = settings.admin_secret or cron  # fall back to cron when ADMIN_SECRET unset
+    if not (cron or admin):
         raise HTTPException(403, "Admin access not configured")
-    if not secrets.compare_digest(x_secret or "", settings.cron_secret):
+    provided = x_secret or ""
+    # Evaluate both compares unconditionally (no short-circuit) — constant-time.
+    ok_cron = bool(cron) and secrets.compare_digest(provided, cron)
+    ok_admin = bool(admin) and secrets.compare_digest(provided, admin)
+    if not (ok_cron or ok_admin):
         raise HTTPException(403, "Forbidden")
 
 
