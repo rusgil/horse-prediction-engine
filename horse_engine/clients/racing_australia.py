@@ -1376,6 +1376,26 @@ class RacingAustraliaClient:
             # soft-block keeps re-trying with fresh IPs. Short-TTL (5 min) and
             # never persist (an empty is never written to DB anyway).
             if not meetings:
+                # DEBUG (2026-09-06): when a state parses empty despite the proxy
+                # serving a real page, dump what the backend actually received —
+                # response size + the distinct Key date-prefixes present — so we
+                # can tell a soft-block (tiny/no links) from a date mismatch
+                # (real links, wrong prefix) from a genuine no-race day.
+                try:
+                    from urllib.parse import unquote as _unq
+                    _prefixes = {}
+                    for _l in all_meeting_links:
+                        _m = re.search(r"Key=([^&\"]+)", _l.get("href", ""))
+                        if _m:
+                            _k = _unq(_m.group(1)).split(",", 1)[0]
+                            _prefixes[_k] = _prefixes.get(_k, 0) + 1
+                    log.warning(
+                        "[cal-debug] %s empty: html_bytes=%d ra_date=%r link_prefixes=%s",
+                        cache_key, len(html or ""), ra_date,
+                        sorted(_prefixes.items()),
+                    )
+                except Exception as _e:
+                    log.warning("[cal-debug] %s empty (diag failed: %s)", cache_key, _e)
                 log.warning(
                     "Calendar for %s still EMPTY after %d rotation(s) (links_on_page=%d) "
                     "— caching empty 5 min only, not persisting",
