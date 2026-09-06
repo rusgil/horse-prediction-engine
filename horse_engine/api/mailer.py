@@ -212,3 +212,16 @@ Your 5-Day Pass ends {exp}. Renew or upgrade to keep your access:
 {plans_url}
 """
     return await _send(to_email, subject, html, text, kind="expiry_reminder")
+
+
+async def send_ops_report(
+    to_email: str,
+    subject: str,
+    html_body: str,
+    text_body: Optional[str] = None,
+) -> bool:
+    """Send an internal ops/monitoring email (e.g. the daily morning
+    meeting-reconcile report). Thin wrapper over _send so ops mail shares the
+    same Resend path, logging, and fail-closed behaviour as transactional mail.
+    """
+    return await _send(to_email, subject, html_body, text_body, kind="ops_report")

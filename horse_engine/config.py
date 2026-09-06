@@ -49,6 +49,9 @@ class Settings(BaseSettings):
     # root cause of the mobile "You're in → back to login" loop.
     api_base_url: str = "https://api.funkyiq.com"
     first_admin_email: str = "rusgil@gmail.com"
+    # Ops/support inbox for the daily morning meeting-reconcile report. Override
+    # with the SUPPORT_EMAIL env var to point at a real support@ inbox.
+    support_email: str = "rusgil@gmail.com"
     member_cap: int = 1000
 
     # ── Billing (freemium 5-day pass, 2026-08-24) ─────────────────────

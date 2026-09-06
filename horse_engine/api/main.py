@@ -983,6 +983,191 @@ async def _scheduled_enrich():
         log.exception("[scheduler] Enrichment failed: %s", e)
 
 
+def _vc_from_meeting(m: dict, race_date: str) -> str:
+    """Derive the venue_code slug used in race_ids from an RA meeting dict.
+    Mirrors the logic in _enrich_date so the reconcile keys match exactly."""
+    slug = m.get("slug", "") or ""
+    date_sfx = f"-{race_date.replace('-', '')}"
+    if slug.endswith(date_sfx):
+        return slug[: -len(date_sfx)]
+    if slug:
+        return slug.split("-")[0]
+    return (m.get("name", "") or "").lower().replace(" ", "-")
+
+
+async def _enriched_venue_codes(race_date: str) -> set[str]:
+    """Distinct venue_codes with at least one non-cancelled prediction for the
+    date — i.e. exactly what the Lounge card is built from. race_id format is
+    '{race_date}_{venue_code}_R{n}', and race_date itself has no underscores."""
+    import re as _re
+    prefix = f"{race_date}_"
+    vcs: set[str] = set()
+    async with get_session() as session:
+        rids = (await session.execute(
+            select(RunnerPredictionRow.race_id)
+            .where(RunnerPredictionRow.race_id.like(f"{prefix}%"))
+            .where(RunnerPredictionRow.cancelled.is_(False) | RunnerPredictionRow.cancelled.is_(None))
+            .distinct()
+        )).scalars().all()
+    for rid in rids:
+        core = _re.sub(r"_R\d+$", "", rid[len(prefix):])
+        if core:
+            vcs.add(core)
+    return vcs
+
+
+async def _reconcile_meetings(race_date: str, remediate: bool = True) -> dict:
+    """Cross-check the meetings that SHOULD be on the card (RA calendar ∩ Sportsbet
+    allowlist) against what's actually enriched in the DB. Optionally bust the RA
+    calendar cache + re-enrich to self-heal a gap. Returns a report dict.
+
+    RA is the race-data source; Sportsbet is the allowlist (we only enrich the AU
+    thoroughbred meetings SB books). A meeting missing from the card means it was
+    never enriched — usually because the morning enrich's RA discovery ran during a
+    proxy soft-block and missed it. Busting the calendar cache first forces a fresh
+    discovery so the reconcile isn't fooled by the same stale-empty cache."""
+    from horse_engine.clients.sportsbet_schedule import (
+        get_sportsbet_au_meetings, venue_on_sportsbet,
+    )
+    client = get_tab_client()
+    report: dict = {"date": race_date, "ok": True, "remediated": False}
+
+    try:
+        client.purge_calendar_cache(race_date)
+    except Exception as e:
+        log.warning("[reconcile] calendar purge failed for %s: %s", race_date, e)
+
+    ra = await client.get_meetings(race_date) or []
+    sb = await get_sportsbet_au_meetings(race_date)
+    report["ra_count"] = len(ra)
+    report["sb_count"] = (len(sb) if sb else None)
+    if sb:
+        expected = [m for m in ra
+                    if venue_on_sportsbet(m.get("venue") or "", sb)
+                    or venue_on_sportsbet(m.get("name") or "", sb)]
+    else:
+        # SB schedule unavailable — fall back to expecting every RA meeting so a
+        # gap still surfaces rather than silently passing.
+        expected = list(ra)
+        report["sb_unavailable"] = True
+
+    exp_map = {
+        _vc_from_meeting(m, race_date): (m.get("venue") or m.get("name") or "?", m.get("state") or "?")
+        for m in expected
+    }
+    # Blocklisted picnic/bush venues never enrich by design — not a gap.
+    exp_map = {vc: v for vc, v in exp_map.items() if vc and not _should_skip_venue(vc)}
+
+    enriched = await _enriched_venue_codes(race_date)
+    missing = {vc: v for vc, v in exp_map.items() if vc not in enriched}
+    report["expected_count"] = len(exp_map)
+    report["enriched_count"] = len([vc for vc in exp_map if vc in enriched])
+    report["missing_before"] = sorted(f"{v[0]} ({v[1]})" for v in missing.values())
+
+    if missing and remediate:
+        log.warning("[reconcile] %s: %d expected meeting(s) not enriched: %s — remediating",
+                    race_date, len(missing), report["missing_before"])
+        try:
+            async with get_session() as session:
+                model = await _load_model(session)
+            await _enrich_date(race_date, client, model, force=False, sb_filter=True)
+            report["remediated"] = True
+        except Exception as e:
+            log.exception("[reconcile] remediation enrich failed for %s: %s", race_date, e)
+            report["remediation_error"] = str(e)
+        enriched = await _enriched_venue_codes(race_date)
+        missing = {vc: v for vc, v in exp_map.items() if vc not in enriched}
+        report["enriched_count"] = len([vc for vc in exp_map if vc in enriched])
+
+    report["missing_after"] = sorted(f"{v[0]} ({v[1]})" for v in missing.values())
+    report["ok"] = (len(missing) == 0)
+    return report
+
+
+async def _email_reconcile_report(report: dict) -> bool:
+    """Email the morning reconcile result to the ops/support inbox — every
+    morning, pass or fail. Fails closed (logs, never raises)."""
+    from horse_engine.api.mailer import send_ops_report
+    date = report.get("date", "?")
+    ok = bool(report.get("ok"))
+    err = report.get("error")
+    status = "✅ All meetings loaded" if ok and not err else "⚠️ ACTION NEEDED — missing meetings"
+    subj = f"[MyHorse.Tips] Morning check {date} — {'OK' if ok and not err else 'MISSING MEETINGS'}"
+
+    missing_after = report.get("missing_after") or []
+    facts = [
+        ("Date", date),
+        ("RA meetings found", report.get("ra_count")),
+        ("On Sportsbet (expected)", report.get("expected_count")),
+        ("Enriched on card", report.get("enriched_count")),
+        ("Remediation ran", "yes" if report.get("remediated") else "no"),
+    ]
+    fact_rows = "".join(
+        f"<tr><td style='padding:5px 12px;color:#555'>{k}</td>"
+        f"<td style='padding:5px 12px;font-weight:600'>{v}</td></tr>"
+        for k, v in facts if v is not None
+    )
+    if missing_after:
+        miss_html = (
+            "<p style='margin:18px 0 6px;font-weight:700;color:#b91c1c'>Still missing after auto-remediation:</p>"
+            "<ul style='margin:0;padding-left:20px;color:#b91c1c'>"
+            + "".join(f"<li style='padding:2px 0'>{m}</li>" for m in missing_after)
+            + "</ul>"
+            "<p style='font-size:13px;color:#666;margin-top:10px'>These meetings are on Sportsbet but could not be "
+            "enriched — likely a proxy soft-block or fields not yet posted. They should clear on the next enrich; "
+            "if they persist, check the RA proxy.</p>"
+        )
+        banner_bg, banner_fg = "#fef2f2", "#b91c1c"
+    else:
+        miss_html = "<p style='margin:18px 0;color:#166534;font-weight:600'>Every Sportsbet-booked meeting is enriched and on the card. 🎉</p>"
+        banner_bg, banner_fg = "#f0fdf4", "#166534"
+    if report.get("remediated"):
+        before = report.get("missing_before") or []
+        miss_html += (f"<p style='font-size:13px;color:#666;margin-top:8px'>Auto-remediation re-enriched "
+                      f"{len(before)} meeting(s) this run: {', '.join(before)}.</p>")
+    if err:
+        miss_html += f"<p style='color:#b91c1c;font-weight:700'>Reconcile error: {err}</p>"
+
+    html = f"""
+    <div style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;max-width:560px;margin:0 auto;padding:28px 24px;color:#111;">
+      <div style="background:{banner_bg};color:{banner_fg};padding:14px 18px;border-radius:10px;font-weight:700;font-size:16px;margin-bottom:20px">{status}</div>
+      <table style="border-collapse:collapse;font-size:14px;margin-bottom:8px">{fact_rows}</table>
+      {miss_html}
+      <p style="font-size:12px;color:#999;margin-top:28px;padding-top:16px;border-top:1px solid #eee">Automated morning meeting-reconcile · MyHorse.Tips ops</p>
+    </div>
+    """
+    text_lines = [f"Morning check {date}: {status}", ""]
+    for k, v in facts:
+        if v is not None:
+            text_lines.append(f"  {k}: {v}")
+    if missing_after:
+        text_lines += ["", "STILL MISSING after remediation:"] + [f"  - {m}" for m in missing_after]
+    if err:
+        text_lines += ["", f"ERROR: {err}"]
+    text = "\n".join(text_lines)
+
+    to = settings.support_email or settings.first_admin_email
+    return await send_ops_report(to, subj, html, text)
+
+
+async def _scheduled_meeting_reconcile():
+    """Daily morning control: verify every Sportsbet-booked meeting is enriched
+    onto the card, self-heal any gap, and email the ops/support inbox the result
+    (every morning, pass or fail). Runs after the morning enrich."""
+    race_date = _today_aest().isoformat()
+    log.info("[reconcile] Morning meeting reconcile for %s", race_date)
+    try:
+        report = await _reconcile_meetings(race_date, remediate=True)
+    except Exception as e:
+        log.exception("[reconcile] failed: %s", e)
+        report = {"date": race_date, "ok": False, "error": str(e)}
+    if report.get("ok"):
+        log.info("[reconcile] %s OK — %s meetings enriched", race_date, report.get("enriched_count"))
+    else:
+        log.warning("[reconcile] %s NOT ok — missing: %s", race_date, report.get("missing_after"))
+    await _email_reconcile_report(report)
+
+
 async def _scheduled_pre_race_enrich():
     """Re-enrich any race starting within the next 2 hours. Runs every 15 min during racing hours."""
     from sqlalchemy import update as sa_update
@@ -3481,6 +3666,13 @@ async def lifespan(app: FastAPI):
     # one set of Calendar.aspx hits, all post-stagger so RA-friendly. On a
     # day RA is flaky this is the cron tick that saves the afternoon.
     scheduler.add_job(_scheduled_enrich, CronTrigger(hour=11, minute=30, jitter=600, timezone="Australia/Sydney"))
+
+    # Morning meeting-reconcile: cross-check RA calendar ∩ Sportsbet allowlist
+    # against what's actually enriched onto the card, self-heal any gap (bust
+    # calendar cache + re-enrich), and email the ops/support inbox the result
+    # EVERY morning (pass or fail). Runs after the 8:30 enrich; remediation
+    # covers meetings the enrich missed during a proxy soft-block window.
+    scheduler.add_job(_scheduled_meeting_reconcile, CronTrigger(hour=9, minute=45, timezone="Australia/Sydney"))
 
     # Edge cache warm-up ticks at strategic times. The continuous prewarm
     # task (`_prewarm_edge_cache` below) refreshes every 60-90s once it
@@ -17064,6 +17256,26 @@ async def admin_bust_meetings_cache(
         await session.commit()
     return {"ok": True, "date": race_date, "calendar_cache_purged": cal_purged,
             "db_calendar_rows_deleted": cal_db_rows}
+
+
+@app.post("/api/admin/meetings/reconcile")
+async def admin_reconcile_meetings(
+    race_date: Optional[str] = None,
+    remediate: bool = True,
+    email: bool = False,
+    x_cron_secret: Optional[str] = Header(None),
+):
+    """Manually run the morning meeting-reconcile (RA ∩ Sportsbet vs enriched).
+    Same logic the 9:45am scheduled job runs. `remediate` (default true) busts the
+    calendar cache + re-enriches any gap; `email` (default false) also sends the
+    ops/support report so you can test the mail path. Returns the report dict."""
+    _check_admin(x_cron_secret)
+    rd = race_date or _today_aest().isoformat()
+    _validate_date(rd)
+    report = await _reconcile_meetings(rd, remediate=remediate)
+    if email:
+        report["emailed"] = await _email_reconcile_report(report)
+    return report
 
 
 @app.get("/api/admin/cancelled-today")
