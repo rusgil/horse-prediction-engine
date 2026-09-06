@@ -1296,6 +1296,7 @@ class RacingAustraliaClient:
             # empty across all passes. Non-empty first pass breaks immediately.
             meetings = []
             all_meeting_links = []
+            genuine_empty = False  # real page, just no race for this state today
             for _rot in range(1 + _EMPTY_ROTATE_RETRIES):
                 html = None
                 for attempt, wait in enumerate((2, 5, 15), start=1):
@@ -1362,43 +1363,48 @@ class RacingAustraliaClient:
 
                 if meetings:
                     break
-                # Empty parse — probable soft-block. Rotate to a fresh exit IP and
-                # retry (unless we've exhausted the cap).
+                # Distinguish a GENUINE no-race day from a SOFT-BLOCK. A real RA
+                # calendar page always carries keyed Acceptances/Results links
+                # (for other dates, even when this state has no race today); a
+                # soft-block returns the page shell stripped of ALL keyed links
+                # (link_prefixes=[]). Only the soft-block is worth burning a fresh
+                # residential IP on — a real empty day is empty on every IP, so
+                # rotating just wastes the cap AND stalls the /api/meetings
+                # endpoint (each rotation = a backoff sleep + a serialized proxy
+                # hit). Genuine no-race states (SA/NT/ACT/TAS most days) break out
+                # immediately here.
+                has_any_key = any(
+                    re.search(r"Key=([^&\"]+)", l.get("href", "")) for l in all_meeting_links
+                )
+                if has_any_key:
+                    genuine_empty = True
+                    break
+                # No keyed links at all → soft-block. Rotate to a fresh exit IP.
                 if _rot < _EMPTY_ROTATE_RETRIES:
                     log.warning(
-                        "Calendar for %s parsed EMPTY (soft-block?) — rotate-retry "
-                        "%d/%d with a fresh IP", cache_key, _rot + 1, _EMPTY_ROTATE_RETRIES,
+                        "Calendar for %s SOFT-BLOCK (0 keyed links, %d bytes) — rotate-retry "
+                        "%d/%d with a fresh IP", cache_key, len(html or ""),
+                        _rot + 1, _EMPTY_ROTATE_RETRIES,
                     )
                     await asyncio.sleep(_EMPTY_ROTATE_BACKOFFS[min(_rot, len(_EMPTY_ROTATE_BACKOFFS) - 1)])
 
-            # Still empty after all rotations. Never trust an empty for the full
-            # 6h — a genuine no-race state re-checks cheaply, and a persistent
-            # soft-block keeps re-trying with fresh IPs. Short-TTL (5 min) and
-            # never persist (an empty is never written to DB anyway).
+            # Still empty after all passes. Two very different cases:
             if not meetings:
-                # DEBUG (2026-09-06): when a state parses empty despite the proxy
-                # serving a real page, dump what the backend actually received —
-                # response size + the distinct Key date-prefixes present — so we
-                # can tell a soft-block (tiny/no links) from a date mismatch
-                # (real links, wrong prefix) from a genuine no-race day.
-                try:
-                    from urllib.parse import unquote as _unq
-                    _prefixes = {}
-                    for _l in all_meeting_links:
-                        _m = re.search(r"Key=([^&\"]+)", _l.get("href", ""))
-                        if _m:
-                            _k = _unq(_m.group(1)).split(",", 1)[0]
-                            _prefixes[_k] = _prefixes.get(_k, 0) + 1
-                    log.warning(
-                        "[cal-debug] %s empty: html_bytes=%d ra_date=%r link_prefixes=%s",
-                        cache_key, len(html or ""), ra_date,
-                        sorted(_prefixes.items()),
+                if genuine_empty:
+                    # Confirmed real page, this state simply has no race today.
+                    # Trust it for 30 min — no soft-block, no point re-hammering
+                    # the proxy or stalling the endpoint on every warm tick.
+                    log.info(
+                        "Calendar for %s: no race today (real page, %d dated links) "
+                        "— caching empty 30 min", cache_key, len(all_meeting_links),
                     )
-                except Exception as _e:
-                    log.warning("[cal-debug] %s empty (diag failed: %s)", cache_key, _e)
+                    self._calendar_cache[cache_key] = (datetime.utcnow() - timedelta(seconds=19800), [])
+                    return []
+                # Soft-block that survived every rotation. Cache only 5 min so the
+                # next warm cycle keeps retrying with fresh IPs until one lands.
                 log.warning(
-                    "Calendar for %s still EMPTY after %d rotation(s) (links_on_page=%d) "
-                    "— caching empty 5 min only, not persisting",
+                    "Calendar for %s SOFT-BLOCK after %d rotation(s) (links_on_page=%d, no keyed "
+                    "links) — caching empty 5 min, will keep retrying",
                     cache_key, 1 + _EMPTY_ROTATE_RETRIES, len(all_meeting_links),
                 )
                 self._calendar_cache[cache_key] = (datetime.utcnow() - timedelta(seconds=3300), [])
