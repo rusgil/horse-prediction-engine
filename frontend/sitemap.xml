@@ -2,31 +2,79 @@
 <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
   <url>
     <loc>https://myhorse.tips/</loc>
-    <lastmod>2026-07-23</lastmod>
+    <lastmod>2026-09-07</lastmod>
     <changefreq>daily</changefreq>
     <priority>1.0</priority>
   </url>
   <url>
-    <loc>https://myhorse.tips/edge</loc>
-    <lastmod>2026-07-23</lastmod>
-    <changefreq>daily</changefreq>
+    <loc>https://myhorse.tips/welcome</loc>
+    <lastmod>2026-09-07</lastmod>
+    <changefreq>weekly</changefreq>
     <priority>0.9</priority>
   </url>
   <url>
-    <loc>https://myhorse.tips/hotseat</loc>
-    <lastmod>2026-07-23</lastmod>
-    <changefreq>daily</changefreq>
+    <loc>https://myhorse.tips/guides</loc>
+    <lastmod>2026-09-07</lastmod>
+    <changefreq>weekly</changefreq>
     <priority>0.9</priority>
   </url>
   <url>
-    <loc>https://myhorse.tips/bets</loc>
-    <lastmod>2026-07-23</lastmod>
-    <changefreq>daily</changefreq>
+    <loc>https://myhorse.tips/guides/read-a-race-card</loc>
+    <lastmod>2026-09-07</lastmod>
+    <changefreq>monthly</changefreq>
     <priority>0.8</priority>
   </url>
   <url>
+    <loc>https://myhorse.tips/guides/barrier-draw</loc>
+    <lastmod>2026-09-07</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.8</priority>
+  </url>
+  <url>
+    <loc>https://myhorse.tips/guides/track-conditions</loc>
+    <lastmod>2026-09-07</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.8</priority>
+  </url>
+  <url>
+    <loc>https://myhorse.tips/guides/glossary</loc>
+    <lastmod>2026-09-07</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.8</priority>
+  </url>
+  <url>
+    <loc>https://myhorse.tips/guides/how-our-ratings-work</loc>
+    <lastmod>2026-09-07</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.8</priority>
+  </url>
+  <url>
+    <loc>https://myhorse.tips/contact</loc>
+    <lastmod>2026-09-07</lastmod>
+    <changefreq>yearly</changefreq>
+    <priority>0.5</priority>
+  </url>
+  <url>
+    <loc>https://myhorse.tips/edge</loc>
+    <lastmod>2026-09-07</lastmod>
+    <changefreq>daily</changefreq>
+    <priority>0.7</priority>
+  </url>
+  <url>
+    <loc>https://myhorse.tips/plans</loc>
+    <lastmod>2026-09-07</lastmod>
+    <changefreq>monthly</changefreq>
+    <priority>0.6</priority>
+  </url>
+  <url>
     <loc>https://myhorse.tips/privacy</loc>
-    <lastmod>2026-07-23</lastmod>
+    <lastmod>2026-09-07</lastmod>
+    <changefreq>yearly</changefreq>
+    <priority>0.3</priority>
+  </url>
+  <url>
+    <loc>https://myhorse.tips/subscription-agreement</loc>
+    <lastmod>2026-09-07</lastmod>
     <changefreq>yearly</changefreq>
     <priority>0.3</priority>
   </url>

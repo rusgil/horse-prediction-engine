@@ -8,12 +8,23 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <script src="/theme.js?v=22"></script>
   <script>
-    /* Lounge v2 (2026-07-28): the new meetings layout is the default lounge.
-       "Trad" on the toggle stores an opt-out; only then does / render this page. */
+    /* Homepage routing (2026-09 — AdSense/SEO):
+       - Members go to the live Lounge (v2), unless they've opted into the
+         classic layout (localStorage 'lounge_trad').
+       - Logged-out visitors AND search-engine crawlers are sent to the public
+         landing page (/welcome), which is indexable and links to the /guides
+         content hub. This keeps crawlers on real, crawlable content instead of
+         bouncing them into a noindex app page — the "low value content" trap.
+       The /api/check call decides which case applies. */
     (function () {
       try {
-        location.replace('/lounge-c.html');
+        if (localStorage.getItem('lounge_trad') === '1') return; // classic layout renders here
       } catch (e) {}
+      fetch('/api/check', { credentials: 'include' })
+        .then(function (r) {
+          location.replace(r.ok ? '/lounge-c.html' : '/welcome');
+        })
+        .catch(function () { location.replace('/welcome'); });
     })();
   </script>
   <meta name="google-adsense-account" content="ca-pub-3484503919714282">

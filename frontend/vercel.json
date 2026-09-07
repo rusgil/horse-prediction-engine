@@ -19,6 +19,34 @@
       "destination": "/splash.html"
     },
     {
+      "source": "/guides",
+      "destination": "/guides.html"
+    },
+    {
+      "source": "/guides/read-a-race-card",
+      "destination": "/guide-race-card.html"
+    },
+    {
+      "source": "/guides/barrier-draw",
+      "destination": "/guide-barriers.html"
+    },
+    {
+      "source": "/guides/track-conditions",
+      "destination": "/guide-going.html"
+    },
+    {
+      "source": "/guides/glossary",
+      "destination": "/guide-glossary.html"
+    },
+    {
+      "source": "/guides/how-our-ratings-work",
+      "destination": "/guide-ratings.html"
+    },
+    {
+      "source": "/contact",
+      "destination": "/contact.html"
+    },
+    {
       "source": "/showcase",
       "destination": "/showcase.html"
     },
