@@ -20,7 +20,10 @@
       try {
         if (localStorage.getItem('lounge_trad') === '1') return; // classic layout renders here
       } catch (e) {}
-      fetch('/api/check', { credentials: 'include' })
+      /* Use /api/auth/me (real auth state: 200 signed-in, 401 signed-out) —
+         NOT /api/check, which is a health probe that returns 200 to everyone
+         and so sent crawlers into the noindex Lounge. */
+      fetch('/api/auth/me', { credentials: 'include' })
         .then(function (r) {
           location.replace(r.ok ? '/lounge-c.html' : '/welcome');
         })
