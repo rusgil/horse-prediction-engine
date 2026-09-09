@@ -1095,13 +1095,16 @@ async def _reconcile_meetings(race_date: str, remediate: bool = True) -> dict:
     report["enriched_count"] = len([vc for vc in exp_map if vc in enriched])
     report["missing_before"] = sorted(f"{v[0]} ({v[1]})" for v in missing.values())
 
+    enrich_summary: list = []
     if missing and remediate:
         log.warning("[reconcile] %s: %d expected meeting(s) not enriched: %s — remediating",
                     race_date, len(missing), report["missing_before"])
         try:
             async with get_session() as session:
                 model = await _load_model(session)
-            await _enrich_date(race_date, client, model, force=False, sb_filter=True)
+            # Capture the per-venue enrich summary so we can report WHY a meeting
+            # is still missing (empty/soft-block vs error vs partial), not just that.
+            enrich_summary = await _enrich_date(race_date, client, model, force=False, sb_filter=True) or []
             report["remediated"] = True
         except Exception as e:
             log.exception("[reconcile] remediation enrich failed for %s: %s", race_date, e)
@@ -1110,9 +1113,35 @@ async def _reconcile_meetings(race_date: str, remediate: bool = True) -> dict:
         missing = {vc: v for vc, v in exp_map.items() if vc not in enriched}
         report["enriched_count"] = len([vc for vc in exp_map if vc in enriched])
 
+    # Attach a plain-English cause to each still-missing meeting from the enrich
+    # summary (status per venue_code), so the morning email is self-explaining.
+    status_by_vc = {s.get("venue"): s for s in enrich_summary if isinstance(s, dict)}
     report["missing_after"] = sorted(f"{v[0]} ({v[1]})" for v in missing.values())
+    report["missing_after_detail"] = sorted(
+        f"{v[0]} ({v[1]}) — {_enrich_cause(status_by_vc.get(vc))}"
+        for vc, v in missing.items()
+    )
     report["ok"] = (len(missing) == 0)
     return report
+
+
+def _enrich_cause(status: Optional[dict]) -> str:
+    """Plain-English reason a meeting is still missing, derived from the
+    _enrich_date per-venue summary entry (or None if it wasn't attempted)."""
+    if not status:
+        return "not attempted this run (already-enriched skip, or not re-discovered on RA)"
+    st = status.get("status")
+    if st == "empty":
+        return "RA returned 0 races — soft-blocked Acceptances page or fields not yet posted"
+    if st == "error":
+        return f"enrich error: {status.get('error', 'unknown')}"
+    if st == "ok":
+        races = status.get("races") or 0
+        written = status.get("written")
+        if races and not written:
+            return f"{races} races on RA but 0 written — per-race fetch failed or all already-enriched"
+        return f"enriched {written}/{races} races — may take a moment to surface on the card"
+    return str(st or "unknown")
 
 
 async def _email_reconcile_report(report: dict) -> bool:
@@ -1126,6 +1155,8 @@ async def _email_reconcile_report(report: dict) -> bool:
     subj = f"[MyHorse.Tips] Morning check {date} — {'OK' if ok and not err else 'MISSING MEETINGS'}"
 
     missing_after = report.get("missing_after") or []
+    # Prefer the per-meeting cause list ("Venue (STATE) — reason") when present.
+    missing_detail = report.get("missing_after_detail") or missing_after
     facts = [
         ("Date", date),
         ("RA meetings found", report.get("ra_count")),
@@ -1142,11 +1173,12 @@ async def _email_reconcile_report(report: dict) -> bool:
         miss_html = (
             "<p style='margin:18px 0 6px;font-weight:700;color:#b91c1c'>Still missing after auto-remediation:</p>"
             "<ul style='margin:0;padding-left:20px;color:#b91c1c'>"
-            + "".join(f"<li style='padding:2px 0'>{m}</li>" for m in missing_after)
+            + "".join(f"<li style='padding:3px 0'>{m}</li>" for m in missing_detail)
             + "</ul>"
-            "<p style='font-size:13px;color:#666;margin-top:10px'>These meetings are on Sportsbet but could not be "
-            "enriched — likely a proxy soft-block or fields not yet posted. They should clear on the next enrich; "
-            "if they persist, check the RA proxy.</p>"
+            "<p style='font-size:13px;color:#666;margin-top:10px'>The reason is shown after each meeting. "
+            "&lsquo;Soft-blocked&rsquo; usually clears itself on the next enrich (the fetch now rotates a fresh IP + "
+            "re-tries within the hour); &lsquo;fields not yet posted&rsquo; clears once the club loads them. If a "
+            "meeting persists all day, check the RA proxy.</p>"
         )
         banner_bg, banner_fg = "#fef2f2", "#b91c1c"
     else:
@@ -1172,7 +1204,7 @@ async def _email_reconcile_report(report: dict) -> bool:
         if v is not None:
             text_lines.append(f"  {k}: {v}")
     if missing_after:
-        text_lines += ["", "STILL MISSING after remediation:"] + [f"  - {m}" for m in missing_after]
+        text_lines += ["", "STILL MISSING after remediation:"] + [f"  - {m}" for m in missing_detail]
     if err:
         text_lines += ["", f"ERROR: {err}"]
     text = "\n".join(text_lines)
