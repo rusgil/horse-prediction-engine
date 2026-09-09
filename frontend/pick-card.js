@@ -457,7 +457,7 @@
       ? (isExpired() ? 'Renew your pass' : 'Choose a plan')
       : `Sign up — ${_money()} / ${_days()} days`;
     return `<div class="trophy-wrap" data-unlock>
-      <div class="trophy-label">🏆 Recent winner — our top pick won at <b>${sp}</b>${when ? ' · ' + esc(when) : ''}</div>
+      <div class="trophy-label"><span class="trophy-ico">🏆</span> Recent winner — our top pick won at <b>${sp}</b>${when ? ' · ' + esc(when) : ''}</div>
       ${render(t, { trophy: true })}
       <button class="unlock-btn trophy-cta" data-unlock>${cta}</button>
     </div>`;

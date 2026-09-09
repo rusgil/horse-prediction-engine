@@ -195,16 +195,20 @@
 
 /* Trophy for the day — our biggest recent win, shown as a full race card
    inside a gold-accented wrap (proof, always green). */
+/* Trophy uses a bright true-gold (#f5c842), NOT the site --gold (#e8a020),
+   which is an amber that reads brown on the winner banner. */
 .trophy-wrap {
   margin: 0 0 14px; padding: 5px; border-radius: calc(var(--radius, 12px) + 3px);
   cursor: pointer;
-  border: 1px solid color-mix(in srgb, var(--gold, #f5c842) 45%, var(--line));
-  background: color-mix(in srgb, var(--gold, #f5c842) 9%, transparent);
+  border: 1px solid color-mix(in srgb, #f5c842 55%, var(--line));
+  background: color-mix(in srgb, #f5c842 12%, transparent);
 }
 .trophy-label {
   font-size: 0.85rem; font-weight: 800; letter-spacing: 0.05em; text-transform: uppercase;
-  color: var(--gold, #f5c842); padding: 5px 8px 7px;
+  color: #f5c842; padding: 5px 8px 7px;
 }
+/* Richer, brighter glyph so the 🏆 itself reads gold, not brown. */
+.trophy-ico { filter: saturate(1.5) brightness(1.08); }
 .trophy-label b { color: var(--text); }
 .trophy-wrap .jcard { margin-bottom: 0; }
 .trophy-cta { display: block; width: calc(100% - 10px); margin: 8px 5px 4px; padding: 11px 18px; }
