@@ -32910,6 +32910,20 @@ async def _enrich_date(race_date: str, client, model, force: bool = False, place
             continue
         try:
             raw_events = await client.get_meeting_races(slug)
+            # A meeting that came off the calendar but returns 0 races is a real
+            # failure (soft-blocked/stripped Acceptances page, or fields not yet
+            # posted) — NOT a clean run. Log it loudly so it's never silent again
+            # (Devonport Synthetic 2026-09-09 enriched to nothing without a trace).
+            if not raw_events:
+                log.warning(
+                    "[enrich] %s/%s produced 0 races from RA (empty/soft-blocked "
+                    "Acceptances or fields not posted) — nothing enriched",
+                    venue_code, race_date,
+                )
+                summary.append({"venue": venue_code, "status": "empty", "races": 0})
+                continue
+            n_written = 0
+            n_norace = 0
             for raw_event in raw_events:
                 race_num = raw_event.get("eventNumber")
                 race_id = f"{race_date}_{venue_code}_R{race_num}"
@@ -32925,6 +32939,7 @@ async def _enrich_date(race_date: str, client, model, force: bool = False, place
                             continue
                 full_event = await client.get_race(slug, race_num)
                 if not full_event:
+                    n_norace += 1
                     continue
                 race = await client.parse_race(full_event, race_date, venue_name, state)
                 async with get_session() as session:
@@ -32942,7 +32957,14 @@ async def _enrich_date(race_date: str, client, model, force: bool = False, place
                         race_id,
                         [_prediction_to_db_dict(p, race_id, race.scheduled_time, race=race) for p in predictions],
                     )
-            summary.append({"venue": venue_code, "status": "ok"})
+                n_written += 1
+            if n_norace:
+                log.warning(
+                    "[enrich] %s/%s — %d/%d races returned no data from RA (get_race None)",
+                    venue_code, race_date, n_norace, len(raw_events),
+                )
+            summary.append({"venue": venue_code, "status": "ok",
+                            "races": len(raw_events), "written": n_written})
         except Exception as e:
             log.warning("Cron failed for %s on %s: %s", venue_code, race_date, e)
             summary.append({"venue": venue_code, "status": "error", "error": str(e)})

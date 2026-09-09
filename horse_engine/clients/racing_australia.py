@@ -64,6 +64,16 @@ _ROTATE_BACKOFFS = [5.0, 15.0, 30.0]   # len must be >= _ROTATE_RETRIES
 # non-empty first hit costs nothing. Tunable via env (0 disables).
 _EMPTY_ROTATE_RETRIES = int(os.environ.get("RA_CAL_EMPTY_ROTATE_RETRIES", "2") or "2")
 _EMPTY_ROTATE_BACKOFFS = [3.0, 8.0, 15.0]
+# Empty-MEETING (Acceptances) rotate-retry (2026-09-10). Same idea as the
+# calendar rotate-retry, but for the per-meeting Acceptances fetch: a meeting
+# that came off the calendar but parses to 0 races is almost always a
+# soft-blocked/stripped page (a real meeting always has >=1 race), so rotate a
+# fresh IP and retry (bounded — no hammering). Without this, a soft-block on the
+# Acceptances page made the meeting enrich silently to 0 races (Devonport
+# Synthetic, 2026-09-09). Shorter backoffs than the calendar to keep the daily
+# enrich fast. Tunable via env (0 disables).
+_MEETING_EMPTY_ROTATE_RETRIES = int(os.environ.get("RA_MEETING_EMPTY_ROTATE_RETRIES", "2") or "2")
+_MEETING_EMPTY_ROTATE_BACKOFFS = [2.0, 5.0, 10.0]
 _TRIP_AFTER_CYCLES = 3
 _CYCLE_WINDOW_S = 3600                  # 1 hour
 
@@ -1439,15 +1449,41 @@ class RacingAustraliaClient:
             return cached[1]
         from urllib.parse import quote
         url = f"{_BASE}/Acceptances.aspx?Key={quote(ra_key, safe='')}"
-        try:
-            html = await self._get(url)
-        except Exception as e:
-            log.warning("Acceptances fetch failed for %s: %s", ra_key, e)
-            # Cache None for 5 min so a 503-storm doesn't dogpile RA.
-            # 30-min TTL minus 25 min = 5 min remaining.
-            self._meeting_cache[ra_key] = (datetime.utcnow() - timedelta(seconds=1500), None)
-            return None
-        parsed = _parse_acceptances_page(html, ra_key, race_date, state)
+        # Soft-block rotate-retry: this meeting came off the calendar, so a real
+        # Acceptances page must have >=1 race. An empty parse (0 races) is almost
+        # always a soft-blocked/stripped page — rotate a fresh residential IP and
+        # retry, exactly like the calendar fetch. A genuinely field-less page (fields
+        # not posted yet) stays empty across all passes and we give up cheaply.
+        parsed = None
+        for _rot in range(1 + _MEETING_EMPTY_ROTATE_RETRIES):
+            try:
+                html = await self._get(url)
+            except Exception as e:
+                log.warning("Acceptances fetch failed for %s: %s", ra_key, e)
+                # Cache None for 5 min so a 503-storm doesn't dogpile RA.
+                # 30-min TTL minus 25 min = 5 min remaining.
+                self._meeting_cache[ra_key] = (datetime.utcnow() - timedelta(seconds=1500), None)
+                return None
+            parsed = _parse_acceptances_page(html, ra_key, race_date, state)
+            if parsed and parsed.get("races"):
+                break  # real meeting with races — done
+            if _rot < _MEETING_EMPTY_ROTATE_RETRIES:
+                log.warning(
+                    "Acceptances for %s parsed 0 races (soft-block?) — rotate-retry "
+                    "%d/%d with a fresh IP", ra_key, _rot + 1, _MEETING_EMPTY_ROTATE_RETRIES,
+                )
+                await asyncio.sleep(_MEETING_EMPTY_ROTATE_BACKOFFS[min(_rot, len(_MEETING_EMPTY_ROTATE_BACKOFFS) - 1)])
+        if not (parsed and parsed.get("races")):
+            # Still empty after all rotations — persistent soft-block or fields not
+            # posted. Short-cache (5 min) so we re-try within the hour instead of
+            # serving the empty for the full 30-min TTL.
+            log.warning(
+                "Acceptances for %s STILL 0 races after %d rotation(s) — persistent "
+                "soft-block or fields not posted; caching empty 5 min",
+                ra_key, 1 + _MEETING_EMPTY_ROTATE_RETRIES,
+            )
+            self._meeting_cache[ra_key] = (datetime.utcnow() - timedelta(seconds=1500), parsed)
+            return parsed
         self._meeting_cache[ra_key] = (datetime.utcnow(), parsed)
         return parsed
 
