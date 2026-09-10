@@ -1298,20 +1298,13 @@
     if (!s) { el.innerHTML = ''; return; }
     const wPct = Math.round(s.w / s.settled * 100);
     const plcPct = Math.round((s.w + s.pl) / s.settled * 100);
-    const pos = s.profit >= 0;
-    const roi = s.staked ? Math.round(s.profit / s.staked * 100) : 0;
-    const plCol = pos ? 'var(--mint)' : 'var(--red, #ef4444)';
     el.innerHTML = `
       <div class="ds-stat"><b class="num">${s.settled}</b> settled</div>
       <div class="ds-divider"></div>
       <div class="ds-stat"><b class="num" style="color:var(--mint)">${s.w}</b> picks won <span class="num">(${wPct}%)</span></div>
       <div class="ds-divider"></div>
       <div class="ds-stat"><b class="num" style="color:var(--amber)">${s.pl}</b> more placed <span class="num">(${plcPct}% placed incl. wins)</span></div>
-      <div class="ds-divider"></div>
-      <div class="ds-stat" title="Flat $1 win bet on every pick shown, settled at starting price (SP)">
-        <b class="num" style="color:${plCol}">${pos ? '+' : '−'}$${Math.abs(s.profit).toFixed(2)}</b>
-        <span class="num">on $1 each · staked $${s.staked} → returned $${s.returned.toFixed(2)} · <b style="color:${plCol}">${pos ? '+' : ''}${roi}% ROI</b></span>
-      </div>`;
+      <div class="ds-stat" style="margin-left:auto" title="Flat $1 win bet on every pick shown, settled at starting price (SP): $${s.staked} staked → $${s.returned.toFixed(2)} returned">return <b class="num" style="font-size:0.86rem">$${s.returned.toFixed(2)}</b></div>`;
   }
   function renderControls() {
     const el = document.getElementById('ctlRows');
