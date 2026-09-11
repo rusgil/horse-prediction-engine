@@ -26,6 +26,7 @@ import argparse
 import bz2
 import json
 import logging
+import os
 import re
 import subprocess  # used only in scan_tar
 import sys
@@ -33,8 +34,9 @@ from collections import defaultdict
 from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
-_API_URL = "https://web-production-dec62.up.railway.app"
-_CRON_SECRET = "horse2026secretJH"
+_API_URL = os.environ.get("API_URL", "https://api.funkyiq.com")
+# Never hardcode the admin secret — read it from the environment at run time.
+_CRON_SECRET = os.environ.get("CRON_SECRET", "")
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger(__name__)
