@@ -86,16 +86,23 @@
   // Metropolitan tracks are premier meetings — a wide-open field there is still
   // a race worth showing, so metro venues are NEVER hidden or demoted (same
   // treatment as badged venues). Matches on venue / venue_code / _venue.
-  var _METRO_VENUES = new Set([
-    'rosehill','randwick','royalrandwick','warwickfarm','canterbury','canterburypark',
-    'flemington','caulfield','mooneevalley','sandown','sandownhillside','sandownlakeside',
-    'eaglefarm','doomben','morphettville','ascot','belmont'
-  ]);
+  // Match a metro ROOT as a substring so official name variants resolve too:
+  // 'Rosehill Gardens'->rosehill, 'Royal Randwick'->randwick, 'Morphettville
+  // Parks'->morphettville, 'Sportsbet-Sandown Hillside'->sandown. Roots are
+  // distinctive enough to avoid bush-track collisions (e.g. 'warwickfarm' not
+  // 'warwick', so Warwick QLD isn't caught).
+  var _METRO_ROOTS = [
+    'rosehill','randwick','warwickfarm','canterbury','flemington','caulfield',
+    'mooneevalley','sandown','eaglefarm','doomben','morphettville','ascot','belmont'
+  ];
   function _isMetro(pick) {
     if (!pick) return false;
-    return _METRO_VENUES.has(_normVenue(pick.venue))
-      || _METRO_VENUES.has(_normVenue(pick.venue_code))
-      || _METRO_VENUES.has(_normVenue(pick._venue));
+    var fields = [_normVenue(pick.venue), _normVenue(pick.venue_code), _normVenue(pick._venue)];
+    for (var i = 0; i < fields.length; i++) {
+      var f = fields[i]; if (!f) continue;
+      for (var j = 0; j < _METRO_ROOTS.length; j++) { if (f.indexOf(_METRO_ROOTS[j]) !== -1) return true; }
+    }
+    return false;
   }
   function isOpenRace(pick) {
     if (!pick || pick.is_sharp || _venueBadged(pick) || _isMetro(pick)) return false;
