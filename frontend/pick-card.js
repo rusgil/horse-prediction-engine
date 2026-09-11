@@ -83,8 +83,22 @@
     return _badgedVenues.has(_normVenue(pick.venue)) || _badgedVenues.has(_normVenue(pick.venue_code))
       || _badgedVenues.has(_normVenue(pick._venue));
   }
+  // Metropolitan tracks are premier meetings — a wide-open field there is still
+  // a race worth showing, so metro venues are NEVER hidden or demoted (same
+  // treatment as badged venues). Matches on venue / venue_code / _venue.
+  var _METRO_VENUES = new Set([
+    'rosehill','randwick','royalrandwick','warwickfarm','canterbury','canterburypark',
+    'flemington','caulfield','mooneevalley','sandown','sandownhillside','sandownlakeside',
+    'eaglefarm','doomben','morphettville','ascot','belmont'
+  ]);
+  function _isMetro(pick) {
+    if (!pick) return false;
+    return _METRO_VENUES.has(_normVenue(pick.venue))
+      || _METRO_VENUES.has(_normVenue(pick.venue_code))
+      || _METRO_VENUES.has(_normVenue(pick._venue));
+  }
   function isOpenRace(pick) {
-    if (!pick || pick.is_sharp || _venueBadged(pick)) return false;
+    if (!pick || pick.is_sharp || _venueBadged(pick) || _isMetro(pick)) return false;
     const w = _pickWinPct(pick);
     // Compare the ROUNDED value the card displays — so a pick shown as "25%"
     // (true 24.5-25.4%) is never treated as below 25 (matches "<25 not <=25").
@@ -95,7 +109,7 @@
   // band still shows, demoted (isOpenRace). Sharp + badged venues never hidden.
   var HIDE_RACE_WIN_MAX = 20;
   function isHiddenRace(pick) {
-    if (!pick || pick.is_sharp || _venueBadged(pick)) return false;
+    if (!pick || pick.is_sharp || _venueBadged(pick) || _isMetro(pick)) return false;
     const w = _pickWinPct(pick);
     // Compare the ROUNDED value the card displays — a pick shown as "20%"
     // (true 19.5-20.4%) is NOT below 20 ("<20 not <=20").
