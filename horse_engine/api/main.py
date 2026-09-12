@@ -32927,8 +32927,20 @@ async def _enrich_date(race_date: str, client, model, force: bool = False, place
                 log.warning("[enrich] Sportsbet allowlist unavailable for %s — blocklist-only fallback", race_date)
         except Exception as e:
             log.warning("[enrich] Sportsbet allowlist skipped for %s (keeping all): %s", race_date, e)
+    import random as _rnd
+    _BATCH = int(os.environ.get("ENRICH_BATCH_SIZE", "4"))
+    _BATCH_PAUSE = float(os.environ.get("ENRICH_BATCH_PAUSE", "30"))
+    _BATCH_JITTER = float(os.environ.get("ENRICH_BATCH_JITTER", "30"))
     summary = []
-    for m in meetings:
+    for idx, m in enumerate(meetings):
+        # Batch pacing (2026-09-12): after every _BATCH meetings, pause a
+        # JITTERED cool-down so the proxy rotates exit IPs and RA's per-IP
+        # request volume stays low. A 15-meeting Saturday done in one burst
+        # trips RA's WAF (cumulative per-IP volume) and cascades into
+        # soft-blocks; done ~4-at-a-time with cool-downs between batches it
+        # stays under the line. Jittered so the cadence isn't fingerprintable.
+        if idx > 0 and idx % _BATCH == 0:
+            await asyncio.sleep(_BATCH_PAUSE + _rnd.random() * _BATCH_JITTER)
         slug = m.get("slug", "")
         date_sfx = f"-{race_date.replace('-', '')}"
         venue_code = slug[:-len(date_sfx)] if slug.endswith(date_sfx) else slug.split("-")[0] if slug else m.get("name", "").lower().replace(" ", "-")
