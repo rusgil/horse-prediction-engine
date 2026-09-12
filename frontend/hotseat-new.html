@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
   <script src="/theme.js?v=22"></script>
-  <script src="/pick-card.js?v=40"></script>
+  <script src="/pick-card.js?v=41"></script>
 <meta name="robots" content="noindex">
 <title>FunkyIQ — Hot Seat</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -1523,9 +1523,10 @@
         // grey overlay (CSS ::after) dims it while the figures stay readable
         // underneath. Not clickable (no data-open); click toasts the reason.
         const _coin = window.PickCard.isHiddenRace({ win_probability: r.top_win_probability, is_sharp: r.is_sharp, venue: r._venue || r.venue || (typeof m !== "undefined" && m ? m.venue : null) });
-        // Only tally non-coin-flip races so the column totals match the coloured
-        // tiles (coin-flips are greyed and never show a green win).
-        if (done && !_coin) {
+        // Tally excludes low-confidence (<20%) races — INCLUDING metros (which
+        // still DISPLAY via _coin's metro exemption but must not distort stats).
+        const _statsX = window.PickCard.isStatsExcluded({ win_probability: r.top_win_probability, is_sharp: r.is_sharp, venue: r._venue || r.venue || (typeof m !== "undefined" && m ? m.venue : null) });
+        if (done && !_statsX) {
           colS[i]++;
           if (r.model_correct === true) colW[i]++;
           if (r.model_placed === true) colP[i]++;

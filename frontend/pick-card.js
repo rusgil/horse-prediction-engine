@@ -122,6 +122,16 @@
     // (true 19.5-20.4%) is NOT below 20 ("<20 not <=20").
     return w != null && Math.round(w) < HIDE_RACE_WIN_MAX;
   }
+  // STATS exclusion — separate from DISPLAY. A sub-20% top pick is a coin-flip we
+  // don't COUNT in the win-rate tallies, even at metro tracks: metros still SHOW
+  // (isHiddenRace exempts them) but their low-confidence races must not inflate/
+  // distort the stats. Badged venues stay counted (they win ~26% OOS despite
+  // <20%); Sharp always counts. NOTE: no metro exemption here — that's the point.
+  function isStatsExcluded(pick) {
+    if (!pick || pick.is_sharp || _venueBadged(pick)) return false;
+    const w = _pickWinPct(pick);
+    return w != null && Math.round(w) < HIDE_RACE_WIN_MAX;
+  }
 
   function dualStat(win_pct, place_pct, accuracy, open) {
     if (win_pct == null) return '';
@@ -674,7 +684,7 @@
     render, dualStat, winPlace, resultBlock, esc, wallTime, countdown,
     lockedCard, paywallBanner, trophyBanner, configureBilling, openCheckout, openPricing, bindUnlock,
     fetchJSON, isMember, isSubscriber, isFiveDayHolder, isLoggedIn, isExpired, renderExpiredBanner, splashUpsell, plansUpsell, plansGrid, refreshSplashUpsell, loadMembership,
-    fetchSparklines, isOpenRace, isHiddenRace, loadVenueBadges,
+    fetchSparklines, isOpenRace, isHiddenRace, isStatsExcluded, loadVenueBadges,
   };
   loadVenueBadges();   // warm the badged-venue set early so exceptions apply on first render
 })();
