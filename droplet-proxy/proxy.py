@@ -81,6 +81,16 @@ _UA_STRING = (
 # fresh connection → a new residential IP, then retry. Rotate only on failure.
 _STICKY_ROTATE_RETRIES = int(os.environ.get("RA_PROXY_ROTATE_RETRIES", "4"))
 _STICKY_ROTATE_BACKOFF = 1.0   # faster rotation to fit the backend calendar timeout
+# Proactive rotation (2026-09-12). A sticky exit IP that soaks up too many
+# requests trips RA's per-IP volume threshold: fine on a weekday (<6 meetings,
+# ~50 requests) but it cascades on a big Saturday (13 meetings, 130+ requests).
+# So rotate the exit IP every N requests BEFORE it accumulates enough to trip —
+# spreading a big day's load across several IPs instead of overloading one. The
+# cadence is JITTERED so it isn't a fingerprintable fixed pattern.
+_PROACTIVE_ROTATE_BASE = int(os.environ.get("RA_PROXY_PROACTIVE_ROTATE", "35"))
+_PROACTIVE_ROTATE_JITTER = int(os.environ.get("RA_PROXY_PROACTIVE_JITTER", "15"))
+_session_req_count = 0
+_next_proactive_rotate = _PROACTIVE_ROTATE_BASE + random.randint(0, _PROACTIVE_ROTATE_JITTER)
 _sticky_session: Optional[AsyncSession] = None
 
 
@@ -231,6 +241,7 @@ async def proxy(path: str, request: Request):
     """Forward GET to {UPSTREAM_BASE}/{path}?{query} and return upstream
     body + status verbatim. Caller must send X-Proxy-Secret."""
     global _last_request_at, _daily_count, _daily_window_start, _recent_403_count, _recent_softblock_count
+    global _session_req_count, _next_proactive_rotate
 
     # Auth - fail closed.
     secret = request.headers.get("x-proxy-secret", "")
@@ -262,6 +273,18 @@ async def proxy(path: str, request: Request):
 
     # Single-flight with min interval - proxy must not become the new hammer.
     async with _request_lock:
+        # Proactive exit-IP rotation: cap requests-per-IP (jittered) so a big
+        # day's volume spreads across many IPs instead of overloading one and
+        # tripping RA's per-IP soft-block threshold.
+        _session_req_count += 1
+        if _session_req_count >= _next_proactive_rotate:
+            await _rotate_session()
+            import logging as _lr
+            _lr.getLogger("ra-proxy").info(
+                "proactive residential rotation after %d requests (jittered cap %d)",
+                _session_req_count, _next_proactive_rotate)
+            _session_req_count = 0
+            _next_proactive_rotate = _PROACTIVE_ROTATE_BASE + random.randint(0, _PROACTIVE_ROTATE_JITTER)
         elapsed = time.monotonic() - _last_request_at
         if elapsed < _MIN_INTERVAL:
             await asyncio.sleep(_MIN_INTERVAL - elapsed + random.random() * 0.5)
