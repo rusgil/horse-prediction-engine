@@ -23517,6 +23517,15 @@ async def enrich_meeting_endpoint(race_date: str, venue_code: str,
     results = []
     async with get_session() as session:
         model = await _load_model(session)
+        place_model = await _load_place_model(session)
+        exotic_model = await _load_exotic_model(session)
+    # Full-quality enrich (2026-09-12): previously this endpoint called
+    # enrich_and_predict_race(race, model) WITHOUT the place/exotic/calibration
+    # models, so a per-meeting re-enrich wrote predictions missing place &
+    # exotic ranks (breaking Edge trifecta + place stats). Load + pass them all,
+    # mirroring the scheduled _enrich_date path.
+    venue_cal = await _load_venue_calibration()
+    output_cal = await _load_output_calibration_curve()
 
     for raw_event in raw_events:
         race_num = raw_event.get("eventNumber")
@@ -23528,7 +23537,13 @@ async def enrich_meeting_endpoint(race_date: str, venue_code: str,
             race = await client.parse_race(full_event, race_date, venue_name, state)
             async with get_session() as session:
                 await _inject_accumulated_stats(race, session)
-            predictions, _ = await enrich_and_predict_race(race, model)
+            predictions, _ = await enrich_and_predict_race(
+                race, model,
+                venue_calibration=venue_cal,
+                place_model=place_model,
+                exotic_model=exotic_model,
+                output_calibration_curve=output_cal,
+            )
             async with get_session() as session:
                 await save_race_predictions(
                     session,
