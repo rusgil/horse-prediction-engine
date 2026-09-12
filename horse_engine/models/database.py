@@ -1531,6 +1531,28 @@ async def backfill_prediction_history(session: AsyncSession) -> int:
 async def save_race_predictions(session: AsyncSession, race_id: str, predictions: list[dict], force: bool = False) -> None:
     from sqlalchemy import delete, func
 
+    # ── Data-integrity guardrail (2026-09-12) ─────────────────────────────
+    # A correctly-enriched race has exactly one winner, so its win probabilities
+    # sum to ~1.0. A sum well off 1.0 means the pipeline degraded THIS race —
+    # e.g. the market blend / normalisation was skipped because odds were missing
+    # during an RA outage — producing flat or over-concentrated numbers. Serving
+    # that risks a customer betting on a broken prediction, so we DO NOT publish
+    # it: we suppress the race (drop any live rows) and leave it for a clean
+    # re-enrich. A later enrich that sums correctly re-publishes it automatically.
+    if predictions:
+        _wpsum = sum((p.get("win_probability") or 0) for p in predictions)
+        _lo = float(os.environ.get("RACE_PROB_SUM_MIN", "0.92"))
+        _hi = float(os.environ.get("RACE_PROB_SUM_MAX", "1.10"))
+        if not (_lo <= _wpsum <= _hi):
+            logging.getLogger(__name__).warning(
+                "[guardrail] %s: win-prob sum=%.3f outside [%.2f, %.2f] — degraded "
+                "enrichment, suppressing race (not publishing to customers)",
+                race_id, _wpsum, _lo, _hi,
+            )
+            await session.execute(delete(RunnerPredictionRow).where(RunnerPredictionRow.race_id == race_id))
+            await session.commit()
+            return
+
     # Check if an immutable history snapshot already exists for this race
     history_exists = (await session.execute(
         select(func.count()).select_from(RunnerPredictionHistoryRow)
