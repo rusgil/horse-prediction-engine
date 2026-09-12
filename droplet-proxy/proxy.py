@@ -280,7 +280,7 @@ async def proxy(path: str, request: Request):
         if _session_req_count >= _next_proactive_rotate:
             await _rotate_session()
             import logging as _lr
-            _lr.getLogger("ra-proxy").info(
+            _lr.getLogger("ra-proxy").warning(
                 "proactive residential rotation after %d requests (jittered cap %d)",
                 _session_req_count, _next_proactive_rotate)
             _session_req_count = 0
