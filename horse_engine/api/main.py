@@ -1317,45 +1317,60 @@ async def _check_source_health(race_date: str) -> None:
     CROSS-SOURCE: a source is flagged only when the OTHER still returns meetings
     while it returns none. That way a genuinely quiet day (both empty) never
     alarms, and a silent schema change (parse yields 0) trips the same alert as a
-    hard outage. Debounced via _send_ops_alert (3/24h per source per date).
+    hard outage. Confirmed with a re-fetch before alerting (a single empty read
+    is usually a transient timeout, not a real outage), and debounced to once
+    per source per date via _send_ops_alert(cap=1).
     Never raises — a monitor must not break the enrich it rides along with."""
     try:
         from horse_engine.clients.sportsbet_schedule import get_sportsbet_au_meetings
-        try:
-            sb = await get_sportsbet_au_meetings(race_date)
-        except Exception:
-            sb = None
-        sb_n = len(sb) if sb else 0
-        try:
-            op_meetings = await OddsProClient().get_meeting_odds(race_date)
-        except Exception:
-            op_meetings = None
-        op_n = len(op_meetings) if op_meetings else 0
 
-        # Only one of the two returning nothing is the signal. Both-empty is a
-        # quiet day (or a dual outage the RA fallback still covers) — no alarm.
+        async def _counts():
+            try:
+                _sb = await get_sportsbet_au_meetings(race_date)
+            except Exception:
+                _sb = None
+            try:
+                _op = await OddsProClient().get_meeting_odds(race_date)
+            except Exception:
+                _op = None
+            return (len(_sb) if _sb else 0), (len(_op) if _op else 0)
+
+        sb_n, op_n = await _counts()
+
+        # Exactly one source empty is the signal — but CONFIRM with a re-fetch
+        # ~5s later before alerting. A single empty read is almost always a
+        # transient timeout/blip, not a real outage or schema change (verified
+        # 2026-09-14: a one-off OddsPro empty read at 23:27 fired a false alert
+        # while the API was actually fine). Require the same source empty twice.
+        # Both-empty = quiet day / dual outage (RA fallback covers) → never alarm.
+        if (sb_n == 0) != (op_n == 0):
+            await asyncio.sleep(5)
+            sb_n, op_n = await _counts()
+
         if sb_n == 0 and op_n > 0:
             await _send_ops_alert(
                 f"sb_api_broken:{race_date}",
                 f"[MyHorse.Tips] Sportsbet API returned no meetings — {race_date}",
                 f"<p style='font-size:14px;color:#333;line-height:1.6'>Sportsbet returned <b>0</b> AU "
-                f"thoroughbred meetings for <b>{race_date}</b> while OddsPro returned <b>{op_n}</b>. "
-                f"This usually means the Sportsbet API changed or is down — it defines the race universe "
-                f"we display, so check the <code>sportsbet_schedule</code> client / AllRacing endpoint.</p>",
+                f"thoroughbred meetings for <b>{race_date}</b> (confirmed on a re-fetch) while OddsPro "
+                f"returned <b>{op_n}</b>. Likely the Sportsbet API changed or is down — it defines the "
+                f"race universe we display, so check the <code>sportsbet_schedule</code> client / AllRacing endpoint.</p>",
                 cap=1,
             )
-        if op_n == 0 and sb_n > 0:
+        elif op_n == 0 and sb_n > 0:
             await _send_ops_alert(
                 f"oddspro_api_broken:{race_date}",
                 f"[MyHorse.Tips] OddsPro API returned no meetings — {race_date}",
                 f"<p style='font-size:14px;color:#333;line-height:1.6'>OddsPro returned <b>0</b> AU "
-                f"thoroughbred meetings for <b>{race_date}</b> while Sportsbet returned <b>{sb_n}</b>. "
-                f"This usually means the OddsPro API changed or is down — it supplies state + odds, so "
-                f"check the <code>oddspro</code> client / <code>/api/meetings</code> endpoint.</p>",
+                f"thoroughbred meetings for <b>{race_date}</b> (confirmed on a re-fetch) while Sportsbet "
+                f"returned <b>{sb_n}</b>. Likely the OddsPro API changed or is down — it supplies state + "
+                f"odds, so check the <code>oddspro</code> client / <code>/api/meetings</code> endpoint.</p>",
                 cap=1,
             )
-        if sb_n == 0 and op_n == 0:
+        elif sb_n == 0 and op_n == 0:
             log.info("[source-health] %s: SB and OddsPro both empty — quiet day or dual outage, no alert", race_date)
+        else:
+            log.info("[source-health] %s: SB=%d OddsPro=%d — ok (any earlier mismatch was transient)", race_date, sb_n, op_n)
     except Exception as e:
         log.warning("[source-health] check failed for %s: %s", race_date, e)
 
