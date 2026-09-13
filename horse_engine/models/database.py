@@ -1545,6 +1545,22 @@ async def save_race_predictions(session: AsyncSession, race_id: str, predictions
     # <20%, open-race demotion), not by destroying data here. Do not
     # reintroduce a sum-based check — win_prob is not a normalised distribution.
 
+    # ── Never destroy good rows on an empty/failed enrich ─────────────────
+    # This function is a delete-then-insert (see the delete ~100 lines below).
+    # If a re-enrich yields NO predictions — a degraded RA fetch where
+    # get_race was soft-blocked and parse_race produced 0 runners — the delete
+    # would wipe a previously-good race and insert nothing, silently vanishing
+    # it from the card. Observed 2026-09-13 (Northam/Dalby races disappearing
+    # mid re-enrich). A failed enrich must be a NO-OP, not a deletion. Genuine
+    # clears (all-scratched) go through the cancelled flag / a dedicated admin
+    # path, never this write. This IS the "don't publish a broken race" guard
+    # the sum-check was reaching for — but it protects data instead of deleting.
+    if not predictions:
+        logging.getLogger(__name__).info(
+            "[save] %s: empty predictions (degraded enrich) — leaving existing rows intact", race_id
+        )
+        return
+
     # Check if an immutable history snapshot already exists for this race
     history_exists = (await session.execute(
         select(func.count()).select_from(RunnerPredictionHistoryRow)
