@@ -3838,6 +3838,21 @@ _scheduler = None
 async def lifespan(app: FastAPI):
     await init_db()
 
+    # Non-prod (staging) safety switch. Background schedulers + startup jobs run
+    # only in production (or when explicitly forced via ENABLE_BACKGROUND_JOBS).
+    # In a staging instance this stops the app from auto-hitting Racing
+    # Australia, settling bets, generating bets, or emailing members — you drive
+    # enrich manually there. _bg() no-ops a would-be background task in non-prod.
+    _run_bg = settings.app_env == "production" or settings.enable_background_jobs
+    def _bg(coro):
+        if _run_bg:
+            return asyncio.create_task(coro)
+        coro.close()  # prevent "coroutine was never awaited" warning
+        return None
+    if not _run_bg:
+        log.warning("[lifespan] APP_ENV=%s — background schedulers + startup jobs DISABLED (non-prod safety)",
+                    settings.app_env)
+
     from apscheduler.schedulers.asyncio import AsyncIOScheduler
     from apscheduler.triggers.cron import CronTrigger
     from apscheduler.triggers.interval import IntervalTrigger
@@ -3993,7 +4008,7 @@ async def lifespan(app: FastAPI):
         _warm_adjacent_meetings,
         IntervalTrigger(minutes=10, jitter=60, timezone="Australia/Sydney"),
     )
-    asyncio.create_task(_warm_adjacent_meetings())
+    _bg(_warm_adjacent_meetings())
 
     # BUG-43: hourly (was 9am once) — each race snapshots inside its T-2h
     # window so the frozen market features reflect a live market.
@@ -4150,8 +4165,12 @@ async def lifespan(app: FastAPI):
         _scheduled_settle_bets,
         CronTrigger(hour="11-23", minute="10,40", timezone="Australia/Sydney")
     )
-    scheduler.start()
-    log.info("[scheduler] Cron jobs scheduled")
+    if _run_bg:
+        scheduler.start()
+        log.info("[scheduler] Cron jobs scheduled")
+    else:
+        log.warning("[scheduler] non-prod (APP_ENV=%s) — scheduler NOT started, %d cron jobs registered but idle",
+                    settings.app_env, len(scheduler.get_jobs()))
 
     # Enrich today on startup — but only if it hasn't run in the last
     # 30 min, to protect the RA proxy on heavy-deploy days (15+ deploys
@@ -4170,13 +4189,13 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             log.warning("[startup-enrich] staleness check failed: %s", e)
         await _scheduled_enrich()
-    asyncio.create_task(_startup_enrich_if_stale())
+    _bg(_startup_enrich_if_stale())
 
     # One-shot idempotent follow-up seeds — noop after first successful run.
-    asyncio.create_task(_seed_sharp_bao_roi_followup())
-    asyncio.create_task(_seed_isotonic_reenable_followup())
-    asyncio.create_task(_seed_shortest_fav_confidence_followup())
-    asyncio.create_task(_seed_clean_market_retrain_followup())
+    _bg(_seed_sharp_bao_roi_followup())
+    _bg(_seed_isotonic_reenable_followup())
+    _bg(_seed_shortest_fav_confidence_followup())
+    _bg(_seed_clean_market_retrain_followup())
 
     # Bet-gen + settlement + result-seed catch-up on startup. Without this,
     # any deploy that lands between cron ticks defers all of these to the
@@ -4198,7 +4217,7 @@ async def lifespan(app: FastAPI):
             await _scheduled_settle_bets()
         except Exception as e:
             log.warning("[startup] settle-bets catch-up failed: %s", e)
-    asyncio.create_task(_startup_bet_catchup())
+    _bg(_startup_bet_catchup())
 
     # Hydrate /api/edge response cache from Postgres before any user can
     # hit the endpoint. Eliminates the 30-60s post-deploy cold-cache
@@ -4257,7 +4276,7 @@ async def lifespan(app: FastAPI):
             else:
                 retry_delay = min(30 * consecutive_failures, 300)
                 await asyncio.sleep(retry_delay)
-    asyncio.create_task(_prewarm_edge_cache())
+    _bg(_prewarm_edge_cache())
 
     # Prewarm /api/edge/yesterday once on startup so the first user after
     # a redeploy doesn't pay the 10s on-demand-seed cost. Yesterday's
@@ -4270,7 +4289,7 @@ async def lifespan(app: FastAPI):
             log.info("[edge-yesterday-prewarm] cache warm")
         except Exception as e:
             log.warning("[edge-yesterday-prewarm] failed: %s", e)
-    asyncio.create_task(_prewarm_yesterday())
+    _bg(_prewarm_yesterday())
 
     # Prewarm /api/meetings for the date strip range (-7..+2). After a
     # redeploy, every date click on the main page would otherwise pay
@@ -4291,7 +4310,7 @@ async def lifespan(app: FastAPI):
             log.info("[meetings-prewarm] %d dates warm", len(dates))
         except Exception as e:
             log.warning("[meetings-prewarm] failed: %s", e)
-    asyncio.create_task(_prewarm_meetings_strip())
+    _bg(_prewarm_meetings_strip())
 
     # Live track-condition sweep — every 30 min during racing hours. The SB
     # client caches for 30 min and makes ONE racecard request per meeting, so
@@ -4307,7 +4326,7 @@ async def lifespan(app: FastAPI):
             except Exception as e:
                 log.warning("[track-conditions] loop error: %s", e)
             await asyncio.sleep(1800 + random.uniform(0, 300))
-    asyncio.create_task(_track_conditions_loop())
+    _bg(_track_conditions_loop())
 
     # Backfill last 3 days — catch up on any missed enrichments/results.
     # Throttled per-date: skip dates whose latest enriched_at is < 12h old.
@@ -4339,7 +4358,7 @@ async def lifespan(app: FastAPI):
                     log.info("[startup] Seeded %d results for %s", n, seed_date)
             except Exception as e:
                 log.warning("[startup] Backfill failed for %s: %s", seed_date, e)
-    asyncio.create_task(_startup_backfill())
+    _bg(_startup_backfill())
 
     yield
 

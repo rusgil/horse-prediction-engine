@@ -59,6 +59,14 @@ async def _send(
     invite emails to the admin so you can see every invite that goes
     out without opening the DB — see send_invite_email() below.
     """
+    # Non-prod safety: a staging/test instance must NEVER email real members.
+    # Suppress the actual send (log it so you can see what WOULD have gone out)
+    # and report success so callers proceed normally.
+    if settings.app_env != "production":
+        log.info("[mailer] APP_ENV=%s — SUPPRESSED email to %s (subject=%r)",
+                 settings.app_env, to_email, subject[:60])
+        await _log_email(to_email, kind, subject, False, "suppressed_non_prod")
+        return True
     if not settings.resend_api_key:
         log.warning("[mailer] RESEND_API_KEY unset — cannot send to %s", to_email)
         await _log_email(to_email, kind, subject, False, None)

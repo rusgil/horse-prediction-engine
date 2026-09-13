@@ -4,6 +4,16 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
+    # Deployment environment. "production" is the live site. Anything else
+    # (e.g. "staging") is a non-prod instance: background schedulers + startup
+    # jobs are NOT started and customer emails are suppressed, so a test
+    # instance can never auto-hit Racing Australia, settle bets, or email real
+    # members. Set APP_ENV=staging on the staging service. Default is safe for
+    # prod (unchanged behaviour). enable_background_jobs is an explicit override
+    # to force the schedulers on in a non-prod instance if ever needed.
+    app_env: str = "production"
+    enable_background_jobs: bool = False
+
     anthropic_api_key: str = ""
     cron_secret: str = ""
     # Human admin-dashboard password (dashboard.html / labs-gate.js "Admin secret"
