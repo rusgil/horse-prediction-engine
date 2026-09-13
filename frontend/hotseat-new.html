@@ -1496,7 +1496,12 @@
     const el = document.getElementById('viewA');
     if (!S.meetings.length) return;
     const prevScroll = el.querySelector('.grid-wrap')?.scrollLeft || 0;
-    const maxR = Math.max(1, ...S.meetings.map(m => (S.details[vcOf(m)] || []).length));
+    // Columns are keyed by RACE NUMBER, not by array position — otherwise a
+    // meeting missing early races (e.g. Dalby present=[R4,R5,R7]) has its races
+    // packed left into the wrong columns, so the "R1" column opens R4. Size the
+    // grid to the highest race_number present, and look each cell up by number.
+    const maxR = Math.max(1, ...S.meetings.map(m =>
+      Math.max(0, ...((S.details[vcOf(m)] || []).map(r => r.race_number || 0)))));
     const head = Array.from({ length: maxR }, (_, i) => `<th>R${i + 1}</th>`).join('');
 
     const colW = Array(maxR).fill(0), colP = Array(maxR).fill(0), colS = Array(maxR).fill(0);
@@ -1515,7 +1520,10 @@
           ${aConf >= 25 && S.date >= aestToday(0) ? `<span class="rs-c ${aConf >= 40 ? 'hi' : ''}">· ${aConf}% best pick</span>` : ''}
         </div>` : '';
       const cells = Array.from({ length: maxR }, (_, i) => {
-        const r = races?.[i];
+        // Match by race_number (column i is race R(i+1)), NOT array index, so a
+        // missing race leaves a blank cell in its own column instead of shifting
+        // later races into the wrong columns.
+        const r = (races || []).find(x => (x.race_number || 0) === i + 1);
         if (!r) return `<td class="cell blank"></td>`;
         if (S.sharpOnly && r.is_sharp !== true) return `<td class="cell blank"></td>`;
         const done = isSettled(r);

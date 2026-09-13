@@ -1427,7 +1427,11 @@
     const el = document.getElementById('viewA');
     if (!S.meetings.length) return;
     const prevScroll = el.querySelector('.grid-wrap')?.scrollLeft || 0;
-    const maxR = Math.max(1, ...S.meetings.map(m => (S.details[vcOf(m)] || []).length));
+    // Columns keyed by RACE NUMBER, not array position — a meeting missing early
+    // races (Dalby present=[R4,R5,R7]) must not pack left into the wrong columns
+    // (the "R1" column was opening R4). Size to the highest race_number present.
+    const maxR = Math.max(1, ...S.meetings.map(m =>
+      Math.max(0, ...((S.details[vcOf(m)] || []).map(r => r.race_number || 0)))));
     const head = Array.from({ length: maxR }, (_, i) => `<th>R${i + 1}</th>`).join('');
 
     const colW = Array(maxR).fill(0), colP = Array(maxR).fill(0), colS = Array(maxR).fill(0);
@@ -1457,7 +1461,10 @@
           ${aConf >= 25 && S.date >= aestToday(0) ? `<span class="rs-c ${aConf >= 40 ? 'hi' : ''}">· ${aConf}% best pick</span>` : ''}
         </div>` : '';
       const cells = Array.from({ length: maxR }, (_, i) => {
-        const r = races?.[i];
+        // Match by race_number (column i is race R(i+1)), NOT array index, so a
+        // missing race leaves a blank cell in its own column instead of shifting
+        // later races into the wrong columns.
+        const r = (races || []).find(x => (x.race_number || 0) === i + 1);
         if (!r) return `<td class="cell blank"></td>`;
         if (r.locked) return `<td class="cell locked-cell ${r.locked_heat || ''}" data-unlock title="Members only — unlock to see this pick"><span class="lk-val"></span></td>`;
         if (S.sharpOnly && r.is_sharp !== true) return `<td class="cell blank"></td>`;
