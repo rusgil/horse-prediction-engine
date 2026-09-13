@@ -1001,9 +1001,12 @@ async def _scheduled_enrich(is_initial: bool = False):
             try:
                 dq = await _dq_ra_vs_sb(today, client)
                 if dq and not dq["match"]:
-                    log.warning("[dq] initial RA meeting load mismatch with SB for %s: %s",
+                    # Log only — no email here. The single morning email is the
+                    # 09:30 completeness check (_scheduled_meeting_reconcile),
+                    # which runs AFTER a self-heal attempt, so an 08:30 mismatch
+                    # that heals itself never pages you.
+                    log.warning("[dq] initial RA meeting load mismatch with SB for %s: %s (no email — 09:30 check owns alerting)",
                                 today, dq["missing_from_ra"])
-                    await _email_ra_sb_mismatch(dq)
                 elif dq:
                     log.info("[dq] RA load matches SB for %s (%d meetings)", today, dq["sb_count"])
                 else:
@@ -1011,17 +1014,11 @@ async def _scheduled_enrich(is_initial: bool = False):
             except Exception as e:
                 log.warning("[dq] RA-vs-SB check failed for %s: %s", today, e)
 
-        # Data-source health watch: alert if Sportsbet or OddsPro stops
-        # returning meetings while the other still does. SKIP the initial
-        # (08:30) run — OddsPro publishes the day's AU thoroughbred card ~an
-        # hour later than Sportsbet (verified 2026-09-14: empty at 08:45,
-        # populated by 09:34), so an early check false-positives on OddsPro.
-        # Runs on the 10:30 / 11:30 enrichs, by which time both are populated.
-        if not is_initial:
-            try:
-                await _check_source_health(today)
-            except Exception as e:
-                log.warning("[source-health] failed for %s: %s", today, e)
+        # (Removed 2026-09-14) The SB-vs-OddsPro source-health cross-check that
+        # emailed here was replaced by a single 09:30 completeness alert
+        # (_scheduled_meeting_reconcile): the ONLY morning email is now "today's
+        # data isn't loaded + enriched by 09:30". _check_source_health() is left
+        # defined but no longer wired to a scheduled run.
     except Exception as e:
         log.exception("[scheduler] Enrichment failed: %s", e)
 
@@ -1226,9 +1223,11 @@ async def _email_reconcile_report(report: dict) -> bool:
 
 
 async def _scheduled_meeting_reconcile():
-    """Daily morning control: verify every Sportsbet-booked meeting is enriched
-    onto the card, self-heal any gap, and email the ops/support inbox the result
-    (every morning, pass or fail). Runs after the morning enrich."""
+    """Daily 09:30 control: verify every Sportsbet-booked meeting is loaded +
+    enriched onto the card, self-heal any gap, and email support ONLY IF it is
+    still incomplete afterwards. A fully-loaded morning sends NO email (silence
+    = all good). Runs after the 08:30 enrich, so it catches days the morning
+    load didn't finish."""
     race_date = _today_aest().isoformat()
     log.info("[reconcile] Morning meeting reconcile for %s", race_date)
     try:
@@ -1237,10 +1236,11 @@ async def _scheduled_meeting_reconcile():
         log.exception("[reconcile] failed: %s", e)
         report = {"date": race_date, "ok": False, "error": str(e)}
     if report.get("ok"):
-        log.info("[reconcile] %s OK — %s meetings enriched", race_date, report.get("enriched_count"))
+        # Complete by 09:30 → stay silent (email only when NOT loaded+enriched).
+        log.info("[reconcile] %s OK — %s meetings enriched, no email sent", race_date, report.get("enriched_count"))
     else:
-        log.warning("[reconcile] %s NOT ok — missing: %s", race_date, report.get("missing_after"))
-    await _email_reconcile_report(report)
+        log.warning("[reconcile] %s NOT ok — missing: %s — emailing support", race_date, report.get("missing_after"))
+        await _email_reconcile_report(report)
 
 
 async def _dq_ra_vs_sb(race_date: str, client) -> Optional[dict]:
@@ -3896,12 +3896,14 @@ async def lifespan(app: FastAPI):
     # day RA is flaky this is the cron tick that saves the afternoon.
     scheduler.add_job(_scheduled_enrich, CronTrigger(hour=11, minute=30, jitter=600, timezone="Australia/Sydney"))
 
-    # Morning meeting-reconcile: cross-check RA calendar ∩ Sportsbet allowlist
+    # 09:30 completeness control: cross-check RA calendar ∩ Sportsbet allowlist
     # against what's actually enriched onto the card, self-heal any gap (bust
-    # calendar cache + re-enrich), and email the ops/support inbox the result
-    # EVERY morning (pass or fail). Runs after the 8:30 enrich; remediation
-    # covers meetings the enrich missed during a proxy soft-block window.
-    scheduler.add_job(_scheduled_meeting_reconcile, CronTrigger(hour=9, minute=45, timezone="Australia/Sydney"))
+    # calendar cache + re-enrich), and email support ONLY IF today's data is
+    # still not loaded + enriched after the heal. A complete morning sends no
+    # email (silence = all good). Runs after the 8:30 enrich; this is the single
+    # morning data-load alert (the old 8:30 DQ email + SB/OddsPro source-health
+    # alert were folded into it).
+    scheduler.add_job(_scheduled_meeting_reconcile, CronTrigger(hour=9, minute=30, timezone="Australia/Sydney"))
 
     # Edge cache warm-up ticks at strategic times. The continuous prewarm
     # task (`_prewarm_edge_cache` below) refreshes every 60-90s once it
