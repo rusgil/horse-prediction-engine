@@ -1010,6 +1010,14 @@ async def _scheduled_enrich(is_initial: bool = False):
                     log.info("[dq] RA-vs-SB check skipped for %s (SB unavailable)", today)
             except Exception as e:
                 log.warning("[dq] RA-vs-SB check failed for %s: %s", today, e)
+
+        # Data-source health watch (every scheduled run, debounced): alert if
+        # Sportsbet or OddsPro stops returning meetings while the other still
+        # does — catches an API change/outage on either unauthenticated feed.
+        try:
+            await _check_source_health(today)
+        except Exception as e:
+            log.warning("[source-health] failed for %s: %s", today, e)
     except Exception as e:
         log.exception("[scheduler] Enrichment failed: %s", e)
 
@@ -1299,6 +1307,55 @@ async def _email_ra_sb_mismatch(dq: dict) -> bool:
             + ("\n".join(f"  - {m}" for m in missing) or "  (none listed)"))
     to = settings.support_email or settings.first_admin_email
     return await send_ops_report(to, subj, html, text)
+
+
+async def _check_source_health(race_date: str) -> None:
+    """Email support if Sportsbet or OddsPro stops returning usable data.
+
+    Both are unauthenticated third-party JSON APIs (no key, no contract), so a
+    schema change or lock-down would silently break discovery/odds. Detection is
+    CROSS-SOURCE: a source is flagged only when the OTHER still returns meetings
+    while it returns none. That way a genuinely quiet day (both empty) never
+    alarms, and a silent schema change (parse yields 0) trips the same alert as a
+    hard outage. Debounced via _send_ops_alert (3/24h per source per date).
+    Never raises — a monitor must not break the enrich it rides along with."""
+    try:
+        from horse_engine.clients.sportsbet_schedule import get_sportsbet_au_meetings
+        try:
+            sb = await get_sportsbet_au_meetings(race_date)
+        except Exception:
+            sb = None
+        sb_n = len(sb) if sb else 0
+        try:
+            op_meetings = await OddsProClient().get_meeting_odds(race_date)
+        except Exception:
+            op_meetings = None
+        op_n = len(op_meetings) if op_meetings else 0
+
+        # Only one of the two returning nothing is the signal. Both-empty is a
+        # quiet day (or a dual outage the RA fallback still covers) — no alarm.
+        if sb_n == 0 and op_n > 0:
+            await _send_ops_alert(
+                f"sb_api_broken:{race_date}",
+                f"[MyHorse.Tips] Sportsbet API returned no meetings — {race_date}",
+                f"<p style='font-size:14px;color:#333;line-height:1.6'>Sportsbet returned <b>0</b> AU "
+                f"thoroughbred meetings for <b>{race_date}</b> while OddsPro returned <b>{op_n}</b>. "
+                f"This usually means the Sportsbet API changed or is down — it defines the race universe "
+                f"we display, so check the <code>sportsbet_schedule</code> client / AllRacing endpoint.</p>",
+            )
+        if op_n == 0 and sb_n > 0:
+            await _send_ops_alert(
+                f"oddspro_api_broken:{race_date}",
+                f"[MyHorse.Tips] OddsPro API returned no meetings — {race_date}",
+                f"<p style='font-size:14px;color:#333;line-height:1.6'>OddsPro returned <b>0</b> AU "
+                f"thoroughbred meetings for <b>{race_date}</b> while Sportsbet returned <b>{sb_n}</b>. "
+                f"This usually means the OddsPro API changed or is down — it supplies state + odds, so "
+                f"check the <code>oddspro</code> client / <code>/api/meetings</code> endpoint.</p>",
+            )
+        if sb_n == 0 and op_n == 0:
+            log.info("[source-health] %s: SB and OddsPro both empty — quiet day or dual outage, no alert", race_date)
+    except Exception as e:
+        log.warning("[source-health] check failed for %s: %s", race_date, e)
 
 
 async def _scheduled_pre_race_enrich():
