@@ -1342,6 +1342,7 @@ async def _check_source_health(race_date: str) -> None:
                 f"thoroughbred meetings for <b>{race_date}</b> while OddsPro returned <b>{op_n}</b>. "
                 f"This usually means the Sportsbet API changed or is down — it defines the race universe "
                 f"we display, so check the <code>sportsbet_schedule</code> client / AllRacing endpoint.</p>",
+                cap=1,
             )
         if op_n == 0 and sb_n > 0:
             await _send_ops_alert(
@@ -1351,6 +1352,7 @@ async def _check_source_health(race_date: str) -> None:
                 f"thoroughbred meetings for <b>{race_date}</b> while Sportsbet returned <b>{sb_n}</b>. "
                 f"This usually means the OddsPro API changed or is down — it supplies state + odds, so "
                 f"check the <code>oddspro</code> client / <code>/api/meetings</code> endpoint.</p>",
+                cap=1,
             )
         if sb_n == 0 and op_n == 0:
             log.info("[source-health] %s: SB and OddsPro both empty — quiet day or dual outage, no alert", race_date)
@@ -3013,16 +3015,19 @@ _ra_degraded_since: Optional[datetime] = None
 _RA_DEGRADED_ALERT_AFTER = timedelta(hours=1)
 
 
-async def _send_ops_alert(alert_key: str, subject: str, detail_html: str) -> bool:
+async def _send_ops_alert(alert_key: str, subject: str, detail_html: str, cap: Optional[int] = None) -> bool:
     """Email the admin (settings.first_admin_email → rusgil@gmail.com) about an
-    operational condition, capped at 3 per `alert_key` per rolling 24h with a
-    30-min floor between sends. Two independent budgets today:
+    operational condition, capped at `cap` per `alert_key` per rolling 24h
+    (default _OPS_ALERT_CAP) with a 30-min floor between sends. Pass cap=1 for
+    once-a-day alerts. Budgets today:
       - 'splash_active'  — the user-facing splash went up
       - 'ra_degraded_1h' — RA has been failing across rotations for ~1h
+      - 'sb_api_broken'/'oddspro_api_broken' — cap=1 (once per source per day)
     DB-backed (ResponseCacheRow) so a redeploy can't reset the cap. Never raises."""
     to = (getattr(settings, "first_admin_email", "") or "").strip()
     if not to:
         return False
+    effective_cap = cap if cap is not None else _OPS_ALERT_CAP
     cache_key = f"ops_alert:{alert_key}"
     now = datetime.utcnow()
     try:
@@ -3038,8 +3043,8 @@ async def _send_ops_alert(alert_key: str, subject: str, detail_html: str) -> boo
                     sends = []
             sends = [s for s in sends
                      if (now - datetime.fromisoformat(s)) < _OPS_ALERT_WINDOW]
-            if len(sends) >= _OPS_ALERT_CAP:
-                log.info("[ops-alert] %s suppressed (cap %d/24h reached)", alert_key, _OPS_ALERT_CAP)
+            if len(sends) >= effective_cap:
+                log.info("[ops-alert] %s suppressed (cap %d/24h reached)", alert_key, effective_cap)
                 return False
             if sends and (now - datetime.fromisoformat(sends[-1])) < _OPS_ALERT_MIN_GAP:
                 log.info("[ops-alert] %s suppressed (min-gap)", alert_key)
@@ -3056,7 +3061,7 @@ async def _send_ops_alert(alert_key: str, subject: str, detail_html: str) -> boo
         "<h2 style=\"font-size:18px;margin:0 0 12px\">FunkyIQ ops alert</h2>"
         f"{detail_html}"
         f"<p style=\"font-size:12px;color:#999;margin-top:24px;padding-top:16px;border-top:1px solid #eee\">"
-        f"Automated — capped at {_OPS_ALERT_CAP} per 24h for this alert type.</p></div>"
+        f"Automated — capped at {effective_cap} per 24h for this alert type.</p></div>"
     )
     ok = await mailer._send(to, subject, html)
     if ok:
