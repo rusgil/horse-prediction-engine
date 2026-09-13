@@ -1056,6 +1056,50 @@ async def _enriched_venue_codes(race_date: str) -> set[str]:
     return vcs
 
 
+async def _race_prediction_health(race_date: str) -> tuple[dict[str, set[int]], dict[str, list[int]]]:
+    """Per-race prediction health for the date, straight from the DB.
+
+    Returns (present, degraded):
+      present  = {venue_code: {race_num, ...}} — races with >=1 non-cancelled row
+      degraded = {venue_code: [race_num, ...]} — races that are PRESENT but whose
+                 HORSE PREDICTIONS look non-enriched: <2 runner rows, no usable win
+                 probability, OR the place model never ran (place_probability all
+                 null/0). This is the 'races that had non-enriched horse
+                 predictions' guard — the original failure mode (e.g. a per-meeting
+                 enrich that wrote win-probs with no place/exotic model).
+    race_id format is '{race_date}_{venue_code}_R{n}'."""
+    import re as _re
+    prefix = f"{race_date}_"
+    rows_by_rid: dict[str, list[tuple]] = {}
+    async with get_session() as session:
+        rows = (await session.execute(
+            select(
+                RunnerPredictionRow.race_id,
+                RunnerPredictionRow.win_probability,
+                RunnerPredictionRow.place_probability,
+            )
+            .where(RunnerPredictionRow.race_id.like(f"{prefix}%"))
+            .where(RunnerPredictionRow.cancelled.is_(False) | RunnerPredictionRow.cancelled.is_(None))
+        )).all()
+    for rid, win, place in rows:
+        rows_by_rid.setdefault(rid, []).append((win, place))
+    present: dict[str, set[int]] = {}
+    degraded: dict[str, list[int]] = {}
+    for rid, preds in rows_by_rid.items():
+        m = _re.match(r"^(.*)_R(\d+)$", rid[len(prefix):])
+        if not m:
+            continue
+        vc, rnum = m.group(1), int(m.group(2))
+        present.setdefault(vc, set()).add(rnum)
+        has_win = any((w or 0) > 0 for w, _ in preds)
+        has_place = any((p is not None and p > 0) for _, p in preds)
+        if len(preds) < 2 or not has_win or not has_place:
+            degraded.setdefault(vc, []).append(rnum)
+    for vc in degraded:
+        degraded[vc].sort()
+    return present, degraded
+
+
 async def _reconcile_meetings(race_date: str, remediate: bool = True) -> dict:
     """Cross-check the meetings that SHOULD be on the card (RA calendar ∩ Sportsbet
     allowlist) against what's actually enriched in the DB. Optionally bust the RA
@@ -1125,12 +1169,69 @@ async def _reconcile_meetings(race_date: str, remediate: bool = True) -> dict:
     # Attach a plain-English cause to each still-missing meeting from the enrich
     # summary (status per venue_code), so the morning email is self-explaining.
     status_by_vc = {s.get("venue"): s for s in enrich_summary if isinstance(s, dict)}
+    # ── Race-level completeness — the 'non-enriched horse predictions' guard ──
+    # A meeting can be present yet (a) missing individual races, or (b) have
+    # races whose HORSE PREDICTIONS are degraded — the place model never ran,
+    # <2 runner rows, or no win prob (the ORIGINAL failure mode). Cross-check
+    # the Sportsbet race list (reliable at 09:30 — SB publishes before OddsPro)
+    # against the DB, per expected+present meeting.
+    try:
+        from horse_engine.clients.sportsbet_schedule import get_sportsbet_race_times, _norm as _sbnorm
+        sb_times = await get_sportsbet_race_times(race_date)
+    except Exception as e:
+        log.warning("[reconcile] race-times fetch failed for %s: %s", race_date, e)
+        sb_times = None
+
+    async def _race_scan():
+        present, degraded = await _race_prediction_health(race_date)
+        rm: dict[str, list[int]] = {}   # vc -> race nums with NO predictions
+        rd: dict[str, list[int]] = {}   # vc -> race nums present but degraded
+        for vc, (vname, vstate) in exp_map.items():
+            if vc not in enriched:
+                continue  # whole meeting already counted as missing
+            have = present.get(vc, set())
+            exp_nums: set[int] = set()
+            if sb_times:
+                nv = _sbnorm(vname)
+                for k, nums in sb_times.items():
+                    if k and (k == nv or k in nv or nv in k):
+                        exp_nums |= set(nums.keys())
+            if exp_nums:
+                miss = sorted(n for n in exp_nums if n not in have)
+                if miss:
+                    rm[vc] = miss
+            if degraded.get(vc):
+                rd[vc] = degraded[vc]
+        return rm, rd
+
+    rm, rd = await _race_scan()
+
+    # Heal MISSING races with a standard enrich (force=False fills races that
+    # have no rows; it only skips races that already have rows). Run it if we
+    # didn't already remediate for missing meetings above.
+    if rm and remediate and not report.get("remediated"):
+        try:
+            async with get_session() as session:
+                model = await _load_model(session)
+            await _enrich_date(race_date, client, model, force=False, sb_filter=True)
+            report["remediated"] = True
+            enriched = await _enriched_venue_codes(race_date)
+            missing = {vc: v for vc, v in exp_map.items() if vc not in enriched}
+            rm, rd = await _race_scan()
+        except Exception as e:
+            log.warning("[reconcile] race-gap remediation failed for %s: %s", race_date, e)
+
+    # Degraded races are NOT auto-healed here (a per-race forced re-enrich risks
+    # a calendar-hammer in the cron, and they should be rare now the root bug is
+    # fixed) — they are DETECTED and reported so the morning email surfaces them.
+    report["race_missing"] = {f"{exp_map[vc][0]} ({exp_map[vc][1]})": nums for vc, nums in rm.items()}
+    report["race_degraded"] = {f"{exp_map[vc][0]} ({exp_map[vc][1]})": nums for vc, nums in rd.items()}
     report["missing_after"] = sorted(f"{v[0]} ({v[1]})" for v in missing.values())
     report["missing_after_detail"] = sorted(
         f"{v[0]} ({v[1]}) — {_enrich_cause(status_by_vc.get(vc))}"
         for vc, v in missing.items()
     )
-    report["ok"] = (len(missing) == 0)
+    report["ok"] = (len(missing) == 0 and not rm and not rd)
     return report
 
 
@@ -1154,18 +1255,30 @@ def _enrich_cause(status: Optional[dict]) -> str:
 
 
 async def _email_reconcile_report(report: dict) -> bool:
-    """Email the morning reconcile result to the ops/support inbox — every
-    morning, pass or fail. Fails closed (logs, never raises)."""
+    """Email the ops/support inbox when today's data is NOT fully loaded +
+    enriched (called only on failure). Covers missing meetings, missing races,
+    AND races present with degraded/non-enriched horse predictions. Fails closed
+    (logs, never raises)."""
     from horse_engine.api.mailer import send_ops_report
     date = report.get("date", "?")
-    ok = bool(report.get("ok"))
     err = report.get("error")
-    status = "✅ All meetings loaded" if ok and not err else "⚠️ ACTION NEEDED — missing meetings"
-    subj = f"[MyHorse.Tips] Morning check {date} — {'OK' if ok and not err else 'MISSING MEETINGS'}"
-
     missing_after = report.get("missing_after") or []
-    # Prefer the per-meeting cause list ("Venue (STATE) — reason") when present.
     missing_detail = report.get("missing_after_detail") or missing_after
+    race_missing = report.get("race_missing") or {}      # {venue: [race nums]}
+    race_degraded = report.get("race_degraded") or {}    # {venue: [race nums]}
+
+    problems = []
+    if missing_after:
+        problems.append(f"{len(missing_after)} meeting(s) missing")
+    if race_missing:
+        problems.append(f"{sum(len(v) for v in race_missing.values())} race(s) missing")
+    if race_degraded:
+        problems.append(f"{sum(len(v) for v in race_degraded.values())} race(s) un-enriched")
+    headline = ", ".join(problems) if problems else (err or "issue")
+    status = f"⚠️ ACTION NEEDED — {headline}"
+    subj = f"[MyHorse.Tips] Morning check {date} — NOT COMPLETE ({headline})"
+    banner_bg, banner_fg = "#fef2f2", "#b91c1c"
+
     facts = [
         ("Date", date),
         ("RA meetings found", report.get("ra_count")),
@@ -1178,25 +1291,28 @@ async def _email_reconcile_report(report: dict) -> bool:
         f"<td style='padding:5px 12px;font-weight:600'>{v}</td></tr>"
         for k, v in facts if v is not None
     )
+
+    def _sec(title, items):
+        return (f"<p style='margin:18px 0 6px;font-weight:700;color:#b91c1c'>{title}</p>"
+                f"<ul style='margin:0;padding-left:20px;color:#b91c1c'>{items}</ul>")
+    parts = []
     if missing_after:
-        miss_html = (
-            "<p style='margin:18px 0 6px;font-weight:700;color:#b91c1c'>Still missing after auto-remediation:</p>"
-            "<ul style='margin:0;padding-left:20px;color:#b91c1c'>"
-            + "".join(f"<li style='padding:3px 0'>{m}</li>" for m in missing_detail)
-            + "</ul>"
-            "<p style='font-size:13px;color:#666;margin-top:10px'>The reason is shown after each meeting. "
-            "&lsquo;Soft-blocked&rsquo; usually clears itself on the next enrich (the fetch now rotates a fresh IP + "
-            "re-tries within the hour); &lsquo;fields not yet posted&rsquo; clears once the club loads them. If a "
-            "meeting persists all day, check the RA proxy.</p>"
-        )
-        banner_bg, banner_fg = "#fef2f2", "#b91c1c"
-    else:
-        miss_html = "<p style='margin:18px 0;color:#166534;font-weight:600'>Every Sportsbet-booked meeting is enriched and on the card. 🎉</p>"
-        banner_bg, banner_fg = "#f0fdf4", "#166534"
-    if report.get("remediated"):
-        before = report.get("missing_before") or []
-        miss_html += (f"<p style='font-size:13px;color:#666;margin-top:8px'>Auto-remediation re-enriched "
-                      f"{len(before)} meeting(s) this run: {', '.join(before)}.</p>")
+        parts.append(_sec("Meetings still missing after auto-remediation:",
+                          "".join(f"<li style='padding:3px 0'>{m}</li>" for m in missing_detail)))
+    if race_missing:
+        parts.append(_sec("On the card but MISSING races (no predictions):",
+                          "".join(f"<li style='padding:3px 0'>{v}: R{', R'.join(map(str, n))}</li>"
+                                  for v, n in sorted(race_missing.items()))))
+    if race_degraded:
+        parts.append(_sec("Races present but with NON-ENRICHED horse predictions "
+                          "(place model didn't run / no win prob / &lt;2 runners):",
+                          "".join(f"<li style='padding:3px 0'>{v}: R{', R'.join(map(str, n))}</li>"
+                                  for v, n in sorted(race_degraded.items()))))
+    miss_html = "".join(parts) or "<p style='margin:18px 0;color:#166534'>No specific gaps captured.</p>"
+    miss_html += ("<p style='font-size:13px;color:#666;margin-top:10px'>Missing meetings/races auto-remediate on "
+                  "the next enrich (fresh-IP retry). &lsquo;Non-enriched predictions&rsquo; usually mean the enrich "
+                  "ran without the place/exotic model or a partial RA fetch — force a re-enrich for those races. "
+                  "If anything persists, check the RA proxy.</p>")
     if err:
         miss_html += f"<p style='color:#b91c1c;font-weight:700'>Reconcile error: {err}</p>"
 
@@ -1213,7 +1329,11 @@ async def _email_reconcile_report(report: dict) -> bool:
         if v is not None:
             text_lines.append(f"  {k}: {v}")
     if missing_after:
-        text_lines += ["", "STILL MISSING after remediation:"] + [f"  - {m}" for m in missing_detail]
+        text_lines += ["", "MEETINGS still missing after remediation:"] + [f"  - {m}" for m in missing_detail]
+    if race_missing:
+        text_lines += ["", "MISSING races (no predictions):"] + [f"  - {v}: R{', R'.join(map(str, n))}" for v, n in sorted(race_missing.items())]
+    if race_degraded:
+        text_lines += ["", "NON-ENRICHED horse predictions:"] + [f"  - {v}: R{', R'.join(map(str, n))}" for v, n in sorted(race_degraded.items())]
     if err:
         text_lines += ["", f"ERROR: {err}"]
     text = "\n".join(text_lines)
