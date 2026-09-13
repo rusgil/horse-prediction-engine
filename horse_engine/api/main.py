@@ -1011,13 +1011,17 @@ async def _scheduled_enrich(is_initial: bool = False):
             except Exception as e:
                 log.warning("[dq] RA-vs-SB check failed for %s: %s", today, e)
 
-        # Data-source health watch (every scheduled run, debounced): alert if
-        # Sportsbet or OddsPro stops returning meetings while the other still
-        # does — catches an API change/outage on either unauthenticated feed.
-        try:
-            await _check_source_health(today)
-        except Exception as e:
-            log.warning("[source-health] failed for %s: %s", today, e)
+        # Data-source health watch: alert if Sportsbet or OddsPro stops
+        # returning meetings while the other still does. SKIP the initial
+        # (08:30) run — OddsPro publishes the day's AU thoroughbred card ~an
+        # hour later than Sportsbet (verified 2026-09-14: empty at 08:45,
+        # populated by 09:34), so an early check false-positives on OddsPro.
+        # Runs on the 10:30 / 11:30 enrichs, by which time both are populated.
+        if not is_initial:
+            try:
+                await _check_source_health(today)
+            except Exception as e:
+                log.warning("[source-health] failed for %s: %s", today, e)
     except Exception as e:
         log.exception("[scheduler] Enrichment failed: %s", e)
 
