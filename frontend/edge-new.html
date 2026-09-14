@@ -1123,7 +1123,7 @@
     const p = winProb * 100;
     if (p >= 46 && !off) return { cls: 'tier-hot',    dot: 'hot',    heat: 'heat-hot',    label: '🔥 HOT' };
     if (p >= 36 && !off) return { cls: 'tier-high',   dot: 'high',   heat: 'heat-high',   label: '⚡ HIGH' };
-    if (p >= 30)         return { cls: 'tier-strong', dot: 'strong', heat: 'heat-strong', label: 'STRONG' };
+    if (p >= 30)         return { cls: 'tier-strong', dot: 'strong', heat: 'heat-strong', label: 'MODERATE' };
     return null;
   }
   const isSettled = r => r.model_correct !== null && r.model_correct !== undefined;
@@ -1214,8 +1214,8 @@
     let chip;
     if (ct === 'hot' || (ct == null && conf >= 46 && !p.going_offtrack)) chip = '<span class="chip tier-hot2">🔥 HOT PICK</span>';
     else if (ct === 'high' || (ct == null && conf >= 36 && !p.going_offtrack)) chip = '<span class="chip tier-high2">⚡ HIGH CONFIDENCE</span>';
-    else chip = '<span class="chip tier-strong2">STRONG PICK</span>';
-    if (p.going_offtrack) chip += '<span class="chip offg" title="Soft/Heavy track — model confidence capped at Strong">⚠ OFF-GOING</span>';
+    else chip = '<span class="chip tier-strong2">MODERATE PICK</span>';
+    if (p.going_offtrack) chip += '<span class="chip offg" title="Soft/Heavy track — model confidence capped at Moderate">⚠ OFF-GOING</span>';
     return chip;
   }
 
@@ -1526,7 +1526,7 @@
       return { picks: sp, fallback: false };
     }
     // Confidence-tier filters (hot ≥46% · high 36-46% · strong 30-36%) — match
-    // the badge via tierOf so the filter shows exactly the 🔥/⚡/STRONG picks.
+    // the badge via tierOf so the filter shows exactly the 🔥/⚡/MODERATE picks.
     // No fallback-to-all: an empty tier shows the empty state, not every pick.
     if (E.mode === 'hot' || E.mode === 'high' || E.mode === 'strong') {
       const t = picks.filter(p => {
@@ -1652,7 +1652,7 @@
     el.innerHTML = picks.map(p => {
       const cd = countdown(p.scheduled_time);
       const isPast = p.scheduled_time && new Date(p.scheduled_time).getTime() < Date.now();
-      const tier = p.tier === 'hot' ? '<span class="chip tier-hot2">🔥 HOT EXOTIC</span>' : p.tier === 'high' ? '<span class="chip tier-high2">⚡ HIGH CONFIDENCE</span>' : '<span class="chip tier-strong2">STRONG EXOTIC</span>';
+      const tier = p.tier === 'hot' ? '<span class="chip tier-hot2">🔥 HOT EXOTIC</span>' : p.tier === 'high' ? '<span class="chip tier-high2">⚡ HIGH CONFIDENCE</span>' : '<span class="chip tier-strong2">MODERATE EXOTIC</span>';
       const rk = ['①', '②', '③', '④'];
       const legs = [...(p.legs || [])];
       if (p.first_four && p.first_four.length === 4 && !legs.find(l => l.horse_name === p.first_four[3].horse_name)) legs.push(p.first_four[3]);
