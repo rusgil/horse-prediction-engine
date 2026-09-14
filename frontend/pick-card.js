@@ -159,7 +159,7 @@
     const ct = pick.confidence_tier, conf = pick.win_pct || 0;
     if (ct === 'hot' || (ct == null && conf >= 46 && !pick.going_offtrack)) return '<span class="chip tier-hot2">🔥 HOT PICK</span>';
     if (ct === 'high' || (ct == null && conf >= 36 && !pick.going_offtrack)) return '<span class="chip tier-high2">⚡ HIGH CONFIDENCE</span>';
-    if (ct === 'strong' || (ct == null && conf >= 30 && !pick.going_offtrack)) return '<span class="chip tier-strong2">✦ STRONG</span>';
+    if (ct === 'strong' || (ct == null && conf >= 30 && !pick.going_offtrack)) return '<span class="chip tier-strong2">✦ MODERATE</span>';
     return '';
   }
   function favChip(pick) {

@@ -949,7 +949,7 @@
 <div class="legend-box">
   <div class="lg-item"><span class="chip tier-hot lg-chip">🔥 HOT</span><span><b>Hot pick</b> — model ≥46% win confidence. Our strongest tier: historically wins ~1 in 2.</span></div>
   <div class="lg-item"><span class="chip tier-high lg-chip">⚡ HIGH</span><span><b>High confidence</b> — 36–45% win confidence, wins ~4 in 10.</span></div>
-  <div class="lg-item"><span class="chip tier-strong lg-chip">STRONG</span><span><b>Strong pick</b> — 30–35% win confidence. Still well above a random pick.</span></div>
+  <div class="lg-item"><span class="chip tier-strong lg-chip">MODERATE</span><span><b>Moderate pick</b> — 30–35% win confidence. Still well above a random pick.</span></div>
   <div class="lg-item"><span class="chip sharp lg-chip">🎯 SHARP</span><span><b>Sharp race</b> — passed our strictest quality gate. The races we back hardest.</span></div>
   <div class="lg-item"><span class="chip cf lg-chip">👑 CLEAR FAV</span><span><b>Clear favourite</b> — our top pick leads our 2nd pick by 5+ points of win probability.</span></div>
   <div class="lg-item"><span class="chip tu lg-chip">⚖️ TOSS-UP</span><span><b>Toss-up</b> — our top two are within 2 points of each other: a genuine coin-flip.</span></div>
@@ -1205,7 +1205,7 @@
     const p = winProb * 100;
     if (p >= 46 && !off) return { cls: 'tier-hot',    dot: 'hot',    heat: 'heat-hot',    label: '🔥 HOT' };
     if (p >= 36 && !off) return { cls: 'tier-high',   dot: 'high',   heat: 'heat-high',   label: '⚡ HIGH' };
-    if (p >= 30)         return { cls: 'tier-strong', dot: 'strong', heat: 'heat-strong', label: 'STRONG' };
+    if (p >= 30)         return { cls: 'tier-strong', dot: 'strong', heat: 'heat-strong', label: 'MODERATE' };
     return null;
   }
   // Decisiveness chip: 👑 CLEAR FAV when rank1 leads rank2 by ≥5pt,
