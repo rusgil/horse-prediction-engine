@@ -136,7 +136,7 @@
     },
     {
       "source": "/api/:path*",
-      "destination": "https://api.funkyiq.com/api/:path*"
+      "destination": "https://web-staging-a02dc.up.railway.app/api/:path*"
     }
   ]
 }
