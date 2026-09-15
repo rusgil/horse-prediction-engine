@@ -1561,6 +1561,33 @@ async def save_race_predictions(session: AsyncSession, race_id: str, predictions
         )
         return
 
+    # ── Partial-overwrite guard ───────────────────────────────────────────
+    # The empty guard above only catches a ZERO-runner save. A PARTIAL fetch is
+    # just as destructive: a pre-race re-enrich that soft-blocks mid-field can
+    # return e.g. 1 runner, and the delete-then-insert below would replace a
+    # healthy full field with that stub (observed 2026-09-15: Wellington R6
+    # clobbered 13 -> 1). Real fields don't collapse like that — genuine
+    # scratchings go through the cancelled flag, not a shrunk row set. So refuse
+    # to overwrite a healthy field with a drastically smaller one; keep what we
+    # have and wait for the next clean fetch. force=True (admin repair) bypasses.
+    if not force:
+        _new_n = len(predictions)
+        _existing_n = (await session.execute(
+            select(func.count()).select_from(RunnerPredictionRow)
+            .where(RunnerPredictionRow.race_id == race_id)
+            .where(RunnerPredictionRow.cancelled.is_(False) | RunnerPredictionRow.cancelled.is_(None))
+        )).scalar() or 0
+        _healthy_min = int(os.environ.get("RACE_HEALTHY_FIELD_MIN", "5"))
+        _min_frac = float(os.environ.get("RACE_MIN_FIELD_FRACTION", "0.5"))
+        if _existing_n >= _healthy_min and _new_n < _existing_n * _min_frac:
+            logging.getLogger(__name__).warning(
+                "[save] %s: REFUSING partial overwrite — have %d runners, new save only %d "
+                "(<%.0f%% of the field). Keeping existing (likely a partial/soft-blocked RA "
+                "fetch). Pass force=True to override.",
+                race_id, _existing_n, _new_n, _min_frac * 100,
+            )
+            return
+
     # Check if an immutable history snapshot already exists for this race
     history_exists = (await session.execute(
         select(func.count()).select_from(RunnerPredictionHistoryRow)
