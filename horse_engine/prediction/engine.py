@@ -718,6 +718,16 @@ def predict_race(race: Race, model: HorseModel, venue_calibration: dict[str, flo
             trace[_top.runner.horse_name]["r1_3_segment_calib"] = f"x{_r13}->{_boosted}"
         _top.win_prob = _boosted
 
+    # Final invariant: re-enforce P(top-3) ≥ P(top-1) per horse AFTER all
+    # win_prob edits. The earlier enforcement (~L668) runs BEFORE the market-defer
+    # swap (~L694) and the R1-3 segment boost (~L719), both of which lift a
+    # win_prob without touching place_prob — leaving place_prob < win_prob, which
+    # is structurally impossible and was flagged by the integrity monitor
+    # (2026-09-16). Clamp here so the stored output always satisfies place ≥ win.
+    for p in predictions:
+        if p.place_prob is not None and p.place_prob < p.win_prob:
+            p.place_prob = round(min(p.win_prob, 0.99), 4)
+
     # Rank by place probability (using the trained place model when provided,
     # else the heuristic carried on each prediction). Sorting predictions by
     # their own place_prob guarantees the ranking matches the horse.
