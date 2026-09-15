@@ -1337,16 +1337,20 @@
   // Unified date bar: Latest = yesterday's results (newest settled day);
   // ‹ › steps through earlier dates, capped forward at yesterday.
   const edgeAccFor = d => {
-    // When d is the date the page is currently showing, mirror the on-screen
-    // strip exactly (same picks + counting) so the two never diverge. Fall back
-    // to the /api/performance aggregate only for dates not currently loaded.
-    if (E.view === 'res' && d === E.resDate) {
-      const s = edgeVisibleStats();
-      if (s) return ` <span class="dp-acc num">Win ${Math.round(s.w / s.settled * 100)}% · Plc ${Math.round((s.w + s.pl) / s.settled * 100)}%</span>`;
-    }
-    const st = E.perfByDate[d];
-    if (!st) return '';
-    return ` <span class="dp-acc num">Win ${st.pct}% · Plc ${st.placePct}%</span>`;
+    // The date-pill mirrors the on-screen breakdown's RAW count (every settled
+    // pick shown) for the date being displayed, so the pill and the stat strip
+    // can NEVER disagree. It deliberately does NOT show the /api/performance
+    // aggregate, which floors out sub-20% coin-flip races — a different
+    // methodology that made the pill read 67% while the breakdown read 60%
+    // (2026-09-15). Methodology here: count all settled. Shows nothing until the
+    // shown date's results load. (The overall/About-page stats keep their 20%
+    // floor — this only governs the on-screen Edge date-pill.)
+    const shown = (E.view === 'res') ? E.resDate : aestToday(0);
+    if (d !== shown) return '';
+    const s = edgeVisibleStats();
+    return s
+      ? ` <span class="dp-acc num">Win ${Math.round(s.w / s.settled * 100)}% · Plc ${Math.round((s.w + s.pl) / s.settled * 100)}%</span>`
+      : '';
   };
   function edgeDateBarHTML() {
     const onToday = E.view === 'up';
