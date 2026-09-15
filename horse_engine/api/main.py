@@ -1255,10 +1255,10 @@ def _enrich_cause(status: Optional[dict]) -> str:
 
 
 async def _email_reconcile_report(report: dict) -> bool:
-    """Email the ops/support inbox when today's data is NOT fully loaded +
-    enriched (called only on failure). Covers missing meetings, missing races,
-    AND races present with degraded/non-enriched horse predictions. Fails closed
-    (logs, never raises)."""
+    """Email the ops/support inbox a morning report EVERY day (pass or fail):
+    the meeting-load outcome, any self-healing that ran, and — on failure — the
+    outstanding gaps (missing meetings, missing races, or races with
+    degraded/non-enriched horse predictions). Fails closed (logs, never raises)."""
     from horse_engine.api.mailer import send_ops_report
     date = report.get("date", "?")
     err = report.get("error")
@@ -1274,10 +1274,16 @@ async def _email_reconcile_report(report: dict) -> bool:
         problems.append(f"{sum(len(v) for v in race_missing.values())} race(s) missing")
     if race_degraded:
         problems.append(f"{sum(len(v) for v in race_degraded.values())} race(s) un-enriched")
+    ok = not (missing_after or race_missing or race_degraded or err)
     headline = ", ".join(problems) if problems else (err or "issue")
-    status = f"⚠️ ACTION NEEDED — {headline}"
-    subj = f"[MyHorse.Tips] Morning check {date} — NOT COMPLETE ({headline})"
-    banner_bg, banner_fg = "#fef2f2", "#b91c1c"
+    if ok:
+        status = "✅ All meetings loaded + enriched"
+        subj = f"[MyHorse.Tips] Morning check {date} — OK"
+        banner_bg, banner_fg = "#f0fdf4", "#166534"
+    else:
+        status = f"⚠️ ACTION NEEDED — {headline}"
+        subj = f"[MyHorse.Tips] Morning check {date} — NOT COMPLETE ({headline})"
+        banner_bg, banner_fg = "#fef2f2", "#b91c1c"
 
     facts = [
         ("Date", date),
@@ -1308,11 +1314,28 @@ async def _email_reconcile_report(report: dict) -> bool:
                           "(place model didn't run / no win prob / &lt;2 runners):",
                           "".join(f"<li style='padding:3px 0'>{v}: R{', R'.join(map(str, n))}</li>"
                                   for v, n in sorted(race_degraded.items()))))
-    miss_html = "".join(parts) or "<p style='margin:18px 0;color:#166534'>No specific gaps captured.</p>"
-    miss_html += ("<p style='font-size:13px;color:#666;margin-top:10px'>Missing meetings/races auto-remediate on "
-                  "the next enrich (fresh-IP retry). &lsquo;Non-enriched predictions&rsquo; usually mean the enrich "
-                  "ran without the place/exotic model or a partial RA fetch — force a re-enrich for those races. "
-                  "If anything persists, check the RA proxy.</p>")
+    # Self-healing summary — shown pass OR fail, so the report always explains
+    # what the 09:30 remediation did.
+    if report.get("remediated"):
+        before = report.get("missing_before") or []
+        recovered = [m for m in before if m not in missing_after]
+        heal_html = ("<p style='margin:16px 0 4px;font-weight:700;color:#166534'>Self-healing ran</p>"
+                     f"<p style='font-size:13px;color:#555;margin:0'>Re-enriched "
+                     f"{(str(len(before)) + ' missing meeting(s): ' + ', '.join(before)) if before else 'race-level gaps'}."
+                     + (f" Recovered: {', '.join(recovered)}." if recovered else "")
+                     + "</p>")
+    else:
+        heal_html = "<p style='font-size:13px;color:#666;margin:14px 0 0'>No self-healing needed — the 08:30 load was complete.</p>"
+
+    if ok:
+        miss_html = heal_html + ("<p style='margin:14px 0;color:#166534;font-weight:600'>Every Sportsbet-booked "
+                                 "meeting is loaded + enriched, and all races have predictions. 🎉</p>")
+    else:
+        miss_html = heal_html + "".join(parts)
+        miss_html += ("<p style='font-size:13px;color:#666;margin-top:10px'>Missing meetings/races auto-remediate on "
+                      "the next enrich (fresh-IP retry). &lsquo;Non-enriched predictions&rsquo; usually mean the enrich "
+                      "ran without the place/exotic model or a partial RA fetch — force a re-enrich for those races. "
+                      "If anything persists, check the RA proxy.</p>")
     if err:
         miss_html += f"<p style='color:#b91c1c;font-weight:700'>Reconcile error: {err}</p>"
 
@@ -1328,6 +1351,13 @@ async def _email_reconcile_report(report: dict) -> bool:
     for k, v in facts:
         if v is not None:
             text_lines.append(f"  {k}: {v}")
+    if report.get("remediated"):
+        _before = report.get("missing_before") or []
+        text_lines += ["", "Self-healing: re-enriched " + (f"{len(_before)} gap(s): {', '.join(_before)}" if _before else "race-level gaps")]
+    else:
+        text_lines += ["", "Self-healing: none needed (08:30 load complete)."]
+    if ok:
+        text_lines += ["", "Everything loaded + enriched. All good."]
     if missing_after:
         text_lines += ["", "MEETINGS still missing after remediation:"] + [f"  - {m}" for m in missing_detail]
     if race_missing:
@@ -1344,10 +1374,9 @@ async def _email_reconcile_report(report: dict) -> bool:
 
 async def _scheduled_meeting_reconcile():
     """Daily 09:30 control: verify every Sportsbet-booked meeting is loaded +
-    enriched onto the card, self-heal any gap, and email support ONLY IF it is
-    still incomplete afterwards. A fully-loaded morning sends NO email (silence
-    = all good). Runs after the 08:30 enrich, so it catches days the morning
-    load didn't finish."""
+    enriched onto the card, self-heal any gap, and email support a morning report
+    EVERY day — pass or fail — outlining the meeting-load outcome and any
+    self-healing that ran. Runs after the 08:30 enrich."""
     race_date = _today_aest().isoformat()
     log.info("[reconcile] Morning meeting reconcile for %s", race_date)
     try:
@@ -1355,12 +1384,9 @@ async def _scheduled_meeting_reconcile():
     except Exception as e:
         log.exception("[reconcile] failed: %s", e)
         report = {"date": race_date, "ok": False, "error": str(e)}
-    if report.get("ok"):
-        # Complete by 09:30 → stay silent (email only when NOT loaded+enriched).
-        log.info("[reconcile] %s OK — %s meetings enriched, no email sent", race_date, report.get("enriched_count"))
-    else:
-        log.warning("[reconcile] %s NOT ok — missing: %s — emailing support", race_date, report.get("missing_after"))
-        await _email_reconcile_report(report)
+    log.info("[reconcile] %s %s — %s meetings enriched — sending morning report",
+             race_date, "OK" if report.get("ok") else "NOT ok", report.get("enriched_count"))
+    await _email_reconcile_report(report)
 
 
 async def _dq_ra_vs_sb(race_date: str, client) -> Optional[dict]:
@@ -4018,11 +4044,10 @@ async def lifespan(app: FastAPI):
 
     # 09:30 completeness control: cross-check RA calendar ∩ Sportsbet allowlist
     # against what's actually enriched onto the card, self-heal any gap (bust
-    # calendar cache + re-enrich), and email support ONLY IF today's data is
-    # still not loaded + enriched after the heal. A complete morning sends no
-    # email (silence = all good). Runs after the 8:30 enrich; this is the single
-    # morning data-load alert (the old 8:30 DQ email + SB/OddsPro source-health
-    # alert were folded into it).
+    # calendar cache + re-enrich), and email support a morning report EVERY day —
+    # pass or fail — outlining the meeting-load outcome + any self-healing. Runs
+    # after the 8:30 enrich; this is the single morning data-load report (the old
+    # 8:30 DQ email + SB/OddsPro source-health alert were folded into it).
     scheduler.add_job(_scheduled_meeting_reconcile, CronTrigger(hour=9, minute=30, timezone="Australia/Sydney"))
 
     # Edge cache warm-up ticks at strategic times. The continuous prewarm
