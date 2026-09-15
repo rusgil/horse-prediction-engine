@@ -1056,20 +1056,26 @@ async def _enriched_venue_codes(race_date: str) -> set[str]:
     return vcs
 
 
-async def _race_prediction_health(race_date: str) -> tuple[dict[str, set[int]], dict[str, list[int]]]:
+async def _race_prediction_health(race_date: str) -> tuple[dict[str, set[int]], dict[str, list[int]], dict[str, list[int]]]:
     """Per-race prediction health for the date, straight from the DB.
 
-    Returns (present, degraded):
-      present  = {venue_code: {race_num, ...}} — races with >=1 non-cancelled row
-      degraded = {venue_code: [race_num, ...]} — races that are PRESENT but whose
-                 HORSE PREDICTIONS look non-enriched: <2 runner rows, no usable win
-                 probability, OR the place model never ran (place_probability all
-                 null/0). This is the 'races that had non-enriched horse
-                 predictions' guard — the original failure mode (e.g. a per-meeting
-                 enrich that wrote win-probs with no place/exotic model).
+    Returns (present, degraded, anomalous):
+      present   = {venue_code: {race_num, ...}} — races with >=1 non-cancelled row
+      degraded  = {venue_code: [race_num, ...]} — races PRESENT but whose HORSE
+                  PREDICTIONS look non-enriched: <2 runner rows, no usable win
+                  probability, OR the place model never ran (place_probability all
+                  null/0). The original 'non-enriched horse predictions' failure.
+      anomalous = {venue_code: [race_num, ...]} — races PRESENT with valid rows but
+                  a DEGENERATE win-prob spread: a meaningful favourite yet the
+                  2nd-ranked runner near zero (e.g. 20% for the top pick and ~0.1%
+                  for everyone else). The models ran but the distribution looks
+                  broken. Thresholds env-tunable (RACE_ANOM_*).
     race_id format is '{race_date}_{venue_code}_R{n}'."""
     import re as _re
     prefix = f"{race_date}_"
+    _min_field = int(os.environ.get("RACE_ANOM_MIN_FIELD", "4"))
+    _top_min = float(os.environ.get("RACE_ANOM_TOP_MIN", "0.08"))
+    _second_max = float(os.environ.get("RACE_ANOM_SECOND_MAX", "0.02"))
     rows_by_rid: dict[str, list[tuple]] = {}
     async with get_session() as session:
         rows = (await session.execute(
@@ -1085,6 +1091,7 @@ async def _race_prediction_health(race_date: str) -> tuple[dict[str, set[int]], 
         rows_by_rid.setdefault(rid, []).append((win, place))
     present: dict[str, set[int]] = {}
     degraded: dict[str, list[int]] = {}
+    anomalous: dict[str, list[int]] = {}
     for rid, preds in rows_by_rid.items():
         m = _re.match(r"^(.*)_R(\d+)$", rid[len(prefix):])
         if not m:
@@ -1095,9 +1102,18 @@ async def _race_prediction_health(race_date: str) -> tuple[dict[str, set[int]], 
         has_place = any((p is not None and p > 0) for _, p in preds)
         if len(preds) < 2 or not has_win or not has_place:
             degraded.setdefault(vc, []).append(rnum)
+            continue  # already flagged; distribution check is for otherwise-valid races
+        # Distribution sanity: a real field spreads probability across several
+        # runners. A meaningful top pick with a near-zero 2nd (a spike) means the
+        # spread collapsed onto one horse — a broken-looking prediction.
+        wins = sorted((float(w or 0) for w, _ in preds), reverse=True)
+        if len(wins) >= _min_field and wins[0] >= _top_min and wins[1] < _second_max:
+            anomalous.setdefault(vc, []).append(rnum)
     for vc in degraded:
         degraded[vc].sort()
-    return present, degraded
+    for vc in anomalous:
+        anomalous[vc].sort()
+    return present, degraded, anomalous
 
 
 async def _reconcile_meetings(race_date: str, remediate: bool = True) -> dict:
@@ -1183,9 +1199,10 @@ async def _reconcile_meetings(race_date: str, remediate: bool = True) -> dict:
         sb_times = None
 
     async def _race_scan():
-        present, degraded = await _race_prediction_health(race_date)
+        present, degraded, anomalous = await _race_prediction_health(race_date)
         rm: dict[str, list[int]] = {}   # vc -> race nums with NO predictions
         rd: dict[str, list[int]] = {}   # vc -> race nums present but degraded
+        ra: dict[str, list[int]] = {}   # vc -> race nums with a degenerate spread
         for vc, (vname, vstate) in exp_map.items():
             if vc not in enriched:
                 continue  # whole meeting already counted as missing
@@ -1202,9 +1219,11 @@ async def _reconcile_meetings(race_date: str, remediate: bool = True) -> dict:
                     rm[vc] = miss
             if degraded.get(vc):
                 rd[vc] = degraded[vc]
-        return rm, rd
+            if anomalous.get(vc):
+                ra[vc] = anomalous[vc]
+        return rm, rd, ra
 
-    rm, rd = await _race_scan()
+    rm, rd, ra = await _race_scan()
 
     # Heal MISSING races with a standard enrich (force=False fills races that
     # have no rows; it only skips races that already have rows). Run it if we
@@ -1217,7 +1236,7 @@ async def _reconcile_meetings(race_date: str, remediate: bool = True) -> dict:
             report["remediated"] = True
             enriched = await _enriched_venue_codes(race_date)
             missing = {vc: v for vc, v in exp_map.items() if vc not in enriched}
-            rm, rd = await _race_scan()
+            rm, rd, ra = await _race_scan()
         except Exception as e:
             log.warning("[reconcile] race-gap remediation failed for %s: %s", race_date, e)
 
@@ -1226,12 +1245,13 @@ async def _reconcile_meetings(race_date: str, remediate: bool = True) -> dict:
     # fixed) — they are DETECTED and reported so the morning email surfaces them.
     report["race_missing"] = {f"{exp_map[vc][0]} ({exp_map[vc][1]})": nums for vc, nums in rm.items()}
     report["race_degraded"] = {f"{exp_map[vc][0]} ({exp_map[vc][1]})": nums for vc, nums in rd.items()}
+    report["race_anomalous"] = {f"{exp_map[vc][0]} ({exp_map[vc][1]})": nums for vc, nums in ra.items()}
     report["missing_after"] = sorted(f"{v[0]} ({v[1]})" for v in missing.values())
     report["missing_after_detail"] = sorted(
         f"{v[0]} ({v[1]}) — {_enrich_cause(status_by_vc.get(vc))}"
         for vc, v in missing.items()
     )
-    report["ok"] = (len(missing) == 0 and not rm and not rd)
+    report["ok"] = (len(missing) == 0 and not rm and not rd and not ra)
     return report
 
 
@@ -1266,6 +1286,7 @@ async def _email_reconcile_report(report: dict) -> bool:
     missing_detail = report.get("missing_after_detail") or missing_after
     race_missing = report.get("race_missing") or {}      # {venue: [race nums]}
     race_degraded = report.get("race_degraded") or {}    # {venue: [race nums]}
+    race_anomalous = report.get("race_anomalous") or {}  # {venue: [race nums]}
 
     problems = []
     if missing_after:
@@ -1274,7 +1295,9 @@ async def _email_reconcile_report(report: dict) -> bool:
         problems.append(f"{sum(len(v) for v in race_missing.values())} race(s) missing")
     if race_degraded:
         problems.append(f"{sum(len(v) for v in race_degraded.values())} race(s) un-enriched")
-    ok = not (missing_after or race_missing or race_degraded or err)
+    if race_anomalous:
+        problems.append(f"{sum(len(v) for v in race_anomalous.values())} race(s) look wrong")
+    ok = not (missing_after or race_missing or race_degraded or race_anomalous or err)
     headline = ", ".join(problems) if problems else (err or "issue")
     if ok:
         status = "✅ All meetings loaded + enriched"
@@ -1314,6 +1337,11 @@ async def _email_reconcile_report(report: dict) -> bool:
                           "(place model didn't run / no win prob / &lt;2 runners):",
                           "".join(f"<li style='padding:3px 0'>{v}: R{', R'.join(map(str, n))}</li>"
                                   for v, n in sorted(race_degraded.items()))))
+    if race_anomalous:
+        parts.append(_sec("Races whose predictions LOOK WRONG (degenerate spread — a "
+                          "top pick but the rest ~0%, e.g. 20% then 0.1% for all others):",
+                          "".join(f"<li style='padding:3px 0'>{v}: R{', R'.join(map(str, n))}</li>"
+                                  for v, n in sorted(race_anomalous.items()))))
     # Self-healing summary — shown pass OR fail, so the report always explains
     # what the 09:30 remediation did.
     if report.get("remediated"):
@@ -1364,6 +1392,8 @@ async def _email_reconcile_report(report: dict) -> bool:
         text_lines += ["", "MISSING races (no predictions):"] + [f"  - {v}: R{', R'.join(map(str, n))}" for v, n in sorted(race_missing.items())]
     if race_degraded:
         text_lines += ["", "NON-ENRICHED horse predictions:"] + [f"  - {v}: R{', R'.join(map(str, n))}" for v, n in sorted(race_degraded.items())]
+    if race_anomalous:
+        text_lines += ["", "PREDICTIONS LOOK WRONG (degenerate spread):"] + [f"  - {v}: R{', R'.join(map(str, n))}" for v, n in sorted(race_anomalous.items())]
     if err:
         text_lines += ["", f"ERROR: {err}"]
     text = "\n".join(text_lines)
