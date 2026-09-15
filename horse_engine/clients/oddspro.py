@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import statistics
 from datetime import datetime
 from typing import Optional
 
@@ -18,6 +19,31 @@ log = logging.getLogger(__name__)
 _BASE = "https://oddspro.com.au/api/external"
 _MEETINGS_BASE = "https://oddspro.com.au/api/meetings"
 _AU_STATES = {"NSW", "VIC", "QLD", "SA", "WA", "TAS", "NT", "ACT"}
+
+# A lone stale/erroneous bookmaker price can sit far above the real market
+# (observed 2026-09-15: Panelli, a ~$2.10 favourite, had one book at $7.50 while
+# ~33 others were ~$2.10). Taking max() across books then surfaced $7.50 as the
+# "best available" — wildly wrong, and it also fakes a huge overlay/value.
+# _ODDS_OUTLIER_FACTOR: any price above this multiple of the field MEDIAN is
+# treated as a data error and dropped, so "best available" is the best REAL
+# price a punter could get. Genuine wide spreads on longshots stay inside it.
+_ODDS_OUTLIER_FACTOR = 1.6
+
+
+def _robust_best_price(prices: list) -> Optional[float]:
+    """Best available fixed-win price, resistant to a single stale/erroneous
+    outlier. Prices at/below 1.0 are ignored. With <3 quotes there's not enough
+    to judge an outlier, so the plain best is returned; otherwise any quote more
+    than _ODDS_OUTLIER_FACTOR x the median is dropped as a data error and the max
+    of what remains is returned."""
+    ps = [p for p in prices if p and p > 1.0]
+    if not ps:
+        return None
+    if len(ps) < 3:
+        return max(ps)
+    med = statistics.median(ps)
+    within = [p for p in ps if p <= med * _ODDS_OUTLIER_FACTOR]
+    return max(within) if within else med
 
 
 class OddsProClient:
@@ -121,8 +147,9 @@ class OddsProClient:
                         for bm in markets
                         if bm.get("fixedWin") and (bm["fixedWin"].get("price") or 0) > 1.0
                     ]
-                    if prices:
-                        track_odds[(race_num, name_lower)] = max(prices)
+                    best = _robust_best_price(prices)
+                    if best is not None:
+                        track_odds[(race_num, name_lower)] = best
             result[track_lower] = track_odds
             log.debug("OddsPro meetings: %s %d runners", track_lower, len(track_odds))
 
@@ -186,7 +213,7 @@ class OddsProClient:
                         for bm in runner.get("bookmakerMarkets", [])
                         if bm.get("fixedWin") and (bm["fixedWin"].get("price") or 0) > 1.0
                     ]
-                    sp = max(prices) if prices else None
+                    sp = _robust_best_price(prices)
                     info[num] = {"name": name, "sp": sp}
                     if (runner.get("status") or "").upper() != "SCRATCHED":
                         ran.append({"number": num, "name": name, "sp": sp})
