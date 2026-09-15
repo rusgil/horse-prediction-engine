@@ -2157,7 +2157,7 @@ export CRON_SECRET='&lt;your CRON_SECRET&gt;'
                 if (tierPremium[i]) lines.push(`  💎 Premium: ${tierPremium[i]}`);
                 if (tierHot[i])     lines.push(`  🔥 Hot Pick: ${tierHot[i]}`);
                 if (tierHigh[i])    lines.push(`  ⚡ High Confidence: ${tierHigh[i]}`);
-                if (tierStrong[i])  lines.push(`  Strong Pick: ${tierStrong[i]}`);
+                if (tierStrong[i])  lines.push(`  Moderate Pick: ${tierStrong[i]}`);
                 return lines;
               },
             }}},
@@ -2747,7 +2747,7 @@ export CRON_SECRET='&lt;your CRON_SECRET&gt;'
               </div>
               <div class="tier-card">
                 <div class="tier-card-num" style="color:var(--blue)">${t.strong?.hit_rate_pct ?? 0}%</div>
-                <div class="tier-card-label">📈 Strong (rest)</div>
+                <div class="tier-card-label">📈 Moderate (rest)</div>
                 <div class="tier-card-sub">${t.strong?.hits ?? 0} / ${t.strong?.races ?? 0} races</div>
               </div>
             </div>

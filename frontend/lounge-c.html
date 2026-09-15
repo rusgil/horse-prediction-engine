@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-  <script src="/theme.js?v=22"></script>
+  <script src="/theme.js?v=24"></script>
 <meta name="robots" content="noindex">
 <title>FunkyIQ — Lounge C</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -31,8 +31,8 @@
     --purple-dim: rgba(179,136,255,0.16);
     --hot: #fb923c;
     --hot-dim: rgba(251,146,60,0.16);
-    --strong: #e879f9;
-    --strong-dim: rgba(232,121,249,0.15);
+    --strong: #2dd4bf;
+    --strong-dim: rgba(45,212,191,0.15);
     --red: #fa4d4d;
     --red-dim: rgba(250,77,77,0.14);
     --shadow: 0 10px 30px rgba(0,0,0,0.45);
@@ -58,8 +58,8 @@
     --purple-dim: rgba(124,58,237,0.10);
     --hot: #d95f0e;
     --hot-dim: rgba(217,95,14,0.13);
-    --strong: #c026d3;
-    --strong-dim: rgba(192,38,211,0.11);
+    --strong: #0d9488;
+    --strong-dim: rgba(13,148,136,0.12);
     --red: #cf4444;
     --red-dim: rgba(207,68,68,0.10);
     --shadow: 0 8px 22px rgba(22,32,46,0.09);
@@ -956,7 +956,7 @@
 <div class="legend-box">
   <div class="lg-item"><span class="chip tier-hot lg-chip">🔥 HOT</span><span><b>Hot pick</b> — model ≥46% win confidence. Our strongest tier: historically wins ~1 in 2.</span></div>
   <div class="lg-item"><span class="chip tier-high lg-chip">⚡ HIGH</span><span><b>High confidence</b> — 36–45% win confidence, wins ~4 in 10.</span></div>
-  <div class="lg-item"><span class="chip tier-strong lg-chip">STRONG</span><span><b>Strong pick</b> — 30–35% win confidence. Still well above a random pick.</span></div>
+  <div class="lg-item"><span class="chip tier-strong lg-chip">MODERATE</span><span><b>Moderate pick</b> — 30–35% win confidence. Still well above a random pick.</span></div>
   <div class="lg-item"><span class="chip sharp lg-chip">🎯 SHARP</span><span><b>Sharp race</b> — passed our strictest quality gate. The races we back hardest.</span></div>
   <div class="lg-item"><span class="chip cf lg-chip">👑 CLEAR FAV</span><span><b>Clear favourite</b> — our top pick leads our 2nd pick by 5+ points of win probability.</span></div>
   <div class="lg-item"><span class="chip tu lg-chip">⚖️ TOSS-UP</span><span><b>Toss-up</b> — our top two are within 2 points of each other: a genuine coin-flip.</span></div>
@@ -1198,7 +1198,7 @@
     const p = winProb * 100;
     if (p >= 46 && !off) return { cls: 'tier-hot',    dot: 'hot',    heat: 'heat-hot',    label: '🔥 HOT' };
     if (p >= 36 && !off) return { cls: 'tier-high',   dot: 'high',   heat: 'heat-high',   label: '⚡ HIGH' };
-    if (p >= 30)         return { cls: 'tier-strong', dot: 'strong', heat: 'heat-strong', label: 'STRONG' };
+    if (p >= 30)         return { cls: 'tier-strong', dot: 'strong', heat: 'heat-strong', label: 'MODERATE' };
     return null;
   }
   // Place play — last-2 races at country meetings are excluded from Sharp
