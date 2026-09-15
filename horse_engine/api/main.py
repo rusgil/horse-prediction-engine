@@ -5307,6 +5307,57 @@ async def auth_logout(request: Request, response: Response):
     return {"ok": True}
 
 
+@app.post("/api/admin/dev-login")
+async def dev_login(
+    email: str = "test@staging.local",
+    access: str = "power",
+    x_cron_secret: Optional[str] = Header(None),
+):
+    """STAGING-ONLY passwordless test login — 404 anywhere but APP_ENV=staging.
+
+    Real magic-link emails are suppressed on staging (email sender is off), so
+    this mints a session directly so you can test authenticated / member flows.
+    It creates (or reuses) the user, optionally grants access, and sets the
+    session cookie on the response. Double-gated: only active when
+    APP_ENV == 'staging' AND a valid admin/cron secret is supplied, so it is
+    completely inert on production (which is APP_ENV=production).
+
+    access:
+      'power'  -> role=power_user (bypasses billing; full member access)
+      'member' -> seat_active=True (active member seat)
+      'free'   -> plain member, no seat (sees the paywall)
+
+    Call it from the STAGING FRONTEND origin so the host-only cookie lands on
+    that domain — in the browser console on the staging site:
+      fetch('/api/admin/dev-login?email=you@test.dev&access=power',
+            {method:'POST', headers:{'x-cron-secret':'<staging cron secret>'}})
+        .then(r=>r.json()).then(console.log)
+    then reload. (Requires COOKIE_DOMAIN blank on staging so the cookie is
+    host-only for the preview domain.)
+    """
+    if settings.app_env != "staging":
+        raise HTTPException(status_code=404, detail="Not found")
+    _check_admin(x_cron_secret)
+    user = await _auth_get_or_create_user(email)
+    from sqlalchemy import update as sa_update
+    updates: dict = {}
+    if access == "power":
+        updates = {"role": "power_user"}
+    elif access == "member":
+        updates = {"seat_active": True}
+    elif access == "free":
+        updates = {"role": "member", "seat_active": False}
+    if updates:
+        async with get_session() as _s:
+            await _s.execute(sa_update(UserRow).where(UserRow.id == user.id).values(**updates))
+            await _s.commit()
+    cookie_token = await _auth_create_session(user.id)
+    from fastapi.responses import JSONResponse
+    resp = JSONResponse({"ok": True, "email": email, "access": access, "user_id": user.id})
+    _auth_set_session_cookie(resp, cookie_token)
+    return resp
+
+
 @app.get("/api/auth/me")
 async def auth_me(user=Depends(_auth_current_user_optional)):
     """Return the current user's identity + role, or 401 if not signed
