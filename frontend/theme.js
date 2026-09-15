@@ -69,8 +69,8 @@
     '  --amber-dim: rgba(168,100,0,0.11);',
     '  --hot: #d05a0c;',
     '  --hot-dim: rgba(208,90,12,0.12);',
-    '  --strong: #64748b;',
-    '  --strong-dim: rgba(100,116,139,0.12);',
+    '  --strong: #0d9488;',
+    '  --strong-dim: rgba(13,148,136,0.12);',
     '  --shadow: 0 6px 18px rgba(23,33,47,0.08);',
     '}',
     /* Modern brand aurora backdrop layered over each page\'s flat --bg.
