@@ -1116,6 +1116,79 @@ async def _race_prediction_health(race_date: str) -> tuple[dict[str, set[int]], 
     return present, degraded, anomalous
 
 
+async def _field_incomplete_races(
+    race_date: str, client, exp_map: dict, enriched: set,
+) -> dict[str, list[int]]:
+    """Independent field-completeness cross-check: our rated (non-cancelled)
+    field size per race vs OddsPro's active runner count.
+
+    Flags races we froze MATERIALLY SHORT — the failure _race_prediction_health
+    misses when a short field still has a normal win-prob spread (Wellington
+    2026-09-15 R6: we rated 3 of 9 starters with a plausible spread, so neither
+    the <2-runner 'degraded' nor the spike 'anomalous' check fired; the six
+    missed runners then finished, tripping unrated_finishers only AFTER the
+    race). OddsPro's count excludes scratched + no-market runners, so it is a
+    CONSERVATIVE lower bound on the true field — we only flag a gap it is
+    confident about, keeping false positives (legit late scratchings, minor
+    name-match misses) out of the morning email.
+
+    Returns {venue_code: [race_num, ...]}. Detection only — never mutates."""
+    if os.environ.get("FIELD_INCOMPLETE_CHECK", "1") != "1":
+        return {}
+    min_missing = int(os.environ.get("FIELD_INCOMPLETE_MIN_MISSING", "3"))
+    max_fraction = float(os.environ.get("FIELD_INCOMPLETE_FRACTION", "0.75"))
+    try:
+        op_odds = await client._odds.get_meeting_odds(race_date)
+    except Exception as e:
+        log.warning("[reconcile] field-completeness: OddsPro fetch failed for %s: %s", race_date, e)
+        return {}
+    if not op_odds:
+        return {}
+    # OddsPro active-runner count per track per race.
+    op_counts: dict[str, dict[int, int]] = {}
+    for track_lower, runners in op_odds.items():
+        per_race: dict[int, int] = {}
+        for (rn, _name) in runners.keys():
+            per_race[rn] = per_race.get(rn, 0) + 1
+        op_counts[track_lower] = per_race
+    op_tracks = list(op_counts.keys())
+    # Our active count per venue per race.
+    import re as _re
+    async with get_session() as session:
+        rids = (await session.execute(
+            select(RunnerPredictionRow.race_id)
+            .where(RunnerPredictionRow.race_id.like(f"{_like_safe(race_date)}_%"))
+            .where(RunnerPredictionRow.cancelled.is_(False) | RunnerPredictionRow.cancelled.is_(None))
+        )).scalars().all()
+    our_counts: dict[str, dict[int, int]] = {}
+    for rid in rids:
+        m = _re.match(r"^(.*)_R(\d+)$", rid[len(race_date) + 1:])
+        if not m:
+            continue
+        vc, rn = m.group(1), int(m.group(2))
+        our_counts.setdefault(vc, {})
+        our_counts[vc][rn] = our_counts[vc].get(rn, 0) + 1
+    incomplete: dict[str, list[int]] = {}
+    for vc, (vname, _vstate) in exp_map.items():
+        if vc not in enriched:
+            continue
+        track = (client._odds.find_matching_track(vname, op_tracks)
+                 or client._odds.find_matching_track(vc, op_tracks)
+                 or client._odds.find_matching_track(_debrand_venue(vc), op_tracks))
+        if not track:
+            continue
+        opc = op_counts.get(track) or op_counts.get(track.lower()) or {}
+        for rn, ours in (our_counts.get(vc) or {}).items():
+            expected = opc.get(rn)
+            if not expected:
+                continue
+            if (expected - ours) >= min_missing and ours < expected * max_fraction:
+                incomplete.setdefault(vc, []).append(rn)
+    for vc in incomplete:
+        incomplete[vc].sort()
+    return incomplete
+
+
 async def _reconcile_meetings(race_date: str, remediate: bool = True) -> dict:
     """Cross-check the meetings that SHOULD be on the card (RA calendar ∩ Sportsbet
     allowlist) against what's actually enriched in the DB. Optionally bust the RA
@@ -1243,9 +1316,18 @@ async def _reconcile_meetings(race_date: str, remediate: bool = True) -> dict:
     # Degraded races are NOT auto-healed here (a per-race forced re-enrich risks
     # a calendar-hammer in the cron, and they should be rare now the root bug is
     # fixed) — they are DETECTED and reported so the morning email surfaces them.
+    # Independent field-completeness cross-check (OddsPro runner count vs ours).
+    # Detects short frozen fields that _race_scan's degraded/anomalous checks
+    # miss (a plausible-looking spread over too few runners). Detection only.
+    try:
+        ri = await _field_incomplete_races(race_date, client, exp_map, enriched)
+    except Exception as e:
+        log.warning("[reconcile] field-completeness scan failed for %s: %s", race_date, e)
+        ri = {}
     report["race_missing"] = {f"{exp_map[vc][0]} ({exp_map[vc][1]})": nums for vc, nums in rm.items()}
     report["race_degraded"] = {f"{exp_map[vc][0]} ({exp_map[vc][1]})": nums for vc, nums in rd.items()}
     report["race_anomalous"] = {f"{exp_map[vc][0]} ({exp_map[vc][1]})": nums for vc, nums in ra.items()}
+    report["race_incomplete"] = {f"{exp_map[vc][0]} ({exp_map[vc][1]})": nums for vc, nums in ri.items()}
     report["missing_after"] = sorted(f"{v[0]} ({v[1]})" for v in missing.values())
     report["missing_after_detail"] = sorted(
         f"{v[0]} ({v[1]}) — {_enrich_cause(status_by_vc.get(vc))}"
@@ -1287,6 +1369,7 @@ async def _email_reconcile_report(report: dict) -> bool:
     race_missing = report.get("race_missing") or {}      # {venue: [race nums]}
     race_degraded = report.get("race_degraded") or {}    # {venue: [race nums]}
     race_anomalous = report.get("race_anomalous") or {}  # {venue: [race nums]}
+    race_incomplete = report.get("race_incomplete") or {}  # {venue: [race nums]} short field vs OddsPro
 
     problems = []
     if missing_after:
@@ -1297,7 +1380,9 @@ async def _email_reconcile_report(report: dict) -> bool:
         problems.append(f"{sum(len(v) for v in race_degraded.values())} race(s) un-enriched")
     if race_anomalous:
         problems.append(f"{sum(len(v) for v in race_anomalous.values())} race(s) look wrong")
-    ok = not (missing_after or race_missing or race_degraded or race_anomalous or err)
+    if race_incomplete:
+        problems.append(f"{sum(len(v) for v in race_incomplete.values())} race(s) short field")
+    ok = not (missing_after or race_missing or race_degraded or race_anomalous or race_incomplete or err)
     headline = ", ".join(problems) if problems else (err or "issue")
     if ok:
         status = "✅ All meetings loaded + enriched"
@@ -1342,6 +1427,12 @@ async def _email_reconcile_report(report: dict) -> bool:
                           "top pick but the rest ~0%, e.g. 20% then 0.1% for all others):",
                           "".join(f"<li style='padding:3px 0'>{v}: R{', R'.join(map(str, n))}</li>"
                                   for v, n in sorted(race_anomalous.items()))))
+    if race_incomplete:
+        parts.append(_sec("Races frozen with a SHORT FIELD (fewer runners rated than "
+                          "OddsPro lists — probabilities computed over an incomplete field; "
+                          "missed runners can win, e.g. Wellington 2026-09-15 R6 rated 3 of 9):",
+                          "".join(f"<li style='padding:3px 0'>{v}: R{', R'.join(map(str, n))}</li>"
+                                  for v, n in sorted(race_incomplete.items()))))
     # Self-healing summary — shown pass OR fail, so the report always explains
     # what the 09:30 remediation did.
     if report.get("remediated"):
@@ -1394,6 +1485,8 @@ async def _email_reconcile_report(report: dict) -> bool:
         text_lines += ["", "NON-ENRICHED horse predictions:"] + [f"  - {v}: R{', R'.join(map(str, n))}" for v, n in sorted(race_degraded.items())]
     if race_anomalous:
         text_lines += ["", "PREDICTIONS LOOK WRONG (degenerate spread):"] + [f"  - {v}: R{', R'.join(map(str, n))}" for v, n in sorted(race_anomalous.items())]
+    if race_incomplete:
+        text_lines += ["", "SHORT FIELD (fewer runners rated than OddsPro lists):"] + [f"  - {v}: R{', R'.join(map(str, n))}" for v, n in sorted(race_incomplete.items())]
     if err:
         text_lines += ["", f"ERROR: {err}"]
     text = "\n".join(text_lines)
