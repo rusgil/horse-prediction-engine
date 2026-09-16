@@ -20797,6 +20797,32 @@ async def admin_weekly_followup_measure_now(
     return {"ok": True, "result": result}
 
 
+@app.post("/api/admin/weekly-review-followup/{followup_id}/dismiss")
+async def admin_weekly_followup_dismiss(
+    followup_id: int,
+    note: str = Query("", description="Why it's being dismissed"),
+    x_cron_secret: Optional[str] = Header(None),
+):
+    """Close a follow-up WITHOUT measuring it — for stale/superseded items or
+    manual watches that have no auto-measurer (measure-now skips those as
+    'unknown measurement_type'). Marks it resolved with verdict='dismissed' so
+    the card flips off 'Awaiting review'. No model/data change."""
+    _check_admin(x_cron_secret)
+    async with get_session() as session:
+        row = (await session.execute(
+            select(WeeklyReviewFollowUpRow).where(WeeklyReviewFollowUpRow.id == followup_id)
+        )).scalars().first()
+        if not row:
+            raise HTTPException(404, "follow-up not found")
+        row.measured_at = datetime.utcnow()
+        row.verdict = "dismissed"
+        if note:
+            row.next_action_md = f"Dismissed: {note}"
+        await session.commit()
+        title = row.title
+    return {"ok": True, "dismissed": followup_id, "title": title}
+
+
 @app.get("/api/admin/benchmark-historical-results-queries")
 async def admin_benchmark_historical_results(
     x_cron_secret: Optional[str] = Header(None),
@@ -32810,14 +32836,23 @@ async def _compute_output_calibration_curve(days: int = 45) -> dict:
                       f"({len(samples):,} samples) — not queued for review",
         }
 
-    # Surface a follow-up row for human review. Reviewer promotes or
-    # rejects via the dashboard buttons (POST endpoints below).
-    await _seed_candidate_review_followup(
-        artefact="isotonic",
-        candidate_id=candidate_id,
-        backtest=backtest,
-        sample_size=len(samples),
-    )
+    # Surface a follow-up row for human review — but ONLY when isotonic is
+    # actually ENABLED. While it's disabled (_load_output_calibration_curve
+    # returns None) a promoted candidate wouldn't be applied anyway, so seeding a
+    # daily "review candidate #N" reminder just floods the follow-up list with a
+    # treadmill (36 stale rows by 2026-09-16). The candidate row is still written
+    # above for audit / for when isotonic is re-enabled; the seeding resumes
+    # automatically once the load short-circuit is removed.
+    if await _load_output_calibration_curve() is None:
+        log.info("[output_calibration] candidate #%d written but isotonic is DISABLED "
+                 "— skipping review follow-up (no treadmill)", candidate_id)
+    else:
+        await _seed_candidate_review_followup(
+            artefact="isotonic",
+            candidate_id=candidate_id,
+            backtest=backtest,
+            sample_size=len(samples),
+        )
 
     log.info("[output_calibration] candidate #%d written from %d samples: %d breakpoints, backtest delta=%+.2fpp",
              candidate_id, len(samples), len(curve), backtest.get("win_pct_delta", 0.0))
