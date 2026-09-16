@@ -726,7 +726,14 @@ def predict_race(race: Race, model: HorseModel, venue_calibration: dict[str, flo
     # (2026-09-16). Clamp here so the stored output always satisfies place ≥ win.
     for p in predictions:
         if p.place_prob is not None and p.place_prob < p.win_prob:
-            p.place_prob = round(min(p.win_prob, 0.99), 4)
+            # Ceiling is 1.0, NOT 0.99: on a degenerate near-empty field a
+            # favourite's win_prob can round to ~1.0 (e.g. 2026-09-15 Wellington
+            # R6, a partially-enriched NZ card where only one runner was rated).
+            # min(win, 0.99) would then leave place=0.99 < win — re-raising the
+            # very place<win CRITICAL this clamp exists to prevent. Cap at 1.0 so
+            # place can always reach win. Healthy fields have win << 0.99, so the
+            # cosmetic 0.99 place ceiling at L670 still governs every normal race.
+            p.place_prob = round(min(p.win_prob, 1.0), 4)
 
     # Rank by place probability (using the trained place model when provided,
     # else the heuristic carried on each prediction). Sorting predictions by
