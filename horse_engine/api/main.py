@@ -18473,6 +18473,28 @@ async def _auto_heal_findings(target: str, findings: list[dict]) -> list[dict]:
                             "affected": synced, "reverted_post_jump": reverted_post_jump,
                             "outcome": "healed" if (synced or reverted_post_jump) else "skipped"})
 
+        elif check == "place_prob_less_than_win_prob":
+            # Enforce the structural invariant P(top-3) >= P(top-1) on the MUTABLE
+            # rows (frozen history is never touched). This is the data-heal mirror
+            # of the engine clamp (prediction/engine.py): a settled row written
+            # before the clamp fix shipped — e.g. a degenerate near-empty field
+            # where win rounds to ~1.0 — keeps a place<win CRITICAL lit until it
+            # ages out. One DB-side UPDATE raises place UP to win; never lowers.
+            async with get_session() as session:
+                res = await session.execute(
+                    sa_update(RunnerPredictionRow)
+                    .where(RunnerPredictionRow.race_id.like(f"{_like_safe(target)}_%"))
+                    .where(RunnerPredictionRow.cancelled.is_(False) | RunnerPredictionRow.cancelled.is_(None))
+                    .where(RunnerPredictionRow.place_probability < RunnerPredictionRow.win_probability)
+                    .values(place_probability=RunnerPredictionRow.win_probability)
+                )
+                if res.rowcount:
+                    await session.commit()
+            _edge_response_cache = None
+            actions.append({"check": check, "action": "clamp_place_to_win",
+                            "affected": res.rowcount or 0,
+                            "outcome": "healed" if res.rowcount else "skipped"})
+
         elif check == "stale_response_cache":
             _edge_response_cache = None
             actions.append({"check": check, "action": "bust_edge_cache",
