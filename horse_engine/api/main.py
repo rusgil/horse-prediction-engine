@@ -15061,6 +15061,114 @@ async def market_disagreement_backtest(
     }
 
 
+@app.get("/api/admin/tier-performance-backtest")
+async def tier_performance_backtest(
+    start: Optional[str] = Query(None, description="inclusive YYYY-MM-DD; default = today-`days`"),
+    end: Optional[str] = Query(None, description="inclusive YYYY-MM-DD; default = today"),
+    days: int = Query(30, ge=1, le=365),
+    x_cron_secret: Optional[str] = Header(None),
+):
+    """Per confidence-tier performance for settled races in a date range.
+
+    Buckets each race by its frozen live rank-1 win% into the SAME tiers the site
+    publishes — HOT (>=46%), HIGH (36-46%), MODERATE (<36%) — and reports, per
+    tier: strike rate (top pick won), agreement with the market favourite, and
+    flat-stake ROI at starting price. Frozen live snapshots only, earliest per
+    race (same contamination guards as the tier grade). Read-only.
+
+    Note: tiers here are derived from the raw frozen win%, so a pick PUBLISHED at
+    a capped tier (off-going Soft/Heavy caps at MODERATE) is bucketed by its true
+    win% — this measures model confidence, not the badge shown."""
+    _check_admin(x_cron_secret)
+    if start:
+        _validate_date(start)
+    if end:
+        _validate_date(end)
+    lo = f"{start}_" if start else f"{(_today_aest() - timedelta(days=int(days))).isoformat()}_"
+    # exclusive upper bound = day after `end`
+    hi = None
+    if end:
+        _e = date.fromisoformat(end) + timedelta(days=1)
+        hi = f"{_e.isoformat()}_"
+    async with get_session() as session:
+        q = (
+            select(
+                RunnerPredictionHistoryRow.race_id,
+                RunnerPredictionHistoryRow.horse_name,
+                RunnerPredictionHistoryRow.win_probability,
+                RunnerPredictionHistoryRow.market_rank,
+                RunnerPredictionHistoryRow.scheduled_time,
+                RunnerPredictionHistoryRow.enriched_at,
+            )
+            .where(RunnerPredictionHistoryRow.race_id >= lo)
+            .where(RunnerPredictionHistoryRow.model_rank == 1)
+            .where(RunnerPredictionHistoryRow.cancelled.is_(False)
+                   | RunnerPredictionHistoryRow.cancelled.is_(None))
+            .where((RunnerPredictionHistoryRow.source == "live")
+                   | RunnerPredictionHistoryRow.source.is_(None))
+            .order_by(RunnerPredictionHistoryRow.enriched_at.asc())
+        )
+        if hi:
+            q = q.where(RunnerPredictionHistoryRow.race_id < hi)
+        prows = (await session.execute(q)).fetchall()
+        rq = (
+            select(HistoricalResultRow.race_id, HistoricalResultRow.horse_name,
+                   HistoricalResultRow.position, HistoricalResultRow.starting_price)
+            .where(HistoricalResultRow.race_id >= lo)
+        )
+        if hi:
+            rq = rq.where(HistoricalResultRow.race_id < hi)
+        rres = (await session.execute(rq)).fetchall()
+    winner = {rid: _normalize_horse(hn) for rid, hn, pos, _sp in rres if pos == 1}
+    sp_by = {(rid, _normalize_horse(hn)): sp for rid, hn, _pos, sp in rres}
+    picks: dict[str, tuple] = {}  # earliest live rank-1 per race
+    for rid, hn, wp, mrank, sched, ea in prows:
+        if rid in picks:
+            continue
+        if sched:  # belt-and-braces: written before jump
+            try:
+                if ea and ea >= datetime.fromisoformat(sched.replace("Z", "")):
+                    continue
+            except Exception:
+                pass
+        picks[rid] = (hn, (wp or 0.0), mrank)
+    tiers: dict[str, list] = {"hot": [], "high": [], "moderate": []}
+    for rid, (hn, wp, mrank) in picks.items():
+        if rid not in winner:
+            continue  # settled races only
+        wpc = wp * 100
+        tier = "hot" if wpc >= 46 else "high" if wpc >= 36 else "moderate"
+        won = _normalize_horse(hn) == winner[rid]
+        sp = sp_by.get((rid, _normalize_horse(hn)))
+        tiers[tier].append((won, sp, mrank == 1))
+
+    def summ(rows: list) -> dict:
+        n = len(rows)
+        if not n:
+            return {"n": 0}
+        wins = sum(1 for w, _, _ in rows if w)
+        favs = sum(1 for _, _, f in rows if f)
+        priced = [(w, float(sp)) for w, sp, _ in rows if sp and sp > 1]
+        staked = len(priced)
+        ret = sum(sp for w, sp in priced if w)
+        return {
+            "n": n,
+            "win_pct": round(100.0 * wins / n, 1),
+            "fav_agreement_pct": round(100.0 * favs / n, 1),
+            "priced_n": staked,
+            "roi_pct_flat_sp": round((ret - staked) / staked * 100, 1) if staked else None,
+        }
+    all_rows = tiers["hot"] + tiers["high"] + tiers["moderate"]
+    return {
+        "range": {"from": start or lo[:-1], "to": end or "today"},
+        "graded_races": len(all_rows),
+        "all": summ(all_rows),
+        "hot_ge46": summ(tiers["hot"]),
+        "high_36to46": summ(tiers["high"]),
+        "moderate_lt36": summ(tiers["moderate"]),
+    }
+
+
 @app.post("/api/admin/backfill-field-size")
 async def backfill_field_size(
     days: int = Query(90, ge=1, le=365),
