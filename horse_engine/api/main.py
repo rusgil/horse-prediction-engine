@@ -15084,6 +15084,7 @@ async def tier_performance_backtest(
         _validate_date(start)
     if end:
         _validate_date(end)
+    from horse_engine.bets import is_metro_venue as _is_metro
     lo = f"{start}_" if start else f"{(_today_aest() - timedelta(days=int(days))).isoformat()}_"
     # exclusive upper bound = day after `end`
     hi = None
@@ -15091,17 +15092,23 @@ async def tier_performance_backtest(
         _e = date.fromisoformat(end) + timedelta(days=1)
         hi = f"{_e.isoformat()}_"
     async with get_session() as session:
+        # Pull the FULL field (all runners), not just rank-1 — needed to recompute
+        # the Sharp gate (rank-2 gap, top-3 sum) rather than trust the frozen
+        # is_sharp flag, which is known to freeze wrong (incident 2026-08).
         q = (
             select(
                 RunnerPredictionHistoryRow.race_id,
                 RunnerPredictionHistoryRow.horse_name,
                 RunnerPredictionHistoryRow.win_probability,
+                RunnerPredictionHistoryRow.model_rank,
                 RunnerPredictionHistoryRow.market_rank,
+                RunnerPredictionHistoryRow.venue,
+                RunnerPredictionHistoryRow.race_number,
+                RunnerPredictionHistoryRow.batch_id,
                 RunnerPredictionHistoryRow.scheduled_time,
                 RunnerPredictionHistoryRow.enriched_at,
             )
             .where(RunnerPredictionHistoryRow.race_id >= lo)
-            .where(RunnerPredictionHistoryRow.model_rank == 1)
             .where(RunnerPredictionHistoryRow.cancelled.is_(False)
                    | RunnerPredictionHistoryRow.cancelled.is_(None))
             .where((RunnerPredictionHistoryRow.source == "live")
@@ -15110,7 +15117,7 @@ async def tier_performance_backtest(
         )
         if hi:
             q = q.where(RunnerPredictionHistoryRow.race_id < hi)
-        prows = (await session.execute(q)).fetchall()
+        allrows = (await session.execute(q)).fetchall()
         rq = (
             select(HistoricalResultRow.race_id, HistoricalResultRow.horse_name,
                    HistoricalResultRow.position, HistoricalResultRow.starting_price)
@@ -15121,26 +15128,57 @@ async def tier_performance_backtest(
         rres = (await session.execute(rq)).fetchall()
     winner = {rid: _normalize_horse(hn) for rid, hn, pos, _sp in rres if pos == 1}
     sp_by = {(rid, _normalize_horse(hn)): sp for rid, hn, _pos, sp in rres}
-    picks: dict[str, tuple] = {}  # earliest live rank-1 per race
-    for rid, hn, wp, mrank, sched, ea in prows:
-        if rid in picks:
-            continue
-        if sched:  # belt-and-braces: written before jump
-            try:
-                if ea and ea >= datetime.fromisoformat(sched.replace("Z", "")):
-                    continue
-            except Exception:
-                pass
-        picks[rid] = (hn, (wp or 0.0), mrank)
+
+    by_race: dict[str, list] = {}
+    for r in allrows:
+        by_race.setdefault(r.race_id, []).append(r)
+    # meeting_max race number per (date, venue) — for the late-non-metro gate.
+    mtg_max: dict[tuple, int] = {}
+    for rid, rrows in by_race.items():
+        d10 = rid[:10]
+        vc = _parse_race_id(rid)[1]
+        for r in rrows:
+            if r.race_number:
+                mtg_max[(d10, vc)] = max(mtg_max.get((d10, vc), 0), r.race_number)
+
     tiers: dict[str, list] = {"hot": [], "high": [], "moderate": []}
-    for rid, (hn, wp, mrank) in picks.items():
+    sharp_rows: list = []
+    for rid, rrows in by_race.items():
         if rid not in winner:
             continue  # settled races only
-        wpc = wp * 100
+        # earliest pre-jump snapshot (batch) → the field as first frozen.
+        first = min(rrows, key=lambda x: (x.enriched_at or datetime.max))
+        if first.scheduled_time:
+            try:
+                if first.enriched_at and first.enriched_at >= datetime.fromisoformat(first.scheduled_time.replace("Z", "")):
+                    continue  # written after jump — contaminated
+            except Exception:
+                pass
+        field = [x for x in rrows if (x.batch_id == first.batch_id)] if first.batch_id \
+            else [x for x in rrows if x.enriched_at == first.enriched_at]
+        rank1 = next((x for x in field if x.model_rank == 1), None) or max(field, key=lambda x: (x.win_probability or 0))
+        wps = sorted([(x.win_probability or 0.0) for x in field], reverse=True)
+        r1p = wps[0] if wps else 0.0
+        r2p = wps[1] if len(wps) > 1 else 0.0
+        top3 = sum(wps[:3])
+        d10 = rid[:10]
+        vc = _parse_race_id(rid)[1]
+        is_sharp = _is_sharp_gate(
+            r1p, r2p, top3,
+            days_since_last_run=None,  # not stored on history — >180d layoff gate skipped (rare)
+            is_metro=_is_metro(rank1.venue or vc),
+            race_number=rank1.race_number,
+            meeting_max_race=mtg_max.get((d10, vc), 0),
+            race_date=d10,
+        )
+        wpc = (rank1.win_probability or 0.0) * 100
         tier = "hot" if wpc >= 46 else "high" if wpc >= 36 else "moderate"
-        won = _normalize_horse(hn) == winner[rid]
-        sp = sp_by.get((rid, _normalize_horse(hn)))
-        tiers[tier].append((won, sp, mrank == 1))
+        won = _normalize_horse(rank1.horse_name) == winner[rid]
+        sp = sp_by.get((rid, _normalize_horse(rank1.horse_name)))
+        rec = (won, sp, rank1.market_rank == 1)
+        tiers[tier].append(rec)
+        if is_sharp:
+            sharp_rows.append(rec)
 
     def summ(rows: list) -> dict:
         n = len(rows)
@@ -15166,6 +15204,8 @@ async def tier_performance_backtest(
         "hot_ge46": summ(tiers["hot"]),
         "high_36to46": summ(tiers["high"]),
         "moderate_lt36": summ(tiers["moderate"]),
+        "sharp": summ(sharp_rows),
+        "sharp_note": "Sharp recomputed via _is_sharp_gate from the earliest pre-jump snapshot; >180d layoff gate skipped (days_since_last_run not on history rows).",
     }
 
 
