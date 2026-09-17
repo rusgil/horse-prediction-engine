@@ -15066,6 +15066,7 @@ async def tier_performance_backtest(
     start: Optional[str] = Query(None, description="inclusive YYYY-MM-DD; default = today-`days`"),
     end: Optional[str] = Query(None, description="inclusive YYYY-MM-DD; default = today"),
     days: int = Query(30, ge=1, le=365),
+    detail: bool = Query(False, description="also return the per-pick rows (for external matching, e.g. CLV)"),
     x_cron_secret: Optional[str] = Header(None),
 ):
     """Per confidence-tier performance for settled races in a date range.
@@ -15143,6 +15144,7 @@ async def tier_performance_backtest(
 
     tiers: dict[str, list] = {"hot": [], "high": [], "moderate": []}
     sharp_rows: list = []
+    detail_rows: list = []
     for rid, rrows in by_race.items():
         if rid not in winner:
             continue  # settled races only
@@ -15179,6 +15181,20 @@ async def tier_performance_backtest(
         tiers[tier].append(rec)
         if is_sharp:
             sharp_rows.append(rec)
+        if detail:
+            detail_rows.append({
+                "race_id": rid,
+                "date": d10,
+                "venue_code": vc,
+                "race_number": rank1.race_number,
+                "horse_name": rank1.horse_name,
+                "win_prob": round(rank1.win_probability or 0.0, 4),
+                "tier": tier,
+                "is_sharp": is_sharp,
+                "is_fav": rank1.market_rank == 1,
+                "won": won,
+                "sp": float(sp) if sp else None,
+            })
 
     def summ(rows: list) -> dict:
         n = len(rows)
@@ -15206,6 +15222,7 @@ async def tier_performance_backtest(
         "moderate_lt36": summ(tiers["moderate"]),
         "sharp": summ(sharp_rows),
         "sharp_note": "Sharp recomputed via _is_sharp_gate from the earliest pre-jump snapshot; >180d layoff gate skipped (days_since_last_run not on history rows).",
+        **({"picks": detail_rows} if detail else {}),
     }
 
 
