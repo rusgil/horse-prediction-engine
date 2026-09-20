@@ -4271,6 +4271,34 @@ def _history_healthy_filter():
     )
 
 
+# Whole-day stats write-offs — dates whose predictions were systemically bad
+# (e.g. a blind enrich where OddsPro odds weren't up: the model ran without the
+# market, favourites were mis-ranked, most of the card was wrong). Such a day must
+# NEVER count toward DISPLAYED performance: a blind race whose pick lost would
+# otherwise be scored as a real loss and drag win-rate/ROI down (i.e. missing data
+# counted as 0%). Belt-and-braces alongside the per-row `contaminated` flag, which
+# the auto-repair job can flip back off.
+STATS_EXCLUDED_DATES: frozenset = frozenset({
+    "2026-09-20",   # all-country card enriched blind — OddsPro odds not up at enrich
+})
+
+
+def _exclude_stats_dates(race_id_col):
+    """SQLAlchemy clause excluding STATS_EXCLUDED_DATES from a race_id column
+    (race_ids are '{YYYY-MM-DD}_{venue}_R{n}'). No-op (true) when the set is
+    empty. Apply to every DISPLAYED performance read so a written-off day never
+    counts as results — neither wins nor losses."""
+    from sqlalchemy import and_, not_, true
+    if not STATS_EXCLUDED_DATES:
+        return true()
+    return and_(*[not_(race_id_col.like(f"{_like_safe(d)}_%")) for d in STATS_EXCLUDED_DATES])
+
+
+def _race_id_date_excluded(race_id: str) -> bool:
+    """Python-side counterpart of _exclude_stats_dates for in-memory filtering."""
+    return (race_id or "")[:10] in STATS_EXCLUDED_DATES
+
+
 # Defense #3 — auto-repair contaminated snapshots once upstream returns
 # to health. Tracks how long we've been continuously healthy so we don't
 # repair inside a flapping window; requires ≥ this many minutes of solid
@@ -20536,7 +20564,7 @@ async def _measure_premium_bao_roi_500() -> float:
     cutoff = (_today_aest() - timedelta(days=365)).isoformat()
     async with get_session() as session:
         hr_rows = (await session.execute(
-            select(HistoricalResultRow).where(HistoricalResultRow.race_id >= cutoff)
+            select(HistoricalResultRow).where(HistoricalResultRow.race_id >= cutoff).where(_exclude_stats_dates(HistoricalResultRow.race_id))
         )).scalars().all()
         if not hr_rows:
             return 0.0
@@ -24551,7 +24579,7 @@ async def _backtest_weight_candidate(
         )).scalars().all()
 
         hr_rows = (await session.execute(
-            select(HistoricalResultRow).where(HistoricalResultRow.race_id >= cutoff)
+            select(HistoricalResultRow).where(HistoricalResultRow.race_id >= cutoff).where(_exclude_stats_dates(HistoricalResultRow.race_id))
         )).scalars().all()
 
     winners = {r.race_id: _normalize_horse(r.horse_name) for r in hr_rows if r.position == 1}
@@ -29751,7 +29779,9 @@ async def performance_summary(
 
     async with get_session() as session:
         hr_result = await session.execute(
-            select(HistoricalResultRow).where(HistoricalResultRow.race_id >= cutoff)
+            select(HistoricalResultRow)
+            .where(HistoricalResultRow.race_id >= cutoff)
+            .where(_exclude_stats_dates(HistoricalResultRow.race_id))  # drop written-off days
         )
         hr_rows = hr_result.scalars().all()
 
@@ -29771,6 +29801,7 @@ async def performance_summary(
             # FIX-S source leg — quarantined/validation rows must not grade
             .where((RunnerPredictionHistoryRow.source == "live")
                    | RunnerPredictionHistoryRow.source.is_(None))
+            .where(_history_healthy_filter())  # exclude contaminated (blind-enrich) rows
             .order_by(RunnerPredictionHistoryRow.enriched_at.desc())
         )
         top_picks: dict[str, RunnerPredictionHistoryRow] = {}
@@ -30263,7 +30294,9 @@ async def performance_tier_grade(sample_size: int = Query(500, ge=100, le=2000))
 
     async with get_session() as session:
         hr_rows = (await session.execute(
-            select(HistoricalResultRow).where(HistoricalResultRow.race_id >= cutoff)
+            select(HistoricalResultRow)
+            .where(HistoricalResultRow.race_id >= cutoff)
+            .where(_exclude_stats_dates(HistoricalResultRow.race_id))  # drop written-off days
         )).scalars().all()
         if not hr_rows:
             return {"buckets": {"all": None, "sharp": None, "non_sharp": None}}
@@ -30283,6 +30316,7 @@ async def performance_tier_grade(sample_size: int = Query(500, ge=100, le=2000))
             .where(RunnerPredictionHistoryRow.model_rank == 1)
             .where(RunnerPredictionHistoryRow.cancelled.is_(False) | RunnerPredictionHistoryRow.cancelled.is_(None))
             .where(RunnerPredictionHistoryRow.source == "live")
+            .where(_history_healthy_filter())  # exclude contaminated (blind-enrich) rows
             .order_by(RunnerPredictionHistoryRow.enriched_at.asc())
         )
         top_picks: dict[str, RunnerPredictionHistoryRow] = {}
@@ -31572,7 +31606,7 @@ async def performance_by_venue(days: int = Query(30, ge=1, le=90)):
     cutoff = (date.today() - timedelta(days=days)).isoformat()
     async with get_session() as session:
         hr_result = await session.execute(
-            select(HistoricalResultRow).where(HistoricalResultRow.race_id >= cutoff)
+            select(HistoricalResultRow).where(HistoricalResultRow.race_id >= cutoff).where(_exclude_stats_dates(HistoricalResultRow.race_id))
         )
         hr_rows = hr_result.scalars().all()
         if not hr_rows:
@@ -31760,7 +31794,7 @@ async def open_race_backtest(
     cutoff = (date.today() - timedelta(days=days)).isoformat()
     async with get_session() as session:
         hr_rows = (await session.execute(
-            select(HistoricalResultRow).where(HistoricalResultRow.race_id >= cutoff)
+            select(HistoricalResultRow).where(HistoricalResultRow.race_id >= cutoff).where(_exclude_stats_dates(HistoricalResultRow.race_id))
         )).scalars().all()
         if not hr_rows:
             return {"days": days, "total_rank1": 0}
@@ -31924,7 +31958,9 @@ async def premium_performance(days: int = Query(30, ge=1, le=365), x_cron_secret
 
     async with get_session() as session:
         hr_result = await session.execute(
-            select(HistoricalResultRow).where(HistoricalResultRow.race_id >= cutoff)
+            select(HistoricalResultRow)
+            .where(HistoricalResultRow.race_id >= cutoff)
+            .where(_exclude_stats_dates(HistoricalResultRow.race_id))  # drop written-off days
         )
         hr_rows = hr_result.scalars().all()
 
@@ -31943,6 +31979,7 @@ async def premium_performance(days: int = Query(30, ge=1, le=365), x_cron_secret
             .where(RunnerPredictionHistoryRow.win_probability.isnot(None))
             .where(RunnerPredictionHistoryRow.cancelled.is_(False) | RunnerPredictionHistoryRow.cancelled.is_(None))
             .where(RunnerPredictionHistoryRow.source == "live")
+            .where(_history_healthy_filter())  # exclude contaminated (blind-enrich) rows
             .order_by(RunnerPredictionHistoryRow.enriched_at.desc())
         )
         top_picks: dict[str, RunnerPredictionHistoryRow] = {}
@@ -32001,7 +32038,7 @@ async def premium_performance_public():
 
     async with get_session() as session:
         hr_result = await session.execute(
-            select(HistoricalResultRow).where(HistoricalResultRow.race_id >= cutoff)
+            select(HistoricalResultRow).where(HistoricalResultRow.race_id >= cutoff).where(_exclude_stats_dates(HistoricalResultRow.race_id))
         )
         hr_rows = hr_result.scalars().all()
         if not hr_rows:
@@ -32094,7 +32131,7 @@ async def premium_performance_monthly():
 
     async with get_session() as session:
         hr_result = await session.execute(
-            select(HistoricalResultRow).where(HistoricalResultRow.race_id >= cutoff)
+            select(HistoricalResultRow).where(HistoricalResultRow.race_id >= cutoff).where(_exclude_stats_dates(HistoricalResultRow.race_id))
         )
         hr_rows = hr_result.scalars().all()
         if not hr_rows:
@@ -32166,7 +32203,7 @@ async def premium_performance_daily():
 
     async with get_session() as session:
         hr_result = await session.execute(
-            select(HistoricalResultRow).where(HistoricalResultRow.race_id >= cutoff)
+            select(HistoricalResultRow).where(HistoricalResultRow.race_id >= cutoff).where(_exclude_stats_dates(HistoricalResultRow.race_id))
         )
         hr_rows = hr_result.scalars().all()
         if not hr_rows:
@@ -33117,7 +33154,7 @@ async def _load_venue_calibration() -> dict[str, float]:
     cutoff = (date.today() - timedelta(days=60)).isoformat()
     async with get_session() as session:
         hr_result = await session.execute(
-            select(HistoricalResultRow).where(HistoricalResultRow.race_id >= cutoff)
+            select(HistoricalResultRow).where(HistoricalResultRow.race_id >= cutoff).where(_exclude_stats_dates(HistoricalResultRow.race_id))
         )
         hr_rows = hr_result.scalars().all()
         if not hr_rows:
@@ -33320,7 +33357,7 @@ async def _compute_output_calibration_curve(days: int = 45) -> dict:
     cutoff = (date.today() - timedelta(days=days)).isoformat()
     async with get_session() as session:
         hr_rows = (await session.execute(
-            select(HistoricalResultRow).where(HistoricalResultRow.race_id >= cutoff)
+            select(HistoricalResultRow).where(HistoricalResultRow.race_id >= cutoff).where(_exclude_stats_dates(HistoricalResultRow.race_id))
         )).scalars().all()
         if not hr_rows:
             return {"ok": False, "reason": "no historical results in window"}
