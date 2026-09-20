@@ -18230,15 +18230,19 @@ async def admin_bust_meetings_cache(
 async def admin_quality_gate(
     remediate: bool = True,
     assess_only: bool = False,
+    date: Optional[str] = None,
     x_cron_secret: Optional[str] = Header(None),
 ):
     """Run the final daily quality gate on demand (same logic as the 11:45 cron).
     `assess_only=true` returns the health verdict without flipping the splash or
-    re-enriching (safe read-only dry-run). `remediate` (default true) attempts a
+    re-enriching (safe read-only dry-run); `date` (YYYY-MM-DD, assess_only only)
+    checks a past card for calibration. `remediate` (default true) attempts a
     self-healing re-enrich when the card is unhealthy."""
     _check_admin(x_cron_secret)
     if assess_only:
-        return await _assess_card_health(_today_aest().isoformat())
+        target = date or _today_aest().isoformat()
+        _validate_date(target)
+        return await _assess_card_health(target)
     return await _run_final_quality_gate(remediate=remediate)
 
 
