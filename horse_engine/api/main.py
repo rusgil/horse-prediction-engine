@@ -3427,7 +3427,13 @@ async def _assess_card_health(race_date: str) -> dict:
 
     Tunable via QGATE_* env. Detection only — never mutates predictions."""
     import re as _re
-    _blind_frac_max = float(os.environ.get("QGATE_MARKET_BLIND_FRACTION", "0.5"))
+    # Threshold calibrated on real cards: a HEALTHY metro day (2026-09-19) buried
+    # the favourite outside our top-3 in just 3% of priced races (max rank-1
+    # 76%); the BLIND country day (2026-09-20) buried it in 45% (max 34%). 0.25
+    # sits 8x above the healthy baseline and well below the blind level — the
+    # blend weights the market at ~0.79, so a SIGHTED model cannot disagree with
+    # the favourite this often; a high fraction means odds never reached the blend.
+    _blind_frac_max = float(os.environ.get("QGATE_MARKET_BLIND_FRACTION", "0.25"))
     _min_priced = int(os.environ.get("QGATE_MIN_PRICED_RACES", "5"))
     reasons: list[str] = []
     stats: dict = {}
@@ -18230,15 +18236,19 @@ async def admin_bust_meetings_cache(
 async def admin_quality_gate(
     remediate: bool = True,
     assess_only: bool = False,
+    date: Optional[str] = None,
     x_cron_secret: Optional[str] = Header(None),
 ):
     """Run the final daily quality gate on demand (same logic as the 11:45 cron).
     `assess_only=true` returns the health verdict without flipping the splash or
-    re-enriching (safe read-only dry-run). `remediate` (default true) attempts a
+    re-enriching (safe read-only dry-run); `date` (YYYY-MM-DD, assess_only only)
+    checks a past card for calibration. `remediate` (default true) attempts a
     self-healing re-enrich when the card is unhealthy."""
     _check_admin(x_cron_secret)
     if assess_only:
-        return await _assess_card_health(_today_aest().isoformat())
+        target = date or _today_aest().isoformat()
+        _validate_date(target)
+        return await _assess_card_health(target)
     return await _run_final_quality_gate(remediate=remediate)
 
 
