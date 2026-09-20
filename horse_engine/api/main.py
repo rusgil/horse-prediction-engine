@@ -1512,6 +1512,107 @@ async def _scheduled_meeting_reconcile():
     await _email_reconcile_report(report)
 
 
+async def _run_final_quality_gate(remediate: bool = True) -> dict:
+    """FINAL daily quality gate — the last check after the morning enrich cycle,
+    BEFORE the first race. Assesses the whole card's prediction health
+    (_assess_card_health): flat/compressed output, market-blind (favourite
+    mis-ranked = odds didn't merge), or degraded races.
+
+    On UNHEALTHY:
+      1. flip the model_unstable splash ON immediately (hide the bad picks from
+         users — the 2026-09-20 failure was users seeing blind picks because
+         nothing hid them),
+      2. optionally attempt ONE remediation re-enrich (force) to self-heal,
+      3. re-assess; if still unhealthy leave the splash UP,
+      4. email the outcome.
+    On HEALTHY: clear any stale model_unstable splash and (quietly) log.
+
+    Returns the verdict + actions. Callable from the scheduler or the admin
+    endpoint. Never raises."""
+    race_date = _today_aest().isoformat()
+    actions: list[str] = []
+    try:
+        verdict = await _assess_card_health(race_date)
+    except Exception as e:
+        log.exception("[qgate] assessment failed: %s", e)
+        # Fail SAFE: if we can't assess, put the splash up rather than risk
+        # publishing bad picks, and alert.
+        await _set_model_unstable_banner_internal(True, f"qgate_assess_error:{str(e)[:80]}")
+        await _send_ops_alert(
+            "final_quality_gate",
+            "FunkyIQ: quality gate could not assess the card",
+            f"<p>The 11:30 final quality gate failed to assess {race_date}: "
+            f"<code>{str(e)[:200]}</code>. Splash raised as a precaution.</p>",
+        )
+        return {"date": race_date, "healthy": False, "error": str(e), "actions": ["assess_error->splash_on"]}
+
+    if not verdict.get("ran_before_first_race", True):
+        # The gate is meant to run BEFORE the first race. If it didn't, that's a
+        # scheduling failure worth knowing about — surface it in the alert.
+        actions.append("WARNING_ran_after_first_race")
+
+    if verdict["healthy"]:
+        # Clear any stale splash from an earlier trip today.
+        await _set_model_unstable_banner_internal(False, "qgate_healthy")
+        log.info("[qgate] %s HEALTHY — %s", race_date, verdict["stats"])
+        return {**verdict, "actions": ["healthy->splash_clear"]}
+
+    # UNHEALTHY — hide the picks first, remediate second.
+    reason = "; ".join(verdict["reasons"])[:400]
+    await _set_model_unstable_banner_internal(True, f"qgate:{reason}")
+    actions.append("splash_on")
+    log.warning("[qgate] %s UNHEALTHY: %s", race_date, reason)
+
+    remediated = None
+    if remediate:
+        try:
+            client = get_tab_client()
+            async with get_session() as session:
+                model = await _load_model(session)
+            await _enrich_date(race_date, client, model, force=True, sb_filter=True)
+            _invalidate_meeting_caches(race_date)
+            actions.append("reenrich")
+            remediated = await _assess_card_health(race_date)
+            if remediated["healthy"]:
+                await _set_model_unstable_banner_internal(False, "qgate_healed_after_reenrich")
+                actions.append("healed->splash_clear")
+                log.info("[qgate] %s HEALED after re-enrich", race_date)
+            else:
+                actions.append("still_unhealthy->splash_stays")
+        except Exception as e:
+            log.exception("[qgate] remediation failed: %s", e)
+            actions.append(f"remediation_error:{str(e)[:80]}")
+
+    final = remediated or verdict
+    healed = bool(remediated and remediated["healthy"])
+    _rows = "".join(f"<li>{_r}</li>" for _r in (final.get("reasons") or verdict["reasons"]))
+    banner = ("✅ Card healed after re-enrich — splash cleared." if healed
+              else "⚠️ Card still degraded after remediation — splash is UP; picks hidden.")
+    await _send_ops_alert(
+        "final_quality_gate",
+        f"FunkyIQ quality gate {race_date}: {'healed' if healed else 'DEGRADED'}",
+        f"<p><b>{banner}</b></p>"
+        f"<p>Initial check flagged:</p><ul>{''.join(f'<li>{r}</li>' for r in verdict['reasons'])}</ul>"
+        + ("" if healed else f"<p>After remediation:</p><ul>{_rows or '<li>(same)</li>'}</ul>")
+        + f"<p style='color:#555'>Stats: <code>{final.get('stats')}</code><br>"
+        f"First jump (UTC): {verdict.get('first_jump_utc')} · "
+        f"ran before first race: {verdict.get('ran_before_first_race')}</p>"
+        + ("<p style='color:#b91c1c'><b>NOTE:</b> this gate ran AFTER the first "
+           "race — move it earlier.</p>" if "WARNING_ran_after_first_race" in actions else ""),
+    )
+    return {**final, "actions": actions, "healed": healed}
+
+
+async def _scheduled_final_quality_gate():
+    """11:45 AEST: the day's FINAL prediction-quality gate, after the 11:30
+    enrich and before the first race (~12:00+ AEST earliest). Hides degraded
+    picks behind the splash and self-heals where possible."""
+    try:
+        await _run_final_quality_gate(remediate=True)
+    except Exception as e:
+        log.exception("[qgate] scheduled run failed: %s", e)
+
+
 async def _dq_ra_vs_sb(race_date: str, client) -> Optional[dict]:
     """Data-quality check for the initial (8:30) enrich: did RA's meeting load
     discover every meeting Sportsbet books for the date? Returns a report dict,
@@ -3299,6 +3400,131 @@ def _detect_snapshot_distribution_degradation(races: dict) -> tuple[bool, str]:
     return False, f"ok(max={max_p:.3f} std={std_p:.3f})"
 
 
+async def _assess_card_health(race_date: str) -> dict:
+    """FINAL daily quality assessment of the WHOLE card's predictions, from the
+    DB. Independent of any single enrich run. Returns a verdict dict:
+
+        {healthy: bool, reasons: [...], stats: {...},
+         first_jump: iso|None, ran_before_first_race: bool}
+
+    Three failure signals, any of which means the card is NOT publishable:
+
+      1. compressed_distribution — max rank-1 win% < 30% AND std < 0.03 across
+         >=5 races. The flat/near-uniform fingerprint of a blind enrich (odds
+         never merged -> market_implied defaults to 1/N). This is what tripped
+         on 2026-09-20.
+
+      2. market_blind — among races that DO have odds, the market favourite
+         (shortest price) is buried outside our top-3 by win-prob in too large a
+         share of races. On a healthy card the model agrees with the favourite
+         ~80%+ of the time; when odds don't reach the blend the favourite is
+         mis-ranked wholesale (2026-09-20: $1.75 fav at rank 2, $3.50 fav at
+         rank 5). Direct symptom, catches partial blindness the flat-check may
+         miss. Needs >=5 priced races to judge.
+
+      3. degraded_races — >=1 race with non-enriched horse predictions (<2
+         runners / no win / no place), via _race_prediction_health.
+
+    Tunable via QGATE_* env. Detection only — never mutates predictions."""
+    import re as _re
+    _blind_frac_max = float(os.environ.get("QGATE_MARKET_BLIND_FRACTION", "0.5"))
+    _min_priced = int(os.environ.get("QGATE_MIN_PRICED_RACES", "5"))
+    reasons: list[str] = []
+    stats: dict = {}
+
+    async with get_session() as session:
+        rows = (await session.execute(
+            select(
+                RunnerPredictionRow.race_id,
+                RunnerPredictionRow.horse_name,
+                RunnerPredictionRow.win_probability,
+                RunnerPredictionRow.best_available_odds,
+                RunnerPredictionRow.model_rank,
+                RunnerPredictionRow.scheduled_time,
+            )
+            .where(RunnerPredictionRow.race_id.like(f"{_like_safe(race_date)}_%"))
+            .where(RunnerPredictionRow.cancelled.is_(False) | RunnerPredictionRow.cancelled.is_(None))
+        )).all()
+
+    by_race: dict[str, list] = {}
+    sched_by_race: dict[str, str] = {}
+    for rid, hn, wp, bao, mrank, sched in rows:
+        by_race.setdefault(rid, []).append((hn, wp or 0.0, bao or 0.0, mrank))
+        if sched and rid not in sched_by_race:
+            sched_by_race[rid] = sched
+    n_races = len(by_race)
+    stats["races"] = n_races
+
+    # ── 1. Compressed / flat distribution ──────────────────────────────
+    rank1_probs: list[float] = []
+    for rid, rs in by_race.items():
+        top = max(rs, key=lambda t: t[1])
+        rank1_probs.append(top[1])
+    if len(rank1_probs) >= 5:
+        max_p = max(rank1_probs)
+        mean_p = sum(rank1_probs) / len(rank1_probs)
+        std_p = (sum((p - mean_p) ** 2 for p in rank1_probs) / len(rank1_probs)) ** 0.5
+        stats["max_rank1"] = round(max_p, 3)
+        stats["std_rank1"] = round(std_p, 3)
+        if max_p < 0.30 and std_p < 0.03:
+            reasons.append(f"compressed_distribution(max={max_p:.3f} std={std_p:.3f} n={len(rank1_probs)})")
+    else:
+        stats["max_rank1"] = None
+
+    # ── 2. Market-blind: favourite mis-ranked across priced races ───────
+    priced_races = 0
+    fav_buried = 0
+    for rid, rs in by_race.items():
+        priced = [t for t in rs if t[2] > 1.0]
+        if len(priced) < 2:
+            continue
+        priced_races += 1
+        fav = min(priced, key=lambda t: t[2])            # shortest price
+        ranked = sorted(rs, key=lambda t: t[1], reverse=True)  # by our win-prob
+        fav_pos = next((i for i, t in enumerate(ranked) if t[0] == fav[0]), 99) + 1
+        if fav_pos > 3:
+            fav_buried += 1
+    stats["priced_races"] = priced_races
+    stats["fav_buried"] = fav_buried
+    if priced_races >= _min_priced:
+        blind_frac = fav_buried / priced_races
+        stats["fav_buried_fraction"] = round(blind_frac, 2)
+        if blind_frac > _blind_frac_max:
+            reasons.append(
+                f"market_blind(fav_outside_top3 in {fav_buried}/{priced_races} "
+                f"priced races = {blind_frac:.0%}; odds likely not merged)"
+            )
+
+    # ── 3. Degraded races (non-enriched horse predictions) ──────────────
+    try:
+        _present, _degraded, _anom = await _race_prediction_health(race_date)
+        n_degraded = sum(len(v) for v in _degraded.values())
+        stats["degraded_races"] = n_degraded
+        if n_degraded > 0:
+            _ex = {vc: nums for vc, nums in list(_degraded.items())[:6]}
+            reasons.append(f"degraded_races({n_degraded}: {_ex})")
+    except Exception as e:
+        stats["degraded_check_error"] = str(e)[:120]
+
+    # ── First-race timing: is the gate running BEFORE the first jump? ───
+    first_jump = None
+    for _sched in sched_by_race.values():
+        _j = sched_to_utc_naive(_sched) if _sched else None
+        if _j is not None and (first_jump is None or _j < first_jump):
+            first_jump = _j
+    ran_before = (first_jump is None) or (datetime.utcnow() < first_jump)
+    stats["now_utc"] = datetime.utcnow().isoformat()
+
+    return {
+        "date": race_date,
+        "healthy": len(reasons) == 0,
+        "reasons": reasons,
+        "stats": stats,
+        "first_jump_utc": first_jump.isoformat() if first_jump else None,
+        "ran_before_first_race": ran_before,
+    }
+
+
 # User-facing splash copy — deliberately generic. Internal reasons
 # (breaker_open, distribution:*) stay in logs + the ops-alert email, never
 # on screen (2026-07-24, per user).
@@ -4188,6 +4414,13 @@ async def lifespan(app: FastAPI):
     # after the 8:30 enrich; this is the single morning data-load report (the old
     # 8:30 DQ email + SB/OddsPro source-health alert were folded into it).
     scheduler.add_job(_scheduled_meeting_reconcile, CronTrigger(hour=9, minute=30, timezone="Australia/Sydney"))
+    # FINAL prediction-quality gate — runs after the 11:30 enrich and before the
+    # first race (earliest AU thoroughbred jump is ~12:00 AEST, so 11:45 clears
+    # the 11:30+jitter enrich yet stays ahead of the card). Hides degraded picks
+    # behind the splash + self-heals. No jitter — must be deterministic vs the
+    # first race. The gate self-verifies it ran before the first jump and alerts
+    # if not (see _run_final_quality_gate / ran_before_first_race).
+    scheduler.add_job(_scheduled_final_quality_gate, CronTrigger(hour=11, minute=45, timezone="Australia/Sydney"))
 
     # Edge cache warm-up ticks at strategic times. The continuous prewarm
     # task (`_prewarm_edge_cache` below) refreshes every 60-90s once it
@@ -17991,6 +18224,22 @@ async def admin_bust_meetings_cache(
         await session.commit()
     return {"ok": True, "date": race_date, "calendar_cache_purged": cal_purged,
             "db_calendar_rows_deleted": cal_db_rows}
+
+
+@app.post("/api/admin/quality-gate")
+async def admin_quality_gate(
+    remediate: bool = True,
+    assess_only: bool = False,
+    x_cron_secret: Optional[str] = Header(None),
+):
+    """Run the final daily quality gate on demand (same logic as the 11:45 cron).
+    `assess_only=true` returns the health verdict without flipping the splash or
+    re-enriching (safe read-only dry-run). `remediate` (default true) attempts a
+    self-healing re-enrich when the card is unhealthy."""
+    _check_admin(x_cron_secret)
+    if assess_only:
+        return await _assess_card_health(_today_aest().isoformat())
+    return await _run_final_quality_gate(remediate=remediate)
 
 
 @app.post("/api/admin/meetings/reconcile")
