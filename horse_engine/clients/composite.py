@@ -79,25 +79,36 @@ class CompositeClient:
         ra_key = meeting.get("id", "")
         race_date = meeting.get("date") or meeting.get("meetingDateLocal") or date.today().isoformat()
 
-        tracks = await self._odds.get_tracks(race_date)
-        op_track = self._odds.find_matching_track(venue, tracks)
-        if not op_track:
-            log.debug("OddsPro: no track match for '%s' on %s", venue, race_date)
-
-        # Load BOTH the movers dict (for opening prices / steam signals, when
-        # we bring those back) AND the full-market meeting dict. The movers
-        # endpoint only returns runners whose price has moved recently, so
-        # relying on it alone left firm-priced favourites (and every non-mover)
-        # with sel.topToteWin=None. Market features then defaulted every
-        # horse's market_implied_prob to 1/N, blinding the model to the market
-        # signal. Root cause of the 2026-07-15/16 flat-distribution incident.
-        # Full-market fetch is one API call for the whole country, cached
-        # for 2 minutes inside OddsProClient — cheap.
-        odds_map, meeting_odds, ra_results = await asyncio.gather(
-            self._odds.get_track_odds(op_track) if op_track else _empty_dict(),
-            self._odds.get_meeting_odds(race_date) if op_track else _empty_dict(),
+        # Full-market meeting odds are the PRIMARY market source — one cheap
+        # cached call covering the whole country. ALWAYS fetch it, and match the
+        # venue against ITS OWN track keys as a fallback. The old code gated the
+        # full-market fetch (and the movers fetch) behind op_track from
+        # get_tracks(); when get_tracks() returned empty or failed to match a
+        # venue (country meetings / name variants), op_track was None → BOTH odds
+        # sources were skipped → zero odds merged → every runner's
+        # market_implied_prob defaulted to 1/N, blinding the model. That is the
+        # 2026-07-15/16 AND 2026-09-20 flat-distribution incident: an all-country
+        # card enriched with no odds, the field greyed and the favourite
+        # mis-ranked (a $1.75 shot dropped to rank 2). Decoupling the full-market
+        # fetch from get_tracks makes OddsPro robust to a get_tracks() miss.
+        tracks, meeting_odds, ra_results = await asyncio.gather(
+            self._odds.get_tracks(race_date),
+            self._odds.get_meeting_odds(race_date),
             self._ra.get_results(ra_key) if ra_key else _empty_dict(),
         )
+        op_track = self._odds.find_matching_track(venue, tracks or [])
+        if not op_track and meeting_odds:
+            # get_tracks missed — match against the full-market track keys instead.
+            op_track = self._odds.find_matching_track(venue, list(meeting_odds.keys()))
+        if not op_track:
+            log.warning(
+                "OddsPro: no track match for '%s' on %s (get_tracks=%d, meeting_odds=%d) "
+                "— race will enrich BLIND (market defaults to 1/N)",
+                venue, race_date, len(tracks or []), len(meeting_odds or {}),
+            )
+        # Movers dict (opening prices / steam) — optional, only when we have a
+        # track; full_market below is what guarantees firm favourites land.
+        odds_map = await (self._odds.get_track_odds(op_track) if op_track else _empty_dict())
         full_market = meeting_odds.get((op_track or "").lower(), {}) if op_track else {}
 
         # Re-key the OddsPro maps through _normalize so apostrophe/spacing
