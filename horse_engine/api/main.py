@@ -22693,27 +22693,13 @@ async def today_status():
         except Exception:
             enrichment_done = False
 
-    # Model-unstable gate: the distribution-sanity guard flips model_unstable ON
-    # when the day's rank-1 output is compressed/degraded (e.g. odds missing at
-    # enrich → blind, near-uniform win-probs). It drove the ops-alert email but
-    # was NOT wired into this publish gate, so the frontend splash never showed
-    # and users saw the degraded picks anyway (2026-09-20). Respect it here so a
-    # genuine degradation holds TODAY behind the "temporarily unavailable" splash.
-    model_unstable = False
-    try:
-        _warn = await _load_site_warnings()
-        model_unstable = bool((_warn.get("model_unstable") or {}).get("active"))
-    except Exception:
-        model_unstable = False  # fail open — never blank the page on a warnings read error
-
     result = {
         "date": today,
-        "ready": bool(after_publish and enrichment_done and not model_unstable),
+        "ready": bool(after_publish and enrichment_done),
         "now_aest": now.strftime("%H:%M"),
         "publish_time": f"{_TODAY_PUBLISH_HOUR:02d}:{_TODAY_PUBLISH_MIN:02d}",
         "after_publish_time": after_publish,
         "enrichment_done": enrichment_done,
-        "model_unstable": model_unstable,
     }
     _today_status_cache = (_time.monotonic(), result)
     return result
