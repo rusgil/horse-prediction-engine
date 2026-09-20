@@ -770,7 +770,20 @@ def _apply_benter_blend(predictions: list, trace: dict | None = None) -> bool:
     if len(predictions) < 2:
         return False
     markets = [getattr(p.enriched, "market_implied_prob", 0.0) or 0.0 for p in predictions]
-    covered = sum(1 for m in markets if m > 0)
+    # Coverage MUST be measured on REAL odds, not market_implied_prob: when a
+    # runner has no odds, market.py defaults market_implied_prob to ~1/N (the
+    # overround-free prob of a uniform field), which is > 0 and so silently
+    # passed this guard — making the blend ALWAYS run. On a blind card (no book
+    # has priced it yet, e.g. early-morning country meetings) that blends every
+    # runner against a PHANTOM uniform market at beta weight, collapsing the whole
+    # field to ~1/N and greying every race as low-confidence (2026-09-20: all 55
+    # races across 8 venues flat because the morning enrich ran before odds
+    # posted). best_available_odds is 0 when unpriced, so it is the honest
+    # market-presence signal (same one blind-shrinkage uses downstream).
+    covered = sum(
+        1 for p in predictions
+        if (getattr(p.enriched, "best_available_odds", 0.0) or 0.0) > 1.0
+    )
     if covered < 0.8 * len(predictions):
         if trace is not None:
             for p in predictions:
