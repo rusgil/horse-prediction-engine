@@ -3427,7 +3427,13 @@ async def _assess_card_health(race_date: str) -> dict:
 
     Tunable via QGATE_* env. Detection only — never mutates predictions."""
     import re as _re
-    _blind_frac_max = float(os.environ.get("QGATE_MARKET_BLIND_FRACTION", "0.5"))
+    # Threshold calibrated on real cards: a HEALTHY metro day (2026-09-19) buried
+    # the favourite outside our top-3 in just 3% of priced races (max rank-1
+    # 76%); the BLIND country day (2026-09-20) buried it in 45% (max 34%). 0.25
+    # sits 8x above the healthy baseline and well below the blind level — the
+    # blend weights the market at ~0.79, so a SIGHTED model cannot disagree with
+    # the favourite this often; a high fraction means odds never reached the blend.
+    _blind_frac_max = float(os.environ.get("QGATE_MARKET_BLIND_FRACTION", "0.25"))
     _min_priced = int(os.environ.get("QGATE_MIN_PRICED_RACES", "5"))
     reasons: list[str] = []
     stats: dict = {}
