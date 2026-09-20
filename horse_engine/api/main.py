@@ -1853,6 +1853,18 @@ async def _scheduled_pre_race_enrich():
                         await _inject_accumulated_stats(race, session)
                     predictions, _ = await enrich_and_predict_race(
                         race, model, place_model=place_model, exotic_model=exotic_model)
+                    # Skip BLIND races (no odds) — same rule as _enrich_date. Also
+                    # protects an existing good (odds-based) prediction from being
+                    # overwritten if this near-jump fetch momentarily has no odds.
+                    if predictions and os.environ.get("ENRICH_SKIP_BLIND", "1") == "1":
+                        _n_priced = sum(
+                            1 for p in predictions
+                            if (getattr(p.enriched, "best_available_odds", 0) or 0) > 1.0
+                        )
+                        if _n_priced < 0.8 * len(predictions):
+                            log.info("[pre-race] %s SKIPPED — blind (%d/%d priced)",
+                                     race_id, _n_priced, len(predictions))
+                            continue
                     async with get_session() as session:
                         await save_race_predictions(
                             session,
@@ -33958,6 +33970,7 @@ async def _enrich_date(race_date: str, client, model, force: bool = False, place
                 continue
             n_written = 0
             n_norace = 0
+            n_skipped_blind = 0
             for raw_event in raw_events:
                 race_num = raw_event.get("eventNumber")
                 race_id = f"{race_date}_{venue_code}_R{race_num}"
@@ -33985,6 +33998,30 @@ async def _enrich_date(race_date: str, client, model, force: bool = False, place
                     exotic_model=exotic_model,
                     output_calibration_curve=output_cal,
                 )
+                # ── Plan A: skip BLIND races (no market odds), don't publish ──
+                # When the odds source (OddsPro) has no prices for this race the
+                # model runs uncalibrated: win-probs collapse toward 1/N and the
+                # favourite is mis-ranked (2026-09-20/21 all-provincial cards —
+                # OddsPro didn't carry the venue). Publishing that is worse than
+                # publishing nothing (a $41 shot tipped over the $3.50 fav). So
+                # DON'T save a blind race — leave it with no rows, and because the
+                # morning ticks + 15-min pre-race enrich re-attempt any race that
+                # has no rows (force=False), it is automatically RECHECKED and
+                # fills in the moment odds appear. If odds never come, the 11:45
+                # quality gate greys the card. Env-off via ENRICH_SKIP_BLIND=0.
+                if predictions and os.environ.get("ENRICH_SKIP_BLIND", "1") == "1":
+                    _n_priced = sum(
+                        1 for p in predictions
+                        if (getattr(p.enriched, "best_available_odds", 0) or 0) > 1.0
+                    )
+                    if _n_priced < 0.8 * len(predictions):
+                        n_skipped_blind += 1
+                        log.info(
+                            "[enrich] %s SKIPPED — blind (%d/%d runners priced); "
+                            "no odds from source, will retry next tick",
+                            race_id, _n_priced, len(predictions),
+                        )
+                        continue
                 async with get_session() as session:
                     await save_race_predictions(
                         session,
@@ -33997,8 +34034,12 @@ async def _enrich_date(race_date: str, client, model, force: bool = False, place
                     "[enrich] %s/%s — %d/%d races returned no data from RA (get_race None)",
                     venue_code, race_date, n_norace, len(raw_events),
                 )
+            if n_skipped_blind:
+                log.warning("[enrich] %s/%s — %d race(s) skipped as BLIND (no odds); will retry",
+                            venue_code, race_date, n_skipped_blind)
             summary.append({"venue": venue_code, "status": "ok",
-                            "races": len(raw_events), "written": n_written})
+                            "races": len(raw_events), "written": n_written,
+                            "skipped_blind": n_skipped_blind})
         except Exception as e:
             log.warning("Cron failed for %s on %s: %s", venue_code, race_date, e)
             summary.append({"venue": venue_code, "status": "error", "error": str(e)})
