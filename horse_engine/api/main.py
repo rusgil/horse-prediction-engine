@@ -144,6 +144,32 @@ _TODAY_PUBLISH_HOUR = 9
 _TODAY_PUBLISH_MIN = 30
 
 
+def _skip_blind_mode() -> str:
+    """How the enrich paths treat a BLIND race (no market odds): 'enforce' (skip
+    the save so it retries next tick), 'dryrun' (LOG that it would be skipped but
+    still save — observe impact without changing output), or 'off'.
+
+    Default is ENFORCE everywhere (prod + staging). Override via ENRICH_SKIP_BLIND
+    = dryrun | 0/off (1/enforce/on also accepted, same as default)."""
+    v = (os.environ.get("ENRICH_SKIP_BLIND", "") or "").strip().lower()
+    if v in ("0", "off", "false"):
+        return "off"
+    if v in ("dryrun", "dry-run", "log"):
+        return "dryrun"
+    return "enforce"
+
+
+def _race_blind_check(predictions) -> tuple[bool, int]:
+    """(is_blind, n_priced): a race is blind when <80% of its runners carry a
+    real best_available_odds — the market never reached the model, so win-probs
+    collapse toward 1/N and the favourite is mis-ranked."""
+    n_priced = sum(
+        1 for p in predictions
+        if (getattr(getattr(p, "enriched", None), "best_available_odds", 0) or 0) > 1.0
+    )
+    return (n_priced < 0.8 * len(predictions), n_priced)
+
+
 def _validate_date(race_date: str) -> str:
     if not _DATE_RE.match(race_date):
         raise HTTPException(400, "Invalid date format — expected YYYY-MM-DD")
@@ -1856,15 +1882,16 @@ async def _scheduled_pre_race_enrich():
                     # Skip BLIND races (no odds) — same rule as _enrich_date. Also
                     # protects an existing good (odds-based) prediction from being
                     # overwritten if this near-jump fetch momentarily has no odds.
-                    if predictions and os.environ.get("ENRICH_SKIP_BLIND", "1") == "1":
-                        _n_priced = sum(
-                            1 for p in predictions
-                            if (getattr(p.enriched, "best_available_odds", 0) or 0) > 1.0
-                        )
-                        if _n_priced < 0.8 * len(predictions):
-                            log.info("[pre-race] %s SKIPPED — blind (%d/%d priced)",
-                                     race_id, _n_priced, len(predictions))
-                            continue
+                    _sb_mode = _skip_blind_mode() if predictions else "off"
+                    if _sb_mode != "off":
+                        _blind, _n_priced = _race_blind_check(predictions)
+                        if _blind:
+                            if _sb_mode == "enforce":
+                                log.warning("[skip-blind] pre-race %s SKIPPED — blind (%d/%d priced)",
+                                            race_id, _n_priced, len(predictions))
+                                continue
+                            log.warning("[skip-blind-dryrun] pre-race %s WOULD be skipped — blind (%d/%d priced)",
+                                        race_id, _n_priced, len(predictions))
                     async with get_session() as session:
                         await save_race_predictions(
                             session,
@@ -34011,25 +34038,22 @@ async def _enrich_date(race_date: str, client, model, force: bool = False, place
                 # model runs uncalibrated: win-probs collapse toward 1/N and the
                 # favourite is mis-ranked (2026-09-20/21 all-provincial cards —
                 # OddsPro didn't carry the venue). Publishing that is worse than
-                # publishing nothing (a $41 shot tipped over the $3.50 fav). So
-                # DON'T save a blind race — leave it with no rows, and because the
-                # morning ticks + 15-min pre-race enrich re-attempt any race that
-                # has no rows (force=False), it is automatically RECHECKED and
-                # fills in the moment odds appear. If odds never come, the 11:45
-                # quality gate greys the card. Env-off via ENRICH_SKIP_BLIND=0.
-                if predictions and os.environ.get("ENRICH_SKIP_BLIND", "1") == "1":
-                    _n_priced = sum(
-                        1 for p in predictions
-                        if (getattr(p.enriched, "best_available_odds", 0) or 0) > 1.0
-                    )
-                    if _n_priced < 0.8 * len(predictions):
+                # publishing nothing (a $41 shot tipped over the $3.50 fav). ENFORCE
+                # => don't save; the morning ticks + 15-min pre-race enrich re-attempt
+                # any race with no rows, so it's RECHECKED and fills in the moment
+                # odds appear (11:45 gate greys it if they never do). DRYRUN => log
+                # only, still save. Env-off/override via ENRICH_SKIP_BLIND.
+                _sb_mode = _skip_blind_mode() if predictions else "off"
+                if _sb_mode != "off":
+                    _blind, _n_priced = _race_blind_check(predictions)
+                    if _blind:
                         n_skipped_blind += 1
-                        log.info(
-                            "[enrich] %s SKIPPED — blind (%d/%d runners priced); "
-                            "no odds from source, will retry next tick",
-                            race_id, _n_priced, len(predictions),
-                        )
-                        continue
+                        if _sb_mode == "enforce":
+                            log.warning("[skip-blind] %s SKIPPED — blind (%d/%d priced); retry next tick",
+                                        race_id, _n_priced, len(predictions))
+                            continue
+                        log.warning("[skip-blind-dryrun] %s WOULD be skipped — blind (%d/%d priced) — saving anyway",
+                                    race_id, _n_priced, len(predictions))
                 async with get_session() as session:
                     await save_race_predictions(
                         session,
