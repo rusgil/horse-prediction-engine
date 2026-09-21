@@ -8498,6 +8498,14 @@ async def get_edge_yesterday(for_date: Optional[str] = Query(None, alias="date")
     """Qualifying picks with actual results and SP odds from Racing Australia.
     Accepts ?date=YYYY-MM-DD (defaults to yesterday)."""
     target_date = for_date or (_today_aest() - timedelta(days=1)).isoformat()
+    # Never display a written-off day's results (blind enrich = garbage picks) —
+    # roll the results view back to the most recent GOOD day. STATS_EXCLUDED_DATES
+    # already removes it from the aggregates; this hides it from the day view too
+    # (2026-09-20). Applies whether the date is the default or explicitly requested.
+    _skip_guard = 0
+    while target_date in STATS_EXCLUDED_DATES and _skip_guard < 31:
+        target_date = (date.fromisoformat(target_date) - timedelta(days=1)).isoformat()
+        _skip_guard += 1
     ttl = _yesterday_cache_ttl(target_date)
     # In-memory cache. Past-date results are stable; today refreshes every minute.
     cached = _yesterday_response_cache.get(target_date)
