@@ -147,24 +147,16 @@ _TODAY_PUBLISH_MIN = 30
 def _skip_blind_mode() -> str:
     """How the enrich paths treat a BLIND race (no market odds): 'enforce' (skip
     the save so it retries next tick), 'dryrun' (LOG that it would be skipped but
-    still save — observe impact before enforcing), or 'off'.
+    still save — observe impact without changing output), or 'off'.
 
-    Default is environment-aware: ENFORCE on non-prod (so staging tests the real
-    behaviour) and DRY-RUN on production (so we watch what it *would* skip on a
-    live morning before turning it on). Override anywhere via ENRICH_SKIP_BLIND
-    = 1/enforce | dryrun | 0/off."""
+    Default is ENFORCE everywhere (prod + staging). Override via ENRICH_SKIP_BLIND
+    = dryrun | 0/off (1/enforce/on also accepted, same as default)."""
     v = (os.environ.get("ENRICH_SKIP_BLIND", "") or "").strip().lower()
-    if v in ("1", "enforce", "on"):
-        return "enforce"
     if v in ("0", "off", "false"):
         return "off"
     if v in ("dryrun", "dry-run", "log"):
         return "dryrun"
-    try:
-        from horse_engine.config import settings as _s
-        return "enforce" if (getattr(_s, "app_env", "production") != "production") else "dryrun"
-    except Exception:
-        return "dryrun"
+    return "enforce"
 
 
 def _race_blind_check(predictions) -> tuple[bool, int]:
@@ -34050,7 +34042,7 @@ async def _enrich_date(race_date: str, client, model, force: bool = False, place
                 # => don't save; the morning ticks + 15-min pre-race enrich re-attempt
                 # any race with no rows, so it's RECHECKED and fills in the moment
                 # odds appear (11:45 gate greys it if they never do). DRYRUN => log
-                # only, still save (observe on prod before enforcing).
+                # only, still save. Env-off/override via ENRICH_SKIP_BLIND.
                 _sb_mode = _skip_blind_mode() if predictions else "off"
                 if _sb_mode != "off":
                     _blind, _n_priced = _race_blind_check(predictions)
