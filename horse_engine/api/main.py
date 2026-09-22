@@ -1350,6 +1350,39 @@ async def _reconcile_meetings(race_date: str, remediate: bool = True) -> dict:
     except Exception as e:
         log.warning("[reconcile] field-completeness scan failed for %s: %s", race_date, e)
         ri = {}
+
+    # Split "missing" races (no prediction) into genuinely-missing vs
+    # awaiting-odds. Skip-blind deliberately withholds a race with no market odds
+    # (2026-09-22 Emerald/Leeton), which the reconcile would otherwise flag as
+    # ACTION-NEEDED "missing" every morning. A race whose odds ARE in OddsPro but
+    # still has no prediction is a REAL failure (should have enriched); one with
+    # NO odds was correctly skipped and will auto-fill when odds post (or grey at
+    # 11:45). Only the former stays in race_missing.
+    rm_await: dict[str, list[int]] = {}
+    if rm:
+        try:
+            _op_odds = await client._odds.get_meeting_odds(race_date)
+            _priced_by_track: dict[str, set] = {}
+            for _track, _runners in (_op_odds or {}).items():
+                _priced_by_track[_sbnorm(_track)] = {rn for (rn, _n) in _runners.keys()}
+            for vc in list(rm.keys()):
+                _nv = _sbnorm(exp_map[vc][0]); _vn = _sbnorm(vc)
+                _priced: set = set()
+                for _k, _rns in _priced_by_track.items():
+                    if _k and (_k == _nv or _k in _nv or _nv in _k or _k == _vn or _k in _vn or _vn in _k):
+                        _priced |= _rns
+                _genuine = [n for n in rm[vc] if n in _priced]      # odds exist → real miss
+                _awaiting = [n for n in rm[vc] if n not in _priced]  # no odds → skip-blind
+                if _awaiting:
+                    rm_await[vc] = sorted(_awaiting)
+                if _genuine:
+                    rm[vc] = sorted(_genuine)
+                else:
+                    del rm[vc]
+        except Exception as e:
+            log.warning("[reconcile] skip-blind split failed for %s: %s", race_date, e)
+
+    report["race_awaiting_odds"] = {f"{exp_map[vc][0]} ({exp_map[vc][1]})": nums for vc, nums in rm_await.items()}
     report["race_missing"] = {f"{exp_map[vc][0]} ({exp_map[vc][1]})": nums for vc, nums in rm.items()}
     report["race_degraded"] = {f"{exp_map[vc][0]} ({exp_map[vc][1]})": nums for vc, nums in rd.items()}
     report["race_anomalous"] = {f"{exp_map[vc][0]} ({exp_map[vc][1]})": nums for vc, nums in ra.items()}
@@ -1396,6 +1429,7 @@ async def _email_reconcile_report(report: dict) -> bool:
     race_degraded = report.get("race_degraded") or {}    # {venue: [race nums]}
     race_anomalous = report.get("race_anomalous") or {}  # {venue: [race nums]}
     race_incomplete = report.get("race_incomplete") or {}  # {venue: [race nums]} short field vs OddsPro
+    race_awaiting_odds = report.get("race_awaiting_odds") or {}  # {venue: [race nums]} skip-blind (INFORMATIONAL — not a failure)
 
     problems = []
     if missing_after:
@@ -1408,6 +1442,8 @@ async def _email_reconcile_report(report: dict) -> bool:
         problems.append(f"{sum(len(v) for v in race_anomalous.values())} race(s) look wrong")
     if race_incomplete:
         problems.append(f"{sum(len(v) for v in race_incomplete.values())} race(s) short field")
+    # race_awaiting_odds is EXPECTED (skip-blind withheld races with no odds) — it
+    # is reported informationally and never makes the check "not OK".
     ok = not (missing_after or race_missing or race_degraded or race_anomalous or race_incomplete or err)
     headline = ", ".join(problems) if problems else (err or "issue")
     if ok:
@@ -1435,6 +1471,11 @@ async def _email_reconcile_report(report: dict) -> bool:
     def _sec(title, items):
         return (f"<p style='margin:18px 0 6px;font-weight:700;color:#b91c1c'>{title}</p>"
                 f"<ul style='margin:0;padding-left:20px;color:#b91c1c'>{items}</ul>")
+
+    def _sec_info(title, items):
+        # Informational (grey) — expected, no action needed.
+        return (f"<p style='margin:18px 0 6px;font-weight:700;color:#555'>{title}</p>"
+                f"<ul style='margin:0;padding-left:20px;color:#555'>{items}</ul>")
     parts = []
     if missing_after:
         parts.append(_sec("Meetings still missing after auto-remediation:",
@@ -1459,6 +1500,15 @@ async def _email_reconcile_report(report: dict) -> bool:
                           "missed runners can win, e.g. Wellington 2026-09-15 R6 rated 3 of 9):",
                           "".join(f"<li style='padding:3px 0'>{v}: R{', R'.join(map(str, n))}</li>"
                                   for v, n in sorted(race_incomplete.items()))))
+    # Awaiting-odds is informational and shown in BOTH the OK and not-OK emails
+    # (a card can be otherwise fine yet have races still waiting on a market).
+    await_html = ""
+    if race_awaiting_odds:
+        await_html = _sec_info("Races AWAITING ODDS — no market yet, so skip-blind withheld "
+                          "them (correctly — a blind race mis-ranks the favourite). They "
+                          "auto-fill the moment odds post, or are greyed at 11:45. No action needed:",
+                          "".join(f"<li style='padding:3px 0'>{v}: R{', R'.join(map(str, n))}</li>"
+                                  for v, n in sorted(race_awaiting_odds.items())))
     # Self-healing summary — shown pass OR fail, so the report always explains
     # what the 09:30 remediation did.
     if report.get("remediated"):
@@ -1474,9 +1524,9 @@ async def _email_reconcile_report(report: dict) -> bool:
 
     if ok:
         miss_html = heal_html + ("<p style='margin:14px 0;color:#166534;font-weight:600'>Every Sportsbet-booked "
-                                 "meeting is loaded + enriched, and all races have predictions. 🎉</p>")
+                                 "meeting is loaded + enriched, and all races have predictions. 🎉</p>") + await_html
     else:
-        miss_html = heal_html + "".join(parts)
+        miss_html = heal_html + "".join(parts) + await_html
         miss_html += ("<p style='font-size:13px;color:#666;margin-top:10px'>Missing meetings/races auto-remediate on "
                       "the next enrich (fresh-IP retry). &lsquo;Non-enriched predictions&rsquo; usually mean the enrich "
                       "ran without the place/exotic model or a partial RA fetch — force a re-enrich for those races. "
@@ -1513,6 +1563,8 @@ async def _email_reconcile_report(report: dict) -> bool:
         text_lines += ["", "PREDICTIONS LOOK WRONG (degenerate spread):"] + [f"  - {v}: R{', R'.join(map(str, n))}" for v, n in sorted(race_anomalous.items())]
     if race_incomplete:
         text_lines += ["", "SHORT FIELD (fewer runners rated than OddsPro lists):"] + [f"  - {v}: R{', R'.join(map(str, n))}" for v, n in sorted(race_incomplete.items())]
+    if race_awaiting_odds:
+        text_lines += ["", "AWAITING ODDS (skip-blind — no action, auto-fills/greys):"] + [f"  - {v}: R{', R'.join(map(str, n))}" for v, n in sorted(race_awaiting_odds.items())]
     if err:
         text_lines += ["", f"ERROR: {err}"]
     text = "\n".join(text_lines)
