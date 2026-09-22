@@ -1450,10 +1450,15 @@ class RacingAustraliaClient:
         from urllib.parse import quote
         url = f"{_BASE}/Acceptances.aspx?Key={quote(ra_key, safe='')}"
         # Soft-block rotate-retry: this meeting came off the calendar, so a real
-        # Acceptances page must have >=1 race. An empty parse (0 races) is almost
-        # always a soft-blocked/stripped page — rotate a fresh residential IP and
-        # retry, exactly like the calendar fetch. A genuinely field-less page (fields
-        # not posted yet) stays empty across all passes and we give up cheaply.
+        # Acceptances page must have >=1 race AND every race must have runners.
+        # Rotate a fresh residential IP and retry on:
+        #   • EMPTY parse (0 races) — the classic soft-block, OR
+        #   • PARTIAL parse — any race block with 0 selections. A real race always
+        #     has runners, so a race header with no field is almost always a
+        #     partial soft-block / stripped page (2026-09-22 Emerald: R1/R3/R4/R6
+        #     had fields, R2/R5/R7/R8 came back empty — the old code broke on the
+        #     first non-empty parse and cached the partial page for 30 min, so
+        #     those races stayed missing until TTL expiry).
         parsed = None
         for _rot in range(1 + _MEETING_EMPTY_ROTATE_RETRIES):
             try:
@@ -1465,22 +1470,29 @@ class RacingAustraliaClient:
                 self._meeting_cache[ra_key] = (datetime.utcnow() - timedelta(seconds=1500), None)
                 return None
             parsed = _parse_acceptances_page(html, ra_key, race_date, state)
-            if parsed and parsed.get("races"):
-                break  # real meeting with races — done
+            _races = (parsed or {}).get("races") or []
+            _empty = [r for r in _races if not (r.get("selections") or [])]
+            if _races and not _empty:
+                break  # complete meeting — every race has runners
             if _rot < _MEETING_EMPTY_ROTATE_RETRIES:
                 log.warning(
-                    "Acceptances for %s parsed 0 races (soft-block?) — rotate-retry "
-                    "%d/%d with a fresh IP", ra_key, _rot + 1, _MEETING_EMPTY_ROTATE_RETRIES,
+                    "Acceptances for %s: %d race(s), %d with NO runners "
+                    "(soft-block/partial?) — rotate-retry %d/%d with a fresh IP",
+                    ra_key, len(_races), len(_empty), _rot + 1, _MEETING_EMPTY_ROTATE_RETRIES,
                 )
                 await asyncio.sleep(_MEETING_EMPTY_ROTATE_BACKOFFS[min(_rot, len(_MEETING_EMPTY_ROTATE_BACKOFFS) - 1)])
-        if not (parsed and parsed.get("races")):
-            # Still empty after all rotations — persistent soft-block or fields not
-            # posted. Short-cache (5 min) so we re-try within the hour instead of
-            # serving the empty for the full 30-min TTL.
+        _races = (parsed or {}).get("races") or []
+        _empty = [r for r in _races if not (r.get("selections") or [])]
+        if not _races or _empty:
+            # Still empty or PARTIAL after all rotations — persistent soft-block or
+            # fields not posted. Return what we have (a partial page is better than
+            # nothing) but SHORT-CACHE (5 min) so the next enrich tick re-attempts
+            # the missing races, instead of locking the incomplete page for 30 min.
             log.warning(
-                "Acceptances for %s STILL 0 races after %d rotation(s) — persistent "
-                "soft-block or fields not posted; caching empty 5 min",
-                ra_key, 1 + _MEETING_EMPTY_ROTATE_RETRIES,
+                "Acceptances for %s STILL %s after %d rotation(s) — caching 5 min for a fresh retry",
+                ra_key,
+                ("0 races" if not _races else f"partial ({len(_races) - len(_empty)}/{len(_races)} races have runners)"),
+                1 + _MEETING_EMPTY_ROTATE_RETRIES,
             )
             self._meeting_cache[ra_key] = (datetime.utcnow() - timedelta(seconds=1500), parsed)
             return parsed
