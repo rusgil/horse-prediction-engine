@@ -160,14 +160,20 @@ def _skip_blind_mode() -> str:
 
 
 def _race_blind_check(predictions) -> tuple[bool, int]:
-    """(is_blind, n_priced): a race is blind when <80% of its runners carry a
-    real best_available_odds — the market never reached the model, so win-probs
-    collapse toward 1/N and the favourite is mis-ranked."""
+    """(is_blind, n_priced): a race is BLIND when it has essentially NO market —
+    fewer than half its runners carry a real best_available_odds. With no market
+    the win-probs collapse toward 1/N and the favourite is mis-ranked (2026-09-20,
+    coverage ~0). A PARTIALLY-priced race (e.g. 8/12 with the favourite among the
+    priced) is NOT blind — the earlier 0.8 threshold wrongly withheld those
+    (2026-09-22 Emerald R1 was 8/12=67% and got skipped). Fraction env-tunable via
+    ENRICH_BLIND_MIN_FRACTION (default 0.5)."""
+    n = len(predictions)
     n_priced = sum(
         1 for p in predictions
         if (getattr(getattr(p, "enriched", None), "best_available_odds", 0) or 0) > 1.0
     )
-    return (n_priced < 0.8 * len(predictions), n_priced)
+    frac = float(os.environ.get("ENRICH_BLIND_MIN_FRACTION", "0.5"))
+    return (n_priced < frac * n, n_priced)
 
 
 def _validate_date(race_date: str) -> str:
