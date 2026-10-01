@@ -11,7 +11,12 @@
     { "source": "/playbook", "destination": "/", "permanent": true },
     { "source": "/funk-me-up", "destination": "/", "permanent": true },
     { "source": "/funkmeup", "destination": "/", "permanent": true },
-    { "source": "/funkmeup.html", "destination": "/", "permanent": true }
+    { "source": "/funkmeup.html", "destination": "/", "permanent": true },
+    { "source": "/guides/read-a-race-card", "destination": "/guides", "permanent": true },
+    { "source": "/guides/barrier-draw", "destination": "/guides", "permanent": true },
+    { "source": "/guides/track-conditions", "destination": "/guides", "permanent": true },
+    { "source": "/guides/glossary", "destination": "/guides", "permanent": true },
+    { "source": "/guides/how-our-ratings-work", "destination": "/guides", "permanent": true }
   ],
   "rewrites": [
     {
@@ -21,26 +26,6 @@
     {
       "source": "/guides",
       "destination": "/guides.html"
-    },
-    {
-      "source": "/guides/read-a-race-card",
-      "destination": "/guide-race-card.html"
-    },
-    {
-      "source": "/guides/barrier-draw",
-      "destination": "/guide-barriers.html"
-    },
-    {
-      "source": "/guides/track-conditions",
-      "destination": "/guide-going.html"
-    },
-    {
-      "source": "/guides/glossary",
-      "destination": "/guide-glossary.html"
-    },
-    {
-      "source": "/guides/how-our-ratings-work",
-      "destination": "/guide-ratings.html"
     },
     {
       "source": "/contact",
