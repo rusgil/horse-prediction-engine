@@ -24,6 +24,7 @@ from datetime import date
 
 from horse_engine.clients.racing_australia import RacingAustraliaClient
 from horse_engine.clients.oddspro import OddsProClient
+from horse_engine.clients.sportsbet_schedule import get_sportsbet_win_prices
 from horse_engine.models.race import Race
 
 log = logging.getLogger(__name__)
@@ -117,6 +118,19 @@ class CompositeClient:
         odds_map = {(rn, _normalize(nm)): v for (rn, nm), v in (odds_map or {}).items()}
         full_market = {(rn, _normalize(nm)): v for (rn, nm), v in (full_market or {}).items()}
 
+        # Sportsbet fixed-win prices — the PRIMARY market source now that OddsPro
+        # closed its public API (2026-10: 401/429 to anonymous callers), so the
+        # OddsPro maps above come back empty. Reader returns RAW names; normalize
+        # with _normalize (same as RA names) so curly-vs-straight apostrophes
+        # collapse (Albury bug). Fail-open: {} if SB has no card for this race.
+        try:
+            sb_win_raw = await get_sportsbet_win_prices(race_date, venue, race_number) or {}
+        except Exception as e:
+            log.warning("Sportsbet win-odds fetch failed for %s R%s on %s: %s",
+                        venue, race_number, race_date, e)
+            sb_win_raw = {}
+        sb_win = {_normalize(nm): v for nm, v in sb_win_raw.items()}
+
         race_results: dict[str, dict] = (ra_results.get(race_number) or {}).get("runners", {})
 
         # ── Odds priority for each runner:
@@ -138,6 +152,10 @@ class CompositeClient:
                     fm_price = full_market.get((race_number, name_norm))
                     if fm_price and fm_price > 1.0:
                         sel["topToteWin"] = fm_price
+                    else:
+                        sb_price = sb_win.get(name_norm)
+                        if sb_price and sb_price > 1.0:
+                            sel["topToteWin"] = sb_price
 
             if ra:
                 sel["_finishing_position"] = ra.get("position")

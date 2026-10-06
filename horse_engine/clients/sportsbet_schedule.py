@@ -349,6 +349,72 @@ async def get_sportsbet_place_prices(date: str, track: str, race_number: int) ->
     return out
 
 
+_WIN_TTL_SECONDS = 600  # racecard win prices re-fetched at most every 10 min per race
+_win_cache: dict[tuple, tuple[datetime, dict]] = {}   # (date, norm_track, race_no) -> (ts, {norm_horse: win_price})
+
+
+async def get_sportsbet_win_prices(date: str, track: str, race_number: int) -> dict[str, float] | None:
+    """Fixed WIN prices per runner from the Sportsbet racecard.
+
+    {raw_horse_name: win_price}. Sportsbet is our PRIMARY fixed-win source after
+    OddsPro closed its once-open public API (2026-10: it began returning
+    401/429 to anonymous callers). The racecard's "Win or Place" market carries
+    `winPrice` right beside the `placePrice` that get_sportsbet_place_prices
+    already reads; we take the 'L' (current fixed) price. One racecard request
+    per race, 10-min cache, fail-open — shares the same cached racecard fetch as
+    the place reader, so pulling both for a race costs one upstream call.
+
+    NOTE: keys are the RAW Sportsbet runner names (unlike the place reader's
+    _norm'd keys) so the caller can apply ITS OWN name normalizer — the odds
+    merge in composite.py must strip curly-vs-straight apostrophes the same way
+    it does for RA names, or the merge silently misses runners (Albury bug).
+    """
+    key = (date, _norm(track), int(race_number))
+    cached = _win_cache.get(key)
+    if cached and (datetime.utcnow() - cached[0]).total_seconds() < _WIN_TTL_SECONDS:
+        return cached[1]
+    data = await _fetch_allracing(date)
+    if data is None:
+        return None
+    ev_id = None
+    for m in _iter_au_horse_meetings(data):
+        if _norm(m.get("name") or "") != _norm(track):
+            continue
+        for e in m.get("events") or []:
+            if e.get("raceNumber") == int(race_number):
+                ev_id = e.get("id")
+                break
+    if not ev_id:
+        return None
+    card = await _fetch_racecard(ev_id)
+    if card is None:
+        return None
+    out: dict[str, float] = {}
+    for mk in card.get("markets") or []:
+        if "win or place" not in (mk.get("name") or "").lower():
+            continue
+        for sel in mk.get("selections") or []:
+            win = None
+            for p in sel.get("prices") or []:
+                wp = p.get("winPrice")
+                if not wp or wp <= 1.0:
+                    continue
+                # Prefer the 'L' (current fixed) price; otherwise keep the last
+                # valid winPrice seen (the NTP/NTS "next-to" codes carry the same
+                # or a stale value — 'L' is the live board price).
+                if (p.get("priceCode") or "").upper() == "L":
+                    win = float(wp)
+                    break
+                win = float(wp)
+            if win and sel.get("name"):
+                out[sel["name"]] = win   # RAW name — caller normalizes (see docstring)
+        break
+    if not out:
+        return None
+    _win_cache[key] = (datetime.utcnow(), out)
+    return out
+
+
 async def get_sportsbet_exotic_dividends(date: str, track: str, race_number: int) -> dict | None:
     """Settled exotic tote dividends from the Sportsbet racecard:
     {quinella, exacta, trifecta, first_four} (floats, only keys present).
