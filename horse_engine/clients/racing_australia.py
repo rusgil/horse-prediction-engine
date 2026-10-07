@@ -1051,7 +1051,8 @@ class RacingAustraliaClient:
         )
         return False
 
-    async def _request(self, url: str, *, referer: str | None = None, timeout: float = 35.0) -> str:
+    async def _request(self, url: str, *, referer: str | None = None, timeout: float = 35.0,
+                       rotate: bool = False) -> str:
         """Shared GET path. Honours the breaker, jitters delay, rotates UA,
         and trips the breaker on 403 instead of grinding the WAF deeper.
 
@@ -1089,6 +1090,13 @@ class RacingAustraliaClient:
                 headers["X-Proxy-Secret"] = _RA_PROXY_SECRET
                 if referer:
                     headers["X-Proxy-Referer"] = referer
+                # Tell the proxy to switch to a fresh residential exit IP for
+                # this request — set on the FIRST fetch of a new logical unit
+                # (a state calendar or a meeting landing page via _get) and
+                # omitted on inner sub-fetches (_get_form) so they ride the same
+                # IP. One short human-like "visit" per IP; next visit, next IP.
+                if rotate:
+                    headers["X-Proxy-Rotate"] = "1"
             # When routing through the proxy, its TLS is Caddy's internal
             # self-signed CA (we dropped Let's Encrypt — its rate limits broke
             # every IP rotation). Skip cert verification for the proxy hop only;
@@ -1154,7 +1162,11 @@ class RacingAustraliaClient:
         # IPs before landing a clean one can take ~40s. 35s cut those off mid-
         # rotation, dropping whole states (QLD/WA) from the card. 60s lets the
         # rotation complete while a genuine tarpit still trips the breaker.
-        return await self._request(url, timeout=60.0)
+        # rotate=True: _get serves the landing pages (state Calendar, meeting
+        # Acceptances/Results) — each is the start of a new logical "visit", so
+        # it gets a fresh residential exit IP. Inner pages go through _get_form
+        # (no rotate) and ride this same IP.
+        return await self._request(url, timeout=60.0, rotate=True)
 
     async def _get_form(self, url: str) -> str:
         # Form pages are inner pages — supply a Referer so the traffic looks

@@ -248,6 +248,10 @@ async def proxy(path: str, request: Request):
     if secret != PROXY_SECRET:
         raise HTTPException(status_code=403, detail="Forbidden")
 
+    # Caller-driven rotation signal — see the X-Proxy-Rotate handling in the
+    # request lock below.
+    want_rotate = request.headers.get("x-proxy-rotate", "") == "1"
+
     # Daily cap - rolling 24h window. Hard 503 when exceeded so a runaway
     # caller can't drain the budget overnight without anyone noticing.
     now = time.monotonic()
@@ -273,6 +277,21 @@ async def proxy(path: str, request: Request):
 
     # Single-flight with min interval - proxy must not become the new hammer.
     async with _request_lock:
+        # Caller-driven rotation: the backend sends X-Proxy-Rotate: 1 on the
+        # FIRST fetch of a new logical unit (a state calendar, or a meeting's
+        # Acceptances page) and omits it on that unit's sub-fetches. So each
+        # short, human-like "visit" rides its own residential exit IP and the
+        # next unit gets a fresh one — a full enrich spreads across many IPs by
+        # design, instead of camping one sticky IP until RA soft-blocks it
+        # (the 2026-10-07 stall). The count-based proactive rotation below stays
+        # as a safety cap for an unsignalled caller or an unusually long unit.
+        if want_rotate:
+            await _rotate_session()
+            _session_req_count = 0
+            _next_proactive_rotate = _PROACTIVE_ROTATE_BASE + random.randint(0, _PROACTIVE_ROTATE_JITTER)
+            import logging as _lrot
+            _lrot.getLogger("ra-proxy").info(
+                "caller-driven residential rotation (X-Proxy-Rotate) before %s", path[:100])
         # Proactive exit-IP rotation: cap requests-per-IP (jittered) so a big
         # day's volume spreads across many IPs instead of overloading one and
         # tripping RA's per-IP soft-block threshold.
