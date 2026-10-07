@@ -290,7 +290,10 @@ async def proxy(path: str, request: Request):
             _session_req_count = 0
             _next_proactive_rotate = _PROACTIVE_ROTATE_BASE + random.randint(0, _PROACTIVE_ROTATE_JITTER)
             import logging as _lrot
-            _lrot.getLogger("ra-proxy").info(
+            # WARNING level (not info): the ra-proxy logger only emits WARNING+
+            # to journald, and a per-visit rotation is useful operational signal
+            # worth seeing in `journalctl -u ra-proxy`.
+            _lrot.getLogger("ra-proxy").warning(
                 "caller-driven residential rotation (X-Proxy-Rotate) before %s", path[:100])
         # Proactive exit-IP rotation: cap requests-per-IP (jittered) so a big
         # day's volume spreads across many IPs instead of overloading one and
