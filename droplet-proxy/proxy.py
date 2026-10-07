@@ -136,21 +136,35 @@ _recent_softblock_count = 0
 
 
 def _looks_soft_blocked(path: str, resp) -> bool:
-    """True if this is a Calendar 200 that carries NO meeting links — i.e. a
-    silent WAF soft-block, not a genuine empty racing day. A real RA calendar
-    page always lists Acceptances/Results links for the surrounding week (even
-    when today is empty), so 'zero links' can only mean a decoy/interstitial."""
+    """True if this 200 is a silent WAF soft-block — a decoy/interstitial served
+    to a flagged residential exit IP rather than real content — so the caller
+    rotates to a fresh IP instead of forwarding junk the backend caches as an
+    empty racing day / empty meeting."""
     if resp is None or resp.status_code != 200:
-        return False
-    if "Calendar.aspx" not in path:
         return False
     try:
         body = resp.content or b""
     except Exception:
         return False
-    if len(body) < 200:                       # a real calendar is tens of KB
-        return True
-    return (b"Acceptances" not in body) and (b"Results.aspx" not in body)
+    if "Calendar.aspx" in path:
+        # A real calendar always lists Acceptances/Results links for the
+        # surrounding week (even when today is empty), so 'zero links' can only
+        # mean a decoy/interstitial.
+        if len(body) < 200:                   # a real calendar is tens of KB
+            return True
+        return (b"Acceptances" not in body) and (b"Results.aspx" not in body)
+    if ("Acceptances.aspx" in path) or ("Results.aspx" in path):
+        # A real acceptances/results card carries runner tables — hundreds of
+        # jockey/barrier cells on a full card (verified 2026-10-07: a 7-race
+        # Kensington card was ~116KB with 250+ jockey and 89 barrier hits). RA's
+        # WAF decoy for a flagged exit IP is a small interstitial (~8.6KB stub
+        # observed) with NONE of that, which previously slipped through as a
+        # valid 200 and enriched the meeting to 0 races ("N races on RA but 0
+        # written"). A content-less 200 → treat as soft-block → rotate to a
+        # clean exit IP. _looks_soft_blocked was Calendar-only before this.
+        low = body.lower()
+        return (b"jockey" not in low) and (b"barrier" not in low)
+    return False
 
 app = FastAPI(title="ra-proxy")
 
@@ -290,7 +304,10 @@ async def proxy(path: str, request: Request):
             _session_req_count = 0
             _next_proactive_rotate = _PROACTIVE_ROTATE_BASE + random.randint(0, _PROACTIVE_ROTATE_JITTER)
             import logging as _lrot
-            _lrot.getLogger("ra-proxy").info(
+            # WARNING level (not info): the ra-proxy logger only emits WARNING+
+            # to journald, and a per-visit rotation is useful operational signal
+            # worth seeing in `journalctl -u ra-proxy`.
+            _lrot.getLogger("ra-proxy").warning(
                 "caller-driven residential rotation (X-Proxy-Rotate) before %s", path[:100])
         # Proactive exit-IP rotation: cap requests-per-IP (jittered) so a big
         # day's volume spreads across many IPs instead of overloading one and

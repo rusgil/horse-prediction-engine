@@ -16,6 +16,7 @@ import random
 import re
 from datetime import date, datetime, timedelta
 from typing import Optional
+from zoneinfo import ZoneInfo
 
 import httpx
 from bs4 import BeautifulSoup
@@ -92,10 +93,18 @@ def _proxied(url: str) -> str:
 _AU_STATES = ["NSW", "VIC", "QLD", "SA", "WA", "TAS", "NT", "ACT"]
 _MONTH_NAMES = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"]
 
-# Timezone offset per state for constructing ISO start times (non-DST / winter)
-_STATE_TZ = {
-    "NSW": "+10:00", "VIC": "+10:00", "TAS": "+10:00", "ACT": "+10:00",
-    "QLD": "+10:00", "SA": "+09:30", "WA": "+08:00", "NT": "+09:30",
+# IANA timezone per state for constructing ISO race start times. MUST be a zone
+# (not a fixed offset) so daylight saving is applied correctly for the race's
+# DATE: the eastern states + SA shift to +11:00 / +10:30 from the first Sunday
+# of October to the first Sunday of April, and back to +10:00 / +09:30 in
+# winter. QLD/WA/NT never observe DST. (Hardcoded standard-time offsets here
+# made every NSW/VIC/ACT/TAS/SA race time 1 hour wrong all summer — caught on
+# Mount Gambier, 2026-10-07, DST having started 2026-10-05.)
+_STATE_ZONE = {
+    "NSW": "Australia/Sydney", "ACT": "Australia/Sydney",
+    "VIC": "Australia/Melbourne", "TAS": "Australia/Hobart",
+    "QLD": "Australia/Brisbane", "SA": "Australia/Adelaide",
+    "WA": "Australia/Perth", "NT": "Australia/Darwin",
 }
 
 # Strip bookmaker/sponsor prefixes from venue names so slugs match our internal format
@@ -233,15 +242,25 @@ def _parse_race_class(text: str) -> str:
 
 
 def _build_start_time(race_date: str, time_str: str, state: str) -> str:
-    """'2026-05-31' + '12:20PM' + 'NSW' → '2026-05-31T12:20:00+10:00'"""
+    """'2026-05-31' + '12:20PM' + 'NSW' → '2026-05-31T12:20:00+10:00' (winter)
+       '2026-10-07' + '12:20PM' + 'NSW' → '2026-10-07T12:20:00+11:00' (DST)
+
+    The offset is derived from the state's IANA zone for the race DATE, so
+    daylight saving is applied correctly rather than hardcoded to standard time.
+    """
     if not time_str:
         return ""
     try:
         t = datetime.strptime(time_str.strip().upper(), "%I:%M%p")
-        tz = _STATE_TZ.get(state, "+10:00")
-        return f"{race_date}T{t.strftime('%H:%M')}:00{tz}"
     except ValueError:
         return ""
+    try:
+        y, mo, d = (int(x) for x in race_date.split("-"))
+        zone = ZoneInfo(_STATE_ZONE.get(state, "Australia/Sydney"))
+        return datetime(y, mo, d, t.hour, t.minute, tzinfo=zone).isoformat(timespec="seconds")
+    except Exception:
+        # Zone/date parse failed — fall back to eastern standard time.
+        return f"{race_date}T{t.strftime('%H:%M')}:00+10:00"
 
 
 def _parse_form_string(form: str) -> list[FormStart]:
