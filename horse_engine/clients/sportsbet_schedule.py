@@ -48,6 +48,39 @@ def _norm(s: str) -> str:
     return _NORM_ALIASES.get(n, n)
 
 
+def _find_event_id(data: dict, track: str, race_number: int):
+    """Sportsbet event id for (track, race_number) from an AllRacing payload.
+
+    RA and Sportsbet frequently name the SAME meeting differently — RA 'Park
+    Kyneton' vs SB 'Kyneton', RA 'Kensington' vs SB 'Randwick-Kensington', RA
+    'Aquis Park Gold Coast Poly' vs SB 'Gold Coast Poly'. An exact normalised
+    compare missed all of those, so those meetings got NO Sportsbet odds → every
+    race blind → skip-blind dropped the whole meeting (Kensington + Gold Coast
+    Poly 2026-10-07, Park Kyneton 2026-10-08). Match the meeting by exact
+    normalised name FIRST, then fall back to a substring match (same fuzzy rule
+    as venue_on_sportsbet). Exact-first so e.g. 'Gold Coast' can't grab 'Gold
+    Coast Poly' when both race the same day. Returns None if not found."""
+    t = _norm(track)
+    if not t:
+        return None
+    fuzzy_ev = None
+    for m in _iter_au_horse_meetings(data):
+        n = _norm(m.get("name") or "")
+        if not n:
+            continue
+        exact = (n == t)
+        if not (exact or n in t or t in n):
+            continue
+        for e in m.get("events") or []:
+            if e.get("raceNumber") == race_number:
+                if exact:
+                    return e.get("id")
+                if fuzzy_ev is None:
+                    fuzzy_ev = e.get("id")
+                break
+    return fuzzy_ev
+
+
 async def _fetch_allracing(date: str) -> dict | None:
     """Fetch (and 15-min cache) the raw Sportsbet AllRacing payload for `date`.
     One call feeds both the meeting allowlist and the results backup. None on
@@ -317,14 +350,7 @@ async def get_sportsbet_place_prices(date: str, track: str, race_number: int) ->
     data = await _fetch_allracing(date)
     if data is None:
         return None
-    ev_id = None
-    for m in _iter_au_horse_meetings(data):
-        if _norm(m.get("name") or "") != _norm(track):
-            continue
-        for e in m.get("events") or []:
-            if e.get("raceNumber") == int(race_number):
-                ev_id = e.get("id")
-                break
+    ev_id = _find_event_id(data, track, int(race_number))
     if not ev_id:
         return None
     card = await _fetch_racecard(ev_id)
@@ -376,14 +402,7 @@ async def get_sportsbet_win_prices(date: str, track: str, race_number: int) -> d
     data = await _fetch_allracing(date)
     if data is None:
         return None
-    ev_id = None
-    for m in _iter_au_horse_meetings(data):
-        if _norm(m.get("name") or "") != _norm(track):
-            continue
-        for e in m.get("events") or []:
-            if e.get("raceNumber") == int(race_number):
-                ev_id = e.get("id")
-                break
+    ev_id = _find_event_id(data, track, int(race_number))
     if not ev_id:
         return None
     card = await _fetch_racecard(ev_id)
@@ -427,14 +446,7 @@ async def get_sportsbet_exotic_dividends(date: str, track: str, race_number: int
     data = await _fetch_allracing(date)
     if data is None:
         return None
-    ev_id = None
-    for m in _iter_au_horse_meetings(data):
-        if _norm(m.get("name") or "") != _norm(track):
-            continue
-        for e in m.get("events") or []:
-            if e.get("raceNumber") == int(race_number):
-                ev_id = e.get("id")
-                break
+    ev_id = _find_event_id(data, track, int(race_number))
     if not ev_id:
         return None
     card = await _fetch_racecard(ev_id)
