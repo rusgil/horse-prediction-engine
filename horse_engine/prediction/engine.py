@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import logging
 import math
+import os
 from datetime import date
 
 from horse_engine.enrichers import form as form_enricher
@@ -753,6 +754,32 @@ def predict_race(race: Race, model: HorseModel, venue_calibration: dict[str, flo
     return predictions
 
 
+# Market-mass coverage gate (2026-10-15). Shared by the Benter blend (do we
+# trust the market signal enough to run the blend?) and the publish/skip-blind
+# gate in main.py (should we publish + count this race at all?). Measured as the
+# summed raw implied prob (1/odds) of the runners that carry a REAL price
+# (best_available_odds > 1.0). A fair book sums to ~1.0, so this is how much of
+# the market's money is actually covered: favourites dominate it, so a card with
+# the fav + main chances priced scores high even if a few longshots are unpriced
+# (Balaklava 2026-10-14: 5/8 priced but mass ~1.19), while a genuinely blind card
+# (nothing priced) scores 0. Using MASS not runner-count fixes BOTH the
+# 2026-09-20 phantom-collapse (blend ran on blind cards) AND the 2026-09-22
+# over-withhold (fav-priced 8/12 races wrongly skipped). The blend and the
+# publish gate share this one number so "blend ran" ⟺ "race published+counted".
+BLEND_MIN_MARKET_MASS = float(os.environ.get("BLEND_MIN_MARKET_MASS", "0.80"))
+
+
+def priced_market_mass(predictions: list) -> float:
+    """Summed raw implied prob (1/odds) of runners with a real price
+    (best_available_odds > 1.0) — ~the fraction of the book's money priced."""
+    m = 0.0
+    for p in predictions:
+        o = getattr(getattr(p, "enriched", None), "best_available_odds", 0.0) or 0.0
+        if o > 1.0:
+            m += 1.0 / o
+    return m
+
+
 def _apply_benter_blend(predictions: list, trace: dict | None = None) -> bool:
     """Mass-preserving Benter blend. Returns True if applied.
 
@@ -780,15 +807,24 @@ def _apply_benter_blend(predictions: list, trace: dict | None = None) -> bool:
     # races across 8 venues flat because the morning enrich ran before odds
     # posted). best_available_odds is 0 when unpriced, so it is the honest
     # market-presence signal (same one blind-shrinkage uses downstream).
-    covered = sum(
-        1 for p in predictions
-        if (getattr(p.enriched, "best_available_odds", 0.0) or 0.0) > 1.0
-    )
-    if covered < 0.8 * len(predictions):
+    # Coverage by MARKET MASS, not runner count (2026-10-15). The old
+    # `covered < 0.8 * len` count gate skipped the blend whenever a few longshots
+    # were unpriced — which on Sportsbet-era country cards (SB prices outsiders
+    # near the jump) is routine, leaving the race on the flat raw-model softmax
+    # and greyed (Balaklava 2026-10-14: 5/8 priced, fav $1.9 shown at 15%). Mass
+    # measures how much of the book's money is priced: Balaklava's 5 priced
+    # runners carry ~1.19 (favourites dominate), so the blend runs; a genuinely
+    # blind card (nothing priced) is 0 and still correctly skips (keeps the
+    # 2026-09-20 phantom-collapse protection). best_available_odds is the honest
+    # market-presence signal (market_implied_prob defaults to ~1/N when unpriced).
+    mkt_mass = priced_market_mass(predictions)
+    if mkt_mass < BLEND_MIN_MARKET_MASS:
         if trace is not None:
             for p in predictions:
                 if p.runner.horse_name in trace:
-                    trace[p.runner.horse_name]["benter_blend"] = f"skipped_coverage({covered}/{len(predictions)})"
+                    trace[p.runner.horse_name]["benter_blend"] = (
+                        f"skipped_coverage(mass={mkt_mass:.2f}<{BLEND_MIN_MARKET_MASS})"
+                    )
         return False
     mass = sum(p.win_prob for p in predictions)
     if mass <= 0:
