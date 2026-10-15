@@ -4399,85 +4399,6 @@ def _race_id_date_excluded(race_id: str) -> bool:
     return (race_id or "")[:10] in STATS_EXCLUDED_DATES
 
 
-@app.post("/api/admin/sweep-degraded-races")
-async def sweep_degraded_races(
-    days: int = Query(14, ge=1, le=120),
-    dry_run: bool = Query(True),
-    x_cron_secret: Optional[str] = Header(None),
-):
-    """Retroactively flag races whose stored predictions were DEGRADED — the
-    Benter blend was skipped at enrich time because odds coverage was too thin,
-    so the win-probs are the flat raw-model softmax and the favourite is
-    mis-ranked (Balaklava 2026-10-14: 5/8 priced, $1.9 fav shown at 15%). Those
-    predictions shouldn't count toward displayed performance; mark their history
-    rows contaminated=True so _history_healthy_filter drops them from
-    performance_summary et al. (a degraded pick is then neither scored a win nor
-    a loss). Going forward the market-mass gate re-runs the blend for fav-priced
-    partial cards and withholds genuinely-thin ones, so this is one-off cleanup
-    of the flat-blend-skipped era.
-
-    Detection replicates the OLD blend-skip condition on the stored snapshot:
-    a race is degraded when its non-cancelled PRICED runners
-    (best_available_odds > 1.0) are fewer than 80% of its non-cancelled field.
-    dry_run=true (default) only reports; pass dry_run=false to write.
-    """
-    _check_admin(x_cron_secret)
-    from collections import defaultdict
-    from sqlalchemy import update as sa_update
-    cutoff = (_today_aest() - timedelta(days=days)).isoformat()
-    async with get_session() as session:
-        rows = (await session.execute(
-            select(
-                RunnerPredictionHistoryRow.race_id,
-                RunnerPredictionHistoryRow.best_available_odds,
-                RunnerPredictionHistoryRow.cancelled,
-            )
-            .where(RunnerPredictionHistoryRow.race_id >= cutoff)
-            .where((RunnerPredictionHistoryRow.source == "live")
-                   | RunnerPredictionHistoryRow.source.is_(None))
-        )).all()
-        by_race: dict[str, list] = defaultdict(list)
-        for rid, odds, cancelled in rows:
-            if cancelled:
-                continue
-            by_race[rid].append(odds or 0.0)
-        degraded = []
-        for rid, odds_list in by_race.items():
-            n = len(odds_list)
-            if n == 0:
-                continue
-            priced = sum(1 for o in odds_list if o > 1.0)
-            if priced < 0.8 * n:
-                degraded.append({"race_id": rid, "priced": priced, "field": n})
-        degraded.sort(key=lambda d: d["race_id"])
-        updated_rows = 0
-        if degraded and not dry_run:
-            degraded_ids = [d["race_id"] for d in degraded]
-            # Flag in chunks to keep the IN() clause sane.
-            for i in range(0, len(degraded_ids), 200):
-                chunk = degraded_ids[i:i + 200]
-                r = await session.execute(
-                    sa_update(RunnerPredictionHistoryRow)
-                    .where(RunnerPredictionHistoryRow.race_id.in_(chunk))
-                    .values(contaminated=True)
-                )
-                updated_rows += r.rowcount or 0
-            await session.commit()
-        from collections import Counter
-        per_day = Counter(d["race_id"][:10] for d in degraded)
-        log.warning("[sweep-degraded] days=%d cutoff=%s degraded_races=%d dry_run=%s rows_flagged=%d",
-                    days, cutoff, len(degraded), dry_run, updated_rows)
-        return {
-            "ok": True,
-            "dry_run": dry_run,
-            "cutoff": cutoff,
-            "degraded_race_count": len(degraded),
-            "rows_flagged": updated_rows,
-            "per_day": dict(sorted(per_day.items())),
-            "races": degraded[:200],
-        }
-
-
 # Defense #3 — auto-repair contaminated snapshots once upstream returns
 # to health. Tracks how long we've been continuously healthy so we don't
 # repair inside a flapping window; requires ≥ this many minutes of solid
@@ -6951,6 +6872,84 @@ async def _scheduled_expiry_reminders():
                  res.get("eligible_5day"), res.get("reminders_sent"))
     except Exception:
         log.exception("[expiry-reminders] scheduled sweep failed")
+
+
+@app.post("/api/admin/sweep-degraded-races")
+async def sweep_degraded_races(
+    days: int = Query(14, ge=1, le=120),
+    dry_run: bool = Query(True),
+    x_cron_secret: Optional[str] = Header(None),
+):
+    """Retroactively flag races whose stored predictions were DEGRADED — the
+    Benter blend was skipped at enrich time because odds coverage was too thin,
+    so the win-probs are the flat raw-model softmax and the favourite is
+    mis-ranked (Balaklava 2026-10-14: 5/8 priced, $1.9 fav shown at 15%). Those
+    predictions shouldn't count toward displayed performance; mark their history
+    rows contaminated=True so _history_healthy_filter drops them from
+    performance_summary et al. (a degraded pick is then neither scored a win nor
+    a loss). Going forward the market-mass gate re-runs the blend for fav-priced
+    partial cards and withholds genuinely-thin ones, so this is one-off cleanup
+    of the flat-blend-skipped era.
+
+    Detection replicates the OLD blend-skip condition on the stored snapshot:
+    a race is degraded when its non-cancelled PRICED runners
+    (best_available_odds > 1.0) are fewer than 80% of its non-cancelled field.
+    dry_run=true (default) only reports; pass dry_run=false to write.
+    """
+    _check_admin(x_cron_secret)
+    from collections import defaultdict, Counter
+    from sqlalchemy import update as sa_update
+    cutoff = (_today_aest() - timedelta(days=days)).isoformat()
+    async with get_session() as session:
+        rows = (await session.execute(
+            select(
+                RunnerPredictionHistoryRow.race_id,
+                RunnerPredictionHistoryRow.best_available_odds,
+                RunnerPredictionHistoryRow.cancelled,
+            )
+            .where(RunnerPredictionHistoryRow.race_id >= cutoff)
+            .where((RunnerPredictionHistoryRow.source == "live")
+                   | RunnerPredictionHistoryRow.source.is_(None))
+        )).all()
+        by_race: dict[str, list] = defaultdict(list)
+        for rid, odds, cancelled in rows:
+            if cancelled:
+                continue
+            by_race[rid].append(odds or 0.0)
+        degraded = []
+        for rid, odds_list in by_race.items():
+            n = len(odds_list)
+            if n == 0:
+                continue
+            priced = sum(1 for o in odds_list if o > 1.0)
+            if priced < 0.8 * n:
+                degraded.append({"race_id": rid, "priced": priced, "field": n})
+        degraded.sort(key=lambda d: d["race_id"])
+        updated_rows = 0
+        if degraded and not dry_run:
+            degraded_ids = [d["race_id"] for d in degraded]
+            # Flag in chunks to keep the IN() clause sane.
+            for i in range(0, len(degraded_ids), 200):
+                chunk = degraded_ids[i:i + 200]
+                r = await session.execute(
+                    sa_update(RunnerPredictionHistoryRow)
+                    .where(RunnerPredictionHistoryRow.race_id.in_(chunk))
+                    .values(contaminated=True)
+                )
+                updated_rows += r.rowcount or 0
+            await session.commit()
+        per_day = Counter(d["race_id"][:10] for d in degraded)
+        log.warning("[sweep-degraded] days=%d cutoff=%s degraded_races=%d dry_run=%s rows_flagged=%d",
+                    days, cutoff, len(degraded), dry_run, updated_rows)
+        return {
+            "ok": True,
+            "dry_run": dry_run,
+            "cutoff": cutoff,
+            "degraded_race_count": len(degraded),
+            "rows_flagged": updated_rows,
+            "per_day": dict(sorted(per_day.items())),
+            "races": degraded[:200],
+        }
 
 
 @app.post("/api/admin/users/purge")
