@@ -6894,12 +6894,17 @@ async def sweep_degraded_races(
     Detection replicates the OLD blend-skip condition on the stored snapshot:
     a race is degraded when its non-cancelled PRICED runners
     (best_available_odds > 1.0) are fewer than 80% of its non-cancelled field.
-    dry_run=true (default) only reports; pass dry_run=false to write.
+    SETTLED races only — race_id date strictly before today (AEST): today's and
+    future races are still pre-jump with partial odds (Sportsbet prices outsiders
+    near the jump), so their coverage will complete and the blend will run; we
+    must not pre-flag races that are going to be fine. dry_run=true (default)
+    only reports; pass dry_run=false to write.
     """
     _check_admin(x_cron_secret)
     from collections import defaultdict, Counter
     from sqlalchemy import update as sa_update
     cutoff = (_today_aest() - timedelta(days=days)).isoformat()
+    today_str = _today_aest().isoformat()  # race_ids "YYYY-MM-DD_…" < today_str ⇒ a past day
     async with get_session() as session:
         rows = (await session.execute(
             select(
@@ -6908,6 +6913,7 @@ async def sweep_degraded_races(
                 RunnerPredictionHistoryRow.cancelled,
             )
             .where(RunnerPredictionHistoryRow.race_id >= cutoff)
+            .where(RunnerPredictionHistoryRow.race_id < today_str)  # settled days only
             .where((RunnerPredictionHistoryRow.source == "live")
                    | RunnerPredictionHistoryRow.source.is_(None))
         )).all()
