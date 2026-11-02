@@ -53,6 +53,21 @@
   // field is big — which reads as a "safe" bet and gives false confidence.
   // So we demote the card: no confidence/fav chips, muted stats, honest caveat.
   var OPEN_RACE_WIN_MAX = 25;
+  // ── Feature-race override (Cup day) ─────────────────────────────────────
+  // A marquee wide-open race (the Melbourne Cup) is a genuine big-field
+  // handicap: the model's top pick sits in single digits and no runner is a
+  // standout, so the normal card renders bare/cold and reads as "no
+  // confidence". For a configured feature race we badge it as a feature and
+  // add an honest note that points at the full ranked field (the
+  // market-aligned read) instead of greying it. Keyed on race_id; the note
+  // uses LIVE pick data (never hardcoded runner names), so it stays correct
+  // after the morning odds refresh. Pure presentation — no backend gate.
+  var FEATURE_RACES = {
+    '2026-11-03_flemington_R7': { emoji: '🏆', chip: 'MELBOURNE CUP', name: 'Melbourne Cup' },
+  };
+  function featureRace(pick) {
+    return (pick && pick.race_id && FEATURE_RACES[pick.race_id]) || null;
+  }
   function _pickWinPct(pick) {
     if (pick == null) return null;
     if (pick.win_pct != null) return pick.win_pct;
@@ -141,6 +156,18 @@
     if (accuracy != null) out += `<div class="ds-sep"></div><div class="ds"><span class="ds-num num v-acc">${f(accuracy)}%</span><span class="ds-lbl">model accuracy at this level</span></div>`;
     const note = open ? `<div class="open-note">⚖️ Open race — no strong win pick. A big field lifts the place % (it isn't a strong edge).</div>` : '';
     return `<div class="dual-stat-row${open ? ' open' : ''}">${out}</div>${note}`;
+  }
+
+  // Honest feature-race note (see FEATURE_RACES). Uses live pick data so it
+  // tracks the morning odds refresh. Points the reader at the ranked field —
+  // the market-aligned read — rather than pretending there's a strong edge.
+  function cupNote(pick, feat) {
+    const w = _pickWinPct(pick);
+    const top = pick.horse_name ? `<b>${esc(pick.horse_name)}</b>` : 'the favourite';
+    const rate = (w != null)
+      ? ` rates only about ${Math.round(w)}% to win,`
+      : ' has no commanding rating,';
+    return `<div class="cup-note">${feat.emoji} <b>The ${esc(feat.name)}</b> — a wide-open handicap with no standout. Our model's top pick, ${top},${rate} so there's no strong statistical edge here. Treat the ranked field as a market-aligned read, not a confident bet.</div>`;
   }
 
   // Compact 2-up WIN/PLACE for drawer runner rows — side by side, big and bold.
@@ -276,8 +303,9 @@
     const timeTop = isPast
       ? `<div class="when-top num">${wallTime(pick.scheduled_time)}</div>`
       : `<div class="when-top">${cd.label ? `<span class="cd ${cd.urg || ''}">${cd.label}</span> ` : ''}<span class="num">${wallTime(pick.scheduled_time)}</span></div>`;
-    const openRace = !isPast && isOpenRace(pick);
-    return `<div class="jcard pcard ${outcome} ${openRace ? 'open-race' : ''} ${!isPast && !openRace && pick.confidence_tier === 'hot' ? 'hot' : ''} ${!isPast && !openRace && pick.is_premium ? 'prem' : ''}" style="${dim}" data-open="${esc(pick.race_id)}" data-horse="${esc(pick.horse_name)}">
+    const feat = !isPast ? featureRace(pick) : null;
+    const openRace = !isPast && !feat && isOpenRace(pick);
+    return `<div class="jcard pcard ${outcome} ${feat ? 'cup-feature' : ''} ${openRace ? 'open-race' : ''} ${!isPast && !openRace && pick.confidence_tier === 'hot' ? 'hot' : ''} ${!isPast && !openRace && pick.is_premium ? 'prem' : ''}" style="${dim}" data-open="${esc(pick.race_id)}" data-horse="${esc(pick.horse_name)}">
       <div class="mid">
         ${(() => {
           const idEl = `<div class="pk-venue">${esc(pick.venue)} <b>R${pick.race_number}</b>${badge}</div>`
@@ -288,7 +316,7 @@
           // the name on narrow/mobile-portrait via .pk-split's media query.
           return `<div class="pk-split"><div class="pk-id">${idEl}</div><div class="pk-meta">${metaEl}</div></div>`;
         })()}
-        <div class="pk-chips">${openRace ? '<span class="chip openrace">⚖️ OPEN RACE</span>' : `${tierChip(pick)}${!isPast && pick.is_premium ? '<span class="chip prem">💎 PREMIUM</span>' : ''}${pick.is_sharp ? '<span class="chip sharp">🎯 SHARP</span>' : ''}${!isPast ? favChip(pick) : ''}${!isPast ? exoticChips(pick) : ''}`}${pick.sportsbet_available === false ? '<span class="chip nosb">🚫 Limited fixed-odds</span>' : ''}</div>
+        <div class="pk-chips">${feat ? `<span class="chip cup-feature">${feat.emoji} ${esc(feat.chip)}</span>` : ''}${openRace ? '<span class="chip openrace">⚖️ OPEN RACE</span>' : `${tierChip(pick)}${!isPast && pick.is_premium ? '<span class="chip prem">💎 PREMIUM</span>' : ''}${pick.is_sharp ? '<span class="chip sharp">🎯 SHARP</span>' : ''}${!isPast ? favChip(pick) : ''}${!isPast ? exoticChips(pick) : ''}`}${pick.sportsbet_available === false ? '<span class="chip nosb">🚫 Limited fixed-odds</span>' : ''}</div>
       </div>
       <div class="right">
         ${timeTop}
@@ -297,6 +325,7 @@
         ${!isPast && ctx.showSpark ? `<div class="spark-slot" id="spark-${pick.race_id.replace(/[^a-z0-9]/gi, '-')}"></div>` : ''}
       </div>
       ${dualStat(pick.win_pct, pick.place_pct, pick.accuracy != null ? pick.accuracy : calibratedRate(pick.win_pct), openRace)}
+      ${feat ? cupNote(pick, feat) : ''}
       ${pick.is_teaser ? confidenceCallout(pick) : ''}
       ${!isPast && ctx.footer ? (ctx.footer(pick) || '') : ''}${verdict}${tri}
     </div>`;
@@ -685,6 +714,7 @@
     lockedCard, paywallBanner, trophyBanner, configureBilling, openCheckout, openPricing, bindUnlock,
     fetchJSON, isMember, isSubscriber, isFiveDayHolder, isLoggedIn, isExpired, renderExpiredBanner, splashUpsell, plansUpsell, plansGrid, refreshSplashUpsell, loadMembership,
     fetchSparklines, isOpenRace, isHiddenRace, isStatsExcluded, loadVenueBadges,
+    featureRace, cupNote,
   };
   loadVenueBadges();   // warm the badged-venue set early so exceptions apply on first render
 })();
