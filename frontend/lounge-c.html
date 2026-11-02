@@ -420,6 +420,9 @@
   .cell.coinflip::after { content: ""; position: absolute; inset: 3px; border-radius: 5px;
     background: rgba(128,130,142,0.16); pointer-events: none; }
   .brace.coinflip .coin-fill-row { height: 16px; width: 65%; border-radius: 5px; background: rgba(128,130,142,0.20); border: 1px solid rgba(128,130,142,0.45); }
+  /* Feature race (Cup day) — marquee wide-open race: gold-tinted so it reads
+     as a deliberate feature rather than a cold, uncoloured low-confidence tile. */
+  .cell.feature { position: relative; background: color-mix(in srgb, #c8941a 12%, transparent); box-shadow: inset 0 0 0 1px color-mix(in srgb, #c8941a 45%, transparent); }
   .coin-toast { position: fixed; left: 50%; bottom: 32px; transform: translateX(-50%) translateY(10px);
     background: var(--surface-2, #1a2130); color: var(--text, #e8ecf4); border: 1px solid var(--line, #232c3d);
     border-radius: 999px; padding: 9px 16px; font-size: 0.82rem; font-weight: 600;
@@ -901,8 +904,8 @@
 
   .ff { font-variant-numeric: tabular-nums; letter-spacing: 0.14em; font-weight: 800; }
 </style>
-  <link rel="stylesheet" href="/pick-card.css?v=38">
-  <script src="/pick-card.js?v=41"></script>
+  <link rel="stylesheet" href="/pick-card.css?v=39">
+  <script src="/pick-card.js?v=42"></script>
   <script src="/site-warnings.js" defer></script>
   <script defer src="/_vercel/insights/script.js"></script>
 </head>
@@ -1490,11 +1493,16 @@
           if (r.model_placed === true) colP[i]++;
         }
         const tier = tierOf(r.top_win_probability, isOffGoing(r.track_condition));
+        // Feature race (Cup day): badge the cell so a wide-open marquee race
+        // reads as a deliberate feature, not a cold/blank tile. Single-sourced
+        // from PickCard.featureRace (keyed on race_id).
+        const feat = window.PickCard.featureRace ? window.PickCard.featureRace(r) : null;
         const cls = [
           done ? 'done' : '',
           (!_coin && done) ? resCls(r) : '',
           (!_coin && !done && tier) ? tier.heat : '',
           _coin ? 'coinflip' : '',
+          (feat && !done) ? 'feature' : '',
         ].join(' ');
         // History cells keep their pre-race confidence label beside the result
         const tierWord = tier ? tier.label.replace(/[^A-Za-z]/g, '') : '';
@@ -1526,7 +1534,7 @@
         const wpo = (win != null)
           ? `<div class="cwpo num"><span class="cw">${win}%</span>${plc != null ? `<span class="cp">/${plc}%</span>` : ''}${od ? `<span class="co${valueBet ? ' val' : ''}"> · ${od}</span>` : ''}</div>` : '';
         // Label line: confidence tier word + sharp/clear-fav markers.
-        const marks = (r.is_sharp ? '🎯' : '') + (clearFav ? '👑' : (tossUp ? '⚖️' : '')) + (clearQuin ? '🥈' : '') + (clearTri ? '🥉' : '') + (clearFour ? '🎖️' : '') + (valueBet ? '💎' : '');
+        const marks = (feat && !done ? feat.emoji : '') + (r.is_sharp ? '🎯' : '') + (clearFav ? '👑' : (tossUp ? '⚖️' : '')) + (clearQuin ? '🥈' : '') + (clearTri ? '🥉' : '') + (clearFour ? '🎖️' : '') + (valueBet ? '💎' : '');
         const labelHtml = (tierWord || marks)
           ? `<div class="clab">${tierWord ? `<span class="cell-tier ${tier ? tier.dot : ''}">${tierWord}</span>` : ''}${marks ? `<span class="cmk">${marks}</span>` : ''}</div>`
           : '';
@@ -1606,6 +1614,7 @@
             <div class="meta num">${hero.distance ? hero.distance + 'm · ' : ''}${hero.field_size ? hero.field_size + ' runners · ' : ''}<span></span></div>
           </div>
           <span class="chip ${g.cls}">${esc(g.label)}</span>
+          ${(window.PickCard.featureRace && window.PickCard.featureRace(hero)) ? `<span class="chip cup-feature">${window.PickCard.featureRace(hero).emoji} ${esc(window.PickCard.featureRace(hero).chip)}</span>` : ''}
           ${hero.is_sharp ? `<span class="chip sharp">🎯 SHARP</span>` : ''}
           ${tier ? `<span class="chip ${tier.cls}">${tier.label}</span>` : ''}
           ${watchBtn(hero._state)}
@@ -1640,6 +1649,7 @@
           ${barsHtml(r.top_win_probability, r.top_place_probability)}
         </div>
         <div class="chips">
+          ${(window.PickCard.featureRace && window.PickCard.featureRace(r) && !done) ? `<span class="chip cup-feature">${window.PickCard.featureRace(r).emoji} ${esc(window.PickCard.featureRace(r).chip)}</span>` : ''}
           ${r.is_sharp ? `<span class="chip sharp">🎯 SHARP</span>` : ''}
           ${window.PickCard.isOpenRace({ win_probability: r.top_win_probability, is_sharp: r.is_sharp, venue: r._venue || r.venue || (typeof m !== "undefined" && m ? m.venue : null) })
             ? `<span class="chip openrace">⚖️ OPEN RACE</span>`
@@ -1865,7 +1875,9 @@
     document.getElementById('dwTitle').innerHTML = `${esc(r._venue)} <b class="dw-rnum">R${r.race_number}</b>`;
     document.getElementById('dwSub').innerHTML =
       `${esc(r.race_name || '')}${r.race_name ? ' · ' : ''}<span class="num">${r.distance ? r.distance + 'm · ' : ''}${wallTime(r.scheduled_time)}${r.field_size ? ' · ' + r.field_size + ' runners' : ''}</span>`;
+    const dwFeat = window.PickCard.featureRace ? window.PickCard.featureRace(r) : null;
     document.getElementById('dwChips').innerHTML =
+      (dwFeat && !isSettled(r) ? `<span class="chip cup-feature">${dwFeat.emoji} ${PickCard.esc(dwFeat.chip)}</span>` : '') +
       (r.is_sharp ? `<span class="chip sharp">🎯 SHARP</span>` : '') +
       (tier ? `<span class="chip ${tier.cls}">${tier.label}</span>` : '') +
       watchBtn(r._state);
@@ -1904,7 +1916,15 @@
     const dwFlyers = new Set(flyerRunners(r).map(x => x.tab_number));
     const flyF = r.flyer;
     const dwFlyerNote = (flyF && dwFlyers.size && !isSettled(r)) ? `<div class="flyer-note">🎲 <b>FLYER</b> (🎲 tagged below) — In late country ${flyF.min_field}+ fields, $${flyF.odds_min}–${flyF.odds_max} odds win ~${flyF.win_pct}% / place ~${flyF.place_pct}% based on our model</div>` : '';
-    body.innerHTML = offNote + settledNote + dwFlyerNote + resultHtml + top.map((x, i) => {
+    // Feature race (Cup day): honest note above the ranked field, built from
+    // the live top pick so it tracks the morning odds refresh.
+    const featNote = (dwFeat && !isSettled(r))
+      ? window.PickCard.cupNote({
+          horse_name: (top[0] && top[0].horse_name) || r.top_pick,
+          win_probability: (top[0] && top[0].win_probability != null) ? top[0].win_probability : r.top_win_probability,
+        }, dwFeat)
+      : '';
+    body.innerHTML = featNote + offNote + settledNote + dwFlyerNote + resultHtml + top.map((x, i) => {
       const isVal = (x.overlay || 0) > 0.05 && (x.best_available_odds || 0) >= 3;
       const isFlyer = !isSettled(r) && dwFlyers.has(x.tab_number);
       return `<div class="runner ${i === 0 ? 'top1' : ''}">

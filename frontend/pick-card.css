@@ -129,6 +129,13 @@
 .pcard.open-race .dual-stat-row.open .ds-num { color: var(--text-2); font-weight: 800; }
 .open-note { font-size: 0.66rem; color: var(--text-3); line-height: 1.35; margin-top: 4px; text-align: center; }
 
+/* ── Feature race (Cup day) — marquee wide-open race, badged not greyed ── */
+.chip.cup-feature { background: linear-gradient(135deg, #e6b422, #c8941a); color: #221905; border: 1px solid #a9790f; font-weight: 800; letter-spacing: .02em; flex-shrink: 0; }
+.pcard.cup-feature { border-color: #c8941a; box-shadow: 0 0 0 1px color-mix(in srgb, #c8941a 35%, transparent); }
+.cup-note { font-size: 0.72rem; line-height: 1.45; margin-top: 6px; padding: 8px 10px; border-radius: 8px;
+  color: var(--text-2); background: color-mix(in srgb, #c8941a 12%, transparent); border: 1px solid color-mix(in srgb, #c8941a 40%, transparent); }
+.cup-note b { color: var(--text); }
+
 /* ── Freemium paywall (Stage 3) ──────────────────────────────────────── */
 .jcard.pcard.locked {
   cursor: pointer;
