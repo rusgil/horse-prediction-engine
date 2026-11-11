@@ -63,6 +63,7 @@ from horse_engine.models.database import (
     ResponseCacheRow,
     RunnerPredictionRow,
     RunnerPredictionHistoryRow,
+    PredictionPickChangeRow,
     RacePredictionRow,
     WinCalibrationCurveRow,
     init_db,
@@ -15413,6 +15414,107 @@ async def admin_horse_history(
             "any_wins": any_wins,
             "any_placed": any_placed,
         },
+    }
+
+
+@app.get("/api/admin/race-pick-timeline/{race_id}")
+async def admin_race_pick_timeline(
+    race_id: str,
+    horse: Optional[str] = None,
+    x_cron_secret: Optional[str] = Header(None),
+):
+    """When did a race's top model pick change?
+
+    Three views of one race:
+      - current_top_pick: the live (mutable) #1 right now.
+      - pick_changes: the forward tracker — immutable rows appended whenever a
+        re-enrich flipped the #1 (exact timestamps). Populated from the first
+        deploy of the tracker onward (empty for races enriched before it).
+      - history_batches: best-effort RETRO from the frozen snapshot batches
+        (one per enrichment run). Shows each batch's #1 and, if `horse` is
+        given, that horse's rank in each batch — so you can see across
+        snapshots when a horse stopped being #1. Note this only captures the
+        snapshot cadence, so a flip between snapshots can be missed (which is
+        exactly why the forward tracker exists).
+    """
+    _check_admin(x_cron_secret)
+    norm = _normalize_horse(horse) if horse else None
+    async with get_session() as session:
+        changes = (await session.execute(
+            select(PredictionPickChangeRow)
+            .where(PredictionPickChangeRow.race_id == race_id)
+            .order_by(PredictionPickChangeRow.changed_at.asc())
+        )).scalars().all()
+        hist = (await session.execute(
+            select(RunnerPredictionHistoryRow)
+            .where(RunnerPredictionHistoryRow.race_id == race_id)
+        )).scalars().all()
+        cur = (await session.execute(
+            select(
+                RunnerPredictionRow.horse_name,
+                RunnerPredictionRow.win_probability,
+                RunnerPredictionRow.best_available_odds,
+                RunnerPredictionRow.enriched_at,
+            )
+            .where(RunnerPredictionRow.race_id == race_id)
+            .where(RunnerPredictionRow.cancelled.is_(False) | RunnerPredictionRow.cancelled.is_(None))
+            .order_by(RunnerPredictionRow.model_rank.asc())
+            .limit(1)
+        )).first()
+
+    # Group frozen history into enrichment batches, ordered by capture time.
+    batches: dict[str, list] = {}
+    for r in hist:
+        key = r.batch_id or (r.enriched_at.isoformat() if r.enriched_at else "?")
+        batches.setdefault(key, []).append(r)
+    batch_out = []
+    for key, rws in batches.items():
+        active = [r for r in rws if not r.cancelled]
+        top = min(active, key=lambda r: (r.model_rank or 99)) if active else None
+        enriched_at = next((r.enriched_at for r in rws if r.enriched_at), None)
+        recorded_at = max((r.recorded_at for r in rws if r.recorded_at), default=None)
+        item = {
+            "batch_id": key,
+            "enriched_at": enriched_at.isoformat() if enriched_at else None,
+            "recorded_at": recorded_at.isoformat() if recorded_at else None,
+            "top_pick": top.horse_name if top else None,
+            "top_win_probability": top.win_probability if top else None,
+            "field_size": len(rws),
+        }
+        if norm:
+            match = next((r for r in rws if _normalize_horse(r.horse_name) == norm), None)
+            item["tracked_horse_rank"] = match.model_rank if match else None
+            item["tracked_horse_win_probability"] = match.win_probability if match else None
+        batch_out.append(item)
+    batch_out.sort(key=lambda b: (b["recorded_at"] or b["enriched_at"] or ""))
+
+    return {
+        "race_id": race_id,
+        "tracked_horse": horse,
+        "current_top_pick": ({
+            "horse_name": cur[0],
+            "win_probability": cur[1],
+            "best_available_odds": cur[2],
+            "enriched_at": cur[3].isoformat() if cur and cur[3] else None,
+        } if cur else None),
+        "pick_changes": [
+            {
+                "changed_at": c.changed_at.isoformat() if c.changed_at else None,
+                "old_pick": c.old_pick,
+                "old_win_probability": c.old_win_probability,
+                "old_odds": c.old_odds,
+                "new_pick": c.new_pick,
+                "new_win_probability": c.new_win_probability,
+                "new_odds": c.new_odds,
+                "scheduled_time": c.scheduled_time,
+                "trigger": c.trigger,
+            }
+            for c in changes
+        ],
+        "history_batches": batch_out,
+        "note": ("pick_changes is the exact forward tracker (from first deploy); "
+                 "history_batches is best-effort retro from frozen snapshots and "
+                 "may miss flips that happened between snapshots."),
     }
 
 
