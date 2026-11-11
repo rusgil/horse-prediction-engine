@@ -512,6 +512,32 @@ class RunnerPredictionHistoryRow(Base):
     is_sharp = Column(Boolean, nullable=True, index=True)
 
 
+class PredictionPickChangeRow(Base):
+    """Append-only log of when a race's TOP model pick changed between
+    re-enrichments.
+
+    The live RunnerPredictionRow is overwritten in place on every enrich, and
+    the frozen history only captures periodic snapshot batches — so neither
+    records the moment the #1 pick flips as odds/enrichment move. This table
+    does: save_race_predictions reads the previous #1 before the
+    delete-then-insert and, when the new #1 differs (pre-jump only), appends
+    one immutable row here. Read via /api/admin/race-pick-timeline/{race_id}.
+    """
+    __tablename__ = "prediction_pick_changes"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    race_id = Column(String, index=True)
+    changed_at = Column(DateTime, default=datetime.utcnow, index=True)  # when the flip was detected (UTC)
+    old_pick = Column(String)
+    old_win_probability = Column(Float, nullable=True)
+    old_odds = Column(Float, nullable=True)
+    new_pick = Column(String)
+    new_win_probability = Column(Float, nullable=True)
+    new_odds = Column(Float, nullable=True)
+    scheduled_time = Column(String, nullable=True)   # the race jump time (for pre/post-jump context)
+    trigger = Column(String, default="enrich", nullable=True)
+
+
 class RaCalendarCacheRow(Base):
     """Persistent cache for RA Calendar.aspx HTML + the slug→ra_key map
     it produces. Survives Railway redeploys so we don't fanout 32 RA
@@ -1647,6 +1673,25 @@ async def save_race_predictions(session: AsyncSession, race_id: str, predictions
         if cancelled and horse_name:
             existing_cancelled.add(horse_name)
 
+    # ── Pick-change tracking ──────────────────────────────────────────────
+    # Capture the current published #1 BEFORE the delete-then-insert below, so
+    # a top-pick flip on this re-enrich can be logged (the live row is
+    # overwritten, leaving no trail otherwise). See PredictionPickChangeRow.
+    # Only the normal enrich path tracks changes — force=True is admin repair.
+    prev_top = None
+    if not force:
+        prev_top = (await session.execute(
+            select(
+                RunnerPredictionRow.horse_name,
+                RunnerPredictionRow.win_probability,
+                RunnerPredictionRow.best_available_odds,
+            )
+            .where(RunnerPredictionRow.race_id == race_id)
+            .where(RunnerPredictionRow.cancelled.is_(False) | RunnerPredictionRow.cancelled.is_(None))
+            .order_by(RunnerPredictionRow.model_rank.asc())
+            .limit(1)
+        )).first()
+
     # Write to mutable table
     await session.execute(delete(RunnerPredictionRow).where(RunnerPredictionRow.race_id == race_id))
     rows = []
@@ -1670,6 +1715,40 @@ async def save_race_predictions(session: AsyncSession, race_id: str, predictions
         session.add(row)
         rows.append(row)
     await session.commit()
+
+    # ── Pick-change tracking (continued) ──────────────────────────────────
+    # Now that the new rows are in, compare the new #1 against prev_top and
+    # append an immutable event if the top pick flipped (pre-jump only).
+    # Best-effort: a failure here must never break the save.
+    if not force and prev_top is not None and prev_top[0]:
+        try:
+            _active = [p for p in predictions
+                       if not p.get("cancelled") and p.get("horse_name")]
+            if _active:
+                _new_top = min(_active, key=lambda p: (p.get("model_rank") or 99))
+                _new_name = _new_top.get("horse_name")
+                _sched_raw = predictions[0].get("scheduled_time")
+                _sched = sched_to_utc_naive(_sched_raw) if _sched_raw else None
+                _pre_jump = _sched is None or datetime.utcnow() <= _sched
+                if _pre_jump and _new_name and _new_name != prev_top[0]:
+                    session.add(PredictionPickChangeRow(
+                        race_id=race_id,
+                        changed_at=datetime.utcnow(),
+                        old_pick=prev_top[0],
+                        old_win_probability=prev_top[1],
+                        old_odds=prev_top[2],
+                        new_pick=_new_name,
+                        new_win_probability=_new_top.get("win_probability"),
+                        new_odds=_new_top.get("best_available_odds"),
+                        scheduled_time=_sched_raw,
+                        trigger="enrich",
+                    ))
+                    await session.commit()
+                    logging.getLogger(__name__).info(
+                        "[pickchange] %s: top pick %s -> %s", race_id, prev_top[0], _new_name
+                    )
+        except Exception as _e:
+            logging.getLogger(__name__).debug("[pickchange] %s skipped: %s", race_id, _e)
 
     # Cross-entry handling (2026-07-31 root fix — false-scratch incident).
     # A horse nominated in more than one race at a meeting (cross-entry) RUNS
