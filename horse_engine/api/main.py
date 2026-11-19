@@ -15723,7 +15723,7 @@ async def admin_regrade_early_frozen(
         _edge_response_cache = None
     elif not dry_run and targets and mode == "regrade":
         import uuid as _uuid
-        from sqlalchemy import text as _text
+        from sqlalchemy import text as _text, delete as _sa_delete
         _HIST_COPY_FIELDS = (
             "horse_name", "tab_number", "barrier", "jockey", "trainer", "weight",
             "win_probability", "place_probability", "win_prob_raw", "model_rank",
@@ -15750,20 +15750,22 @@ async def admin_regrade_early_frozen(
                             _sched = sched_to_utc_naive(_m.scheduled_time); break
                     if _sched is None or _sched > datetime.utcnow():
                         continue
-                    # 1) Demote the stale frozen batch(es) out of grading/stats —
-                    #    source is NOT a trigger-guarded field, so this is permitted
-                    #    post-jump. Rows are preserved (audit), just no longer 'live'.
+                    # 1) Remove the stale frozen batch. A UNIQUE index on
+                    #    (race_id, horse_name) means batches can't coexist, so we
+                    #    DELETE rather than supersede. The write-guard trigger is
+                    #    BEFORE INSERT/UPDATE only (not DELETE), so this is allowed
+                    #    post-jump — same pattern as the BUG-44 blind-refresh. The
+                    #    replaced pick is preserved in the incidents ledger (step 3),
+                    #    not the table.
                     await session.execute(
-                        sa_update(RunnerPredictionHistoryRow)
+                        _sa_delete(RunnerPredictionHistoryRow)
                         .where(RunnerPredictionHistoryRow.race_id == rid)
-                        .where((RunnerPredictionHistoryRow.source == "live")
-                               | RunnerPredictionHistoryRow.source.is_(None))
-                        .values(source="superseded_earlyfreeze")
                     )
+                    await session.flush()   # emit the delete before the inserts
                     # 2) Insert a fresh LIVE batch from the near-jump (mutable) pick.
-                    #    With no other live batch present, the write-guard INSERT
-                    #    branch leaves these uncontaminated — the race now grades on
-                    #    the near-jump pick (what members saw).
+                    #    With no rows left, the write-guard INSERT branch leaves
+                    #    these uncontaminated — the race now grades on the near-jump
+                    #    pick (what members saw).
                     new_batch = "regrade-" + str(_uuid.uuid4())
                     now = datetime.utcnow()
                     active = [m for m in mut if not m.cancelled]
@@ -15792,7 +15794,7 @@ async def admin_regrade_early_frozen(
                         "INSERT INTO history_guard_incidents(race_id, horse_name, kind, detail) "
                         "VALUES (:r, :h, 'early_freeze_regrade', :d)"
                     ), {"r": rid, "h": (rank1.horse_name if rank1 else None),
-                        "d": f"superseded stale '{a['frozen_pick']}' -> near-jump '{a['near_jump_pick']}' (lead {a.get('freeze_lead_hours')}h); new batch {new_batch}"})
+                        "d": f"replaced stale '{a['frozen_pick']}' -> near-jump '{a['near_jump_pick']}' (lead {a.get('freeze_lead_hours')}h); new batch {new_batch}"})
                     await session.commit()
                 applied += 1
                 applied_races.append(rid)
