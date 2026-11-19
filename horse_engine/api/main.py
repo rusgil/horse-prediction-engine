@@ -15594,6 +15594,108 @@ async def admin_race_pick_timeline(
     }
 
 
+@app.post("/api/admin/regrade-early-frozen")
+async def admin_regrade_early_frozen(
+    days: int = Query(21, ge=1, le=120),
+    dry_run: bool = True,
+    x_cron_secret: Optional[str] = Header(None),
+):
+    """Option-A re-grade for the early-freeze bug: find settled races whose
+    FROZEN history pick (what the site grades) differs from the near-jump LIVE
+    pick members actually saw, and EXCLUDE those races from displayed stats.
+
+    Background: before the T-2h freeze-window fix, save_race_predictions could
+    freeze history hours/days before the jump; a later re-enrich then flipped
+    the live pick, so the graded pick diverged from what members backed (Scone
+    R8 2026-11-17 graded LYON-loss though the live pick was the winner
+    GIRRAWHEEN). We cannot rewrite the frozen pick — the write-once tamper guard
+    forbids post-jump edits to the pick — so Option A instead marks the race's
+    frozen rows contaminated=True, dropping it from DISPLAYED stats via
+    _history_healthy_filter (counted neither win nor loss), per the standing
+    rule 'if there's an issue, remove it from overall stats.'
+
+    dry_run=True (default): report the affected races only, nothing written.
+    dry_run=False: exclude them. Settled races only (past jumps)."""
+    _check_admin(x_cron_secret)
+    from sqlalchemy import update as sa_update
+    today = _today_aest().isoformat()
+    cutoff = (_today_aest() - timedelta(days=days)).isoformat()
+    async with get_session() as session:
+        winners_q = (await session.execute(
+            select(HistoricalResultRow.race_id, HistoricalResultRow.horse_name)
+            .where(HistoricalResultRow.race_id >= cutoff)
+            .where(HistoricalResultRow.race_id < today)   # settled (past) only
+            .where(HistoricalResultRow.position == 1)
+        )).fetchall()
+        winners = {rid: _normalize_horse(hn) for rid, hn in winners_q}
+        if not winners:
+            return {"days": days, "dry_run": dry_run, "count": 0, "affected": []}
+        rids = list(winners.keys())
+        hist_q = (await session.execute(
+            select(RunnerPredictionHistoryRow.race_id, RunnerPredictionHistoryRow.horse_name,
+                   RunnerPredictionHistoryRow.enriched_at, RunnerPredictionHistoryRow.contaminated)
+            .where(RunnerPredictionHistoryRow.race_id.in_(rids))
+            .where((RunnerPredictionHistoryRow.source == "live")
+                   | RunnerPredictionHistoryRow.source.is_(None))
+            .where(RunnerPredictionHistoryRow.model_rank == 1)
+            .order_by(RunnerPredictionHistoryRow.enriched_at.desc())
+        )).fetchall()
+        frozen: dict[str, tuple] = {}   # race_id -> (frozen rank-1 horse, already_contaminated)
+        for rid, hn, _ea, contam in hist_q:
+            if rid not in frozen:        # latest batch first (graded pick)
+                frozen[rid] = (hn, bool(contam))
+        mut_q = (await session.execute(
+            select(RunnerPredictionRow.race_id, RunnerPredictionRow.horse_name)
+            .where(RunnerPredictionRow.race_id.in_(rids))
+            .where(RunnerPredictionRow.model_rank == 1)
+            .where(RunnerPredictionRow.cancelled.is_(False) | RunnerPredictionRow.cancelled.is_(None))
+        )).fetchall()
+        mutable = {rid: hn for rid, hn in mut_q}
+
+    affected = []
+    for rid in rids:
+        fr = frozen.get(rid); mu = mutable.get(rid)
+        if not fr or not mu:
+            continue
+        frozen_pick, already = fr
+        if _normalize_horse(frozen_pick) == _normalize_horse(mu):
+            continue   # graded pick already matches the near-jump pick
+        w = winners[rid]
+        affected.append({
+            "race_id": rid,
+            "frozen_pick": frozen_pick,
+            "frozen_pick_won": _normalize_horse(frozen_pick) == w,
+            "near_jump_pick": mu,
+            "near_jump_pick_won": _normalize_horse(mu) == w,
+            "already_excluded": already,
+        })
+    flips_loss_to_win = sum(1 for a in affected if not a["frozen_pick_won"] and a["near_jump_pick_won"])
+    flips_win_to_loss = sum(1 for a in affected if a["frozen_pick_won"] and not a["near_jump_pick_won"])
+
+    excluded = 0
+    if not dry_run:
+        to_exclude = [a["race_id"] for a in affected if not a["already_excluded"]]
+        if to_exclude:
+            async with get_session() as session:
+                await session.execute(
+                    sa_update(RunnerPredictionHistoryRow)
+                    .where(RunnerPredictionHistoryRow.race_id.in_(to_exclude))
+                    .values(contaminated=True)
+                )
+                await session.commit()
+            excluded = len(to_exclude)
+            global _edge_response_cache
+            _edge_response_cache = None   # bust stats cache so the change shows
+    return {
+        "days": days, "dry_run": dry_run,
+        "count": len(affected),
+        "flips_loss_to_win": flips_loss_to_win,
+        "flips_win_to_loss": flips_win_to_loss,
+        "races_excluded_now": excluded,
+        "affected": sorted(affected, key=lambda a: a["race_id"], reverse=True),
+    }
+
+
 @app.get("/api/admin/market-disagreement-backtest")
 async def market_disagreement_backtest(
     days: int = Query(21, ge=7, le=180),
