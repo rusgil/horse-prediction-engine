@@ -5,7 +5,7 @@ import json
 import logging
 import os
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from typing import Optional
 
 from sqlalchemy import Column, Float, Integer, String, Text, Boolean, DateTime, Date, Index, UniqueConstraint, select, text
@@ -1836,11 +1836,26 @@ async def save_race_predictions(session: AsyncSession, race_id: str, predictions
                 enriched_at = datetime.fromisoformat(str(enriched_at))
             except (ValueError, TypeError):
                 enriched_at = datetime.utcnow()
+        # Freeze the immutable snapshot only when the race is PRE-JUMP *and*
+        # within the same T-2h window the cron snapshotter uses. The morning
+        # enrich prepares today+tomorrow+day-after, so a race can first enrich
+        # ~30h out — freezing history then locks an early pick that later
+        # re-enriches change, so the frozen/graded pick diverges from what
+        # members see near the jump. Scone R8 2026-11-17 froze LYON ~3 days
+        # early; the live pick flipped to the eventual WINNER Girrawheen on race
+        # morning, yet the site graded us on the stale Lyon loss. Mutable is
+        # still written above regardless; a later in-window enrich (15-min
+        # pre-race cron) or the hourly snapshot cron freezes the near-jump pick.
+        # Unknown start time → is_pre_race stays False and the cron (which writes
+        # unknown-time races immediately) handles it.
+        _HISTORY_FREEZE_WINDOW = timedelta(hours=2)
         is_pre_race = False
         if scheduled_time:
             try:
                 sched = sched_to_utc_naive(scheduled_time)
-                is_pre_race = sched is not None and enriched_at < sched
+                if sched is not None:
+                    _to_jump = sched - datetime.utcnow()
+                    is_pre_race = timedelta(0) < _to_jump <= _HISTORY_FREEZE_WINDOW
             except (ValueError, TypeError):
                 pass
         if is_pre_race:
