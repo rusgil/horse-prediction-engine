@@ -15597,6 +15597,7 @@ async def admin_race_pick_timeline(
 @app.post("/api/admin/regrade-early-frozen")
 async def admin_regrade_early_frozen(
     days: int = Query(21, ge=1, le=120),
+    min_lead_hours: float = Query(3.0, ge=0.0, le=72.0),
     dry_run: bool = True,
     x_cron_secret: Optional[str] = Header(None),
 ):
@@ -15613,6 +15614,12 @@ async def admin_regrade_early_frozen(
     frozen rows contaminated=True, dropping it from DISPLAYED stats via
     _history_healthy_filter (counted neither win nor loss), per the standing
     rule 'if there's an issue, remove it from overall stats.'
+
+    Only genuine early-freezes are flagged: the graded (latest) frozen batch
+    must have been RECORDED more than `min_lead_hours` before the jump (default
+    3h). That isolates the bug (frozen hours/days out) from normal near-jump
+    movement — a race legitimately frozen inside the T-2h window whose #1 then
+    drifted as odds moved is NOT the bug and must stay counted.
 
     dry_run=True (default): report the affected races only, nothing written.
     dry_run=False: exclude them. Settled races only (past jumps)."""
@@ -15633,17 +15640,24 @@ async def admin_regrade_early_frozen(
         rids = list(winners.keys())
         hist_q = (await session.execute(
             select(RunnerPredictionHistoryRow.race_id, RunnerPredictionHistoryRow.horse_name,
-                   RunnerPredictionHistoryRow.enriched_at, RunnerPredictionHistoryRow.contaminated)
+                   RunnerPredictionHistoryRow.enriched_at, RunnerPredictionHistoryRow.recorded_at,
+                   RunnerPredictionHistoryRow.scheduled_time, RunnerPredictionHistoryRow.contaminated)
             .where(RunnerPredictionHistoryRow.race_id.in_(rids))
             .where((RunnerPredictionHistoryRow.source == "live")
                    | RunnerPredictionHistoryRow.source.is_(None))
             .where(RunnerPredictionHistoryRow.model_rank == 1)
             .order_by(RunnerPredictionHistoryRow.enriched_at.desc())
         )).fetchall()
-        frozen: dict[str, tuple] = {}   # race_id -> (frozen rank-1 horse, already_contaminated)
-        for rid, hn, _ea, contam in hist_q:
-            if rid not in frozen:        # latest batch first (graded pick)
-                frozen[rid] = (hn, bool(contam))
+        frozen: dict[str, tuple] = {}   # race_id -> (horse, already_contaminated, lead_hours)
+        for rid, hn, _ea, rec_at, sched_str, contam in hist_q:
+            if rid in frozen:            # keep latest batch only (graded pick)
+                continue
+            # How many hours before the jump was this batch RECORDED? (the freeze lead)
+            lead_h = None
+            _sched = sched_to_utc_naive(sched_str) if sched_str else None
+            if _sched is not None and rec_at is not None:
+                lead_h = (_sched - rec_at).total_seconds() / 3600.0
+            frozen[rid] = (hn, bool(contam), lead_h)
         mut_q = (await session.execute(
             select(RunnerPredictionRow.race_id, RunnerPredictionRow.horse_name)
             .where(RunnerPredictionRow.race_id.in_(rids))
@@ -15657,9 +15671,14 @@ async def admin_regrade_early_frozen(
         fr = frozen.get(rid); mu = mutable.get(rid)
         if not fr or not mu:
             continue
-        frozen_pick, already = fr
+        frozen_pick, already, lead_h = fr
         if _normalize_horse(frozen_pick) == _normalize_horse(mu):
             continue   # graded pick already matches the near-jump pick
+        # Only genuine early-freezes — frozen well outside the T-2h window.
+        # Unknown lead (no sched/recorded) is treated as NOT an early-freeze
+        # (conservative: don't exclude when we can't prove it was frozen early).
+        if lead_h is None or lead_h <= min_lead_hours:
+            continue
         w = winners[rid]
         affected.append({
             "race_id": rid,
@@ -15667,6 +15686,7 @@ async def admin_regrade_early_frozen(
             "frozen_pick_won": _normalize_horse(frozen_pick) == w,
             "near_jump_pick": mu,
             "near_jump_pick_won": _normalize_horse(mu) == w,
+            "freeze_lead_hours": round(lead_h, 1),
             "already_excluded": already,
         })
     flips_loss_to_win = sum(1 for a in affected if not a["frozen_pick_won"] and a["near_jump_pick_won"])
