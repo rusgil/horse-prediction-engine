@@ -15598,6 +15598,8 @@ async def admin_race_pick_timeline(
 async def admin_regrade_early_frozen(
     days: int = Query(21, ge=1, le=120),
     min_lead_hours: float = Query(3.0, ge=0.0, le=72.0),
+    mode: str = Query("regrade", pattern="^(regrade|exclude)$"),
+    flips_only: bool = Query(True),
     dry_run: bool = True,
     x_cron_secret: Optional[str] = Header(None),
 ):
@@ -15624,6 +15626,7 @@ async def admin_regrade_early_frozen(
     dry_run=True (default): report the affected races only, nothing written.
     dry_run=False: exclude them. Settled races only (past jumps)."""
     _check_admin(x_cron_secret)
+    global _edge_response_cache
     from sqlalchemy import update as sa_update
     today = _today_aest().isoformat()
     cutoff = (_today_aest() - timedelta(days=days)).isoformat()
@@ -15692,26 +15695,109 @@ async def admin_regrade_early_frozen(
     flips_loss_to_win = sum(1 for a in affected if not a["frozen_pick_won"] and a["near_jump_pick_won"])
     flips_win_to_loss = sum(1 for a in affected if a["frozen_pick_won"] and not a["near_jump_pick_won"])
 
-    excluded = 0
-    if not dry_run:
-        to_exclude = [a["race_id"] for a in affected if not a["already_excluded"]]
-        if to_exclude:
+    # Targets: flips_only (default) acts only on races whose win/loss OUTCOME is
+    # wrong; otherwise every divergent race. Already-excluded rows are skipped.
+    def _is_flip(a):
+        return a["frozen_pick_won"] != a["near_jump_pick_won"]
+    targets = [a for a in affected if not a["already_excluded"]
+               and (not flips_only or _is_flip(a))]
+
+    applied = 0
+    applied_races: list[str] = []
+    if not dry_run and targets and mode == "exclude":
+        # Option A: drop the affected races from displayed stats (no pick rewrite).
+        async with get_session() as session:
+            await session.execute(
+                sa_update(RunnerPredictionHistoryRow)
+                .where(RunnerPredictionHistoryRow.race_id.in_([a["race_id"] for a in targets]))
+                .values(contaminated=True)
+            )
+            await session.commit()
+        applied = len(targets)
+        applied_races = [a["race_id"] for a in targets]
+        _edge_response_cache = None
+    elif not dry_run and targets and mode == "regrade":
+        import uuid as _uuid
+        from sqlalchemy import text as _text
+        _HIST_COPY_FIELDS = (
+            "horse_name", "tab_number", "barrier", "jockey", "trainer", "weight",
+            "win_probability", "place_probability", "win_prob_raw", "model_rank",
+            "market_rank", "overlay", "best_available_odds", "value_rating",
+            "narrative", "key_flags", "enriched_json", "place_model_rank",
+            "exotic_model_rank", "scheduled_time", "enriched_at", "cancelled",
+            "venue", "state", "race_number", "race_name", "distance",
+            "track_condition", "field_size", "prize_money", "rail_position",
+            "class_change",
+        )
+        for a in targets:
+            rid = a["race_id"]
             async with get_session() as session:
+                mut = (await session.execute(
+                    select(RunnerPredictionRow).where(RunnerPredictionRow.race_id == rid)
+                )).scalars().all()
+                if not mut:
+                    continue
+                # Guard: re-confirm the race really jumped (never touch a live race).
+                _sched = None
+                for _m in mut:
+                    if _m.scheduled_time:
+                        _sched = sched_to_utc_naive(_m.scheduled_time); break
+                if _sched is None or _sched > datetime.utcnow():
+                    continue
+                # 1) Demote the stale frozen batch(es) out of grading/stats —
+                #    source is NOT a trigger-guarded field, so this is permitted
+                #    post-jump. Rows are preserved (audit), just no longer 'live'.
                 await session.execute(
                     sa_update(RunnerPredictionHistoryRow)
-                    .where(RunnerPredictionHistoryRow.race_id.in_(to_exclude))
-                    .values(contaminated=True)
+                    .where(RunnerPredictionHistoryRow.race_id == rid)
+                    .where((RunnerPredictionHistoryRow.source == "live")
+                           | RunnerPredictionHistoryRow.source.is_(None))
+                    .values(source="superseded_earlyfreeze")
                 )
+                # 2) Insert a fresh LIVE batch from the near-jump (mutable) pick.
+                #    With no other live batch present, the write-guard INSERT
+                #    branch leaves these uncontaminated — the race now grades on
+                #    the near-jump pick (what members saw).
+                new_batch = "regrade-" + str(_uuid.uuid4())
+                now = datetime.utcnow()
+                active = [m for m in mut if not m.cancelled]
+                active_sorted = sorted(active, key=lambda m: m.model_rank or 99)
+                rank1 = active_sorted[0] if active_sorted else None
+                top3 = sum((m.win_probability or 0) for m in active_sorted[:3])
+                race_is_sharp = None
+                if rank1 is not None:
+                    _conf = (rank1.win_probability or 0) >= 0.30 or top3 >= 0.60
+                    _doff = None
+                    if rank1.enriched_json:
+                        try:
+                            _e = json.loads(rank1.enriched_json)
+                            _doff = _e.get("days_since_last_run") if isinstance(_e, dict) else None
+                        except Exception:
+                            _doff = None
+                    race_is_sharp = bool(_conf and (_doff is None or _doff <= 180))
+                for m in mut:
+                    vals = {f: getattr(m, f, None) for f in _HIST_COPY_FIELDS}
+                    vals.update(race_id=rid, source="live", batch_id=new_batch,
+                                recorded_at=now, contaminated=False,
+                                is_sharp=(race_is_sharp if (m.model_rank == 1 and not m.cancelled) else None))
+                    session.add(RunnerPredictionHistoryRow(**vals))
+                # 3) Audit ledger entry.
+                await session.execute(_text(
+                    "INSERT INTO history_guard_incidents(race_id, horse_name, kind, detail) "
+                    "VALUES (:r, :h, 'early_freeze_regrade', :d)"
+                ), {"r": rid, "h": (rank1.horse_name if rank1 else None),
+                    "d": f"superseded stale '{a['frozen_pick']}' -> near-jump '{a['near_jump_pick']}' (lead {a.get('freeze_lead_hours')}h); new batch {new_batch}"})
                 await session.commit()
-            excluded = len(to_exclude)
-            global _edge_response_cache
-            _edge_response_cache = None   # bust stats cache so the change shows
+            applied += 1
+            applied_races.append(rid)
+        _edge_response_cache = None   # bust stats cache so the change shows
     return {
-        "days": days, "dry_run": dry_run,
-        "count": len(affected),
+        "days": days, "dry_run": dry_run, "mode": mode, "flips_only": flips_only,
+        "divergent_count": len(affected),
         "flips_loss_to_win": flips_loss_to_win,
         "flips_win_to_loss": flips_win_to_loss,
-        "races_excluded_now": excluded,
+        "targets": len(targets),
+        "races_regraded_now": applied,
         "affected": sorted(affected, key=lambda a: a["race_id"], reverse=True),
     }
 
