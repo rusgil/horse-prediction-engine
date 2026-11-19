@@ -15600,6 +15600,7 @@ async def admin_regrade_early_frozen(
     min_lead_hours: float = Query(3.0, ge=0.0, le=72.0),
     mode: str = Query("regrade", pattern="^(regrade|exclude)$"),
     flips_only: bool = Query(True),
+    limit: int = Query(0, ge=0),   # 0 = all; >0 caps races changed this call (canary)
     dry_run: bool = True,
     x_cron_secret: Optional[str] = Header(None),
 ):
@@ -15701,6 +15702,9 @@ async def admin_regrade_early_frozen(
         return a["frozen_pick_won"] != a["near_jump_pick_won"]
     targets = [a for a in affected if not a["already_excluded"]
                and (not flips_only or _is_flip(a))]
+    targets.sort(key=lambda a: a["race_id"], reverse=True)
+    if limit and limit > 0:
+        targets = targets[:limit]
 
     applied = 0
     applied_races: list[str] = []
