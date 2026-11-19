@@ -585,40 +585,34 @@ def _like_safe(value: str) -> str:
 
 
 async def _scheduled_odds_snapshot():
-    """Snapshot current fixed-win odds for all rank-1 picks scheduled today or
-    tomorrow. Fetches from OddsPro (bookmaker fixed markets), not the RA HTML
-    scrape.
+    """Record the current best-available (Sportsbet) win odds for today's and
+    tomorrow's rank-1 picks into odds_snapshots, giving the steam/odds-movement
+    features and the odds-trend sparklines their time series.
 
-    History note (2026-07-14): the previous implementation called
-    CompositeClient.get_meeting_races which delegates to Racing Australia's HTML
-    scrape. On 2026-06-01 we switched the data pipeline to RA+OddsPro+Betfair;
-    RA's parser never populated topToteWin/flucs (the fields are hard-coded
-    None/{} in RA's parse_selections), so every runner hit the `continue`
-    branch and zero snapshots were inserted for 44 days. Silent death — no
-    exception. Rebuild uses OddsPro directly, same source the working
-    live-odds refresh already uses.
+    This RECORDS what the app already holds — RunnerPredictionRow.best_available_odds,
+    kept fresh from Sportsbet by _scheduled_live_odds_refresh / the enrich crons —
+    and makes NO odds fetch of its own. Decoupling the snapshot from any live odds
+    SOURCE is deliberate: it can never silently die when a vendor changes, and it
+    adds zero external request load.
+
+    History of silent deaths this guards against: (1) 2026-06-01 the pipeline moved
+    to RA HTML which never populated flucs → 44 days of zero snapshots; (2) the
+    rebuild then fetched from OddsPro, whose API closed ~2026-10-03 (401/429) → every
+    meeting hit `continue` → ~7 weeks of zero snapshots (caught by the morning
+    report's odds_snapshots_stale check, 2026-11-18). Recording what we already
+    display removes the external dependency that killed it both times.
     """
-    from horse_engine.clients.oddspro import OddsProClient
-
-    # Hour gate — IntervalTrigger runs 24/7 so we enforce racing-hours
-    # (5am–8pm AEST) here. Skip early morning / overnight fires.
+    # Hour gate — IntervalTrigger runs 24/7 so we enforce racing hours (5am-8pm AEST).
     now_aest = datetime.now(_AEST)
     if now_aest.hour < 5 or now_aest.hour > 20:
         return
-
-    # Variable delay 1-60s. Combined with the 90s interval trigger this
-    # gives an effective spacing of 91-150s between fires — deliberately
-    # non-uniform so our request pattern is harder for a WAF to
-    # fingerprint (RA blocked us on an exact 2-min cadence earlier today).
-    delay = random.uniform(1, 60)
-    await asyncio.sleep(delay)
-    log.debug("[odds-snapshot] Running odds snapshot")
+    # Small jitter so fires aren't perfectly periodic.
+    await asyncio.sleep(random.uniform(1, 20))
     try:
-        op = OddsProClient()
         now_aest = datetime.now(_AEST)
         today = now_aest.date().isoformat()
         tomorrow = (now_aest.date() + timedelta(days=1)).isoformat()
-
+        snapped_at = datetime.utcnow()
         for target_date in (today, tomorrow):
             prefix = f"{target_date}_"
             async with get_session() as session:
@@ -626,53 +620,16 @@ async def _scheduled_odds_snapshot():
                     select(RunnerPredictionRow)
                     .where(RunnerPredictionRow.model_rank == 1)
                     .where(RunnerPredictionRow.race_id.like(f"{prefix}%"))
+                    .where(RunnerPredictionRow.cancelled.is_(False)
+                           | RunnerPredictionRow.cancelled.is_(None))
+                    .where(RunnerPredictionRow.best_available_odds > 1.0)
                 )).scalars().all()
-
             if not picks:
                 continue
-
-            try:
-                meeting_odds = await op.get_meeting_odds(target_date)
-            except Exception as e:
-                log.warning("[odds-snapshot] OddsPro get_meeting_odds failed for %s: %s", target_date, e)
-                continue
-            if not meeting_odds:
-                log.info("[odds-snapshot] OddsPro returned no meetings for %s", target_date)
-                continue
-
-            tracks = list(meeting_odds.keys())
-            snapped_at = datetime.utcnow()
-            inserts_by_venue: dict[str, int] = {}
             snapped_race_ids: set[str] = set()
-
-            # Pull the FULL active field for these races (not just rank-1) so
-            # the piggyback populates best_available_odds for every runner —
-            # otherwise horses 2..N in the Hot Seat field expansion stay at
-            # 'TBA' until the 3h live-odds window opens.
-            pick_race_ids = {p.race_id for p in picks}
+            inserted = 0
             async with get_session() as session:
-                field_rows = (await session.execute(
-                    select(RunnerPredictionRow)
-                    .where(RunnerPredictionRow.race_id.in_(pick_race_ids))
-                    .where(RunnerPredictionRow.cancelled.is_(False) | RunnerPredictionRow.cancelled.is_(None))
-                )).scalars().all()
-
-            async with get_session() as session:
-                for row in field_rows:
-                    try:
-                        _, venue_code, race_num_str = _parse_race_id(row.race_id)
-                        race_num = int(str(race_num_str).replace("R", ""))
-                    except Exception:
-                        continue
-                    op_track = op.find_matching_track(venue_code, tracks)
-                    if not op_track:
-                        continue
-                    name_lower = (row.horse_name or "").lower().strip()
-                    name_norm = _normalize_horse(row.horse_name or "")
-                    track_map = meeting_odds.get(op_track, {})
-                    price = track_map.get((race_num, name_lower)) or track_map.get((race_num, name_norm))
-                    if not price or price <= 1.0:
-                        continue
+                for row in picks:
                     mins_to_jump = None
                     if row.scheduled_time:
                         try:
@@ -680,61 +637,23 @@ async def _scheduled_odds_snapshot():
                             mins_to_jump = round((jump - snapped_at).total_seconds() / 60) if jump else None
                         except Exception:
                             pass
-                    # Place odds (2026-07-28): OddsPro is fixed-win only, so
-                    # place_odds was permanently NULL. Inside the last ~35 min
-                    # before the jump, pull Sportsbet's fixed placePrice once
-                    # per race (10-min client cache) — the final pre-jump
-                    # capture doubles as the post-race "place bet at the jump
-                    # paid $X" record. Recorded for the TOP-3 model ranks.
-                    place_price = None
-                    if mins_to_jump is not None and -5 <= mins_to_jump <= 35:
-                        try:
-                            from horse_engine.clients.sportsbet_schedule import (
-                                get_sportsbet_place_prices, _norm as _sbn)
-                            _, _vc, _rn = _parse_race_id(row.race_id)
-                            _pmap = await get_sportsbet_place_prices(
-                                target_date, _vc, int(str(_rn).replace("R", "")))
-                            if _pmap:
-                                place_price = _pmap.get(_sbn(row.horse_name or ""))
-                        except Exception:
-                            place_price = None
-                    # Snapshot history — rank-1 always (steam cost bounded);
-                    # other ranks only when a place price landed in the
-                    # pre-jump window (the results view needs place odds for
-                    # the ACTUAL placegetters, who can be any horse).
-                    if row.model_rank == 1 or place_price:
-                        session.add(OddsSnapshotRow(
-                            race_id=row.race_id,
-                            horse_name=row.horse_name,
-                            snapshotted_at=snapped_at,
-                            minutes_to_jump=mins_to_jump,
-                            win_odds=float(price),
-                            place_odds=place_price,
-                            source="oddspro-fixed" if row.model_rank == 1 else "sb-place",
-                        ))
-                        if row.model_rank == 1:
-                            snapped_race_ids.add(row.race_id)
-                    # Piggyback the displayed odds — re-fetch inside THIS
-                    # session so the mutation actually persists. The prior
-                    # implementation set the attribute on a detached instance
-                    # (loaded in an earlier `async with` block that had already
-                    # closed), so the update silently vanished at commit time —
-                    # symptom: every rank-1 pick showed 'TBA' all day (2026-07-15
-                    # Balaklava/Bunbury/etc.). Zero extra OddsPro traffic.
-                    db_row = await session.get(RunnerPredictionRow, row.id)
-                    if db_row is not None:
-                        db_row.best_available_odds = float(price)
-                        market_implied = 1.0 / float(price)
-                        db_row.overlay = round((db_row.win_probability or 0) - market_implied, 4)
-                        db_row.value_rating = _value_rating(
-                            db_row.win_probability or 0, float(price), db_row.overlay
-                        )
-                    inserts_by_venue[op_track] = inserts_by_venue.get(op_track, 0) + 1
+                    # Skip well-post-jump fires (keep a 10-min grace for a final capture).
+                    if mins_to_jump is not None and mins_to_jump < -10:
+                        continue
+                    session.add(OddsSnapshotRow(
+                        race_id=row.race_id,
+                        horse_name=row.horse_name,
+                        snapshotted_at=snapped_at,
+                        minutes_to_jump=mins_to_jump,
+                        win_odds=float(row.best_available_odds),
+                        place_odds=None,
+                        source="recorded-sb",
+                    ))
+                    snapped_race_ids.add(row.race_id)
+                    inserted += 1
                 await session.commit()
-            total = sum(inserts_by_venue.values())
-            log.info("[odds-snapshot] Inserted %d rows for %s across %d venues",
-                     total, target_date, len(inserts_by_venue))
-            # Recompute steam features from full snapshot history for these races
+            log.info("[odds-snapshot] Recorded %d rank-1 snapshots for %s", inserted, target_date)
+            # Recompute steam features from the full snapshot history for these races.
             if snapped_race_ids:
                 asyncio.create_task(_update_steam_features(list(snapped_race_ids)))
     except Exception as e:
@@ -4876,7 +4795,7 @@ async def lifespan(app: FastAPI):
     # rank-1 rows while writing snapshot history.
     scheduler.add_job(
         _scheduled_odds_snapshot,
-        IntervalTrigger(seconds=90),
+        IntervalTrigger(seconds=300),   # 5-min: records best_available_odds (updated ~20-min by live-refresh); no external calls
     )
     # Pre-race scan dropped from 15-min → hourly on 2026-07-20 while
     # waiting on commercial API vendor. Cuts our biggest RA-hitter by
