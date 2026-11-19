@@ -4499,6 +4499,73 @@ async def _auto_repair_contaminated_snapshots():
 _scheduler = None
 
 
+# ── Memory maintenance (Railway RAM cost control) ─────────────────────────
+# The web process baselines at ~290MB but climbs to ~3GB and plateaus there.
+# That plateau — not model memory — is the single biggest line on the Railway
+# bill (~$30/mo of billed RSS). The shape (grows then holds, never OOMs) is the
+# classic glibc symptom: the in-process nightly jobs (retrain/backtest/
+# calibration) allocate GBs of pandas/sklearn objects, free them, but glibc
+# keeps the freed arenas mapped, so RSS stays at the high-water mark forever.
+# Railway bills measured RSS, so we pay for memory nothing is using.
+#
+# Fix: periodically force glibc to return free arenas to the OS (malloc_trim)
+# after a gc pass. This is cheap, safe (a no-op when there's nothing to trim),
+# needs no restart and no restart-policy change, and should pull average RSS
+# back down toward the live-object size. Paired with an RSS logger so we can
+# SEE it working and, if any TRUE leak remains (RSS that trim can't reclaim),
+# correlate the growth with the cron schedule to find the offending job.
+def _rss_mb() -> float:
+    """Current resident set size in MB, from /proc (Linux/Railway). 0 on
+    non-Linux / unreadable."""
+    try:
+        with open("/proc/self/status") as f:
+            for line in f:
+                if line.startswith("VmRSS:"):
+                    return int(line.split()[1]) / 1024.0  # kB → MB
+    except Exception:
+        pass
+    return 0.0
+
+
+def _trim_memory() -> float:
+    """gc.collect() then return freed glibc arenas to the OS. Returns MB
+    reclaimed (before−after RSS). Fully best-effort: any failure is swallowed
+    and reported as 0 (e.g. musl libc, where malloc_trim doesn't exist)."""
+    import gc
+    before = _rss_mb()
+    try:
+        gc.collect()
+        import ctypes
+        libc = ctypes.CDLL("libc.so.6")
+        libc.malloc_trim(0)
+    except Exception as e:
+        log.debug("[mem] trim skipped: %s", e)
+    after = _rss_mb()
+    return max(0.0, before - after)
+
+
+async def _scheduled_memory_maintenance():
+    """Every 15 min: log RSS + the heaviest live object types, then trim.
+    The log line lets us watch the plateau fall and, if RSS keeps climbing
+    despite trimming, name the leaking job by when the jump happens."""
+    import gc
+    try:
+        rss = _rss_mb()
+        counts: dict[str, int] = {}
+        for o in gc.get_objects():
+            tn = type(o).__name__
+            counts[tn] = counts.get(tn, 0) + 1
+        top = sorted(counts.items(), key=lambda kv: kv[1], reverse=True)[:6]
+        reclaimed = _trim_memory()
+        log.info(
+            "[mem] RSS=%.0fMB reclaimed=%.0fMB objects=%d top=%s",
+            rss, reclaimed, sum(counts.values()),
+            ", ".join(f"{n}:{c}" for n, c in top),
+        )
+    except Exception as e:
+        log.warning("[mem] maintenance tick failed: %s", e)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await init_db()
@@ -4837,6 +4904,15 @@ async def lifespan(app: FastAPI):
     scheduler.add_job(
         _scheduled_settle_bets,
         CronTrigger(hour="11-23", minute="10,40", timezone="Australia/Sydney")
+    )
+    # Memory maintenance — every 15 min, return freed glibc arenas to the OS so
+    # billed RSS tracks live objects instead of the nightly high-water mark.
+    # See _scheduled_memory_maintenance / _trim_memory. Runs around the clock
+    # (coalesce+1 so a backlog never stacks), cheap, no RA/DB/network impact.
+    scheduler.add_job(
+        _scheduled_memory_maintenance,
+        IntervalTrigger(minutes=15),
+        max_instances=1, coalesce=True,
     )
     if _run_bg:
         scheduler.start()
