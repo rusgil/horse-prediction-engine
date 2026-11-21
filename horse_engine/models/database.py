@@ -539,6 +539,31 @@ class PredictionPickChangeRow(Base):
     trigger = Column(String, default="enrich", nullable=True)
 
 
+class SharpSliceScanRow(Base):
+    """One row per weekly Sharp-filter slice scan — the combinatorial search for
+    the best OOS-stable, volume-constrained prediction slice (the auto-
+    recalibration loop). Read by the admin dashboard 'Sharp Lab' and used to
+    detect when the live gate's edge has drifted. Append-only."""
+    __tablename__ = "sharp_slice_scans"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    ran_at = Column(DateTime, default=datetime.utcnow, index=True)
+    window_days = Column(Integer)
+    n_picks = Column(Integer)                 # settled rank-1 picks scored
+    field_win_pct = Column(Float)             # baseline: all top picks
+    incumbent_win_pct = Column(Float, nullable=True)   # current is_sharp gate (OOS)
+    incumbent_n = Column(Integer, nullable=True)
+    incumbent_lift_pp = Column(Float, nullable=True)   # incumbent - field
+    best_def = Column(Text, nullable=True)             # plain-English best slice
+    best_win_pct = Column(Float, nullable=True)        # OOS (test fold) win%
+    best_train_win_pct = Column(Float, nullable=True)
+    best_n = Column(Integer, nullable=True)
+    best_per_day = Column(Float, nullable=True)
+    best_lift_pp = Column(Float, nullable=True)
+    verdict = Column(String, nullable=True)   # incumbent_ok | better_slice_found | no_qualifier
+    candidates_json = Column(Text, nullable=True)      # top-N ranked survivors
+
+
 class RaCalendarCacheRow(Base):
     """Persistent cache for RA Calendar.aspx HTML + the slug→ra_key map
     it produces. Survives Railway redeploys so we don't fanout 32 RA
