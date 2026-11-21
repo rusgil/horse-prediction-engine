@@ -16096,7 +16096,10 @@ def _scan_sharp_slices(picks: list) -> dict:
 
 async def _run_sharp_slice_scan(days: int = 180) -> dict:
     """Run the scan over `days` of settled picks and persist one SharpSliceScanRow."""
-    res = await tier_performance_backtest(days=days, detail=True, x_cron_secret=settings.cron_secret)
+    # NB: call the route fn directly — must pass EVERY param, else start/end stay
+    # as their Query(None) FieldInfo objects (truthy) and _validate_date blows up.
+    res = await tier_performance_backtest(
+        start=None, end=None, days=days, detail=True, x_cron_secret=settings.cron_secret)
     scan = _scan_sharp_slices(res.get("picks") or [])
     best = scan.get("best") or {}
     inc = scan.get("incumbent") or {}
