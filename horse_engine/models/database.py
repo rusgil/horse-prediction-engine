@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine, async_sess
 from sqlalchemy.orm import DeclarativeBase
 
 from horse_engine.config import settings
+from horse_engine.sharp_gate import is_sharp_gate   # single-source Sharp gate (no inline copies)
 
 
 def _make_engine():
@@ -1791,10 +1792,14 @@ async def save_race_predictions(session: AsyncSession, race_id: str, predictions
             top3_sum = sum((p.get("win_probability") or 0) for p in active_sorted[:3])
             race_is_sharp = None
             if rank1 is not None:
-                r1_conf = (rank1.get("win_probability") or 0) >= 0.30 or top3_sum >= 0.60
-                r1_days_off = rank1.get("days_since_last_run")
-                r1_layoff_ok = r1_days_off is None or r1_days_off <= 180
-                race_is_sharp = bool(r1_conf and r1_layoff_ok)
+                _rank2_wp = (active_sorted[1].get("win_probability") or 0) if len(active_sorted) > 1 else 0.0
+                race_is_sharp = is_sharp_gate(
+                    rank1_prob=rank1.get("win_probability") or 0,
+                    rank2_prob=_rank2_wp, top3_sum=top3_sum,
+                    days_since_last_run=rank1.get("days_since_last_run"),
+                    race_date=race_id[:10],
+                    best_available_odds=rank1.get("best_available_odds"),
+                )
             hist_rows = (await session.execute(
                 select(RunnerPredictionHistoryRow)
                 .where(RunnerPredictionHistoryRow.race_id == race_id)
@@ -1872,7 +1877,6 @@ async def save_race_predictions(session: AsyncSession, race_id: str, predictions
             top3_sum = sum((pp.get("win_probability") or 0) for pp in active_sorted[:3])
             race_is_sharp = None
             if rank1 is not None:
-                _high_conf = ((rank1.get("win_probability") or 0) >= 0.30) or (top3_sum >= 0.60)
                 _days_off = None
                 _enriched_json = rank1.get("enriched_json")
                 if _enriched_json:
@@ -1881,8 +1885,14 @@ async def save_race_predictions(session: AsyncSession, race_id: str, predictions
                         _days_off = _e.get("days_since_last_run") if isinstance(_e, dict) else None
                     except Exception:
                         _days_off = None
-                _layoff_ok = not (isinstance(_days_off, (int, float)) and _days_off > 180)
-                race_is_sharp = bool(_high_conf and _layoff_ok)
+                _rank2_wp = (active_sorted[1].get("win_probability") or 0) if len(active_sorted) > 1 else 0.0
+                race_is_sharp = is_sharp_gate(
+                    rank1_prob=rank1.get("win_probability") or 0,
+                    rank2_prob=_rank2_wp, top3_sum=top3_sum,
+                    days_since_last_run=_days_off,
+                    race_date=race_id[:10],
+                    best_available_odds=rank1.get("best_available_odds"),
+                )
             for p in predictions:
                 try:
                     session.add(RunnerPredictionHistoryRow(
