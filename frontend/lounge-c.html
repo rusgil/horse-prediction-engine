@@ -1929,6 +1929,42 @@
   /* ── countdown ticker (light re-render, drawer untouched) ── */
   setInterval(() => { if (S.meetings.length) renderAll(); }, 45000);
 
+  /* ── live results refresh ──────────────────────────────────────────────
+     loadAll() fetches each meeting's results ONCE; the 45s tick above only
+     RE-RENDERS the cached S.details, never re-fetches. So a late-settling race
+     (esp. WA/NT evening meetings) never updated the win tally until a full
+     reload — e.g. Ascot showed "2/3 wins" after R4 had settled a win (really
+     3/4). Every 2 min, re-fetch ONLY meetings that still have an unsettled race
+     (model_correct null), with a cache-buster to defeat any edge cache, so
+     fresh results flow into the tally. Winds down as the card completes; today
+     only (past dates are fully settled). */
+  async function refreshInProgressMeetings() {
+    if (!S.meetings || !S.meetings.length) return;
+    if (S.date !== aestToday(0)) return;              // past dates are settled
+    const inProgress = S.meetings.filter(m => {
+      if (m.abandoned) return false;
+      const rs = S.details[vcOf(m)];
+      if (!rs || !rs.length) return true;             // not loaded yet
+      return rs.some(r => r.model_correct === null || r.model_correct === undefined);
+    });
+    if (!inProgress.length) return;
+    let changed = false;
+    for (const m of inProgress) {
+      const vc = vcOf(m);
+      try {
+        const res = await fetch(`${API}/api/meetings/${S.date}/${vc}?_t=${Date.now()}`);
+        if (res.ok) {
+          const j = await res.json();
+          if (Array.isArray(j.races)) S.details[vc] = j.races;
+          if (j.abandoned) m.abandoned = true;
+          changed = true;
+        }
+      } catch (e) { /* keep prior cached details on a transient failure */ }
+    }
+    if (changed) renderAll();
+  }
+  setInterval(refreshInProgressMeetings, 120000);
+
   /* ── boot ── */
   S.date = aestToday(0);
   buildDateRow();
