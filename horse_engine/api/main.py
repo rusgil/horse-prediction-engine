@@ -64,6 +64,7 @@ from horse_engine.models.database import (
     RunnerPredictionRow,
     RunnerPredictionHistoryRow,
     PredictionPickChangeRow,
+    SharpSliceScanRow,
     RacePredictionRow,
     WinCalibrationCurveRow,
     init_db,
@@ -4745,6 +4746,11 @@ async def lifespan(app: FastAPI):
     # settles and before the Monday-morning weekly review.
     scheduler.add_job(_scheduled_refresh_about_stats,
                       CronTrigger(day_of_week="sun", hour=8, minute=0, timezone="Australia/Sydney"))
+    # Weekly Sharp-filter slice scan — finds the best OOS-stable, 5-10/day slice
+    # and stores it for the dashboard (Sharp Lab) + drift detection. Sun 6am AEST
+    # (after the 2am calibrate / 3am retrain, before the 8am about-stats refresh).
+    scheduler.add_job(_scheduled_sharp_slice_scan,
+                      CronTrigger(day_of_week="sun", hour=6, minute=0, timezone="Australia/Sydney"))
     # Every 90s base + 1-60s random delay = 91-150s between fires.
     # The variable interval is deliberate: makes our request pattern less
     # WAF-friendly-to-detect (RA blocked us when we hit them on an exact
@@ -15839,8 +15845,10 @@ async def tier_performance_backtest(
                 RunnerPredictionHistoryRow.win_probability,
                 RunnerPredictionHistoryRow.model_rank,
                 RunnerPredictionHistoryRow.market_rank,
+                RunnerPredictionHistoryRow.best_available_odds,
                 RunnerPredictionHistoryRow.venue,
                 RunnerPredictionHistoryRow.race_number,
+                RunnerPredictionHistoryRow.field_size,
                 RunnerPredictionHistoryRow.batch_id,
                 RunnerPredictionHistoryRow.scheduled_time,
                 RunnerPredictionHistoryRow.enriched_at,
@@ -15926,9 +15934,16 @@ async def tier_performance_backtest(
                 "race_number": rank1.race_number,
                 "horse_name": rank1.horse_name,
                 "win_prob": round(rank1.win_probability or 0.0, 4),
+                "rank2_prob": round(r2p, 4),
+                "gap": round(r1p - r2p, 4),
+                "top3_sum": round(top3, 4),
                 "tier": tier,
                 "is_sharp": is_sharp,
                 "is_fav": rank1.market_rank == 1,
+                "market_rank": rank1.market_rank,
+                "best_available_odds": float(rank1.best_available_odds) if rank1.best_available_odds else None,
+                "field_size": rank1.field_size or len(field),
+                "is_metro": _is_metro(rank1.venue or vc),
                 "won": won,
                 "sp": float(sp) if sp else None,
             })
@@ -15961,6 +15976,198 @@ async def tier_performance_backtest(
         "sharp_note": "Sharp recomputed via _is_sharp_gate from the earliest pre-jump snapshot; >180d layoff gate skipped (days_since_last_run not on history rows).",
         **({"picks": detail_rows} if detail else {}),
     }
+
+
+# ── Sharp-filter slice scanner (weekly auto-recalibration) ──────────────────
+# Searches COMBINATIONS of signals for the best OOS-stable, volume-constrained
+# prediction slice, so the Sharp gate's drift is caught and a promote-ready
+# candidate is surfaced each week. Overfitting guards: train/test split (a slice
+# must win on BOTH folds), min-n per fold, a test-fold MARGIN over the field,
+# complexity <=2 signals, and plain-English definitions. Volume guard: the slice
+# must average ~5-10 Sharp picks/day (not filter the card to ~0). Reads the
+# enriched tier-performance-backtest rows (pre-jump odds, gap, market_rank,
+# field_size, …). See memory note sharp-filter-auto-recalibration.
+_SCAN_MIN_N_PER_FOLD = 80
+_SCAN_MIN_PER_DAY = 4.0
+_SCAN_MAX_PER_DAY = 12.0
+_SCAN_TEST_MARGIN_PP = 5.0   # best must beat the field by >= this (pp) on the TEST fold
+
+
+def _scan_sharp_slices(picks: list) -> dict:
+    """Pure combinatorial search over candidate slices. `picks` are the
+    tier-performance-backtest detail rows. Returns the ranked OOS-confirmed
+    survivors + the incumbent is_sharp gate's score, for storage/display."""
+    rows = [p for p in picks if p.get("date") and p.get("won") is not None]
+    rows.sort(key=lambda p: p["date"])
+    if len(rows) < 2 * _SCAN_MIN_N_PER_FOLD:
+        return {"n_picks": len(rows), "verdict": "insufficient_data", "candidates": [], "best": None,
+                "field_win_pct": 0.0, "incumbent": {"win_pct": None, "n": 0, "lift_pp": None}}
+    dates = sorted({p["date"] for p in rows})
+    ndays = len(dates)
+    split = dates[int(ndays * 0.6)]
+    train = [p for p in rows if p["date"] < split]
+    test = [p for p in rows if p["date"] >= split]
+
+    def win(sub):
+        n = len(sub)
+        return ((100.0 * sum(1 for p in sub if p["won"]) / n), n) if n else (0.0, 0)
+    field_all_w, _ = win(rows)
+    field_test_w, _ = win(test)
+
+    def odds(p):
+        o = p.get("best_available_odds")
+        return o if isinstance(o, (int, float)) and o > 1.0 else None
+    def wp(p):
+        v = p.get("win_prob")
+        return (v * 100 if v <= 1 else v) if v is not None else None
+    def gap(p):
+        g = p.get("gap")
+        return (g * 100 if abs(g) <= 1 else g) if g is not None else None
+    def fav(p):
+        return bool(p.get("is_fav") or p.get("market_rank") == 1)
+    def fsz(p):
+        return p.get("field_size")
+    def metro(p):
+        return p.get("is_metro")
+
+    cands = []
+    def add(name, f):
+        cands.append((name, f))
+    for t in (1.8, 2.0, 2.2, 2.4, 2.6, 3.0):
+        add("odds<%s" % t, (lambda p, t=t: odds(p) is not None and odds(p) < t))
+    for w in (30, 36, 40, 46):
+        add("win%%>=%d" % w, (lambda p, w=w: wp(p) is not None and wp(p) >= w))
+    add("is_fav", fav)
+    for g in (6, 10):
+        add("gap>=%dpp" % g, (lambda p, g=g: gap(p) is not None and gap(p) >= g))
+    add("field<=8", (lambda p: isinstance(fsz(p), int) and fsz(p) <= 8))
+    add("field<=11", (lambda p: isinstance(fsz(p), int) and fsz(p) <= 11))
+    add("field>=12", (lambda p: isinstance(fsz(p), int) and fsz(p) >= 12))
+    add("metro", (lambda p: metro(p) is True))
+    add("non-metro", (lambda p: metro(p) is False))
+    # pairwise combos — market price crossed with the other signals.
+    for t in (2.0, 2.3, 2.6, 3.0):
+        for w in (30, 36, 40):
+            add("odds<%s AND win%%>=%d" % (t, w),
+                (lambda p, t=t, w=w: odds(p) is not None and odds(p) < t and wp(p) is not None and wp(p) >= w))
+        add("odds<%s AND is_fav" % t, (lambda p, t=t: odds(p) is not None and odds(p) < t and fav(p)))
+        add("odds<%s AND metro" % t, (lambda p, t=t: odds(p) is not None and odds(p) < t and metro(p) is True))
+        add("odds<%s AND field<=11" % t, (lambda p, t=t: odds(p) is not None and odds(p) < t and isinstance(fsz(p), int) and fsz(p) <= 11))
+    for w in (36, 40):
+        add("win%%>=%d AND is_fav" % w, (lambda p, w=w: wp(p) is not None and wp(p) >= w and fav(p)))
+
+    results = []
+    for name, f in cands:
+        tr = [p for p in train if f(p)]
+        te = [p for p in test if f(p)]
+        al = [p for p in rows if f(p)]
+        tw, tn = win(tr)
+        ew, en = win(te)
+        aw, an = win(al)
+        per_day = an / ndays
+        qualifies = (tn >= _SCAN_MIN_N_PER_FOLD and en >= _SCAN_MIN_N_PER_FOLD
+                     and _SCAN_MIN_PER_DAY <= per_day <= _SCAN_MAX_PER_DAY
+                     and (ew - field_test_w) >= _SCAN_TEST_MARGIN_PP)
+        results.append({
+            "def": name, "all_win_pct": round(aw, 1), "n": an, "per_day": round(per_day, 1),
+            "train_win_pct": round(tw, 1), "test_win_pct": round(ew, 1), "test_n": en,
+            "lift_pp": round(aw - field_all_w, 1), "qualifies": qualifies,
+        })
+    survivors = sorted([r for r in results if r["qualifies"]], key=lambda r: -r["test_win_pct"])
+    inc = [p for p in rows if p.get("is_sharp")]
+    inc_w, inc_n = win(inc)
+    best = survivors[0] if survivors else None
+    if best and inc_n and best["test_win_pct"] > inc_w + 2.0:
+        verdict = "better_slice_found"
+    elif inc_n and (inc_w - field_all_w) >= 3.0:
+        verdict = "incumbent_ok"
+    elif survivors:
+        verdict = "better_slice_found"
+    else:
+        verdict = "no_qualifier"
+    shown = survivors[:12] if survivors else sorted(results, key=lambda r: -r["all_win_pct"])[:12]
+    return {
+        "n_picks": len(rows), "window_dates": [dates[0], dates[-1]],
+        "field_win_pct": round(field_all_w, 1),
+        "incumbent": {"win_pct": round(inc_w, 1), "n": inc_n, "lift_pp": round(inc_w - field_all_w, 1)},
+        "best": best, "verdict": verdict, "candidates": shown,
+    }
+
+
+async def _run_sharp_slice_scan(days: int = 180) -> dict:
+    """Run the scan over `days` of settled picks and persist one SharpSliceScanRow."""
+    res = await tier_performance_backtest(days=days, detail=True, x_cron_secret=settings.cron_secret)
+    scan = _scan_sharp_slices(res.get("picks") or [])
+    best = scan.get("best") or {}
+    inc = scan.get("incumbent") or {}
+    async with get_session() as session:
+        session.add(SharpSliceScanRow(
+            window_days=days, n_picks=scan.get("n_picks"),
+            field_win_pct=scan.get("field_win_pct"),
+            incumbent_win_pct=inc.get("win_pct"), incumbent_n=inc.get("n"),
+            incumbent_lift_pp=inc.get("lift_pp"),
+            best_def=(best.get("def") if best else None),
+            best_win_pct=(best.get("test_win_pct") if best else None),
+            best_train_win_pct=(best.get("train_win_pct") if best else None),
+            best_n=(best.get("n") if best else None),
+            best_per_day=(best.get("per_day") if best else None),
+            best_lift_pp=(best.get("lift_pp") if best else None),
+            verdict=scan.get("verdict"),
+            candidates_json=json.dumps(scan.get("candidates") or []),
+        ))
+        await session.commit()
+    return scan
+
+
+async def _scheduled_sharp_slice_scan():
+    """Weekly: scan for the best Sharp slice + store it for the dashboard."""
+    try:
+        scan = await _run_sharp_slice_scan(days=180)
+        b = scan.get("best") or {}
+        log.info("[sharp-scan] verdict=%s best=%r test=%.1f%% /day=%s incumbent=%.1f%% field=%.1f%%",
+                 scan.get("verdict"), b.get("def"), b.get("test_win_pct") or 0.0,
+                 b.get("per_day"), (scan.get("incumbent") or {}).get("win_pct") or 0.0,
+                 scan.get("field_win_pct") or 0.0)
+    except Exception as e:
+        log.exception("[sharp-scan] weekly scan failed: %s", e)
+
+
+def _serialize_scan_row(r) -> dict:
+    return {
+        "ran_at": r.ran_at.isoformat() if r.ran_at else None,
+        "window_days": r.window_days, "n_picks": r.n_picks,
+        "field_win_pct": r.field_win_pct,
+        "incumbent_win_pct": r.incumbent_win_pct, "incumbent_n": r.incumbent_n,
+        "incumbent_lift_pp": r.incumbent_lift_pp,
+        "best_def": r.best_def, "best_win_pct": r.best_win_pct,
+        "best_train_win_pct": r.best_train_win_pct, "best_n": r.best_n,
+        "best_per_day": r.best_per_day, "best_lift_pp": r.best_lift_pp,
+        "verdict": r.verdict,
+        "candidates": json.loads(r.candidates_json) if r.candidates_json else [],
+    }
+
+
+@app.get("/api/admin/sharp-slice-scan")
+async def admin_sharp_slice_scan(history: int = Query(8, ge=1, le=52),
+                                 x_cron_secret: Optional[str] = Header(None)):
+    """Latest weekly Sharp-slice scan + recent history (for the dashboard)."""
+    _check_admin(x_cron_secret)
+    async with get_session() as session:
+        rows = (await session.execute(
+            select(SharpSliceScanRow).order_by(SharpSliceScanRow.ran_at.desc()).limit(history)
+        )).scalars().all()
+    return {
+        "latest": _serialize_scan_row(rows[0]) if rows else None,
+        "history": [_serialize_scan_row(r) for r in rows],
+    }
+
+
+@app.post("/api/admin/sharp-slice-scan/run")
+async def admin_run_sharp_slice_scan(days: int = Query(180, ge=30, le=365),
+                                     x_cron_secret: Optional[str] = Header(None)):
+    """Run the Sharp-slice scan now (also stores the row). Returns the full scan."""
+    _check_admin(x_cron_secret)
+    return await _run_sharp_slice_scan(days=days)
 
 
 @app.post("/api/admin/backfill-field-size")

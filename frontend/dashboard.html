@@ -1512,6 +1512,7 @@
     // (Win tab is default) but the table populates underneath so it's
     // ready when the user clicks Exotics.
     loadLabStats();
+    loadSharpLab();
   }
 
   /* ═══════════════════════════════════════════════════════
@@ -2318,6 +2319,16 @@ export CRON_SECRET='&lt;your CRON_SECRET&gt;'
         </div>
         <div id="labStatsContent" style="font-size:0.78rem;color:var(--text-dim)">Loading stats…</div>
       </div>
+      <div class="section" id="sharpLabSection">
+        <div class="section-title">🎯 Sharp Lab — weekly slice scan
+          <span style="font-size:0.65rem;color:var(--text-dim);font-weight:400;margin-left:8px">best OOS-stable, 5–10/day slice vs the live Sharp gate · runs Sun 6am</span>
+        </div>
+        <div class="action-bar" style="margin:6px 0 10px">
+          <button class="btn teal" id="sharpScanBtn" onclick="runSharpScan()">Run scan now</button>
+          <span class="btn-status" id="sharpScanStatus"></span>
+        </div>
+        <div id="sharpLabContent" style="font-size:0.8rem;color:var(--text-dim)">Loading scan…</div>
+      </div>
       <div class="action-bar">
         <button class="btn" id="eReenrichBtn" onclick="triggerReenrich('eReenrichBtn', 'exoticStatus')">Re-enrich Today</button>
         <button class="btn" id="eRetrainBtn" onclick="triggerExoticRetrain()">Retrain Exotic Model</button>
@@ -3085,6 +3096,74 @@ export CRON_SECRET='&lt;your CRON_SECRET&gt;'
     } catch (e) {
       console.error('[labStats]', e);
       target.innerHTML = `<div style="color:var(--text-muted)">Could not load — ${escHtml(e.message)}</div>`;
+    }
+  }
+
+  /* ── Sharp Lab: weekly slice-scan results ── */
+  function renderSharpLab(d) {
+    const L = d && d.latest;
+    if (!L) return '<div style="color:var(--text-muted)">No scan yet. Click <b>Run scan now</b>, or it runs automatically Sun 6am AEST.</div>';
+    const ran = L.ran_at ? new Date(L.ran_at + (L.ran_at.includes('Z') ? '' : 'Z')).toLocaleString('en-AU', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit', hour12: true, timeZone: 'Australia/Sydney' }) : '—';
+    const vmap = { better_slice_found: ['⚠️ Better slice found', 'var(--amber,#f59e0b)'], incumbent_ok: ['✓ Live gate still good', 'var(--mint,#22c55e)'], no_qualifier: ['— No qualifying slice', 'var(--text-dim)'], insufficient_data: ['— Not enough data', 'var(--text-dim)'] };
+    const [vlabel, vcol] = vmap[L.verdict] || [L.verdict || '—', 'var(--text-dim)'];
+    const pct = v => (v == null ? '—' : (+v).toFixed(1) + '%');
+    const inc = L.incumbent_win_pct, incLift = L.incumbent_lift_pp;
+    const best = L.best_def;
+    const rows = (L.candidates || []).slice(0, 8).map(c =>
+      `<tr${c.def === best ? ' style="font-weight:700"' : ''}>
+        <td style="text-align:left">${escHtml(c.def)}</td>
+        <td>${pct(c.test_win_pct)}</td><td style="color:var(--text-dim)">${pct(c.train_win_pct)}</td>
+        <td>${c.per_day ?? '—'}/day</td><td>${c.n ?? '—'}</td>
+        <td style="color:${(c.lift_pp||0) > 0 ? 'var(--mint,#22c55e)' : 'var(--text-dim)'}">${c.lift_pp > 0 ? '+' : ''}${c.lift_pp ?? '—'}pp</td>
+      </tr>`).join('');
+    const hist = (d.history || []).slice(1, 6).map(h => {
+      const r = h.ran_at ? new Date(h.ran_at + 'Z').toLocaleDateString('en-AU', { day: 'numeric', month: 'short', timeZone: 'Australia/Sydney' }) : '—';
+      return `<span style="margin-right:12px">${r}: ${escHtml(h.best_def || '—')} ${pct(h.best_win_pct)}</span>`;
+    }).join('');
+    return `
+      <div style="display:flex;gap:18px;flex-wrap:wrap;align-items:baseline;margin-bottom:10px">
+        <div><b style="color:${vcol}">${vlabel}</b></div>
+        <div style="color:var(--text-dim)">Last run: <b style="color:var(--text)">${ran}</b></div>
+        <div style="color:var(--text-dim)">Window: ${L.window_days}d · ${L.n_picks} picks · field ${pct(L.field_win_pct)}</div>
+      </div>
+      <div style="display:flex;gap:24px;flex-wrap:wrap;margin-bottom:12px">
+        <div>Live Sharp gate (is_sharp): <b>${pct(inc)}</b>
+          <span style="color:${(incLift||0) > 0 ? 'var(--mint,#22c55e)' : 'var(--red,#ef4444)'}">${incLift > 0 ? '+' : ''}${incLift == null ? '—' : incLift}pp vs field</span>
+          <span style="color:var(--text-dim)">(n=${L.incumbent_n ?? '—'})</span></div>
+        <div>Best found: <b>${best ? escHtml(best) : '—'}</b>
+          ${best ? `→ <b style="color:var(--mint,#22c55e)">${pct(L.best_win_pct)}</b> OOS · ${L.best_per_day}/day · +${L.best_lift_pp}pp` : ''}</div>
+      </div>
+      ${rows ? `<div style="overflow-x:auto"><table class="mini-table" style="width:100%;font-size:0.74rem;border-collapse:collapse">
+        <thead><tr style="color:var(--text-dim);text-align:center">
+          <th style="text-align:left">slice (signal combination)</th><th>win% (OOS test)</th><th>train</th><th>volume</th><th>n</th><th>lift</th>
+        </tr></thead><tbody style="text-align:center">${rows}</tbody></table></div>` : ''}
+      ${hist ? `<div style="margin-top:10px;font-size:0.68rem;color:var(--text-dim)">Recent scans — ${hist}</div>` : ''}
+      <div style="margin-top:8px;font-size:0.66rem;color:var(--text-muted)">Each slice is train/test split (survive both), min-n per fold, must beat the field on the held-out test fold, and average 5–10 picks/day. Promotion is manual — this is the candidate to review.</div>`;
+  }
+  async function loadSharpLab() {
+    const target = document.getElementById('sharpLabContent');
+    if (!target) return;
+    try {
+      const res = await fetch(`${API}/api/admin/sharp-slice-scan?history=8`, { headers: { 'x-cron-secret': adminSecret } });
+      if (!res.ok) { target.innerHTML = `<div style="color:var(--text-muted)">Could not load (${res.status})</div>`; return; }
+      target.innerHTML = renderSharpLab(await res.json());
+    } catch (e) {
+      target.innerHTML = `<div style="color:var(--text-muted)">Could not load — ${escHtml(e.message)}</div>`;
+    }
+  }
+  async function runSharpScan() {
+    const btn = document.getElementById('sharpScanBtn'), st = document.getElementById('sharpScanStatus');
+    if (btn) btn.disabled = true;
+    if (st) st.textContent = 'Scanning 180 days…';
+    try {
+      const res = await fetch(`${API}/api/admin/sharp-slice-scan/run?days=180`, { method: 'POST', headers: { 'x-cron-secret': adminSecret } });
+      if (st) st.textContent = res.ok ? 'Done.' : `Failed (${res.status})`;
+      await loadSharpLab();
+    } catch (e) {
+      if (st) st.textContent = 'Error: ' + e.message;
+    } finally {
+      if (btn) btn.disabled = false;
+      setTimeout(() => { if (st) st.textContent = ''; }, 4000);
     }
   }
 
