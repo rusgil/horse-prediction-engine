@@ -35,6 +35,17 @@ _SHARP_GATE_ODDS_FROM = "2026-11-21"
 # ~5-10 Sharp races/day. Tune via the slice-scanner, not by hand drift.
 _SHARP_MAX_ODDS = 2.3
 
+# Field-size promotion go-live (2026-11-23). The weekly Sharp Lab slice-scanner's
+# best OOS-stable, volume-right slice on 6 months of pre-jump odds was
+# `odds < 2.6 AND field_size <= 11` — ≈45% win OOS (train≈test), ~6 Sharp/day,
+# +18pp over the field. Widening the price to <2.6 (from <2.3) and excluding big
+# fields nets MORE qualifying races than odds<2.3 alone (~4/day) while holding the
+# edge. On/after this date Sharp uses these two thresholds; earlier races keep the
+# exact gate they were frozen under (date-versioned → history never re-judged).
+_SHARP_GATE_FIELD_FROM = "2026-11-23"
+_SHARP_MAX_ODDS_V2 = 2.6
+_SHARP_MAX_FIELD = 11
+
 
 def is_sharp_gate(
     rank1_prob,
@@ -46,6 +57,7 @@ def is_sharp_gate(
     meeting_max_race=0,
     race_date=None,
     best_available_odds=None,
+    field_size=None,
 ):
     """Is a race's rank-1 pick Sharp? ALL probabilities on the 0-1 scale
     (callers in 0-100 percent must divide by 100 first).
@@ -54,10 +66,13 @@ def is_sharp_gate(
     — pass `race_date` ('YYYY-MM-DD') for settled races; leave None for
     live/upcoming to get the newest gate.
 
-    On/after `_SHARP_GATE_ODDS_FROM` (market-price gate):
-      - the pick must be PRICED (best_available_odds > 1.0) and short —
-        best_available_odds < `_SHARP_MAX_ODDS`  (a blind/unpriced race is never Sharp), AND
-      - not a long layoff (days_since_last_run <= 180).
+    On/after `_SHARP_GATE_FIELD_FROM` (current gate):
+      - PRICED short favourite — best_available_odds < `_SHARP_MAX_ODDS_V2`, AND
+      - small-to-mid field — field_size <= `_SHARP_MAX_FIELD` (unknown field_size
+        falls back to the price-only test), AND not a long layoff (<= 180d).
+    Between `_SHARP_GATE_ODDS_FROM` and `_SHARP_GATE_FIELD_FROM` (market-price gate):
+      - PRICED short favourite — best_available_odds < `_SHARP_MAX_ODDS`
+        (a blind/unpriced race is never Sharp), and not a long layoff.
     Before that date (legacy win_prob gate — unchanged):
       1. rank1 >= 0.30 OR top-3 sum >= 0.60
       2. clear favourite (rank1 - rank2) >= `_SHARP_MIN_GAP`  (from 2026-08-14)
@@ -76,6 +91,17 @@ def is_sharp_gate(
             odds = None
         if odds is None or odds <= 1.0:
             return False  # unpriced / blind race is never Sharp
+        # Field-size promotion (live/upcoming, and settled races on/after go-live):
+        # short favourite in a small-to-mid field. A missing field_size falls back
+        # to the price-only test rather than dropping an otherwise-qualifying pick.
+        if race_date is None or race_date >= _SHARP_GATE_FIELD_FROM:
+            try:
+                fs = int(field_size) if field_size is not None else None
+            except (TypeError, ValueError):
+                fs = None
+            if fs is not None and fs > _SHARP_MAX_FIELD:
+                return False
+            return odds < _SHARP_MAX_ODDS_V2
         return odds < _SHARP_MAX_ODDS
 
     # ── Legacy win_prob gate (historical races before go-live only) ──

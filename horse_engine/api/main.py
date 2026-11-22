@@ -4166,6 +4166,7 @@ async def _snapshot_prerace_predictions() -> int:
                     is_metro=is_metro_venue(_svenue), race_number=_srn,
                     meeting_max_race=_smx, race_date=_parse_race_id(race_id)[0],
                     best_available_odds=rank1.best_available_odds,
+                    field_size=getattr(rank1, "field_size", None),
                 )
             # 2h Sharp lock (see _sharp_lock_2h): once inside the window, freeze to
             # the value set by the first in-window snapshot so history can't drift.
@@ -8034,6 +8035,7 @@ async def get_edge_picks():
                 meeting_max_race=_mx,
                 race_date=target_date,
                 best_available_odds=getattr(runner_row, "best_available_odds", None),
+                field_size=getattr(runner_row, "field_size", None),
             )
             value_bet = bool(settings.value_bet_gate and _is_value_bet(
                 (model_pct or 0) / 100.0, getattr(runner_row, "market_rank", None)))
@@ -8924,6 +8926,7 @@ async def get_edge_yesterday(for_date: Optional[str] = Query(None, alias="date")
             race_number=race_num, meeting_max_race=_mx,
             race_date=p.race_id[:10],
             best_available_odds=getattr(p, "best_available_odds", None),
+            field_size=getattr(p, "field_size", None),
         )
 
         output.append({
@@ -15917,6 +15920,7 @@ async def tier_performance_backtest(
             meeting_max_race=mtg_max.get((d10, vc), 0),
             race_date=d10,
             best_available_odds=rank1.best_available_odds,
+            field_size=(rank1.field_size or len(field)),
         )
         wpc = (rank1.win_probability or 0.0) * 100
         tier = "hot" if wpc >= 46 else "high" if wpc >= 36 else "moderate"
@@ -24390,6 +24394,8 @@ async def get_meeting(race_date: str, venue_code: str):
         # Pick's best-available odds — surfaced in the payload so frontends can
         # show name+price for EVERY race without per-race runner fetches.
         top_pick_odds = {race_id: None for race_id in race_ids}
+        # Field size per race — for the Sharp field-size gate (<=11 from 2026-11-23).
+        top_pick_field = {race_id: None for race_id in race_ids}
         # Rank-2 win prob — used to compute the decisiveness indicator
         # (>5pt gap = model has a clear favourite, not a toss-up).
         rank2_win_probs: dict[str, Optional[float]] = {race_id: None for race_id in race_ids}
@@ -24444,6 +24450,7 @@ async def get_meeting(race_date: str, venue_code: str):
                     top_win_probs[p.race_id] = p.win_probability
                     top_place_probs[p.race_id] = p.place_probability
                     top_pick_odds[p.race_id] = p.best_available_odds
+                    top_pick_field[p.race_id] = p.field_size
                     top_pick_jockey[p.race_id] = p.jockey
                     top_pick_trainer[p.race_id] = p.trainer
                     top_pick_weight[p.race_id] = p.weight
@@ -24489,6 +24496,7 @@ async def get_meeting(race_date: str, venue_code: str):
                     rank1_prob=_r1, rank2_prob=_r2, top3_sum=_t3,
                     days_since_last_run=ctx["days_off"], race_date=race_date,
                     best_available_odds=top_pick_odds.get(rid),
+                    field_size=top_pick_field.get(rid),
                 ) and ctx["finished"])
 
         upcoming_ids = [rid for rid in race_ids if rid not in completed_ids]
@@ -24509,6 +24517,7 @@ async def get_meeting(race_date: str, venue_code: str):
                     top_win_probs[p.race_id] = p.win_probability
                     top_place_probs[p.race_id] = p.place_probability
                     top_pick_odds[p.race_id] = p.best_available_odds
+                    top_pick_field[p.race_id] = p.field_size
                     top_pick_jockey[p.race_id] = p.jockey
                     top_pick_trainer[p.race_id] = p.trainer
                     top_pick_weight[p.race_id] = p.weight
@@ -24548,6 +24557,7 @@ async def get_meeting(race_date: str, venue_code: str):
                     top3_sum=sum((ranks.get(k, (0, None))[0] or 0) for k in (1, 2, 3)),
                     days_since_last_run=_days_off, race_date=race_date,
                     best_available_odds=top_pick_odds.get(rid),
+                    field_size=top_pick_field.get(rid),
                 )
                 # If this race is on a PAST date, treat "no seeded
                 # results" as "didn't run" and strip Sharp status.
@@ -30548,6 +30558,7 @@ async def performance_summary(
                     meeting_max_race=_mtg_max.get((_d, _v), 0),
                     race_date=_d,
                     best_available_odds=getattr(p, "best_available_odds", None),
+                    field_size=getattr(p, "field_size", None),
                 )
 
             top_picks = {rid: p for rid, p in top_picks.items() if _recompute_sharp(p)}
