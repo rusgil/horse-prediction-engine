@@ -1824,6 +1824,7 @@ async def save_race_predictions(session: AsyncSession, race_id: str, predictions
                     days_since_last_run=rank1.get("days_since_last_run"),
                     race_date=race_id[:10],
                     best_available_odds=rank1.get("best_available_odds"),
+                    field_size=rank1.get("field_size"),
                 )
             hist_rows = (await session.execute(
                 select(RunnerPredictionHistoryRow)
@@ -1917,6 +1918,7 @@ async def save_race_predictions(session: AsyncSession, race_id: str, predictions
                     days_since_last_run=_days_off,
                     race_date=race_id[:10],
                     best_available_odds=rank1.get("best_available_odds"),
+                    field_size=rank1.get("field_size"),
                 )
             for p in predictions:
                 try:
