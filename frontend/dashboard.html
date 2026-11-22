@@ -1757,18 +1757,18 @@
     if (perfData?.summary?.length) {
       perfHtml = `
         <div class="section">
-          <div class="section-title">Phase-2 Improvement Tracker — daily top-pick win &amp; place % · <span style="color:#e8a020">changes live 22 Jul 2026</span></div>
+          <div class="section-title">Phase-2 Improvement Tracker — daily top-pick win &amp; place % · <span style="color:#e8a020">changes live 23 Nov 2026</span></div>
           <div class="chart-card">
             <div style="display:flex;gap:12px;margin-bottom:10px;font-size:0.7rem;color:var(--text-dim)">
               <span><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:rgba(34,197,94,0.8);margin-right:4px;vertical-align:middle"></span>Win %</span>
               <span><span style="display:inline-block;width:10px;height:10px;border-radius:2px;background:rgba(59,130,246,0.8);margin-right:4px;vertical-align:middle"></span>Place %</span>
-              <span><span style="display:inline-block;width:10px;height:2px;background:#e8a020;margin-right:4px;vertical-align:middle"></span>Phase-2 changes live (22 Jul)</span>
-              <span style="color:var(--text-dim)">Dashed = pre-change baseline avg · Dotted = avg since 22 Jul</span>
+              <span><span style="display:inline-block;width:10px;height:2px;background:#e8a020;margin-right:4px;vertical-align:middle"></span>Sharp-gate change live (23 Nov)</span>
+              <span style="color:var(--text-dim)">Dashed = pre-change baseline avg · Dotted = avg since 23 Nov</span>
               <span style="color:var(--text-dim)">· Bottom dots = conditions: <span style="color:#22c55e">●</span> all Good/Firm <span style="color:#e8a020">●</span> some Soft/Heavy <span style="color:#ef4444">●</span> heavy day</span>
             </div>
             <div class="chart-wrap" style="height:220px"><canvas id="phase2Chart"></canvas></div>
             <div style="font-size:0.68rem;color:var(--text-dim);margin-top:10px;line-height:1.5;">
-              Daily rank-1 win and place rates from two weeks before the Phase-2 model changes (Benter market blend, Premium odds cap, retrain holdout fix). Days right of the orange marker run the new pipeline — the gap vs the dashed baselines is the measured improvement.
+              Daily rank-1 win and place rates from two weeks before the 23 Nov Sharp-gate change (Sharp recalibrated to short-priced favourites in small-to-mid fields: best odds &lt; 2.6 and field ≤ 11). Days right of the orange marker run the new gate — the Sharp win/place lines (gold/purple) carry its effect; the overall top-pick lines are shown for context.
             </div>
           </div>
         </div>
@@ -2004,11 +2004,13 @@ export CRON_SECRET='&lt;your CRON_SECRET&gt;'
     };
 
     setTimeout(() => {
-      // Phase-2 improvement tracker — window opens 2 weeks before the
-      // 2026-07-22 model changes and grows forward as days accrue.
+      // Improvement tracker — window opens 2 weeks before the latest change
+      // (2026-11-23 Sharp-gate: odds<2.6 AND field<=11) and grows forward as
+      // days accrue. The orange marker appears once the deploy day is settled
+      // (chart ends at yesterday), so it renders from the day after go-live.
       if (perfData?.summary?.length && document.getElementById('phase2Chart')) {
-        const P2_DEPLOY = '2026-07-22';
-        const P2_START  = '2026-07-08';
+        const P2_DEPLOY = '2026-11-23';
+        const P2_START  = '2026-11-09';
         // Exclude today (AEST) — it's still settling; chart ends at yesterday.
         const _todayAestP2 = new Date().toLocaleDateString('en-CA', { timeZone: 'Australia/Sydney' });
         const p2days = [...perfData.summary].reverse().filter(d => d.date >= P2_START && d.date < _todayAestP2);
@@ -2019,7 +2021,7 @@ export CRON_SECRET='&lt;your CRON_SECRET&gt;'
           const pre      = p2days.filter(d => d.date < P2_DEPLOY);
           const baseWin  = pre.length ? pre.reduce((s, d) => s + d.win_rate, 0) / pre.length * 100 : null;
           const basePlace= pre.length ? pre.reduce((s, d) => s + (d.place_rate || 0), 0) / pre.length * 100 : null;
-          // Post-Phase-2 averages (since 22 Jul) — the new pipeline's running mean.
+          // Post-change averages (since 23 Nov) — the new gate's running mean.
           const post     = p2days.filter(d => d.date >= P2_DEPLOY);
           const avgWin   = post.length ? post.reduce((s, d) => s + d.win_rate, 0) / post.length * 100 : null;
           const avgPlace = post.length ? post.reduce((s, d) => s + (d.place_rate || 0), 0) / post.length * 100 : null;
@@ -2054,9 +2056,9 @@ export CRON_SECRET='&lt;your CRON_SECRET&gt;'
                 c.setLineDash([]);
                 c.fillStyle = '#e8a020'; c.font = '600 10px -apple-system, sans-serif';
                 c.textAlign = 'left';
-                c.fillText('22 Jul — Phase 2 live', x + 5, top + 12);
+                c.fillText('23 Nov — Sharp gate change', x + 5, top + 12);
               }
-              if (typeof sharpStartIdx !== 'undefined' && sharpStartIdx >= 0) {
+              if (typeof sharpStartIdx !== 'undefined' && sharpStartIdx > 0) {
                 const xs = chart.scales.x.getPixelForValue(sharpStartIdx);
                 c.strokeStyle = 'rgba(232,160,32,0.5)'; c.setLineDash([2, 3]); c.lineWidth = 1;
                 c.beginPath(); c.moveTo(xs, top); c.lineTo(xs, bottom); c.stroke();
@@ -2089,8 +2091,8 @@ export CRON_SECRET='&lt;your CRON_SECRET&gt;'
                 { label: 'Sharp place %', data: sharpPlace, borderColor: 'rgba(168,85,247,0.95)', backgroundColor: 'transparent', tension: 0.3, pointRadius: 2, borderDash: [4, 3], spanGaps: true },
                 ...(baseWin != null ? [{ label: 'Baseline win', data: p2labels.map(() => +baseWin.toFixed(1)), borderColor: 'rgba(34,197,94,0.45)', borderDash: [6, 5], pointRadius: 0, borderWidth: 1 }] : []),
                 ...(basePlace != null ? [{ label: 'Baseline place', data: p2labels.map(() => +basePlace.toFixed(1)), borderColor: 'rgba(59,130,246,0.45)', borderDash: [6, 5], pointRadius: 0, borderWidth: 1 }] : []),
-                ...(avgWin != null ? [{ label: `Avg win since 22 Jul (${avgWin.toFixed(1)}%)`, data: p2labels.map(() => +avgWin.toFixed(1)), borderColor: 'rgba(34,197,94,0.85)', borderDash: [2, 3], pointRadius: 0, borderWidth: 2 }] : []),
-                ...(avgPlace != null ? [{ label: `Avg place since 22 Jul (${avgPlace.toFixed(1)}%)`, data: p2labels.map(() => +avgPlace.toFixed(1)), borderColor: 'rgba(59,130,246,0.85)', borderDash: [2, 3], pointRadius: 0, borderWidth: 2 }] : []),
+                ...(avgWin != null ? [{ label: `Avg win since 23 Nov (${avgWin.toFixed(1)}%)`, data: p2labels.map(() => +avgWin.toFixed(1)), borderColor: 'rgba(34,197,94,0.85)', borderDash: [2, 3], pointRadius: 0, borderWidth: 2 }] : []),
+                ...(avgPlace != null ? [{ label: `Avg place since 23 Nov (${avgPlace.toFixed(1)}%)`, data: p2labels.map(() => +avgPlace.toFixed(1)), borderColor: 'rgba(59,130,246,0.85)', borderDash: [2, 3], pointRadius: 0, borderWidth: 2 }] : []),
               ]
             },
             options: {
