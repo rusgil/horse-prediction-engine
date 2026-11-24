@@ -30507,7 +30507,12 @@ async def performance_summary(
         # 39% winner → the Sharp win-rate wrongly read 0% while the Lounge cell
         # showed the win). Recomputing from the locked win-probs mirrors the
         # meetings-endpoint fix so the accFor and the heat-map cells agree.
-        if sharp and top_picks:
+        # Build whenever needed: Sharp mode filters to it; Selected (All) mode
+        # EXEMPTS sub-floor Sharp picks so the stat counts the SAME races the card
+        # shows. Edge mode doesn't need it.
+        _need_sharp_set = bool(top_picks) and (sharp or not edge)
+        sharp_rids: set = set()
+        if _need_sharp_set:
             from horse_engine.bets import is_metro_venue
             _t3rows = (await session.execute(
                 select(RunnerPredictionHistoryRow.race_id, RunnerPredictionHistoryRow.win_probability)
@@ -30561,29 +30566,32 @@ async def performance_summary(
                     field_size=getattr(p, "field_size", None),
                 )
 
-            top_picks = {rid: p for rid, p in top_picks.items() if _recompute_sharp(p)}
+            sharp_rids = {rid for rid, p in top_picks.items() if _recompute_sharp(p)}
 
         # Confidence floor (2026-08-31): the tiers are a refinement funnel —
         # Selected (default, rank-1 ≥20%, excludes open coin-flips) → Edge
-        # (≥29.5%) → Sharp (its own gate, applied above). Sharp mode never
-        # contains a <20% pick, so it's left untouched here.
-        if not sharp:
-            if edge:
-                top_picks = {rid: p for rid, p in top_picks.items()
-                             if (p.win_probability or 0) >= 0.295}
-            else:
-                # Selected floor (<20% excluded) — EXCEPT at badged (gold/silver/
-                # bronze) venues, where the model under-rates but still wins (<20%
-                # picks there hit ~26%, OOS-confirmed). Keep those in the stat.
-                from horse_engine.models.database import VenueBadgeRow
-                _badged = set((await session.execute(
-                    select(VenueBadgeRow.venue)
-                    .where(VenueBadgeRow.badge.isnot(None))
-                    .where(VenueBadgeRow.badge != "avoid")
-                )).scalars().all())
-                top_picks = {rid: p for rid, p in top_picks.items()
-                             if (p.win_probability or 0) >= _OVERALL_STATS_MIN_WIN
-                             or (p.venue in _badged)}
+        # (≥29.5%) → Sharp (its own gate). Selected EXEMPTS Sharp + badged picks
+        # (both are always shown/counted on the card), so a sub-floor Sharp pick is
+        # KEPT — mirroring the card's isStatsExcluded(sharp || badged || win≥20).
+        # Without this, the odds-based Sharp gate's sub-20% favourites appear on the
+        # card but drop from the stat, inflating the day's win% (ballina 2026-11-23:
+        # R2 is a Sharp 18.8% LOSER → card reads 4/5, pill wrongly read 4/4 = 100%).
+        if sharp:
+            top_picks = {rid: p for rid, p in top_picks.items() if rid in sharp_rids}
+        elif edge:
+            top_picks = {rid: p for rid, p in top_picks.items()
+                         if (p.win_probability or 0) >= 0.295}
+        else:
+            from horse_engine.models.database import VenueBadgeRow
+            _badged = set((await session.execute(
+                select(VenueBadgeRow.venue)
+                .where(VenueBadgeRow.badge.isnot(None))
+                .where(VenueBadgeRow.badge != "avoid")
+            )).scalars().all())
+            top_picks = {rid: p for rid, p in top_picks.items()
+                         if (p.win_probability or 0) >= _OVERALL_STATS_MIN_WIN
+                         or (p.venue in _badged)
+                         or (rid in sharp_rids)}
 
         # Segment filter (metro/country) — additive; None keeps every race. Lets
         # the reporting separate metro from country so a country-only day (which
