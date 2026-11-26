@@ -1088,6 +1088,7 @@
       }
     } catch (e) { S.perfByDate = {}; }
     buildDateRow();
+    renderDayStrip();   // strip reads S.perfByDate, so refresh it once perf lands
   }
 
   function buildDateRow() {
@@ -1348,21 +1349,20 @@
 
   /* ── shared: day strip ── */
   function renderDayStrip() {
-    // Stats reflect the SAME races shown on screen (S.date, respecting the
-    // Sharp filter) so the strip always matches the visible cells.
-    let races = allRaces();
-    if (S.sharpOnly) races = races.filter(r => r.is_sharp === true);
-    // Exclude sub-20% coin-flips — they're greyed on the grid (no green tile) and
-    // excluded from stats, so they must not add a phantom win to the day summary.
-    races = races.filter(r => !window.PickCard.isHiddenRace({ win_probability: r.top_win_probability, is_sharp: r.is_sharp, venue: r._venue || r.venue }));
-    const settled = races.filter(isSettled);
+    // Stats come from the SAME source as the date-nav pill — the server day-stat
+    // (/api/performance via S.perfByDate), which is sharp-aware — so the strip and
+    // the pill ALWAYS agree. (Previously tallied client-side from loaded cards,
+    // which undercounted when not every meeting had loaded, or when a card's Sharp
+    // flag was computed from a different snapshot than the authoritative day-stat.)
     const el = document.getElementById('dayStrip');
-    const wins = settled.filter(r => r.model_correct === true).length;
-    const placed = settled.filter(r => r.model_correct === false && r.model_placed === true).length;
-    const pct = settled.length ? Math.round(wins / settled.length * 100) : 0;
-    const placePct = settled.length ? Math.round((wins + placed) / settled.length * 100) : 0;
-    const statsHtml = settled.length ? `<div class="ds-row">
-      <div class="ds-stat"><b class="num">${settled.length}</b> settled</div>
+    const perf = S.perfByDate[S.date];
+    const settledN = perf ? perf.races : 0;
+    const wins = perf ? perf.wins : 0;
+    const placed = perf ? perf.placed : 0;          // "more placed" = placed excl. wins
+    const pct = perf ? perf.pct : 0;
+    const placePct = perf ? perf.placePct : 0;
+    const statsHtml = settledN ? `<div class="ds-row">
+      <div class="ds-stat"><b class="num">${settledN}</b> settled</div>
       <div class="ds-divider"></div>
       <div class="ds-stat"><b class="g num">${wins}</b> picks won <span class="num">(${pct}%)</span></div>
       <div class="ds-divider"></div>
