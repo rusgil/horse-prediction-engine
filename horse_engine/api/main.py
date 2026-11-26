@@ -24436,12 +24436,6 @@ async def get_meeting(race_date: str, venue_code: str):
                 # still drove top_pick + model_correct (MR CACCIATORE incident)
                 .where((RunnerPredictionHistoryRow.source == "live")
                        | RunnerPredictionHistoryRow.source.is_(None))
-                # Drop contaminated (blind post-jump re-enrich) snapshots: the
-                # latest snapshot is often a blind re-enrich with no odds, so
-                # without this the top pick's best_available_odds comes back None
-                # and the odds-based Sharp gate can't fire (is_sharp reads None on
-                # settled races). Matches /api/performance so the two agree.
-                .where(_history_healthy_filter())
                 .order_by(RunnerPredictionHistoryRow.enriched_at.desc())
             )
             seen_rank: dict[tuple[str, int], bool] = {}
